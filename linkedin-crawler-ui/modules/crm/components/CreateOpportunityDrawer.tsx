@@ -384,6 +384,7 @@ export function CreateOpportunityDrawer({
     hasValue: Boolean(estimatedBudget),
     hasTeam: Boolean(customerForm.sdrId),
     hasNext: Boolean(customerForm.nextStep.trim()),
+    nextStepValue: customerForm.nextStep,
     hasFollow: Boolean(customerForm.followUpDate),
     hasContact: Boolean(customerForm.phone?.trim() || customerForm.email?.trim()),
   });

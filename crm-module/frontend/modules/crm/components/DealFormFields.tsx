@@ -1192,6 +1192,7 @@ export function DealFormFields({
     hasValue: Boolean(form.estimatedBudget.trim()),
     hasTeam: Boolean(sdrSelectionKey),
     hasNext: Boolean(form.nextStep.trim()),
+    nextStepValue: form.nextStep,
     hasFollow: Boolean(form.followUpDate.trim()),
     hasContact: Boolean(form.phone.trim() || form.email.trim()),
   });

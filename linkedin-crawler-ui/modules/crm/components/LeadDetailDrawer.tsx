@@ -107,6 +107,8 @@ export function LeadDetailDrawer({
   onEdit,
   embedded = false,
   readOnly = false,
+  suppressNavigation = false,
+  onConverted,
 }: {
   lead: CrmLeadRow | null;
   open: boolean;
@@ -125,6 +127,15 @@ export function LeadDetailDrawer({
   embedded?: boolean;
   /** Chỉ xem: ẩn mọi nút sửa/lưu/xác nhận và khoá toàn bộ ô nhập. */
   readOnly?: boolean;
+  /** Khi nhúng vào 1 wizard khác đang dở dang (vd QuickCreateOpportunityFromInbox) - tắt
+   * hẳn `onClose()` + `router.push(...)` sau khi convert thành công (dòng ~1027-1030),
+   * để wizard cha tự quyết định bước tiếp theo thay vì bị điều hướng rời trang. Mặc định
+   * `false` giữ NGUYÊN hành vi cũ cho mọi call site khác (LeadsDirectory, Lead360Drawer...).
+   * Cùng tinh thần `suppressNavigation` đã có sẵn ở CreateOpportunityDrawer.tsx. */
+  suppressNavigation?: boolean;
+  /** Bắn ngay sau khi convert thành công (trước đoạn điều hướng) - CHỈ cần dùng kèm
+   * `suppressNavigation`, cho wizard cha biết để chuyển bước/hiện interstitial riêng. */
+  onConverted?: (result: { customerId: string; contactId: string; dealId: string }) => void;
 }) {
   const router = useRouter();
   const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
@@ -550,6 +561,7 @@ export function LeadDetailDrawer({
     hasValue: form.estimatedValue != null,
     hasTeam: Boolean(form.aeId),
     hasNext: Boolean(form.nextStep.trim()),
+    nextStepValue: form.nextStep,
     hasFollow: Boolean(form.nextStepAt),
     hasContact: Boolean(contact.phone.trim() || contact.email.trim()),
   });
@@ -993,14 +1005,22 @@ export function LeadDetailDrawer({
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Tạo cơ hội thất bại.');
       const result = body.data || {};
       const newCustomerId = result.customer?.id || result.customer_id || '';
+      const newContactId = result.contact?.id || result.contact_id || '';
+      const newDealId = result.deal?.id || result.deal_id || '';
       onSaved({
         ...lead,
         status: 'sql',
         convertedCustomerId: newCustomerId,
-        convertedContactId: result.contact?.id || result.contact_id || '',
-        convertedDealId: result.deal?.id || result.deal_id || '',
+        convertedContactId: newContactId,
+        convertedDealId: newDealId,
       });
       setConvertOpen(false);
+      if (suppressNavigation) {
+        // Nhung vao 1 wizard khac (vd QuickCreateOpportunityFromInbox) - KHONG tu dong/
+        // dieu huong, de wizard cha tu quyet dinh buoc tiep theo.
+        onConverted?.({ customerId: newCustomerId, contactId: newContactId, dealId: newDealId });
+        return;
+      }
       // Feedback 2026-09-26: "xác minh lead xong thì tự trỏ về đúng trang chi
       // tiết khách hàng" - truoc day chi hien man "Da tao co hoi" tinh, phai
       // tu bam link "Xem Khách hàng" moi qua duoc. Dong drawer + dieu huong

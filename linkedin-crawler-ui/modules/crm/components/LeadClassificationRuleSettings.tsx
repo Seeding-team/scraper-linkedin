@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { fetchCrmCategoryLabels } from './CrmCategorySelect';
 import { Loader2 } from './icons';
 
 function headers() {
@@ -22,26 +23,36 @@ const ICP_AUTO_ITEMS: Array<{ key: string; label: string; hint: string }> = [
   { key: 'icp_product_in_catalog', label: 'Sản phẩm/dịch vụ quan tâm có trong danh mục', hint: 'Nếu Lead quan tâm ít nhất một sản phẩm/dịch vụ đã có trong danh mục CRM thì đánh giá ICP = Phù hợp.' },
   { key: 'icp_other_unknown', label: '"Khác" nhập tay = Chưa xác định', hint: 'Bật: không tự loại Lead khi chỉ chọn "Khác", chờ Marketing/Admin kiểm tra thêm. Tắt: Lead chỉ chọn "Khác" bị đánh giá ICP = Không phù hợp.' },
 ];
-const SQL_AND_ITEMS: Array<{ key: string; label: string; hint: string }> = [
+// `valueFilterKey` (tuy chon): key luu trong CUNG JSONB `conditions`, gia tri
+// la list[string] cac ten "Việc tiếp theo" (crm_next_step) duoc tinh la thoa
+// dieu kien nay - rong = chap nhan MOI gia tri (giu hanh vi cu). Chi hien UI
+// chon gia tri khi checkbox cua item tuong ung dang BAT.
+const SQL_AND_ITEMS: Array<{ key: string; label: string; hint: string; valueFilterKey?: string }> = [
   { key: 'sql_product', label: 'Có sản phẩm / dịch vụ', hint: 'Khách đã xác định nhu cầu chính.' },
   { key: 'sql_interest', label: 'Có mức độ quan tâm', hint: 'Marketing đã xác định mức độ quan tâm.' },
   { key: 'sql_value', label: 'Có giá trị dự kiến', hint: 'Phải có giá trị cơ hội dự kiến.' },
   { key: 'sql_team', label: 'Đã chọn Sale nhận bàn giao', hint: 'Đã xác định ai sẽ nhận Lead này.' },
-  { key: 'sql_next', label: 'Có việc tiếp theo', hint: 'Đã xác định next action cho Sale.' },
+  { key: 'sql_next', label: 'Có việc tiếp theo', hint: 'Đã xác định next action cho Sale.', valueFilterKey: 'sql_next_values' },
   { key: 'sql_follow', label: 'Có hạn follow-up', hint: 'Có thời điểm cụ thể để Sale xử lý.' },
   { key: 'sql_fit', label: 'Không ở trạng thái "Chưa phù hợp"', hint: 'Lead không bị loại bởi tiêu chí khách hàng mục tiêu.' },
 ];
-const NURTURE_ITEMS: Array<{ key: string; label: string; hint: string }> = [
+const NURTURE_ITEMS: Array<{ key: string; label: string; hint: string; valueFilterKey?: string }> = [
   { key: 'nur_missing_value', label: 'Thiếu giá trị dự kiến', hint: 'Ví dụ mới biết nhu cầu nhưng chưa xác định ngân sách/quy mô.' },
   { key: 'nur_missing_handoff', label: 'Thiếu thông tin bàn giao Sale', hint: 'Thiếu Sale nhận bàn giao, việc tiếp theo hoặc follow-up.' },
   { key: 'nur_unknown_fit', label: 'Chưa xác định nhóm khách hàng', hint: 'Dùng nếu muốn buộc xác định ICP trước khi lên SQL.' },
+  {
+    key: 'nur_next_step_set',
+    label: 'Việc tiếp theo thuộc nhóm nuôi dưỡng',
+    hint: 'Lead gần đủ SQL nhưng "Việc tiếp theo" đang chọn nằm trong danh sách dưới đây thì xếp Nuôi dưỡng.',
+    valueFilterKey: 'nur_next_step_values',
+  },
 ];
 const UNQUALIFIED_OR_ITEMS: Array<{ key: string; label: string; hint: string }> = [
   { key: 'inv_fit', label: 'Đúng nhóm khách hàng = "Chưa phù hợp"', hint: 'Lead không thuộc nhóm khách hàng mục tiêu.' },
   { key: 'inv_no_contact', label: 'Không có thông tin liên hệ hợp lệ', hint: 'Loại Lead không có SĐT/email hợp lệ.' },
 ];
 
-type Conditions = Record<string, boolean>;
+type Conditions = Record<string, boolean | string[]>;
 
 /** Trang cấu hình "Điều kiện phân loại Lead" (WIP full-flow, prototype
  * markee_crm_v26_compact_opportunity_name.html, mục "Danh mục & cấu hình").
@@ -86,9 +97,25 @@ export function LeadClassificationRuleSettings() {
     return () => { alive = false; };
   }, []);
 
+  const [nextStepOptions, setNextStepOptions] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void fetchCrmCategoryLabels('crm_next_step').then(labels => { if (alive) setNextStepOptions(labels); });
+    return () => { alive = false; };
+  }, []);
+
   function toggle(key: string) {
     if (!canManage) return;
     setConditions(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function toggleValueInList(key: string, value: string) {
+    if (!canManage) return;
+    setConditions(prev => {
+      const current = Array.isArray(prev[key]) ? (prev[key] as string[]) : [];
+      const next = current.includes(value) ? current.filter(item => item !== value) : [...current, value];
+      return { ...prev, [key]: next };
+    });
   }
 
   async function handleSave() {
@@ -150,8 +177,26 @@ export function LeadClassificationRuleSettings() {
         conditions={conditions}
         onToggle={toggle}
       />
-      <RuleCard title="Đạt chuẩn (SQL)" mode="AND" description="Tất cả điều kiện được tick phải thỏa." items={SQL_AND_ITEMS} conditions={conditions} onToggle={toggle} />
-      <RuleCard title="Nuôi dưỡng" mode="FALLBACK" description="Chỉ áp dụng khi chưa đạt SQL và không rơi vào điều kiện loại — chỉ ảnh hưởng lý do hiển thị." items={NURTURE_ITEMS} conditions={conditions} onToggle={toggle} />
+      <RuleCard
+        title="Đạt chuẩn (SQL)"
+        mode="AND"
+        description="Tất cả điều kiện được tick phải thỏa."
+        items={SQL_AND_ITEMS}
+        conditions={conditions}
+        onToggle={toggle}
+        nextStepOptions={nextStepOptions}
+        onToggleValueInList={toggleValueInList}
+      />
+      <RuleCard
+        title="Nuôi dưỡng"
+        mode="FALLBACK"
+        description="Chỉ áp dụng khi chưa đạt SQL và không rơi vào điều kiện loại — chỉ ảnh hưởng lý do hiển thị."
+        items={NURTURE_ITEMS}
+        conditions={conditions}
+        onToggle={toggle}
+        nextStepOptions={nextStepOptions}
+        onToggleValueInList={toggleValueInList}
+      />
       <RuleCard title="Không đạt chuẩn" mode="OR" description="Chỉ cần thỏa một điều kiện được tick là Lead bị loại." items={UNQUALIFIED_OR_ITEMS} conditions={conditions} onToggle={toggle} />
 
       <div className="rule-summary" style={{ border: '1px solid #dbe5f2', background: '#f8fafc', borderRadius: '0.75rem', padding: '0.7rem 0.8rem' }}>
@@ -176,13 +221,17 @@ function RuleCard({
   items,
   conditions,
   onToggle,
+  nextStepOptions = [],
+  onToggleValueInList,
 }: {
   title: string;
   mode: string;
   description: string;
-  items: Array<{ key: string; label: string; hint: string }>;
+  items: Array<{ key: string; label: string; hint: string; valueFilterKey?: string }>;
   conditions: Conditions;
   onToggle: (key: string) => void;
+  nextStepOptions?: string[];
+  onToggleValueInList?: (key: string, value: string) => void;
 }) {
   return (
     <div className="rule-card" style={{ border: '1px solid #e2e8f0', borderRadius: '0.9rem', background: '#fff', overflow: 'hidden' }}>
@@ -194,15 +243,56 @@ function RuleCard({
         <span style={{ fontSize: '0.65rem', fontWeight: 850, padding: '0.3rem 0.5rem', borderRadius: '999px', background: '#f1f4f8', color: '#61728a', whiteSpace: 'nowrap' }}>{mode}</span>
       </div>
       <div style={{ padding: '0.4rem 0.9rem' }}>
-        {items.map(item => (
-          <label key={item.key} style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', padding: '0.55rem 0', borderBottom: '1px dashed #edf1f6', cursor: 'pointer' }}>
-            <input type="checkbox" checked={Boolean(conditions[item.key])} onChange={() => onToggle(item.key)} style={{ width: '16px', height: '16px', marginTop: '1px' }} />
-            <span>
-              <span style={{ display: 'block', fontSize: '0.75rem', color: '#34455c', fontWeight: 750 }}>{item.label}</span>
-              <span style={{ display: 'block', fontSize: '0.68rem', color: '#64748b', marginTop: '0.1rem' }}>{item.hint}</span>
-            </span>
-          </label>
-        ))}
+        {items.map(item => {
+          const checked = Boolean(conditions[item.key]);
+          const selectedValues = Array.isArray(conditions[item.valueFilterKey || '']) ? (conditions[item.valueFilterKey || ''] as string[]) : [];
+          return (
+            <div key={item.key} style={{ borderBottom: '1px dashed #edf1f6' }}>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.55rem', padding: '0.55rem 0', cursor: 'pointer' }}>
+                <input type="checkbox" checked={checked} onChange={() => onToggle(item.key)} style={{ width: '16px', height: '16px', marginTop: '1px' }} />
+                <span>
+                  <span style={{ display: 'block', fontSize: '0.75rem', color: '#34455c', fontWeight: 750 }}>{item.label}</span>
+                  <span style={{ display: 'block', fontSize: '0.68rem', color: '#64748b', marginTop: '0.1rem' }}>{item.hint}</span>
+                </span>
+              </label>
+              {checked && item.valueFilterKey && onToggleValueInList ? (
+                <div style={{ margin: '0 0 0.6rem 1.75rem', padding: '0.5rem 0.6rem', background: '#f8fafc', border: '1px solid #e7edf5', borderRadius: '0.5rem' }}>
+                  <div style={{ fontSize: '0.65rem', color: '#64748b', marginBottom: '0.35rem' }}>
+                    Chỉ tính "Việc tiếp theo" sau đây là thỏa (để trống = chấp nhận mọi giá trị):
+                  </div>
+                  {nextStepOptions.length === 0 ? (
+                    <div style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Chưa có "Việc tiếp theo" nào trong danh mục.</div>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                      {nextStepOptions.map(option => {
+                        const picked = selectedValues.includes(option);
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => onToggleValueInList(item.valueFilterKey as string, option)}
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 650,
+                              padding: '0.25rem 0.55rem',
+                              borderRadius: '999px',
+                              border: picked ? '1px solid #2f6fed' : '1px solid #d7dfea',
+                              background: picked ? '#eaf1ff' : '#fff',
+                              color: picked ? '#2f6fed' : '#475569',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            {option}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

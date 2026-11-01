@@ -659,14 +659,14 @@ export function LeadsDirectory() {
   // thái đó" - tức danh sách phải phản ánh ĐÚNG luật hiện hành, không phải
   // status cũ đã lưu lúc trước khi luật đổi. Lead đã CHỐT (sql/converted/
   // nurturing/unqualified) là quyết định thật của SDR, KHÔNG bị ghi đè.
-  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
+  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean | string[]> | null>(null);
   useEffect(() => {
     let alive = true;
     fetch(`${API_BASE_URL}/api/all-platform/crm/leads/classification-rules`, { credentials: 'include', headers: headers() })
       .then(res => res.json())
       .then(body => {
         if (!alive || body.success === false) return;
-        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
+        setRuleConditions((body.data?.conditions as Record<string, boolean | string[]>) || null);
       })
       .catch(() => {
         // Im lang - khong co rule thi hien nguyen status da luu.
@@ -685,6 +685,7 @@ export function LeadsDirectory() {
       has_value: lead.qualificationEstimatedValue != null,
       has_team: Boolean(lead.qualificationAeId),
       has_next: Boolean(lead.nextStep?.trim()),
+      next_step_value: lead.nextStep || '',
       has_follow: Boolean(lead.followUpDate),
       has_contact: Boolean(lead.phone?.trim() || lead.email?.trim()),
       fit_unfit: icpFromApi(lead.qualificationIcpFit) === 'unfit',

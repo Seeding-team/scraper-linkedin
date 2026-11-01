@@ -211,6 +211,7 @@ export function LeadFormDrawer({
   onOpenQualification,
   onOpenExistingLead,
   initialValues,
+  suppressAutoCloseOnSave = false,
 }: {
   open: boolean;
   currentUser: AppUser | null;
@@ -222,8 +223,19 @@ export function LeadFormDrawer({
   onOpenExistingLead?: (lead: CrmLeadRow) => void;
   /** Dien san tu nguon ben ngoai (vd nut "Tao lead" tren post card seeding
    * bai tu dong - da co san SDT + ten Zalo do bot tim duoc, khong bat go lai
-   * tu dau). SDT van di qua dung luong check-trung nhu go tay. */
-  initialValues?: { phone?: string; leadName?: string; note?: string; source?: string };
+   * tu dau). SDT/email van di qua dung luong check-trung nhu go tay. `email`/
+   * `companyName` them cho luong "+ Tao co hoi" tu Omnichannel Inbox (Lead-
+   * first khi conv chua lien ket CRM) - KHONG anh huong cac nguon prefill cu
+   * (optional, chua truyen van hoat dong nhu truoc). */
+  initialValues?: { phone?: string; email?: string; leadName?: string; companyName?: string; note?: string; source?: string };
+  /** Nut "Tao Lead" (mode 'create') tu goi onClose() ngay sau onSaved() (xem
+   * handleAction() ben duoi) - dung khi drawer nay la MAN HINH DUY NHAT. Khi
+   * nhung vao 1 wizard nhieu buoc (QuickCreateOpportunityFromInbox), onSaved
+   * da tu chuyen buoc trong wizard cha - goi them onClose() se dong NHAM ca
+   * wizard. Bat cu nay de tat dung 1 nhanh do, KHONG doi hanh vi 'create-next'/
+   * 'create-qualify' (von da khong tu dong onClose san). Mac dinh false giu
+   * NGUYEN hanh vi cu cho 2 call site khac (LeadsDirectory, OmnichannelInboxView). */
+  suppressAutoCloseOnSave?: boolean;
 }) {
   const [checkPhone, setCheckPhone] = useState('');
   const [checkEmail, setCheckEmail] = useState('');
@@ -269,7 +281,7 @@ export function LeadFormDrawer({
     if (!open) return;
     setError('');
     setCheckPhone(initialValues?.phone ? normalizePhoneInput(initialValues.phone) : '');
-    setCheckEmail('');
+    setCheckEmail(initialValues?.email?.trim() || '');
     setDupState('idle');
     setDuplicates([]);
     setOverrideCreate(false);
@@ -283,6 +295,9 @@ export function LeadFormDrawer({
     setForm({
       ...base,
       leadName: initialValues?.leadName || base.leadName,
+      companyName: initialValues?.companyName || base.companyName,
+      phone: initialValues?.phone ? normalizePhoneInput(initialValues.phone) : base.phone,
+      email: initialValues?.email?.trim() || base.email,
       note: initialValues?.note || base.note,
     });
     setExtraOpen(false);
@@ -291,7 +306,7 @@ export function LeadFormDrawer({
     setInteractionSavedFor('');
     checkSeqRef.current += 1;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, currentUser, initialValues?.phone, initialValues?.leadName, initialValues?.note, initialValues?.source]);
+  }, [open, currentUser, initialValues?.phone, initialValues?.email, initialValues?.leadName, initialValues?.companyName, initialValues?.note, initialValues?.source]);
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
@@ -668,7 +683,7 @@ export function LeadFormDrawer({
       if (!created) return;
       onSaved(created);
       if (mode === 'create') {
-        onClose();
+        if (!suppressAutoCloseOnSave) onClose();
       } else if (mode === 'create-next') {
         setCheckPhone('');
         setCheckEmail('');

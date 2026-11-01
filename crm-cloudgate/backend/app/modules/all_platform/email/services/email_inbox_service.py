@@ -896,7 +896,7 @@ def _persist_inbound(
         for cid, attachment_id in cid_to_attachment_id.items():
             attachment_url = f"/api/all-platform/email-inbox/attachments/{attachment_id}"
             rewritten_html = re.sub(
-                rf'cid:{re.escape(cid)}(?=["\'])',
+                rf"cid:{re.escape(cid)}(?=[\"'])",
                 attachment_url,
                 rewritten_html,
                 flags=re.IGNORECASE,
@@ -1212,12 +1212,12 @@ def _crm_enrichment(customer_email: str) -> dict[str, Any]:
                 for x in contracts.data or []]
             return base
         deals = _run(lambda: _db().table("customer_leads")
-            .select("id,customer_name,company_name,phone,email,address,deal_stage,estimated_budget")
+            .select("id,customer_id,customer_name,company_name,phone,email,address,deal_stage,estimated_budget")
             .eq("instance", _workspace()).ilike("email", customer_email).limit(1).execute())
         if deals.data:
             deal = deals.data[0]
             base["is_crm_matched"] = True
-            base["crm_data"] = {"matched": True, "name": deal.get("company_name") or deal.get("customer_name"), "companyName": deal.get("company_name"), "phone": deal.get("phone"), "email": deal.get("email"), "address": deal.get("address"), "statusLabel": "Cơ hội CRM"}
+            base["crm_data"] = {"matched": True, "customerId": deal.get("customer_id"), "name": deal.get("company_name") or deal.get("customer_name"), "companyName": deal.get("company_name"), "phone": deal.get("phone"), "email": deal.get("email"), "address": deal.get("address"), "statusLabel": "Cơ hội CRM"}
             base["opportunity"] = {"id": str(deal["id"]), "code": f"OPP-{str(deal['id'])[:6].upper()}", "name": deal.get("customer_name") or "Cơ hội bán hàng", "amount": f"{int(deal.get('estimated_budget') or 0):,} đ".replace(",", "."), "stage": deal.get("deal_stage") or "Đang trao đổi", "winRate": "", "ownerName": "", "updatedAt": ""}
     except Exception as exc:
         logger.warning("Email CRM enrichment failed for workspace {}: {}", _workspace(), type(exc).__name__)

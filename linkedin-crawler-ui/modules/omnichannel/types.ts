@@ -65,6 +65,12 @@ export interface MessageItem {
 
 export interface CrmCustomerMatch {
   matched: boolean;
+  /** ID khach hang CRM that (crm_customers.id) - CHI co khi backend thuc su tim thay (xem
+   * OmnichannelRepository.ts: email co san qua `crm_data.customerId`, Zalo qua
+   * `crm_customer_id`/`matched_customer_id`; Facebook hien chua co nguon that nen luon
+   * undefined, KHONG duoc bia). Dung de quyet dinh luong "+ Tao co hoi" co can qua
+   * Lead-first hay khong (xem QuickCreateOpportunityFromInbox.tsx). */
+  customerId?: string;
   name?: string;
   companyName?: string;
   statusLabel?: string;

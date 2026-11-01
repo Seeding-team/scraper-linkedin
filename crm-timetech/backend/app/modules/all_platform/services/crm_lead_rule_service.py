@@ -36,6 +36,7 @@ NURTURE_LABELS: dict[str, str] = {
     "nur_missing_value": "Thiếu giá trị dự kiến",
     "nur_missing_handoff": "Thiếu thông tin bàn giao Sale",
     "nur_unknown_fit": "Chưa xác định nhóm khách hàng",
+    "nur_next_step_set": "Việc tiếp theo thuộc nhóm nuôi dưỡng",
 }
 UNQUALIFIED_OR_LABELS: dict[str, str] = {
     "inv_fit": "Đúng nhóm khách hàng = “Chưa phù hợp”",
@@ -55,15 +56,30 @@ ICP_AUTO_LABELS: dict[str, str] = {
 ALL_CONDITION_KEYS = set(SQL_AND_LABELS) | set(NURTURE_LABELS) | set(UNQUALIFIED_OR_LABELS) | set(ICP_AUTO_LABELS)
 
 # PHAI khop CHINH XAC voi seed cua migration 151 (co assert luc import module
-# de 2 noi khong bao gio lech nhau).
+# de 2 noi khong bao gio lech nhau). `nur_next_step_set` them sau (2026-10-31,
+# giong icp_product_in_catalog/icp_other_unknown) - KHONG can migration moi,
+# key thieu trong DB cu tu dong fallback ve gia tri duoi day qua
+# _normalize_conditions(fallback=DEFAULT_CONDITIONS) o get_rule_set().
 DEFAULT_CONDITIONS: dict[str, bool] = {
     "sql_product": True, "sql_interest": True, "sql_value": True,
     "sql_team": True, "sql_next": True, "sql_follow": True, "sql_fit": True,
     "nur_missing_value": True, "nur_missing_handoff": True, "nur_unknown_fit": False,
+    "nur_next_step_set": False,
     "inv_fit": True, "inv_no_contact": False,
     "icp_product_in_catalog": True, "icp_other_unknown": True,
 }
 assert set(DEFAULT_CONDITIONS) == ALL_CONDITION_KEYS, "DEFAULT_CONDITIONS phai khop du ALL_CONDITION_KEYS"
+
+# Cau hinh "gia tri Viec tiep theo nao duoc tinh la thoa" - danh sach TEN
+# (crm_next_step category, dung LABEL giong het gia tri luu trong
+# deal/lead.next_step, khong phai id/code) - rong = chap nhan MOI gia tri
+# (giu dung hanh vi cu, khong breaking cac config da luu truoc khi co tinh
+# nang nay). Luu CHUNG 1 JSONB `conditions` voi cac checkbox bool o tren (gia
+# tri la list[str] thay vi bool) de khong can them cot/migration moi - dung
+# tinh than "danh sach key hop le do backend dinh nghia" da ghi trong migration
+# 151 (xem crm_lead_classification_rules.sql).
+VALUE_LIST_KEYS: set[str] = {"sql_next_values", "nur_next_step_values"}
+DEFAULT_VALUE_LISTS: dict[str, list[str]] = {"sql_next_values": [], "nur_next_step_values": []}
 
 
 class RuleValidationError(Exception):
@@ -88,7 +104,24 @@ def _normalize_conditions(raw: dict[str, Any] | None, *, fallback: dict[str, boo
     "nho" gia tri cu."""
     raw = raw or {}
     defaults = fallback or {}
-    return {key: bool(raw.get(key, defaults.get(key, False))) for key in ALL_CONDITION_KEYS}
+    result = {key: bool(raw.get(key, defaults.get(key, False))) for key in ALL_CONDITION_KEYS}
+    for key in VALUE_LIST_KEYS:
+        source = raw.get(key, defaults.get(key, DEFAULT_VALUE_LISTS[key]))
+        result[key] = _normalize_value_list(source)
+    return result
+
+
+def _normalize_value_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
 
 
 def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool] | None = None) -> dict[str, Any]:
@@ -107,10 +140,14 @@ def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool]
     luan la "nurturing" du chi la fallback ngam dinh, khong phai Nuoi duong
     that theo dung 3 dieu kien rieng cua WIP).
 
-    `fields` (tat ca la bool, tinh san o phia goi):
+    `fields` (tat ca la bool, tinh san o phia goi, tru next_step_value la
+    chuoi):
       has_product, has_interest_level, has_value, has_team, has_next,
       has_follow, has_contact, fit_unfit (True neu ICP = "Chưa phù hợp"),
-      fit_known (True neu da xac dinh ICP, khac "Chưa xác định").
+      fit_known (True neu da xac dinh ICP, khac "Chưa xác định"),
+      next_step_value (ten "Việc tiếp theo" dang chon, "" neu chua co - dung
+      de loc theo sql_next_values/nur_next_step_values, KHONG anh huong
+      has_next da tinh san o phia goi).
     """
     c = _normalize_conditions(conditions if conditions is not None else DEFAULT_CONDITIONS)
 
@@ -130,12 +167,17 @@ def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool]
         "sql_follow": "Hạn follow-up",
         "sql_fit": "ICP phù hợp",
     }
+    next_step_value = str(fields.get("next_step_value") or "").strip()
+    sql_next_values = set(c.get("sql_next_values") or [])
+    # sql_next_values rong = chap nhan MOI gia tri (hanh vi cu, khong breaking
+    # config da luu truoc khi co tinh nang loc theo gia tri cu the).
+    sql_next_ok = bool(fields.get("has_next")) and (not sql_next_values or next_step_value in sql_next_values)
     sql_field_values = {
         "sql_product": bool(fields.get("has_product")),
         "sql_interest": bool(fields.get("has_interest_level")),
         "sql_value": bool(fields.get("has_value")),
         "sql_team": bool(fields.get("has_team")),
-        "sql_next": bool(fields.get("has_next")),
+        "sql_next": sql_next_ok,
         "sql_follow": bool(fields.get("has_follow")),
         "sql_fit": not bool(fields.get("fit_unfit")),
     }
@@ -166,6 +208,14 @@ def evaluate_lead_conditions(fields: dict[str, Any], conditions: dict[str, bool]
         nurture_reasons.append("Thiếu thông tin bàn giao Sale")
     if c["nur_unknown_fit"] and not fields.get("fit_known") and others_ok({"sql_fit"}):
         nurture_reasons.append("Chưa xác định nhóm khách hàng")
+    nur_next_step_values = set(c.get("nur_next_step_values") or [])
+    if (
+        c["nur_next_step_set"]
+        and next_step_value
+        and next_step_value in nur_next_step_values
+        and others_ok({"sql_next"})
+    ):
+        nurture_reasons.append("Việc tiếp theo thuộc nhóm nuôi dưỡng")
     is_nurture_forced = bool(nurture_reasons)
 
     base = {"missing": missing, "sql_ok": sql_ok, "sql_total": sql_total}
@@ -217,7 +267,7 @@ def get_rule_set() -> dict[str, Any]:
 
 
 def save_rule_set(conditions: dict[str, Any], actor_id: Optional[str]) -> dict[str, Any]:
-    unknown_keys = set(conditions or {}) - ALL_CONDITION_KEYS
+    unknown_keys = set(conditions or {}) - ALL_CONDITION_KEYS - VALUE_LIST_KEYS
     if unknown_keys:
         raise RuleValidationError(f"Điều kiện không hợp lệ: {', '.join(sorted(unknown_keys))}")
     normalized = _normalize_conditions(conditions)

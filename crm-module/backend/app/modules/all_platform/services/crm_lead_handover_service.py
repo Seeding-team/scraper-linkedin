@@ -167,6 +167,7 @@ def compute_missing_items(lead: dict[str, Any]) -> list[str]:
             "has_contact": bool(str(lead.get("phone") or "").strip() or str(lead.get("email") or "").strip()),
             "fit_unfit": lead.get("qualification_icp_fit") is False,
             "fit_known": lead.get("qualification_icp_fit") is not None,
+            "next_step_value": str(lead.get("next_step") or "").strip(),
         }
         return list(rules.evaluate_lead_conditions(fields, rules.get_rule_set().get("conditions"))["missing"])
     except Exception:  # noqa: BLE001

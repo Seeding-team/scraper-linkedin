@@ -182,7 +182,7 @@ export function LeadDealQualificationPanel(props: {
   showProjectField?: boolean;
 
   verificationOutcome: VerificationOutcome;
-  ruleConditions: Record<string, boolean> | null;
+  ruleConditions: Record<string, boolean | string[]> | null;
   outcomeReasons: string[];
   outcomeMissing: string[];
   sqlProgress: { ok: number; total: number };

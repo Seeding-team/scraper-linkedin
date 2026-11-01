@@ -384,6 +384,15 @@ def duplicate_check(user: dict[str, Any], phone: str | None, email: str | None) 
     visible = _visible_lead_ids(user)
     if visible is not None:
         matches = [row for row in matches if row.get("id") in visible]
+    # BUG THAT DA GAP (phat hien 2026-10-31 khi test wizard "+ Tao co hoi" tu
+    # Omnichannel Inbox bang Playwright that): _duplicate_query() doc thang
+    # LEAD_COLUMNS tu crm_leads, KHONG qua get_lead()/list_leads() nen thieu
+    # han field can_write - FE (mapLead()) doc thieu field nay se mac dinh ve
+    # false, lam MOI input trong LeadDetailDrawer bi khoa disabled het khi mo
+    # 1 Lead tim thay qua duplicate-check (vd luong resume cua
+    # QuickCreateOpportunityFromInbox) dung MA KHONG co cach nao sua duoc.
+    for row in matches:
+        row["can_write"] = can_write_lead(user, row)
     return matches
 
 

@@ -32,10 +32,13 @@ export function useLeadQualificationEngine(params: {
   hasValue: boolean;
   hasTeam: boolean;
   hasNext: boolean;
+  /** Ten "Việc tiếp theo" dang chon - dung de loc theo sql_next_values/
+   * nur_next_step_values (xem evaluateLeadConditions). */
+  nextStepValue?: string;
   hasFollow: boolean;
   hasContact: boolean;
 }) {
-  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
+  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean | string[]> | null>(null);
   const [verificationOutcome, setVerificationOutcome] = useState<VerificationOutcome>('pending');
   const [outcomeReasons, setOutcomeReasons] = useState<string[]>([]);
   const [outcomeMissing, setOutcomeMissing] = useState<string[]>([]);
@@ -48,7 +51,7 @@ export function useLeadQualificationEngine(params: {
       .then(res => res.json())
       .then(body => {
         if (!alive || body.success === false) return;
-        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
+        setRuleConditions((body.data?.conditions as Record<string, boolean | string[]>) || null);
       })
       .catch(() => {
         // Im lang - khong co rule thi giu hanh vi cu, khong chan luong chinh.
@@ -69,6 +72,7 @@ export function useLeadQualificationEngine(params: {
       has_value: params.hasValue,
       has_team: params.hasTeam,
       has_next: params.hasNext,
+      next_step_value: params.nextStepValue || '',
       has_follow: params.hasFollow,
       has_contact: params.hasContact,
       fit_unfit: icpFit === 'unfit',
@@ -81,7 +85,7 @@ export function useLeadQualificationEngine(params: {
     setSqlProgress({ ok: computed.sqlOk, total: computed.sqlTotal });
   }, [
     ruleConditions, params.productValue, params.hasInterestLevel, params.hasValue,
-    params.hasTeam, params.hasNext, params.hasFollow, params.hasContact, icpFit,
+    params.hasTeam, params.hasNext, params.nextStepValue, params.hasFollow, params.hasContact, icpFit,
   ]);
 
   return { ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit };

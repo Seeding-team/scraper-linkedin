@@ -7,6 +7,9 @@ import { ChannelType, ConversationItem, ChannelAccount, MessageItem, OutgoingEma
 import { omnichannelRepository } from "../repositories/OmnichannelRepository";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
 import { DealFormModal } from "@/modules/crm/components/DealFormModal";
+import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
+import { QuickCreateOpportunityFromInbox } from "./QuickCreateOpportunityFromInbox";
+import type { CrmCustomerSummary, CrmUserOption, Deal } from "@/modules/crm/types";
 import { TelegramConnectFlow } from "@/components/all-platform/telegram/TelegramConnectFlow";
 import { ZaloConnectModal } from "./ZaloConnectModal";
 import { EmailConnectModal } from "./EmailConnectModal";
@@ -25,7 +28,6 @@ import {
 import { QuoteWorkspaceModal } from "@/modules/crm/components/QuoteWorkspaceModal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
-import { CustomerAddDrawer } from "@/modules/crm/components/CustomerAddDrawer";
 import { AssignUserModal } from "./AssignUserModal";
 import {
   Customer360Drawer,
@@ -91,6 +93,22 @@ export function OmnichannelInboxView() {
   const [isQuotePreviewOpen, setIsQuotePreviewOpen] = useState(false);
   const [isAssignUserOpen, setIsAssignUserOpen] = useState(false);
   const [isCreateCustomerOpen, setIsCreateCustomerOpen] = useState(false);
+  // Real mode - "Tìm khách hàng" VA "+ Tạo mới" (section Khach hang CRM 360) dung CHUNG 1
+  // luong Lead-first (QuickCreateOpportunityFromInbox mode="find-customer") thay vi 2 modal
+  // rieng (FindCustomerMockModal/LeadFormDrawer) nhu truoc - preview mode van giu nguyen 2
+  // state o tren (isFindCustomerOpen/isCreateCustomerOpen) cho mock cu.
+  const [isFindOrCreateCustomerOpen, setIsFindOrCreateCustomerOpen] = useState(false);
+  // Real mode - "+ Tạo hợp đồng" (section Hop dong CRM 360).
+  const [isCreateContractOpen, setIsCreateContractOpen] = useState(false);
+  // "Sale phu trach" cho QuickCreateOpportunityFromInbox - mirror cach ZaloInboxAdminShell.tsx/
+  // InboxModernLayout.tsx da fetch (xem thao/CRM_KNOWN_BUGS_FIXED.md muc 3, agents=[] hardcode
+  // lam dropdown rong khong hoan tat duoc form).
+  const [crmAgents, setCrmAgents] = useState<CrmUserOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void seedingCrmRepository.getAgents().then(list => { if (alive) setCrmAgents(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [isTelegramConnectOpen, setIsTelegramConnectOpen] = useState(false);
   const [isZaloConnectOpen, setIsZaloConnectOpen] = useState(false);
   const [isEmailConnectOpen, setIsEmailConnectOpen] = useState(false);
@@ -596,6 +614,93 @@ export function OmnichannelInboxView() {
     }
   };
 
+  // Real Mode (khong preview) - "+ Tạo cơ hội" di qua QuickCreateOpportunityFromInbox (Lead-
+  // first khi hoi thoai chua lien ket CRM), component tu lo viec tao Deal that (qua RPC with-
+  // deal neu da co Customer, hoac tao Lead + convert_lead neu chua co) roi moi goi onCreated o
+  // day - CHI con viec cap nhat lai danh sach hoi thoai cho dung voi Deal da tao THAT (khac han
+  // handleCreateDealOfficial o tren, gio chi con dung cho preview mode).
+  const handleQuickOpportunityCreated = (createdDeal: Deal) => {
+    showToast(`Đã tạo cơ hội "${createdDeal.customerName || "Cơ hội mới"}" thành công trên CRM!`);
+    if (activeConversation) {
+      setRealConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id
+            ? {
+                ...c,
+                isCrmMatched: true,
+                opportunity: {
+                  id: createdDeal.id,
+                  code: `OPP-${createdDeal.id.substring(0, 6)}`,
+                  name: createdDeal.customerName || "Cơ hội mới",
+                  amount: `${createdDeal.estimatedBudget || 0}đ`,
+                  stage: "Tư vấn",
+                  winRate: "50%",
+                  ownerName: "Admin",
+                  updatedAt: "Vừa xong",
+                },
+              }
+            : c
+        )
+      );
+    }
+  };
+
+  // mode="find-customer" ("Tìm khách hàng"/"+ Tạo mới") - Customer da san sang (moi tao qua
+  // Lead-first hoac da co san), danh dau lai hoi thoai da lien ket CRM dung voi du lieu THAT
+  // (khac FindCustomerMockModal cu: ten gia dinh tu client, khong co customerId that).
+  const handleQuickCustomerLinked = (customer: CrmCustomerSummary) => {
+    showToast(`Đã liên kết khách hàng "${customer.customerName || customer.companyName || ""}" thành công trên CRM!`);
+    if (activeConversation) {
+      setRealConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id
+            ? {
+                ...c,
+                isCrmMatched: true,
+                crmData: {
+                  ...c.crmData,
+                  matched: true,
+                  customerId: customer.id,
+                  name: customer.customerName || customer.companyName || c.crmData.name,
+                  companyName: customer.companyName || c.crmData.companyName,
+                  phone: customer.phone || c.crmData.phone,
+                  email: customer.email || c.crmData.email,
+                  statusLabel: "Khách hàng",
+                },
+              }
+            : c
+        )
+      );
+    }
+  };
+
+  // mode="contract" ("+ Tạo hợp đồng") - Contract that vua tao qua RegisterExternalContractModal.
+  const handleQuickContractCreated = (contract: any) => {
+    showToast(`Đã ghi nhận hợp đồng "${contract?.title || contract?.contract_number || "mới"}" thành công trên CRM!`);
+    if (activeConversation) {
+      setRealConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConversation.id
+            ? {
+                ...c,
+                contracts: [
+                  ...(c.contracts || []),
+                  {
+                    id: contract?.id || `ct-${Date.now()}`,
+                    code: contract?.contract_number || contract?.id?.slice(0, 8) || "",
+                    title: contract?.title || "Hợp đồng mới",
+                    status: contract?.status || "Nháp",
+                    amount: contract?.contract_value ? `${contract.contract_value}đ` : "",
+                    signedAt: contract?.signed_at,
+                  },
+                ],
+              }
+            : c
+        )
+      );
+    }
+  };
+
   // Dynamically compute conversation counts for each channel
   const channelCounts = useMemo(() => {
     return {
@@ -858,8 +963,12 @@ export function OmnichannelInboxView() {
           onToggleCollapse={() => setIsPane4Collapsed((v) => !v)}
           onOpenCreateDeal={() => setIsCreateDealOpen(true)}
           onOpenCreateQuote={() => setIsCreateQuoteOpen(true)}
-          onOpenFindCustomer={() => setIsFindCustomerOpen(true)}
-          onOpenCreateCustomer={() => setIsCreateCustomerOpen(true)}
+          onOpenFindCustomer={() => (isPreviewMode ? setIsFindCustomerOpen(true) : setIsFindOrCreateCustomerOpen(true))}
+          onOpenCreateCustomer={() => (isPreviewMode ? setIsCreateCustomerOpen(true) : setIsFindOrCreateCustomerOpen(true))}
+          onOpenCreateContract={() => {
+            if (isPreviewMode) { showToast("[PREVIEW UI] Tạo hợp đồng chỉ khả dụng ở chế độ thật."); return; }
+            setIsCreateContractOpen(true);
+          }}
           onOpenAddNote={() => setIsAddNoteOpen(true)}
           onRefreshCrmData={() => showToast("Đã cập nhật dữ liệu CRM 360 mới nhất.")}
           onViewCustomerProfile={() => setIsCustomerDrawerOpen(true)}
@@ -932,15 +1041,80 @@ export function OmnichannelInboxView() {
         }}
       />
 
-      {/* Official CRM Deal Modal */}
-      <DealFormModal
-        open={isCreateDealOpen}
-        loading={dealLoading}
-        onClose={() => setIsCreateDealOpen(false)}
-        onCreate={handleCreateDealOfficial}
-        onUpdate={() => {}}
-        initialCustomer={activeConversation ? { id: activeConversation.id, name: activeConversation.customerName } as any : null}
-      />
+      {/* Official CRM Deal Modal - Preview mode giu nguyen DealFormModal + handleCreateDealOfficial
+          cu (khong goi API that, chi cap nhat preview state cuc bo). Real mode di qua
+          QuickCreateOpportunityFromInbox (Lead-first khi hoi thoai chua lien ket CRM - xem
+          crmData.matched/customerId, KHONG con dung activeConversation.id lam customer_id gia
+          nhu bug cu). */}
+      {isPreviewMode ? (
+        <DealFormModal
+          open={isCreateDealOpen}
+          loading={dealLoading}
+          onClose={() => setIsCreateDealOpen(false)}
+          onCreate={handleCreateDealOfficial}
+          onUpdate={() => {}}
+          initialCustomer={activeConversation ? { id: activeConversation.id, name: activeConversation.customerName } as any : null}
+        />
+      ) : (
+        <QuickCreateOpportunityFromInbox
+          open={isCreateDealOpen}
+          onClose={() => setIsCreateDealOpen(false)}
+          prefill={{
+            name: activeConversation?.customerName,
+            phone: activeConversation?.crmData?.phone,
+            email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
+            companyName: activeConversation?.crmData?.companyName,
+            customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
+          }}
+          currentUser={user}
+          agents={crmAgents}
+          onCreated={handleQuickOpportunityCreated}
+        />
+      )}
+
+      {/* "Tìm khách hàng"/"+ Tạo mới" (section Khach hang CRM 360) - real mode dung CHUNG 1
+          QuickCreateOpportunityFromInbox mode="find-customer" (Lead-first, KHONG tao Customer
+          truc tiep - yeu cau mentor 2026-11-01). Preview mode giu nguyen
+          FindCustomerMockModal/LeadFormDrawer cu (render o duoi). */}
+      {!isPreviewMode && (
+        <QuickCreateOpportunityFromInbox
+          mode="find-customer"
+          open={isFindOrCreateCustomerOpen}
+          onClose={() => setIsFindOrCreateCustomerOpen(false)}
+          prefill={{
+            name: activeConversation?.customerName,
+            phone: activeConversation?.crmData?.phone,
+            email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
+            companyName: activeConversation?.crmData?.companyName,
+            customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
+          }}
+          currentUser={user}
+          agents={crmAgents}
+          onCustomerLinked={handleQuickCustomerLinked}
+        />
+      )}
+
+      {/* "+ Tạo hợp đồng" (section Hop dong CRM 360) - real mode, mode="contract" (Lead-first
+          -> Customer -> Co hoi (tu tao neu chua co) -> RegisterExternalContractModal). Khong
+          co mock cho preview mode (tinh nang nay truoc day la link suong ra /all-platform/
+          contracts, khong co business logic rieng de giu nguyen). */}
+      {!isPreviewMode && (
+        <QuickCreateOpportunityFromInbox
+          mode="contract"
+          open={isCreateContractOpen}
+          onClose={() => setIsCreateContractOpen(false)}
+          prefill={{
+            name: activeConversation?.customerName,
+            phone: activeConversation?.crmData?.phone,
+            email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
+            companyName: activeConversation?.crmData?.companyName,
+            customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
+          }}
+          currentUser={user}
+          agents={crmAgents}
+          onContractCreated={handleQuickContractCreated}
+        />
+      )}
 
       {/* Interactive Drawers & Modals */}
       <ConnectAccountMockModal
@@ -1040,7 +1214,13 @@ export function OmnichannelInboxView() {
         onInsertTemplate={(text) => setComposerText((prev) => (prev ? `${prev}\n${text}` : text))}
       />
 
-      {isCreateQuoteOpen && (
+      {/* Preview mode - giu nguyen QuoteWorkspaceModal + mock state cu (khong goi API
+          that). Real mode - "+ Tạo báo giá" phai di qua dung dieu kien Lead-first giong
+          "+ Tạo cơ hội" (chot voi mentor 2026-11-01: dung chung engine resolve/verify,
+          CHI can Customer da xac minh, khong bat buoc da co Deal) truoc khi mo DUNG popup
+          nguon chuan QuoteWorkspaceModal - khong con dung activeConversation.id lam
+          customer_id gia nhu ban truoc (cung 1 bug da fix cho "+ Tạo cơ hội"). */}
+      {isPreviewMode && isCreateQuoteOpen ? (
         <QuoteWorkspaceModal
           quoteId={null}
           deals={
@@ -1056,15 +1236,9 @@ export function OmnichannelInboxView() {
           onChanged={() => {
             setIsCreateQuoteOpen(false);
             const quoteCode = `QUA-2026-${Math.floor(100 + Math.random() * 900)}`;
-            showToast(
-              isPreviewMode
-                ? `[PREVIEW UI] Đã tạo yêu cầu báo giá xem trước!`
-                : `Đã lưu/tạo yêu cầu báo giá thành công trên CRM!`
-            );
-
+            showToast(`[PREVIEW UI] Đã tạo yêu cầu báo giá xem trước!`);
             if (activeConversation) {
-              const updateFn = isPreviewMode ? setPreviewConversations : setRealConversations;
-              updateFn((prev) =>
+              setPreviewConversations((prev) =>
                 prev.map((c) =>
                   c.id === activeConversation.id
                     ? {
@@ -1085,7 +1259,45 @@ export function OmnichannelInboxView() {
           }}
           onEditDraft={() => {}}
         />
-      )}
+      ) : !isPreviewMode ? (
+        <QuickCreateOpportunityFromInbox
+          mode="quote"
+          open={isCreateQuoteOpen}
+          onClose={() => setIsCreateQuoteOpen(false)}
+          prefill={{
+            name: activeConversation?.customerName,
+            phone: activeConversation?.crmData?.phone,
+            email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
+            companyName: activeConversation?.crmData?.companyName,
+            customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
+          }}
+          currentUser={user}
+          agents={crmAgents}
+          onQuoteChanged={() => {
+            showToast(`Đã lưu/tạo yêu cầu báo giá thành công trên CRM!`);
+            if (activeConversation) {
+              const quoteCode = `QUA-2026-${Math.floor(100 + Math.random() * 900)}`;
+              setRealConversations((prev) =>
+                prev.map((c) =>
+                  c.id === activeConversation.id
+                    ? {
+                        ...c,
+                        quote: {
+                          id: `qua-${Date.now()}`,
+                          code: quoteCode,
+                          amount: "50.000.000đ",
+                          status: "Draft",
+                          ownerName: "Admin",
+                          createdAt: "Vừa xong",
+                        },
+                      }
+                    : c
+                )
+              );
+            }
+          }}
+        />
+      ) : null}
 
       {/* Real Assignee Modal */}
       <AssignUserModal
@@ -1114,33 +1326,25 @@ export function OmnichannelInboxView() {
         }}
       />
 
-      {/* Real Customer Add Drawer */}
-      <CustomerAddDrawer
+      {/* "+ Tạo mới" o card "Chưa liên kết khách hàng" - truoc day mo thang CustomerAddDrawer
+          (tao Customer tran trui, khong qua Lead). Yeu cau Lead-first (mentor, 2026-10-31):
+          phai tao Lead TRUOC, Customer chi sinh ra khi convert Lead luc "+ Tạo cơ hội" (xem
+          QuickCreateOpportunityFromInbox.tsx) - KHONG tu danh dau crmData.matched=true o day,
+          vi Lead vua tao CHUA phai Customer that. */}
+      <LeadFormDrawer
         open={isCreateCustomerOpen}
         currentUser={user}
         onClose={() => setIsCreateCustomerOpen(false)}
-        onCreated={() => {
+        onSaved={() => {
           setIsCreateCustomerOpen(false);
-          if (activeConversation) {
-            const updateFn = isPreviewMode ? setPreviewConversations : setRealConversations;
-            updateFn((prev) =>
-              prev.map((c) =>
-                c.id === activeConversation.id
-                  ? {
-                      ...c,
-                      isCrmMatched: true,
-                      crmData: {
-                        ...c.crmData,
-                        matched: true,
-                        name: c.customerName,
-                        statusLabel: "Khách hàng mới",
-                      },
-                    }
-                  : c
-              )
-            );
-          }
-          showToast("Đã tạo và liên kết Khách hàng CRM thành công!");
+          showToast('Đã tạo Lead mới — bấm "+ Tạo cơ hội" để tiếp tục tạo cơ hội kinh doanh từ Lead này.');
+        }}
+        onOpenQualification={() => setIsCreateCustomerOpen(false)}
+        initialValues={{
+          leadName: activeConversation?.customerName,
+          phone: activeConversation?.crmData?.phone,
+          email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
+          companyName: activeConversation?.crmData?.companyName,
         }}
       />
 
@@ -1181,8 +1385,8 @@ export function OmnichannelInboxView() {
         onClose={() => setIsAddNoteOpen(false)}
         isCrmMatched={activeConversation?.isCrmMatched}
         customerName={activeConversation?.customerName}
-        onOpenFindCustomer={() => setIsFindCustomerOpen(true)}
-        onOpenCreateCustomer={() => setIsCreateCustomerOpen(true)}
+        onOpenFindCustomer={() => (isPreviewMode ? setIsFindCustomerOpen(true) : setIsFindOrCreateCustomerOpen(true))}
+        onOpenCreateCustomer={() => (isPreviewMode ? setIsCreateCustomerOpen(true) : setIsFindOrCreateCustomerOpen(true))}
         onSubmitMock={(noteText) => {
           setIsAddNoteOpen(false);
           if (activeConversation && noteText.trim()) {

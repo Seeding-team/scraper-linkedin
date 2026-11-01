@@ -48,6 +48,21 @@ export function CrmQuote360Panel({
   const [showSendModal, setShowSendModal] = useState(false);
   const [menuOpenQuoteId, setMenuOpenQuoteId] = useState<string | null>(null);
   const [activities, setActivities] = useState<any[]>([]);
+  /** Chan "Gửi link/PDF báo giá" khi bao gia chua du dieu kien chia se that (yeu cau
+   * mentor 2026-11-01): phai da duyet + da bat chia se cong khai + co token that -
+   * KHONG tu bat public/duyet ho, chi kiem tra. 1 cho duy nhat dung chung cho MOI nut
+   * gui link/PDF trong file nay (deu di qua handleSendQuote). */
+  const [blockedShare, setBlockedShare] = useState<{ quote: Quote; reason: string } | null>(null);
+
+  function checkShareGate(quote: Quote): { ok: true } | { ok: false; reason: string } {
+    if (quote.status !== 'approved') {
+      return { ok: false, reason: 'Báo giá chưa được duyệt. Vui lòng duyệt báo giá trước khi gửi link cho khách.' };
+    }
+    if (!quote.publicEnabled || !quote.publicToken) {
+      return { ok: false, reason: 'Báo giá chưa bật chia sẻ công khai. Vui lòng bật chia sẻ trong Quote Workspace trước khi gửi link.' };
+    }
+    return { ok: true };
+  }
 
   const loadQuotes = useCallback(async () => {
     if (!currentLead?.id) {
@@ -112,10 +127,16 @@ export function CrmQuote360Panel({
 
   const handleSendQuote = async (quote: Quote, mode: "link" | "pdf" | "card") => {
     if (!quote) return;
+    const gate = checkShareGate(quote);
+    if (!gate.ok) {
+      setShowSendModal(false);
+      setBlockedShare({ quote, reason: gate.reason });
+      return;
+    }
     const code = quote.code || quote.quoteNumber || quote.id.slice(0, 8);
     const amount = quote.grandTotal ?? quote.totalAmount ?? 0;
     const origin = typeof window !== "undefined" ? window.location.origin : "";
-    const publicUrl = `${origin}/public/quotes/${quote.id}`;
+    const publicUrl = quote.publicUrl || `${origin}/public/quotes/${quote.publicToken}`;
 
     let msgContent = "";
     if (mode === "link") {
@@ -393,6 +414,38 @@ export function CrmQuote360Panel({
                 className="w-full flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
               >
                 <Eye size={14} /> Chỉnh sửa / Xem chi tiết Quote Workspace
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Chan gui link/PDF khi chua du dieu kien chia se - 1 cho duy nhat, dung chung cho
+          MOI nut "Gửi link/PDF báo giá" trong panel nay (xem checkShareGate/handleSendQuote). */}
+      {blockedShare && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4" onClick={e => { if (e.target === e.currentTarget) setBlockedShare(null); }}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl space-y-3">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="size-5 text-amber-500 shrink-0" />
+              <h3 className="text-sm font-bold text-slate-900">Chưa thể gửi báo giá</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">{blockedShare.reason}</p>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={() => setBlockedShare(null)}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={() => {
+                  const quoteId = blockedShare.quote.id;
+                  setBlockedShare(null);
+                  onOpenViewQuote(quoteId);
+                }}
+                className="flex-1 rounded-xl bg-[#d81b60] py-2 text-xs font-bold text-white hover:bg-[#c2185b] transition shadow-2xs"
+              >
+                Mở báo giá để xử lý
               </button>
             </div>
           </div>

@@ -38,7 +38,9 @@ import {
 import type { ZaloBroadcastTarget } from "@/types/zalo-api";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
 import type { SalesAsset } from "@/services/sales-asset.service";
-import { DealFormModal } from "@/modules/crm/components/DealFormModal";
+import { QuickCreateOpportunityFromInbox } from "@/modules/omnichannel/components/QuickCreateOpportunityFromInbox";
+import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import type { CrmUserOption, Deal as CrmDeal } from "@/modules/crm/types";
 import { QuoteWorkspaceModal } from "@/modules/crm/components/QuoteWorkspaceModal";
 import { CrmQuote360Panel } from "@/components/all-platform/inbox/CrmQuote360Panel";
 import { CustomerAddDrawer } from "@/modules/crm/components/CustomerAddDrawer";
@@ -351,6 +353,16 @@ export function ZaloInboxAdminShell() {
   const [showSalesAssetPicker, setShowSalesAssetPicker] = useState(false);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [currentLead, setCurrentLead] = useState<Customer | null>(null);
+  // Danh sach Sale/Presale cho form "Tạo cơ hội" (DealFormModal yeu cau chon
+  // "Sale phu trach" o nhanh tao moi) - truoc day modal mo voi agents={[]}
+  // hardcode (xem thao/CRM_KNOWN_BUGS_FIXED.md muc 3), dropdown rong khong
+  // the hoan tat form. Fetch 1 lan khi mount, khong phu thuoc hoi thoai dang mo.
+  const [crmAgents, setCrmAgents] = useState<CrmUserOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void seedingCrmRepository.getAgents().then(list => { if (alive) setCrmAgents(list); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   useEffect(() => {
     if (!inbox.openConv) {
@@ -1689,14 +1701,21 @@ export function ZaloInboxAdminShell() {
       </div>
 
       {/* ── REAL CRM MODALS & DRAWERS ───────────────────────── */}
-      <DealFormModal
+      <QuickCreateOpportunityFromInbox
         open={showDealModal}
         onClose={() => setShowDealModal(false)}
-        onCreate={() => {
-          setShowDealModal(false);
+        prefill={{
+          name: selectedName,
+          phone: currentLead?.phone || undefined,
+          email: currentLead?.email || undefined,
+          companyName: currentLead?.company_name || undefined,
+          customerId: currentLead?.customer_id || undefined,
+        }}
+        currentUser={user}
+        agents={crmAgents}
+        onCreated={(_deal: CrmDeal) => {
           inbox.showToast("Đã tạo cơ hội kinh doanh mới!", true);
         }}
-        onUpdate={() => {}}
       />
 
       {showQuoteModal && (

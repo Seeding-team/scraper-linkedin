@@ -38,7 +38,7 @@ type ValidationErrorPayload = {
   errors?: string[];
 };
 
-type CustomerLeadRow = {
+export type CustomerLeadRow = {
   id: string;
   customer_id?: string | null;
   customer_name?: string | null;
@@ -397,7 +397,7 @@ function activityToHistory(row: ActivityLogRow): StageHistory {
   };
 }
 
-function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
+export function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
   const stage = normalizeStage(row.deal_stage);
   const estimatedBudget = asNumber(row.estimated_budget);
   const lifetimeValue = asNumber(row.lifetime_value);

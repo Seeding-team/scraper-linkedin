@@ -84,7 +84,7 @@ export function hasAnyProduct(value: string): boolean {
 export function evaluateIcpFitAuto(
   productValue: string,
   knownProductLabels: string[],
-  ruleConditions: Record<string, boolean> | null,
+  ruleConditions: Record<string, boolean | string[]> | null,
 ): IcpFit {
   const items = parseProductList(productValue);
   if (!items.length) return 'unknown';
@@ -120,6 +120,10 @@ export type LeadRuleFields = {
   has_contact: boolean;
   fit_unfit: boolean;
   fit_known: boolean;
+  /** Ten "Việc tiếp theo" dang chon ("" neu chua co) - dung de loc theo
+   * sql_next_values/nur_next_step_values (xem evaluateLeadConditions duoi),
+   * KHONG anh huong has_next da tinh san o phia goi. */
+  next_step_value?: string;
 };
 
 /** Nhan hien thi cho tung dieu kien SQL khi con thieu (Section 9/10 mockup
@@ -154,18 +158,26 @@ export type LeadEvaluation = {
  * Thu tu uu tien: Khong dat chuan (OR) > Nuoi duong (OR, co the override ca
  * khi da du SQL) > SQL (AND) > 'pending' ("chưa đủ dữ liệu") neu khong khop
  * dieu kien nao trong 3 nhom tren. */
-export function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean>): LeadEvaluation {
+export function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string, boolean | string[]>): LeadEvaluation {
   const invalidReasons: string[] = [];
   if (c.inv_fit && fields.fit_unfit) invalidReasons.push('Không phù hợp ICP');
   if (c.inv_no_contact && !fields.has_contact) invalidReasons.push('Không có thông tin liên hệ hợp lệ');
   const isInvalid = invalidReasons.length > 0;
+
+  // sql_next_values rong = chap nhan MOI gia tri (hanh vi cu). Luu trong
+  // CUNG object `c` (key du bool), dung mang any de doc list[string].
+  const sqlNextValues: string[] = Array.isArray((c as Record<string, unknown>).sql_next_values)
+    ? ((c as Record<string, unknown>).sql_next_values as string[])
+    : [];
+  const nextStepValue = (fields.next_step_value || '').trim();
+  const sqlNextOk = fields.has_next && (sqlNextValues.length === 0 || sqlNextValues.includes(nextStepValue));
 
   const sqlChecks: Array<{ key: keyof typeof SQL_FIELD_LABELS; ok: boolean }> = [];
   if (c.sql_product) sqlChecks.push({ key: 'sql_product', ok: fields.has_product });
   if (c.sql_interest) sqlChecks.push({ key: 'sql_interest', ok: fields.has_interest_level });
   if (c.sql_value) sqlChecks.push({ key: 'sql_value', ok: fields.has_value });
   if (c.sql_team) sqlChecks.push({ key: 'sql_team', ok: fields.has_team });
-  if (c.sql_next) sqlChecks.push({ key: 'sql_next', ok: fields.has_next });
+  if (c.sql_next) sqlChecks.push({ key: 'sql_next', ok: sqlNextOk });
   if (c.sql_follow) sqlChecks.push({ key: 'sql_follow', ok: fields.has_follow });
   if (c.sql_fit) sqlChecks.push({ key: 'sql_fit', ok: !fields.fit_unfit });
   const sqlTotal = sqlChecks.length;
@@ -186,6 +198,12 @@ export function evaluateLeadConditions(fields: LeadRuleFields, c: Record<string,
   }
   if (c.nur_unknown_fit && !fields.fit_known && othersOk(['sql_fit'])) {
     nurtureReasons.push('Chưa xác định nhóm khách hàng');
+  }
+  const nurNextStepValues: string[] = Array.isArray((c as Record<string, unknown>).nur_next_step_values)
+    ? ((c as Record<string, unknown>).nur_next_step_values as string[])
+    : [];
+  if (c.nur_next_step_set && nextStepValue && nurNextStepValues.includes(nextStepValue) && othersOk(['sql_next'])) {
+    nurtureReasons.push('Việc tiếp theo thuộc nhóm nuôi dưỡng');
   }
   const isNurtureForced = nurtureReasons.length > 0;
 

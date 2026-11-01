@@ -624,6 +624,7 @@ export class OmnichannelRepository {
       isCrmMatched: !!c.crm_customer_id || !!c.matched_customer_id,
       crmData: {
         matched: !!c.crm_customer_id || !!c.matched_customer_id,
+        customerId: c.crm_customer_id || c.matched_customer_id || undefined,
         name: c.crm_customer_name || c.customer_name || customerName,
         phone: c.phone_number || c.phone,
         email: c.email,

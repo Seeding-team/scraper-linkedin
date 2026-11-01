@@ -48,6 +48,7 @@ export function DealFormModal({
   initialCustomer = null,
   initialProject = null,
   initialContact = null,
+  prefillContact = null,
 }: {
   open: boolean;
   loading?: boolean;
@@ -75,6 +76,12 @@ export function DealFormModal({
    * (contact.customerId + contact.id đã xác định sẵn, khoá cả 2 — không cho
    * đổi sang Customer/Contact khác). CHỈ áp dụng lúc tạo mới. */
   initialContact?: { id: string } | null;
+  /** Prefill phone/email/customerName/companyName KHÔNG khoá Customer (khác
+   * `initialCustomer`, dùng khi biết thông tin liên hệ nhưng CHƯA xác định
+   * được 1 Customer/Lead cụ thể nào — vd "+ Tạo cơ hội" từ Omnichannel Inbox
+   * với hội thoại chưa liên kết CRM). CHỈ áp dụng lúc tạo mới, bị bỏ qua nếu
+   * `initialCustomer` cũng được truyền (initialCustomer ưu tiên hơn). */
+  prefillContact?: { name?: string; companyName?: string; phone?: string; email?: string } | null;
 }) {
   const isCreate = !deal;
   const [form, setForm] = useState<DealFormState>(emptyDealForm);
@@ -117,6 +124,16 @@ export function DealFormModal({
       });
       return;
     }
+    if (prefillContact) {
+      setForm({
+        ...emptyDealForm(),
+        customerName: prefillContact.name || '',
+        companyName: prefillContact.companyName || '',
+        phone: prefillContact.phone || '',
+        email: prefillContact.email || '',
+      });
+      return;
+    }
     // BUG THAT DA GAP (nghiem trong): truoc day o day tu dong nap lai "nhap"
     // tu localStorage (loadDealDraft()) MOI LAN mo form tao moi khong co
     // initialCustomer — nghia la CHI GO CHU (chua bam Luu/Tao deal nao ca)
@@ -130,7 +147,10 @@ export function DealFormModal({
     // toan co che tu luu/tu nap nhap - luon bat dau tu form trang.
     setForm(emptyDealForm());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deal, open, initialCustomer?.id, initialProject?.id, initialContact?.id]);
+  }, [
+    deal, open, initialCustomer?.id, initialProject?.id, initialContact?.id,
+    prefillContact?.name, prefillContact?.companyName, prefillContact?.phone, prefillContact?.email,
+  ]);
 
   function setValue<K extends keyof DealFormState>(key: K, value: DealFormState[K]) {
     setForm(current => ({ ...current, [key]: value }));

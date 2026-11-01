@@ -26,6 +26,7 @@ interface Crm360PanelProps {
   onOpenCreateQuote: () => void;
   onOpenFindCustomer: () => void;
   onOpenCreateCustomer?: () => void;
+  onOpenCreateContract?: () => void;
   onOpenAddNote: () => void;
   onRefreshCrmData?: () => void;
   onViewCustomerProfile?: () => void;
@@ -43,6 +44,7 @@ export const Crm360Panel: React.FC<Crm360PanelProps> = ({
   onOpenCreateQuote,
   onOpenFindCustomer,
   onOpenCreateCustomer,
+  onOpenCreateContract,
   onOpenAddNote,
   onRefreshCrmData,
   onViewCustomerProfile,
@@ -387,15 +389,14 @@ export const Crm360Panel: React.FC<Crm360PanelProps> = ({
           ) : (
             <div className="rounded-xl border border-slate-100 bg-slate-50/50 p-2.5 text-center space-y-1">
               <p className="text-[11px] text-slate-500">Chưa có hợp đồng nào cho khách hàng này</p>
-              <a
-                href="/all-platform/contracts"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-markee-primary,#c2185b)] hover:underline pt-0.5"
+              <button
+                type="button"
+                onClick={onOpenCreateContract}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold text-[var(--color-markee-primary,#c2185b)] hover:underline pt-0.5 cursor-pointer"
               >
                 <Plus className="h-3 w-3" />
                 <span>Tạo hợp đồng</span>
-              </a>
+              </button>
             </div>
           )}
         </div>
