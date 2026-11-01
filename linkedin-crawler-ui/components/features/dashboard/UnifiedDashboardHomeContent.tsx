@@ -547,18 +547,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         dateFrom = d.toISOString().split("T")[0];
       }
 
-      // Khi loc client-side (nhu Can lien he, Khong phu hop, loc seeding status),
-      // fetch page_size lon hon (100) o page 1 de nap du danh sach bai viet da danh gia
-      // vao bo nho, tranh viec chi co 15 bai lam sot bai viet thoa man.
-      const isClientFiltered = Boolean(
-        (seedingStatusFilter && seedingStatusFilter !== "all") ||
-        (callFilter && callFilter !== "all") ||
-        (filters.seeding_status && filters.seeding_status !== "all") ||
-        (serviceArea && serviceArea !== "all")
-      );
-
-      const requestPage = isClientFiltered ? 1 : page;
-      const requestPageSize = isClientFiltered ? 100 : 15;
+      // Mac dinh nap 50 bai/lan de luon co du du lieu san trong bo nho cho cac tab con
+      // Backend da duoc toi uu batching 25 IDs nen 50-100 bai load chi ton ~1s.
+      const requestPage = page;
+      const requestPageSize = 50;
 
       const res = await fetchWithRetry(() =>
         allPlatformPostsService.filter({
@@ -644,7 +636,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } finally {
       setIsLoadingPosts(false);
     }
-  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, seedingStatusFilter, callFilter, serviceArea]);
+  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page]);
 
   
 

@@ -394,18 +394,23 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
     if not post_ids:
         return
     id_column = "id_post_li" if platform == "linkedin" else "id_post_fb"
+    by_post = {}
     try:
-        res = (
-            sb.table("auto_seeding_comments")
-            .select(
-                f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
-                "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
-                "zalo_error, zalo_display_name"
+        # Chia batch 25 de tranh loi 502 Bad Gateway / URI Too Long cua PostgREST
+        for batch_ids in [post_ids[i:i+25] for i in range(0, len(post_ids), 25)]:
+            res = (
+                sb.table("auto_seeding_comments")
+                .select(
+                    f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
+                    "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
+                    "zalo_error, zalo_display_name"
+                )
+                .in_(id_column, batch_ids)
+                .execute()
             )
-            .in_(id_column, post_ids)
-            .execute()
-        )
-        by_post = {r[id_column]: r for r in (res.data or []) if r.get(id_column)}
+            for r in (res.data or []):
+                if r.get(id_column):
+                    by_post[r[id_column]] = r
     except Exception as e:
         _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi lấy bình luận auto-seeding cho feed, bỏ qua: {e}")
         return
@@ -988,41 +993,48 @@ def get_unified_posts(
                 post_urls = list(post_url_to_id.keys())
                 if post_ids or post_urls:
                     seeding_sel = "id_post, link_post, id_member, content, verify, link_comment, social_accounts(account_name)"
-                    if role in ["admin", "leader"]:
-                        kpi_res = execute_supabase_query(
-                            lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", post_ids).execute()
-                        )
-                    else:
-                        kpi_res = execute_supabase_query(
-                            lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("id_post", post_ids).execute()
-                        )
-
-                    kpi_data = kpi_res.data or []
+                    kpi_data = []
+                    
+                    # Chia batch 25 post_ids de tranh 502 Bad Gateway / URI Too Long
+                    for batch_pids in [post_ids[i:i+25] for i in range(0, len(post_ids), 25)]:
+                        if role in ["admin", "leader"]:
+                            b_res = execute_supabase_query(
+                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", b).execute()
+                            )
+                        else:
+                            b_res = execute_supabase_query(
+                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("id_post", b).execute()
+                            )
+                        if b_res.data:
+                            kpi_data.extend(b_res.data)
 
                     existing_pids = set([k.get("id_post") for k in kpi_data if k.get("id_post")])
                     missing_urls = [u for u in post_urls if post_url_to_id.get(u) not in existing_pids]
                     if missing_urls:
-                        if role in ["admin", "leader"]:
-                            url_kpi_res = execute_supabase_query(
-                                lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", missing_urls).execute()
-                            )
-                        else:
-                            url_kpi_res = execute_supabase_query(
-                                lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("link_post", missing_urls).execute()
-                            )
-                        if url_kpi_res.data:
-                            kpi_data.extend(url_kpi_res.data)
+                        # Chia batch 15 missing_urls vi URL rat dai
+                        for batch_urls in [missing_urls[i:i+15] for i in range(0, len(missing_urls), 15)]:
+                            if role in ["admin", "leader"]:
+                                url_kpi_res = execute_supabase_query(
+                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", b).execute()
+                                )
+                            else:
+                                url_kpi_res = execute_supabase_query(
+                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("link_post", b).execute()
+                                )
+                            if url_kpi_res.data:
+                                kpi_data.extend(url_kpi_res.data)
 
                     seeding_member_ids = list(set([k.get("id_member") for k in kpi_data if k.get("id_member")]))
                     member_name_map = {}
                     member_email_map = {}
                     if seeding_member_ids:
-                        mem_res = execute_supabase_query(
-                            lambda: _supabase().table("app_users").select("id, name, email").in_("id", seeding_member_ids).execute()
-                        )
-                        for m in (mem_res.data or []):
-                            member_name_map[m["id"]] = m.get("name") or "Unknown"
-                            member_email_map[m["id"]] = (m.get("email") or "").strip().lower()
+                        for batch_mids in [seeding_member_ids[i:i+25] for i in range(0, len(seeding_member_ids), 25)]:
+                            mem_res = execute_supabase_query(
+                                lambda b=batch_mids: _supabase().table("app_users").select("id, name, email").in_("id", b).execute()
+                            )
+                            for m in (mem_res.data or []):
+                                member_name_map[m["id"]] = m.get("name") or "Unknown"
+                                member_email_map[m["id"]] = (m.get("email") or "").strip().lower()
 
                     kpi_map = {}
                     all_seedings_map = {}
