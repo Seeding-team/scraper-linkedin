@@ -119,9 +119,12 @@ const EmailConnectModalContent: React.FC<EmailConnectModalProps> = ({
       setLoading(false);
       setError(response?.error_description || "Đăng nhập Google thất bại. Vui lòng thử lại.");
     },
-    onNonOAuthError: () => {
+    onNonOAuthError: (nonOAuthError) => {
       setLoading(false);
-      setError("Cửa sổ chọn tài khoản Google đã bị đóng hoặc bị trình duyệt chặn.");
+      if (nonOAuthError?.type === "popup_failed_to_open") {
+        setError("Cửa sổ chọn tài khoản Google bị trình duyệt chặn. Vui lòng cho phép popup và thử lại.");
+      }
+      // type === "popup_closed": nguoi dung tu dong cua cua so, khong phai loi
     },
   });
 
