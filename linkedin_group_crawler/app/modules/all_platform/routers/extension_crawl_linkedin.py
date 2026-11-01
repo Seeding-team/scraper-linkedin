@@ -38,6 +38,8 @@ class LinkedInExtensionPost(BaseModel):
     author: Optional[str] = ""
     content: Optional[str] = ""
     posted_at_raw: Optional[str] = ""
+    posted_at: Optional[str] = None
+    post_time: Optional[str] = None
     likes: Optional[int] = 0
     comments: Optional[int] = 0
     reposts: Optional[int] = None
@@ -75,6 +77,7 @@ async def save_posts(
             "author": p.author,
             "content": p.content,
             "posted_at_raw": p.posted_at_raw,
+            "posted_at": p.posted_at or p.post_time,
             "likes": p.likes,
             "comments": p.comments,
             "shares": (p.reposts if p.reposts is not None else p.shares) or 0,

@@ -319,11 +319,14 @@
     const comments_list = extractComments(block);
     const likers = await extractLikersBestEffort(block);
 
+    const calculated_posted_at = extractPostTimeFromUrl(post_url);
     return {
       post_url,
       author,
       content,
       posted_at_raw,
+      posted_at: calculated_posted_at,
+      post_time: calculated_posted_at,
       likes,
       comments: commentsCount,
       reposts,

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from app.core.logger import get_logger
 from app.core.supabase_client import get_supabase_client
-from app.core.utils.datetime_utils import normalize_relative_time
+from app.core.utils.datetime_utils import normalize_relative_time, extract_linkedin_post_time
 
 logger = get_logger(__name__)
 
@@ -192,7 +192,17 @@ def save_extension_crawl_batch(
             likes = p.get("likes") or 0
             comments = p.get("comments") or 0
             shares = p.get("shares") or 0
-            posted_at_dt = normalize_relative_time(p.get("posted_at_raw") or "", crawl_time)
+            posted_at_val = p.get("posted_at") or p.get("post_time")
+            posted_at_dt = None
+            if posted_at_val:
+                try:
+                    posted_at_dt = datetime.fromisoformat(posted_at_val.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            if not posted_at_dt:
+                posted_at_dt = normalize_relative_time(p.get("posted_at_raw") or "", crawl_time)
+            if not posted_at_dt:
+                posted_at_dt = extract_linkedin_post_time(p.get("post_url"))
             records.append(
                 {
                     "session_id": session_id,

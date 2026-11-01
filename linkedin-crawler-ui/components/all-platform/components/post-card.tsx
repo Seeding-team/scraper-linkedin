@@ -75,6 +75,25 @@ function PlatformIcon({ platform }: { platform: FeedPlatform }) {
   return <FaLinkedin className="text-blue-700 shrink-0" />;
 }
 
+// Helper formatting post publication and crawl timestamps
+function formatPostDateTime(dateStr?: string | null) {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    const timeStr = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+    const dateFormatted = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return {
+      full: `${timeStr} · ${dateFormatted}`,
+      time: timeStr,
+      date: dateFormatted,
+      iso: d.toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
   const { user: currentUser } = useAppAuth();
   const isYouTube = post.platform === "youtube";
@@ -315,13 +334,40 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             )}
           </div>
 
-          <span className="text-sm text-muted-foreground shrink-0 font-medium text-right leading-tight">
-            <span className="block">
-              {post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : ''}
-              {post.posted_at ? ` • ${new Date(post.posted_at).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'})}` : ''}
+          <div className="shrink-0 text-right leading-tight">
+            {(() => {
+              const pubDt = formatPostDateTime(post.post_time || post.posted_at);
+              const crawlFormatted = post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : '';
+              
+              if (pubDt) {
+                return (
+                  <div className="flex flex-col items-end">
+                    <span
+                      className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200"
+                      title={`Thời gian đăng bài gốc: ${pubDt.full}`}
+                    >
+                      <span className="text-slate-400 font-normal">🕒</span>
+                      <span>{pubDt.full}</span>
+                    </span>
+                    {crawlFormatted && crawlFormatted !== pubDt.date && (
+                      <span
+                        className="text-[11px] text-muted-foreground/75 font-normal"
+                        title={`Thời gian cào về hệ thống: ${crawlFormatted}`}
+                      >
+                        Cào: {crawlFormatted}
+                      </span>
+                    )}
+                  </div>
+                );
+              }
 
-            </span>
-          </span>
+              return (
+                <span className="text-sm text-muted-foreground font-medium">
+                  {crawlFormatted}
+                </span>
+              );
+            })()}
+          </div>
         </div>
 
         {/* Nội dung */}

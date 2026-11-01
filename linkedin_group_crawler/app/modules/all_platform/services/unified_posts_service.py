@@ -1,6 +1,7 @@
 """Unified posts service — single source of truth from Supabase, no cache."""
 
 from __future__ import annotations
+from app.core.utils.datetime_utils import extract_linkedin_post_time
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
@@ -329,6 +330,18 @@ def _fetch_posts(
             p["author"] = author_name
             p["author_name"] = author_name
 
+        # Standardize post creation time across platforms
+        if table == "linkedin_posts":
+            real_time = p.get("posted_at")
+            if not real_time:
+                li_dt = extract_linkedin_post_time(p.get("post_url"))
+                if li_dt:
+                    real_time = li_dt.isoformat()
+            p["posted_at"] = real_time
+            p["post_time"] = real_time
+        elif table == "facebook_posts":
+            p["posted_at"] = p.get("post_time")
+
     if table in ("facebook_posts", "linkedin_posts"):
         _attach_auto_seeding_comments(sb, posts, platform="linkedin" if table == "linkedin_posts" else "facebook")
 
@@ -476,6 +489,13 @@ def _fetch_keyword_posts(
                     member_map[mid]["team_name"] = team_dict[tid]
 
     for p in posts:
+        # Standardize post time
+        if p.get("post_time"):
+            p["posted_at"] = p.get("post_time")
+        elif p.get("published_at"):
+            p["post_time"] = p.get("published_at")
+            p["posted_at"] = p.get("published_at")
+
         if table == "youtube_posts":
             # PostCard hiển thị group_name ở đầu thẻ — với YouTube là tên kênh.
             p["group_name"] = p.get("author_name") or p.get("channel_handle") or "Kênh YouTube"
