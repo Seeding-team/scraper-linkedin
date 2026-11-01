@@ -63,27 +63,32 @@ export function ZaloContactModal({
     try {
       // 1. Tìm user Zalo theo số điện thoại
       const found = await findZaloUser(selectedAccountId, phoneNumber, "phone");
-      const targetUid = found?.userId || found?.uid;
+      const targetUid = found?.user_id;
 
       if (!targetUid) {
         throw new Error("Không tìm thấy người dùng Zalo với số điện thoại này hoặc người dùng chặn tìm kiếm qua SĐT.");
       }
 
-      setStatusText(`Đã tìm thấy Zalo: ${found.displayName || phoneNumber}. Đang mở hộp thoại...`);
+      const dName = found.display_name || found.zalo_name || phoneNumber;
+      setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang mở hộp thoại...`);
 
       // 2. Mở / tạo thread chat 1-1
-      const threadRes = await createZaloUserThread(selectedAccountId, targetUid);
-      const convId = threadRes?.conversationId || threadRes?.conv_id || targetUid;
+      const threadRes = await createZaloUserThread(selectedAccountId, {
+        user_id: targetUid,
+        display_name: dName,
+        avatar_url: found.avatar_url || null,
+      });
+      const convId = threadRes?.conversation_id || targetUid;
 
       // 3. Nếu người dùng có nhập tin nhắn, gửi tin nhắn đi
       if (message.trim()) {
         setStatusText("Đang gửi tin nhắn chào hỏi...");
-        await sendZaloMessage(selectedAccountId, convId, message.trim()).catch((err) => {
+        await sendZaloMessage(selectedAccountId, convId, { text: message.trim() }).catch((err) => {
           console.warn("Lỗi gửi tin nhắn Zalo ban đầu:", err);
         });
       }
 
-      toast.success(`Đã kết nối Zalo với ${found.displayName || phoneNumber}!`);
+      toast.success(`Đã kết nối Zalo với ${dName}!`);
       onClose();
 
       // 4. Chuyển hướng tới trang Zalo Inbox của hệ thống
@@ -166,23 +171,23 @@ export function ZaloContactModal({
                       }`}
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
-                        {acc.avatar ? (
+                        {(acc as any).avatar ? (
                           <img
-                            src={acc.avatar}
+                            src={(acc as any).avatar}
                             alt=""
                             className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
                           />
                         ) : (
                           <div className="w-8 h-8 rounded-full bg-sky-100 text-sky-700 font-bold text-xs flex items-center justify-center shrink-0">
-                            {(acc.display_name || "Z").charAt(0).toUpperCase()}
+                            {(((acc as any).display_name || acc.label) || "Z").charAt(0).toUpperCase()}
                           </div>
                         )}
                         <div className="min-w-0">
                           <p className="text-xs font-bold truncate leading-tight">
-                            {acc.display_name || "Tài khoản Zalo"}
+                            {((acc as any).display_name || acc.label) || "Tài khoản Zalo"}
                           </p>
                           <p className="text-[11px] text-muted-foreground truncate">
-                            {acc.phone_number || acc.account_id}
+                            {(acc.phone || (acc as any).phone_number) || acc.account_id}
                           </p>
                         </div>
                       </div>

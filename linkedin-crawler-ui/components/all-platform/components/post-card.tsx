@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink, FiMessageSquare } from "react-icons/fi";
@@ -138,7 +138,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const detectedPhone = useMemo(() => {
     return (
       normalizeDisplayPhone(post.auto_seeding_comment?.phone_number) ||
-      normalizeDisplayPhone(post.phone_number) ||
+      normalizeDisplayPhone((post as any).phone_number) ||
       extractPhoneNumberFromContent(post.content) ||
       ""
     );

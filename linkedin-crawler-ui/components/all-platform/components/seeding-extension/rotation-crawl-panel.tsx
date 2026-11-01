@@ -114,27 +114,7 @@ function useGroupOptions(platform: "facebook" | "linkedin") {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ── THÔNG SỐ CÀO & CUỘN CHỐNG CHECKPOINT (ĐỒNG BỘ EXTENSION) ──
-  const [scrollDistance, setScrollDistance] = useState<number>(1600);
-  const [scrollDelayMin, setScrollDelayMin] = useState<number>(1.5);
-  const [scrollDelayMax, setScrollDelayMax] = useState<number>(2.8);
-  const [groupRestSec, setGroupRestSec] = useState<number>(45);
-  const [maxScrolls, setMaxScrolls] = useState<number>(25);
-  const [oldPostsLimit, setOldPostsLimit] = useState<number>(15);
-  const [maxPostsPerGroup, setMaxPostsPerGroup] = useState<number>(30);
-  const [maxScrollTimeSec, setMaxScrollTimeSec] = useState<number>(90);
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(true);
 
-  const resetCrawlSettingsToDefault = () => {
-    setScrollDistance(1600);
-    setScrollDelayMin(1.5);
-    setScrollDelayMax(2.8);
-    setGroupRestSec(45);
-    setMaxScrolls(25);
-    setOldPostsLimit(15);
-    setMaxPostsPerGroup(30);
-    setMaxScrollTimeSec(90);
-  };
 
   useEffect(() => {
     let cancelled = false;
@@ -727,6 +707,27 @@ function AddScheduleModal({
   const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // ── THÔNG SỐ CÀO & CUỘN CHỐNG CHECKPOINT (ĐỒNG BỘ EXTENSION) ──
+  const [scrollDistance, setScrollDistance] = useState<number>(1600);
+  const [scrollDelayMin, setScrollDelayMin] = useState<number>(1.5);
+  const [scrollDelayMax, setScrollDelayMax] = useState<number>(2.8);
+  const [groupRestSec, setGroupRestSec] = useState<number>(45);
+  const [maxScrolls, setMaxScrolls] = useState<number>(25);
+  const [oldPostsLimit, setOldPostsLimit] = useState<number>(15);
+  const [maxPostsPerGroup, setMaxPostsPerGroup] = useState<number>(30);
+  const [maxScrollTimeSec, setMaxScrollTimeSec] = useState<number>(90);
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(true);
+
+  const resetCrawlSettingsToDefault = () => {
+    setScrollDistance(1600);
+    setScrollDelayMin(1.5);
+    setScrollDelayMax(2.8);
+    setGroupRestSec(45);
+    setMaxScrolls(25);
+    setOldPostsLimit(15);
+    setMaxPostsPerGroup(30);
+    setMaxScrollTimeSec(90);
+  };
 
   // ── THREADS TOPICS & KEYWORDS STATE ──
   const [topics, setTopics] = useState<KeywordTopic[]>([]);

@@ -32,6 +32,8 @@ export interface UnifiedPost {
   crawl_date: string;
   post_time?: string;
   posted_at?: string;
+  phone_number?: string;
+  contact_phone?: string;
   content: string;
   score: number;
   reactions: number;
@@ -707,6 +709,8 @@ export interface ScheduledComment {
   status: ScheduledCommentStatus;
   scheduled_at: string;
   posted_at?: string;
+  phone_number?: string;
+  contact_phone?: string;
   error_message?: string;
   link_comment?: string;
   created_at: string;
