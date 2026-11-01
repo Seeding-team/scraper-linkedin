@@ -1505,25 +1505,27 @@ def get_teams_seeding_efficiency(email: str) -> dict:
 
 def _resolve_overview_scope(sb, email: str) -> tuple[str, list[dict]]:
     """Dùng chung cho get_member_seeding_overview/get_member_crawl_history — admin thấy
-    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình)."""
-    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình), member thấy chính mình."""
+    user_res = sb.table("app_users").select("id, name, email, role").eq("email", (email or "").strip().lower()).limit(1).execute()
     if not user_res.data:
         return "member", []
     caller_id = user_res.data[0]["id"]
     role = user_res.data[0].get("role", "member")
-    if role not in ("admin", "leader"):
-        return role, []
     if role == "admin":
         members = sb.table("app_users").select("id, name, email").eq("is_active", True).execute().data or []
         return role, members
-    teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
-    team_ids = [t["id"] for t in (teams_res.data or [])]
-    member_ids_set = {caller_id}
-    if team_ids:
-        mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-        member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
-    members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
-    return role, members
+    elif role == "leader":
+        teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
+        team_ids = [t["id"] for t in (teams_res.data or [])]
+        member_ids_set = {caller_id}
+        if team_ids:
+            mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
+            member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
+        members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
+        return role, members
+    else:
+        # Member xem tài khoản của chính mình
+        return role, [user_res.data[0]]
 
 
 def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
@@ -1534,7 +1536,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
     """
     sb = _supabase()
     role, members = _resolve_overview_scope(sb, email)
-    if role not in ("admin", "leader") or not members:
+    if not members:
         return {"role": role, "accounts": [], "time_range": time_range}
 
     member_ids = [m["id"] for m in members]
@@ -1623,6 +1625,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
     post_count: dict[str, int] = {}
     ai_passed_count: dict[str, int] = {}
     last_crawled: dict[str, str] = {}
+    ai_threshold = 40
 
     for p in fb_posts:
         mid = p.get("id_member") or fb_group_owner_map.get(p.get("group_id"))
