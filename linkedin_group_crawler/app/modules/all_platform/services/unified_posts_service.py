@@ -976,15 +976,18 @@ def get_unified_posts(
             # Each lambda re-resolves the client via _supabase(). Capturing `sb`
             # would hand a retry the same dead client execute_supabase_query just
             # dropped, defeating the reset.
+            clean_email = (email or "").strip().lower()
             user_res = execute_supabase_query(
-                lambda: _supabase().table("app_users").select("id, role").eq("email", email).limit(1).execute()
+                lambda: _supabase().table("app_users").select("id, role, email").eq("email", clean_email).limit(1).execute()
             )
             if user_res.data:
                 id_member = user_res.data[0]["id"]
                 role = user_res.data[0].get("role", "member")
                 post_ids = [p.get("id") for p in all_posts if p.get("id")]
-                if post_ids:
-                    seeding_sel = "id_post, id_member, content, verify, link_comment, social_accounts(account_name)"
+                post_url_to_id = {p.get("post_url"): p.get("id") for p in all_posts if p.get("post_url") and p.get("id")}
+                post_urls = list(post_url_to_id.keys())
+                if post_ids or post_urls:
+                    seeding_sel = "id_post, link_post, id_member, content, verify, link_comment, social_accounts(account_name)"
                     if role in ["admin", "leader"]:
                         kpi_res = execute_supabase_query(
                             lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", post_ids).execute()
@@ -995,6 +998,21 @@ def get_unified_posts(
                         )
 
                     kpi_data = kpi_res.data or []
+
+                    existing_pids = set([k.get("id_post") for k in kpi_data if k.get("id_post")])
+                    missing_urls = [u for u in post_urls if post_url_to_id.get(u) not in existing_pids]
+                    if missing_urls:
+                        if role in ["admin", "leader"]:
+                            url_kpi_res = execute_supabase_query(
+                                lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", missing_urls).execute()
+                            )
+                        else:
+                            url_kpi_res = execute_supabase_query(
+                                lambda: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("link_post", missing_urls).execute()
+                            )
+                        if url_kpi_res.data:
+                            kpi_data.extend(url_kpi_res.data)
+
                     seeding_member_ids = list(set([k.get("id_member") for k in kpi_data if k.get("id_member")]))
                     member_name_map = {}
                     member_email_map = {}
@@ -1011,31 +1029,35 @@ def get_unified_posts(
                     
                     for kpi in kpi_data:
                         pid = kpi.get("id_post")
+                        if not pid and kpi.get("link_post"):
+                            pid = post_url_to_id.get(kpi.get("link_post"))
                         if pid:
                             sa = kpi.get("social_accounts") or {}
                             s_member_id = kpi.get("id_member")
+                            s_email = member_email_map.get(s_member_id, "")
                             
                             seeding_info = {
                                 "id_member": s_member_id,
                                 "member_id": s_member_id,
                                 "member_name": member_name_map.get(s_member_id, "Unknown"),
-                                "member_email": member_email_map.get(s_member_id, ""),
+                                "member_email": s_email,
                                 "seeding_content": kpi.get("content"),
                                 "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
                                 "link_comment": kpi.get("link_comment"),
-                                "verify_status": kpi.get("verify")
+                                "verify_status": kpi.get("verify") or "yes"
                             }
                             
                             if pid not in all_seedings_map:
                                 all_seedings_map[pid] = []
                             all_seedings_map[pid].append(seeding_info)
                             
-                            if s_member_id == id_member:
+                            is_me = (s_member_id == id_member) or (clean_email and s_email == clean_email)
+                            if is_me:
                                 kpi_map[pid] = {
                                     "seeding_content": kpi.get("content"),
                                     "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
                                     "link_comment": kpi.get("link_comment"),
-                                    "verify_status": kpi.get("verify"),
+                                    "verify_status": kpi.get("verify") or "yes",
                                     "is_my_seeding": True
                                 }
                             elif pid not in kpi_map:
@@ -1043,7 +1065,7 @@ def get_unified_posts(
                                     "seeding_content": kpi.get("content"),
                                     "seeding_name": sa.get("account_name") if isinstance(sa, dict) else None,
                                     "link_comment": kpi.get("link_comment"),
-                                    "verify_status": kpi.get("verify"),
+                                    "verify_status": kpi.get("verify") or "yes",
                                     "is_my_seeding": False
                                 }
                     

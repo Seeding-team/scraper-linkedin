@@ -794,6 +794,45 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         const res = await allPlatformPostsService.getPostSeedingRoster(CURRENT_USER_EMAIL, post.id, post.platform || feedPlatform);
         if (res.success && res.data) {
           setSeedingRosterData(res.data);
+          // Đồng bộ ngay dữ liệu seeding từ roster vào card post ngoài feed
+          const seededItems = (res.data.items || []).filter((i: any) => i.has_seeded);
+          if (seededItems.length > 0) {
+            const currentEmail = (CURRENT_USER_EMAIL || "").trim().toLowerCase();
+            const currentName = (user?.name || "").trim().toLowerCase();
+            const currentId = user?.id ? String(user.id) : "";
+
+            const mySeeded = seededItems.find((i: any) => {
+              if (currentId && String(i.id_member) === currentId) return true;
+              if (currentEmail && (i.email || "").trim().toLowerCase() === currentEmail) return true;
+              const iName = (i.name || "").trim().toLowerCase();
+              if (currentName && (iName === currentName || iName.includes(currentName) || currentName.includes(iName))) return true;
+              return false;
+            });
+
+            setPosts((prev) =>
+              prev.map((p) => {
+                if (p.id === post.id || (p.post_url && p.post_url === post.post_url)) {
+                  return {
+                    ...p,
+                    seeding_content: mySeeded?.content || p.seeding_content || seededItems[0].content,
+                    link_comment: (mySeeded?.link_comment || p.link_comment || seededItems[0].link_comment) || undefined,
+                    verify_status: (mySeeded?.verify_status || p.verify_status || "yes") as any,
+                    is_my_seeding: Boolean(mySeeded),
+                    all_seedings: seededItems.map((i: any) => ({
+                      id_member: i.id_member,
+                      member_id: i.id_member,
+                      member_name: i.name,
+                      member_email: i.email,
+                      seeding_content: i.content,
+                      link_comment: i.link_comment,
+                      verify_status: i.verify_status,
+                    })),
+                  };
+                }
+                return p;
+              })
+            );
+          }
         } else {
           toast.error(res.message || "Không tải được danh sách seeding theo team.");
         }
@@ -803,7 +842,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         setIsLoadingSeedingRoster(false);
       }
     },
-    [CURRENT_USER_EMAIL, feedPlatform],
+    [CURRENT_USER_EMAIL, feedPlatform, user],
   );
 
   const closeSeedingRosterModal = useCallback(() => {

@@ -243,12 +243,11 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
   // Xác định bình luận seeding của CHÍNH NGƯỜI DÙNG HIỆN TẠI (Admin / Leader / Member)
   const mySeeding = useMemo(() => {
-    if (!currentUser) return null;
-    const currentId = currentUser.id ? String(currentUser.id) : "";
-    const currentEmail = (currentUser.email || "").trim().toLowerCase();
-    const currentName = (currentUser.name || "").trim().toLowerCase();
+    const currentId = currentUser?.id ? String(currentUser.id) : "";
+    const currentEmail = (currentUser?.email || "").trim().toLowerCase();
+    const currentName = (currentUser?.name || "").trim().toLowerCase();
 
-    // 1. Tìm trong all_seedings theo ID, Email hoặc Name của người dùng đang đăng nhập
+    // 1. Tìm trong all_seedings theo ID, Email hoặc Name (khớp cả họ tên viết tắt / bao hàm)
     if (post.all_seedings && post.all_seedings.length > 0) {
       const match = post.all_seedings.find((s) => {
         const sId = String((s as any).id_member || (s as any).member_id || "");
@@ -256,21 +255,45 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         const sEmail = String((s as any).member_email || "").trim().toLowerCase();
         if (sEmail && currentEmail && sEmail === currentEmail) return true;
         const sName = String(s.member_name || "").trim().toLowerCase();
-        if (sName && currentName && sName === currentName) return true;
+        if (sName && currentName) {
+          if (sName === currentName) return true;
+          if (sName.includes(currentName) || currentName.includes(sName)) return true;
+        }
         return false;
       });
       if (match) return match;
     }
 
-    // 2. Nếu post có seeding_content gán cho chính user (hoặc is_my_seeding === true)
+    // 2. Nếu post có is_my_seeding === true hoặc có seeding_content hợp lệ
     if (post.seeding_content && !seedingContentIsAuto) {
-      if ((post as any).is_my_seeding === true || userRole === "member") {
+      // Bất kể vai trò admin, leader hay member, nếu backend đã đánh dấu is_my_seeding -> hiển thị
+      if ((post as any).is_my_seeding === true) {
         return {
-          member_name: currentUser.name || "Bạn",
+          member_name: currentUser?.name || "Bạn",
           seeding_content: post.seeding_content,
           seeding_name: post.seeding_name,
           link_comment: post.link_comment,
           verify_status: post.verify_status || "yes",
+        };
+      }
+      // Đối với member: mọi bài có seeding_content gán cho họ đều là của họ
+      if (userRole === "member") {
+        return {
+          member_name: currentUser?.name || "Bạn",
+          seeding_content: post.seeding_content,
+          seeding_name: post.seeding_name,
+          link_comment: post.link_comment,
+          verify_status: post.verify_status || "yes",
+        };
+      }
+      // Nếu bài chỉ có đúng 1 seeding từ trước và có link_comment minh chứng
+      if (post.all_seedings && post.all_seedings.length === 1 && !post.all_seedings[0].member_email) {
+        return {
+          member_name: post.all_seedings[0].member_name || currentUser?.name || "Bạn",
+          seeding_content: post.all_seedings[0].seeding_content || post.seeding_content,
+          seeding_name: post.seeding_name,
+          link_comment: post.all_seedings[0].link_comment || post.link_comment,
+          verify_status: post.all_seedings[0].verify_status || post.verify_status || "yes",
         };
       }
     }
@@ -284,7 +307,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           return JSON.parse(saved);
         } catch {
           return {
-            member_name: currentUser.name || "Bạn",
+            member_name: currentUser?.name || "Bạn",
             seeding_content: saved,
             link_comment: post.link_comment || post.post_url,
             verify_status: "yes",
@@ -808,7 +831,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   );
 }
 
-function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
+function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
   const { user } = useAppAuth();
   const commentPlatform: GroupPlatform | undefined = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
   const { libraryItems: commentTemplates } = useQuickCommentLibrary(commentPlatform);
@@ -883,6 +906,19 @@ function TaskModal({ post, onClose }: { post: UnifiedPost; onClose: () => void; 
       window.open(post.post_url, "_blank");
     }, 200);
 
+    if (typeof window !== "undefined") {
+      const localKey = `my_task_comment_${post.id || post.post_url}`;
+      const savedPayload = {
+        member_name: user?.name || "Bạn",
+        seeding_content: commentText.trim() || "Nhiệm vụ bình luận đã kích hoạt",
+        link_comment: post.post_url,
+        verify_status: "yes",
+      };
+      localStorage.setItem(localKey, JSON.stringify(savedPayload));
+    }
+    if (onCommentSuccess) {
+      setTimeout(() => onCommentSuccess(), 300);
+    }
     toast.success(
       commentText.trim()
         ? "🚀 Đã sao chép bình luận & kích hoạt theo dõi! Hãy dán (Ctrl+V) trên tab vừa mở, Extension sẽ tự động bắt request minh chứng."
