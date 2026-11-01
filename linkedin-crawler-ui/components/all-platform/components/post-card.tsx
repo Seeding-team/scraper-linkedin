@@ -175,8 +175,8 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
       if (typeof window !== "undefined" && (post.id || post.post_url)) {
         const localKey = `my_task_comment_${post.id || post.post_url}`;
         localStorage.setItem(localKey, JSON.stringify({
-          member_name: user?.name || "Bạn",
-          seeding_content: commentText.trim() || "Đã gửi bình luận qua Extension",
+          member_name: currentUser?.name || "Bạn",
+          seeding_content: "Đã gửi bình luận qua Extension",
           link_comment: post.post_url,
           verify_status: "pending",
         }));
@@ -557,27 +557,6 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all"
               >
                 + Lead
-              </button>
-            </div>
-          </div>
-        ) : null}\n            </div>
-            <div className="flex flex-wrap items-center gap-2 mt-0.5">
-              {post.auto_seeding_comment.zalo_conversation_id && (
-                <a
-                  href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
-                >
-                  Xem hộp thoại <FiExternalLink className="w-3 h-3" />
-                </a>
-              )}
-              <button
-                type="button"
-                onClick={() => setShowLeadDrawer(true)}
-                className="inline-flex items-center gap-1 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[10px] font-bold text-white transition hover:bg-emerald-700 cursor-pointer"
-              >
-                + Tạo Lead
               </button>
             </div>
           </div>
