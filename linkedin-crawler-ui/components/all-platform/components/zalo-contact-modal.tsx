@@ -238,16 +238,16 @@ export function ZaloContactModal({
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4 bg-sky-50/50 dark:bg-sky-950/20">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4 bg-rose-50/60 dark:bg-rose-950/20">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full bg-sky-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-[#be123c] text-white flex items-center justify-center font-bold text-sm shadow-xs">
               Z
             </div>
             <div>
               <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base leading-tight">
                 Nhắn tin Zalo tới khách hàng
               </h3>
-              <p className="text-xs text-sky-700 dark:text-sky-300 font-semibold mt-0.5">
+              <p className="text-xs text-rose-700 dark:text-rose-300 font-semibold mt-0.5">
                 📞 {phoneNumber} {zaloDisplayName ? `· Zalo: ${zaloDisplayName}` : ""}
               </p>
             </div>
@@ -292,7 +292,7 @@ export function ZaloContactModal({
                       onClick={() => setSelectedAccountId(acc.account_id)}
                       className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
                         isSelected
-                          ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/30 text-sky-900 dark:text-sky-100 shadow-xs ring-1 ring-sky-500"
+                          ? "border-[#be123c] bg-rose-50/70 dark:bg-rose-950/30 text-rose-950 dark:text-rose-100 shadow-xs ring-1 ring-[#be123c]"
                           : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300"
                       }`}
                     >
@@ -304,7 +304,7 @@ export function ZaloContactModal({
                             className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
                           />
                         ) : (
-                          <div className="w-8 h-8 rounded-full bg-sky-100 text-sky-700 font-bold text-xs flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-rose-100 text-[#be123c] font-bold text-xs flex items-center justify-center shrink-0">
                             {(((acc as any).display_name || acc.label) || "Z").charAt(0).toUpperCase()}
                           </div>
                         )}
@@ -320,7 +320,7 @@ export function ZaloContactModal({
                       <div className="shrink-0 flex items-center gap-1.5">
                         <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
                         <span className="text-[10px] text-emerald-600 font-medium">Sẵn sàng</span>
-                        {isSelected && <FiCheck className="w-4 h-4 text-sky-600 ml-1" />}
+                        {isSelected && <FiCheck className="w-4 h-4 text-[#be123c] ml-1" />}
                       </div>
                     </div>
                   );
@@ -340,7 +340,7 @@ export function ZaloContactModal({
                   href="/all-platform/quick-comments?tab=inbox"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[10px] font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-800 flex items-center gap-1 cursor-pointer transition hover:scale-105"
+                  className="text-[10px] font-bold text-[#be123c] hover:text-[#9f1239] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-800 flex items-center gap-1 cursor-pointer transition hover:scale-105"
                   title="Mở thư viện mẫu inbox để thêm hoặc chỉnh sửa mẫu tin nhắn"
                 >
                   <span>+ Quản lý mẫu inbox</span>
@@ -351,7 +351,7 @@ export function ZaloContactModal({
                 <button
                   type="button"
                   onClick={() => handleSetAsDefault(selectedTemplateId)}
-                  className="text-[11px] font-semibold text-sky-600 hover:text-sky-700 dark:text-sky-400 flex items-center gap-1 cursor-pointer transition-colors"
+                  className="text-[11px] font-semibold text-[#be123c] hover:text-[#9f1239] dark:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
                   title="Đặt mẫu này làm mặc định cho các lần nhắn tin sau của bạn"
                 >
                   <span>{defaultTemplateId === selectedTemplateId ? "★ Đang là mặc định" : "☆ Đặt làm mặc định"}</span>
@@ -372,7 +372,7 @@ export function ZaloContactModal({
                       onClick={() => handleSelectTemplate(tpl)}
                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
                         isSelected
-                          ? "bg-sky-600 text-white shadow-xs ring-1 ring-sky-500"
+                          ? "bg-[#be123c] text-white shadow-xs ring-1 ring-[#be123c]"
                           : "bg-slate-100 hover:bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                       }`}
                       title={tpl.content}
@@ -380,7 +380,7 @@ export function ZaloContactModal({
                       {isDefault && <span className="text-amber-300 font-bold">★</span>}
                       {tpl.label && (
                         <span className={`text-[9px] px-1 py-0.2 rounded font-bold uppercase ${
-                          isSelected ? "bg-white/20 text-white" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                          isSelected ? "bg-white/20 text-white" : tpl.source === "inbox" ? "bg-rose-100 text-[#be123c] dark:bg-rose-950/40 dark:text-rose-300" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
                         }`}>
                           {tpl.label}
                         </span>
@@ -399,13 +399,13 @@ export function ZaloContactModal({
               }}
               rows={3}
               placeholder="Nhập nội dung tin nhắn mở đầu..."
-              className="w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-slate-800 dark:text-slate-100 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+              className="w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-slate-800 dark:text-slate-100 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[#be123c]/20 focus:border-[#be123c] resize-none"
             />
           </div>
 
           {statusText && (
-            <div className="rounded-lg bg-sky-50 dark:bg-sky-950/30 p-2.5 text-xs text-sky-800 dark:text-sky-200 flex items-center gap-2 animate-in fade-in">
-              <span className="inline-block w-2 h-2 rounded-full bg-sky-500 animate-ping"></span>
+            <div className="rounded-lg bg-rose-50 dark:bg-rose-950/30 p-2.5 text-xs text-rose-800 dark:text-rose-200 flex items-center gap-2 animate-in fade-in border border-rose-100">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#be123c] animate-ping"></span>
               <span>{statusText}</span>
             </div>
           )}
@@ -446,7 +446,7 @@ export function ZaloContactModal({
             type="button"
             onClick={handleStartChat}
             disabled={submitting || accounts.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 shadow-md shadow-sky-600/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#be123c] hover:bg-[#9f1239] shadow-md shadow-rose-900/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all cursor-pointer"
           >
             {submitting ? (
               <>

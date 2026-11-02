@@ -536,13 +536,13 @@ function QuickCommentsContent() {
             onClick={() => setActiveMainTab("inbox")}
             className={`px-5 py-2.5 rounded-xl font-extrabold text-sm transition-all flex items-center gap-2 cursor-pointer ${
               activeMainTab === "inbox"
-                ? "bg-sky-600 text-white shadow-md shadow-sky-900/10"
+                ? "bg-[#be123c] text-white shadow-md shadow-rose-900/10"
                 : "bg-white hover:bg-gray-100 text-gray-600 border border-gray-200"
             }`}
           >
             <span>📥</span>
             <span>Thư viện mẫu inbox (Zalo & Tư vấn)</span>
-            <span className={`px-2 py-0.5 rounded-full text-xs ${activeMainTab === "inbox" ? "bg-white/20 text-white" : "bg-sky-100 text-sky-700"}`}>
+            <span className={`px-2 py-0.5 rounded-full text-xs ${activeMainTab === "inbox" ? "bg-white/20 text-white" : "bg-rose-50 text-[#be123c]"}`}>
               {inboxTemplates.length}
             </span>
           </button>
@@ -846,7 +846,7 @@ function QuickCommentsContent() {
               <div>
                 <h1 className="text-[22px] m-0 mb-[4px] font-extrabold text-[#0f172a] flex items-center gap-2">
                   <span>Thư viện mẫu tin nhắn Inbox</span>
-                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-100 text-sky-800 border border-sky-300">
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-[#be123c] border border-rose-200">
                     Zalo 1-Click
                   </span>
                 </h1>
@@ -858,7 +858,7 @@ function QuickCommentsContent() {
                 <button
                   type="button"
                   onClick={openAddInboxModal}
-                  className="px-4 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
+                  className="px-4 py-2.5 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer"
                 >
                   <span className="text-base font-bold">+</span> Thêm mẫu inbox mới
                 </button>
@@ -879,12 +879,12 @@ function QuickCommentsContent() {
                 </div>
                 <span className="text-[11px] text-emerald-500 font-medium">Chào hỏi Zalo</span>
               </div>
-              <div className="bg-white border border-sky-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
-                <span className="text-xs font-semibold text-sky-600 block">Tư vấn báo giá</span>
-                <div className="text-2xl font-black text-sky-950 mt-1">
+              <div className="bg-white border border-rose-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
+                <span className="text-xs font-semibold text-[#be123c] block">Tư vấn báo giá</span>
+                <div className="text-2xl font-black text-rose-950 mt-1">
                   {inboxTemplates.filter((t) => (t.label || "").toLowerCase().includes("giá") || (t.label || "").toLowerCase().includes("tư vấn")).length}
                 </div>
-                <span className="text-[11px] text-sky-500 font-medium">Báo giá giải pháp</span>
+                <span className="text-[11px] text-[#be123c] font-medium">Báo giá giải pháp</span>
               </div>
               <div className="bg-white border border-amber-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.03)]">
                 <span className="text-xs font-semibold text-amber-600 block">Chăm sóc & Follow-up</span>
@@ -934,7 +934,7 @@ function QuickCommentsContent() {
                   value={inboxSearchQuery}
                   onChange={(e) => setInboxSearchQuery(e.target.value)}
                   placeholder="Tìm kiếm mẫu inbox Zalo..."
-                  className="w-full pl-8 pr-4 py-1.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 bg-gray-50/50"
+                  className="w-full pl-8 pr-4 py-1.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#be123c]/20 bg-gray-50/50"
                 />
                 {inboxSearchQuery && (
                   <button
@@ -975,7 +975,7 @@ function QuickCommentsContent() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
-                      <tr className="border-b border-gray-100 bg-sky-50/40 text-[11px] font-extrabold text-sky-900 uppercase tracking-wider">
+                      <tr className="border-b border-gray-100 bg-rose-50/40 text-[11px] font-extrabold text-rose-900 uppercase tracking-wider">
                         <th className="py-3 px-4 w-12 text-center">#</th>
                         <th className="py-3 px-4 w-52">Tiêu đề mẫu tin</th>
                         <th className="py-3 px-4 w-32">Phân loại</th>
@@ -987,7 +987,7 @@ function QuickCommentsContent() {
                       {paginatedInbox.map((tpl, index) => {
                         const globalIndex = inboxStartIndex + index + 1;
                         return (
-                          <tr key={tpl.id} className="hover:bg-sky-50/30 transition">
+                          <tr key={tpl.id} className="hover:bg-rose-50/20 transition">
                             <td className="py-3.5 px-4 text-center text-gray-400 font-bold">
                               <div className="flex items-center justify-center gap-1">
                                 <span>{globalIndex}</span>
@@ -1013,7 +1013,7 @@ function QuickCommentsContent() {
                             </td>
                             <td className="py-3.5 px-4 font-bold text-gray-900">
                               <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-sky-500"></span>
+                                <span className="w-2 h-2 rounded-full bg-[#be123c]"></span>
                                 <span>{tpl.title}</span>
                               </div>
                             </td>
@@ -1024,7 +1024,7 @@ function QuickCommentsContent() {
                               <div className="bg-gray-50/80 rounded-xl p-2.5 border border-gray-100">
                                 <p className="text-xs leading-relaxed whitespace-pre-wrap">{tpl.content}</p>
                                 {tpl.content.includes("{group_name}") && (
-                                  <span className="inline-block mt-1 text-[10px] font-semibold text-sky-600 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                                  <span className="inline-block mt-1 text-[10px] font-semibold text-[#be123c] bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
                                     Biến tự động: &#123;group_name&#125;
                                   </span>
                                 )}
@@ -1035,7 +1035,7 @@ function QuickCommentsContent() {
                                 <button
                                   type="button"
                                   onClick={() => handleCopyText(tpl.content, tpl.title)}
-                                  className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold rounded-lg transition cursor-pointer flex items-center gap-1 text-[11px]"
+                                  className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-[#be123c] font-bold rounded-lg transition cursor-pointer flex items-center gap-1 text-[11px]"
                                   title="Sao chép nhanh để gửi khách"
                                 >
                                   <span>📋</span> Copy
@@ -1090,7 +1090,7 @@ function QuickCommentsContent() {
                         onClick={() => setInboxCurrentPage(p)}
                         className={`w-7 h-7 rounded-lg text-xs font-bold cursor-pointer ${
                           inboxCurrentPage === p
-                            ? "bg-sky-600 text-white"
+                            ? "bg-[#be123c] text-white"
                             : "border border-gray-200 hover:bg-gray-50 text-gray-700"
                         }`}
                       >
@@ -1214,9 +1214,9 @@ function QuickCommentsContent() {
       {isInboxModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-sky-50/50">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-rose-50/50">
               <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-sky-600"></span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#be123c]"></span>
                 <h3 className="font-extrabold text-base text-gray-900">
                   {editingInbox ? "Chỉnh sửa mẫu tin nhắn Inbox Zalo" : "Thêm mẫu tin nhắn Inbox Zalo mới"}
                 </h3>
@@ -1240,7 +1240,7 @@ function QuickCommentsContent() {
                   value={inboxFormData.title}
                   onChange={(e) => setInboxFormData({ ...inboxFormData, title: e.target.value })}
                   placeholder="Ví dụ: Lời chào khách thiết kế web trong nhóm"
-                  className="w-full px-3.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                  className="w-full px-3.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#be123c]/20"
                 />
               </div>
 
@@ -1256,7 +1256,7 @@ function QuickCommentsContent() {
                       onClick={() => setInboxFormData({ ...inboxFormData, label: preset })}
                       className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
                         inboxFormData.label === preset
-                          ? "bg-sky-600 text-white shadow-2xs"
+                          ? "bg-[#be123c] text-white shadow-2xs"
                           : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                       }`}
                     >
@@ -1269,7 +1269,7 @@ function QuickCommentsContent() {
                   value={inboxFormData.label}
                   onChange={(e) => setInboxFormData({ ...inboxFormData, label: e.target.value })}
                   placeholder="Nhập hoặc chọn nhãn ở trên..."
-                  className="w-full px-3.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20"
+                  className="w-full px-3.5 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#be123c]/20"
                 />
               </div>
 
@@ -1286,7 +1286,7 @@ function QuickCommentsContent() {
                         content: inboxFormData.content + " {group_name}",
                       });
                     }}
-                    className="text-[11px] font-bold text-sky-600 hover:text-sky-800 bg-sky-50 px-2 py-0.5 rounded cursor-pointer"
+                    className="text-[11px] font-bold text-[#be123c] hover:text-[#9f1239] bg-rose-50 px-2 py-0.5 rounded cursor-pointer"
                     title="Bấm để chèn biến tên nhóm vào vị trí cuối"
                   >
                     + Chèn &#123;group_name&#125;
@@ -1298,10 +1298,10 @@ function QuickCommentsContent() {
                   value={inboxFormData.content}
                   onChange={(e) => setInboxFormData({ ...inboxFormData, content: e.target.value })}
                   placeholder="Chào bạn, mình thấy bài viết của bạn trong {group_name}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!"
-                  className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-sky-500/20 leading-relaxed resize-none"
+                  className="w-full px-3.5 py-2.5 border border-gray-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#be123c]/20 leading-relaxed resize-none"
                 />
                 <p className="text-[11px] text-gray-400 mt-1">
-                  💡 Mẹo: Dùng <code className="bg-gray-100 px-1 py-0.5 rounded text-sky-700">&#123;group_name&#125;</code> để hệ thống tự động thay bằng tên nhóm Facebook/LinkedIn của bài viết khi nhắn tin.
+                  💡 Mẹo: Dùng <code className="bg-gray-100 px-1 py-0.5 rounded text-[#be123c]">&#123;group_name&#125;</code> để hệ thống tự động thay bằng tên nhóm Facebook/LinkedIn của bài viết khi nhắn tin.
                 </p>
               </div>
 
@@ -1316,7 +1316,7 @@ function QuickCommentsContent() {
                 <button
                   type="submit"
                   disabled={isSubmittingInbox}
-                  className="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 bg-[#be123c] hover:bg-[#9f1239] text-white rounded-xl text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
                 >
                   {isSubmittingInbox ? "Đang lưu..." : editingInbox ? "Cập nhật" : "Tạo mẫu inbox"}
                 </button>
