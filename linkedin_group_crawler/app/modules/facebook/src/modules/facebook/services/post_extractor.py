@@ -18,6 +18,8 @@ class PostExtractor:
             # Gộp quét URL và Date vào cùng 1 vòng lặp
             for link in all_links:
                 href = link.get_attribute('href') or ''
+                if 'comment_id=' in href or 'reply_comment_id=' in href:
+                    continue
                 
                 # Bỏ qua nếu không phải link trỏ về bài đăng Facebook
                 if '/posts/' not in href and '/permalink/' not in href:
@@ -68,6 +70,8 @@ class PostExtractor:
             #  BƯỚC 1: Quét bề nổi - Dùng Regex tìm các link <a> hiển nhiên
             for link in element.locator('a[href]').all():
                 href = link.get_attribute('href') or ''
+                if 'comment_id=' in href or 'reply_comment_id=' in href:
+                    continue
                 if VIDEO_URL_RE.search(href):
                     return clean_post_url(href)
 
@@ -311,7 +315,8 @@ class PostExtractor:
         #  TẦNG 1: Dùng chìa khóa chuẩn (Ưu tiên lấy chuẩn xác và nhanh nhất)
         try:
             for selector in [
-                'div[data-ad-comet-preview="message"]', 
+                'div[data-ad-comet-preview="message"]',
+                'div[data-ad-rendering-role="story_message"]',
                 'div[data-ad-preview="message"]'
             ]:
                 node = element.locator(selector).first
@@ -338,9 +343,10 @@ class PostExtractor:
                     let bestText = '';
                     
                     // Từ khóa UI cấm kỵ (giống NON_REACTION_KEYWORDS ở Python)
-                    const banWords = ['bình luận', 'chia sẻ', 'comment', 'share', 'thông báo'];
+                    const banWords = ['viết bình luận', 'write a comment', 'xem thêm bình luận', 'view more comments'];
                     
                     for (const div of allDirs) {
+                        if (div.closest('[role="article"] [role="article"], [aria-label*="bình luận" i], [aria-label*="comment" i], [aria-label*="trả lời" i], [aria-label*="reply" i], [data-testid*="comment" i]')) continue;
                         // NẾU thẻ này nằm BÊN TRONG commentSection -> Bỏ qua
                         if (commentSection && commentSection.contains(div)) {
                             continue;

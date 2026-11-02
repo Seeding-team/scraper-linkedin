@@ -1,6 +1,6 @@
 // platforms/threads/crawl-sniffer.js - chạy trong MAIN world của trang Threads (document_start)
 // Bắt 2 luồng:
-// 1. Cào bài: GraphQL query có "taken_at" -> chuyển sang platforms/threads/crawl.js.
+// 1. Cào bài: GraphQL query + /ajax/route-definition/ có "taken_at" -> chuyển sang platforms/threads/crawl.js.
 // 2. Bình luận: POST /api/v1/media/configure_text_only_post/ (bóc tách từ comment_thread.json)
 //    -> Dispatch CustomEvent "markee-action-captured" kèm commentId, linkComment, authorName, content, fbUid
 //    để platforms/threads/content.js (ISOLATED world) ghi nhận KPI và minh chứng cho cả Tương tác nội bộ & Seeding ngoài.
@@ -12,7 +12,12 @@
 
     function isWatched(url) {
         if (typeof url !== 'string') return false;
-        return url.indexOf('graphql') !== -1 || url.indexOf('configure_text_only_post') !== -1;
+        return (
+            url.indexOf('graphql') !== -1 ||
+            url.indexOf('/ajax/route-definition/') !== -1 ||
+            url.indexOf('/ajax/bulk-route-definitions/') !== -1 ||
+            url.indexOf('configure_text_only_post') !== -1
+        );
     }
 
     function nameFromBody(body) {
@@ -96,7 +101,11 @@
         if (!text || typeof text !== 'string') return;
         if (url.indexOf('configure_text_only_post') !== -1) {
             handleCommentResponse(text);
-        } else if (url.indexOf('graphql') !== -1) {
+        } else if (
+            url.indexOf('graphql') !== -1 ||
+            url.indexOf('/ajax/route-definition/') !== -1 ||
+            url.indexOf('/ajax/bulk-route-definitions/') !== -1
+        ) {
             forward(text, name);
         }
     }

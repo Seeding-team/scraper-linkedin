@@ -75,7 +75,7 @@
         if (responseData) {
             try {
                 // Bắt stream bài viết group feed cho AI Lead Scorer
-                if (responseData.data && (responseData.data.node?.group_feed || responseData.data.node || responseData.data.edges)) {
+                if (responseData.data && (responseData.data.node?.group_feed || responseData.data.node?.__typename === 'Story' || (Array.isArray(responseData.path) && responseData.path.includes('group_feed')))) {
                     document.dispatchEvent(new CustomEvent("fb-stream-posts-response", {
                         detail: { friendlyName: friendlyName || "GroupsCometFeedRegularStoriesPaginationQuery", responseText: JSON.stringify(responseData), timestamp: Date.now() },
                     }));

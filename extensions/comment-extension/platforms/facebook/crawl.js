@@ -19,7 +19,7 @@
         referringStoryRenderLocation: null,
         renderLocation: "group",
         scale: 1.5,
-        sortingSetting: "RECENT_ACTIVITY",
+        sortingSetting: "CHRONOLOGICAL",
         useDefaultActor: false,
         __relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider: true,
         __relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider: true,
@@ -52,6 +52,22 @@
     const QUERY_NAME = "GroupsCometFeedRegularStoriesPaginationQuery";
     const CAPTURE_STORAGE_KEY = "fbGraphqlCapture_" + QUERY_NAME;
     const CAPTURE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+    // Các khóa con thuộc vùng bình luận (UFI/feedback) hoặc bài đính kèm — tuyệt đối KHÔNG đệ quy vào
+    // khi trích xuất post_id, tác giả, nội dung, thời gian hoặc URL của bài viết gốc.
+    const STORY_SKIP_KEYS = new Set([
+        "feedback",
+        "ufi",
+        "comment_rendering_instance",
+        "comment_rendering_instance_for_feed_location",
+        "interesting_top_level_comments",
+        "display_comments",
+        "comments",
+        "reply_comment",
+        "top_level_comments",
+        "attached_story",
+        "bump_reason",
+    ]);
 
     let capturedQueryTemplate = null;
 
@@ -148,6 +164,20 @@
         return null;
     }
 
+    // Chỉ tìm trong cấu trúc bài viết gốc (Story), bỏ qua hoàn toàn cây bình luận (feedback/comments) và bài đính kèm.
+    function getStoryValue(obj, targetKeys) {
+        if (!obj || typeof obj !== "object") return null;
+        for (const k of targetKeys) {
+            if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+        }
+        for (const key in obj) {
+            if (STORY_SKIP_KEYS.has(key)) continue;
+            const res = getStoryValue(obj[key], targetKeys);
+            if (res !== null) return res;
+        }
+        return null;
+    }
+
     function isToday(unixSeconds) {
         const postDate = new Date(unixSeconds * 1000);
         const today = new Date();
@@ -178,6 +208,7 @@
 
         const targetCount = parseInt(count, 10) || 20;
         const allPosts = [];
+        const seenPostIds = new Set();
         let cursor = null;
         let hasNextPage = true;
         let pageCount = 0;
@@ -186,7 +217,15 @@
             pageCount++;
             const templateVariables = capturedQueryTemplate ? capturedQueryTemplate.variables : FALLBACK_VARIABLES;
             const docId = capturedQueryTemplate ? capturedQueryTemplate.docId : FALLBACK_DOC_ID;
-            const variables = { ...templateVariables, count: 15, cursor, id: tokens.groupId, stream_initial_count: 15 };
+            // Ép sortingSetting = CHRONOLOGICAL để lấy bài viết mới đăng hôm nay thay vì bài cũ mới có comment (RECENT_ACTIVITY)
+            const variables = {
+                ...templateVariables,
+                sortingSetting: "CHRONOLOGICAL",
+                count: 15,
+                cursor,
+                id: tokens.groupId,
+                stream_initial_count: 15,
+            };
 
             const body = new URLSearchParams({
                 fb_dtsg: tokens.fb_dtsg,
@@ -228,32 +267,67 @@
             for (const line of text.trim().split("\n")) {
                 try {
                     const data = JSON.parse(line);
-                    const pageInfo = getDeepValue(data, ["page_info"]);
+                    const pageInfo = data?.data?.node?.group_feed?.page_info || (Array.isArray(data?.path) && data.path.includes("group_feed") ? getDeepValue(data, ["page_info"]) : null);
                     if (pageInfo) {
                         if (pageInfo.has_next_page !== undefined) hasNextPage = pageInfo.has_next_page;
                         if (pageInfo.end_cursor) cursor = pageInfo.end_cursor;
                     }
 
+                    // Chỉ trích xuất các edge thuộc group_feed hoặc node có __typename === "Story".
+                    // Tuyệt đối KHÔNG lấy data.data.edges hay data.node của các chunk @defer thuộc comment/UFI.
                     let edges = [];
-                    if (data?.data?.node?.group_feed?.edges) edges = data.data.node.group_feed.edges;
-                    else if (Array.isArray(data?.data)) edges = data.data;
-                    else if (data?.data?.edges) edges = data.data.edges;
-                    else if (data?.node) edges = [{ node: data.node }];
+                    if (Array.isArray(data?.data?.node?.group_feed?.edges)) {
+                        edges = data.data.node.group_feed.edges;
+                    } else if (
+                        data?.data?.node &&
+                        (data.data.node.__typename === "Story" ||
+                            (Array.isArray(data?.path) && data.path.includes("group_feed")))
+                    ) {
+                        edges = [{ node: data.data.node }];
+                    } else if (
+                        data?.data &&
+                        data.data.__typename === "Story" &&
+                        Array.isArray(data?.path) &&
+                        data.path.includes("group_feed")
+                    ) {
+                        edges = [{ node: data.data }];
+                    }
 
                     for (const edge of edges) {
-                        const node = edge.node;
-                        if (!node) continue;
-                        const postId = node.post_id || node.id || node.legacy_post_id || getDeepValue(node, ["post_id"]);
-                        if (!postId || allPosts.length >= targetCount) continue;
+                        const node = edge && edge.node ? edge.node : edge;
+                        if (!node || typeof node !== "object") continue;
 
-                        const actorsArr = getDeepValue(node, ["actors"]);
+                        // Loại bỏ ngay lập tức nếu node là Comment, Feedback hoặc không phải Story
+                        if (node.__typename && node.__typename !== "Story") continue;
+                        if (String(node.id || "").startsWith("Y29tbWVudD")) continue;
+                        if (node.comment_parent !== undefined) continue;
+
+                        // Ưu tiên lấy post_id số thực tế từ Story trước khi fallback sang node.id
+                        const rawPostId =
+                            node.post_id ||
+                            node.legacy_post_id ||
+                            getStoryValue(node, ["post_id", "legacy_post_id"]) ||
+                            (!String(node.id || "").startsWith("Y29tbWVudD") ? node.id : null);
+                        const postId = rawPostId ? String(rawPostId).trim() : "";
+                        if (!postId || seenPostIds.has(postId) || allPosts.length >= targetCount) continue;
+
+                        const rawUrl =
+                            node.url ||
+                            node.share_url ||
+                            getStoryValue(node, ["url", "share_url", "wwwURL"]) ||
+                            `https://www.facebook.com/groups/${tokens.groupId}/posts/${postId}`;
+                        // Chặn tuyệt đối nếu URL chứa tham số bình luận
+                        if (/([?&])(comment_id|reply_comment_id)=/i.test(rawUrl)) continue;
+                        const url = rawUrl;
+
+                        const actorsArr = getStoryValue(node, ["actors"]);
                         const actorObj = (Array.isArray(actorsArr) ? actorsArr[0] : actorsArr) || {};
                         const author = actorObj?.name || "Ẩn danh";
                         const actorProfileUrl = actorObj?.url || actorObj?.profile_url || "";
                         const actorId = actorObj?.id || actorObj?.profile_id || "";
-                        const message = getDeepValue(node, ["message"])?.text || "";
-                        const url = node.url || node.share_url || `https://www.facebook.com/groups/${tokens.groupId}/posts/${postId}`;
-                        const creationTime = node.creation_time || getDeepValue(node, ["creation_time"]);
+                        const message = getStoryValue(node, ["message"])?.text || "";
+                        const creationTime = node.creation_time || getStoryValue(node, ["creation_time"]);
+
                         const reactionCount = getDeepValue(node, ["reaction_count"])?.count || 0;
                         const commentObj = getDeepValue(node, ["total_comment_count", "comments"]);
                         const commentCount = typeof commentObj === "number" ? commentObj : (commentObj?.total_count || 0);
@@ -267,9 +341,10 @@
                             if (obj.playable_url && typeof obj.playable_url === "string") videoUrl = obj.playable_url;
                             for (const k in obj) extractMedia(obj[k]);
                         };
-                        const attachments = getDeepValue(node, ["attachments"]);
+                        const attachments = getStoryValue(node, ["attachments"]);
                         if (attachments) extractMedia(attachments);
 
+                        seenPostIds.add(postId);
                         allPosts.push({
                             post_id: postId,
                             post_url: url,

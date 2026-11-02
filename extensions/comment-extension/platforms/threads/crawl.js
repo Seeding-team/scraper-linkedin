@@ -1,20 +1,14 @@
 // platforms/threads/crawl.js - cào bài Threads (world cô lập), KẾT HỢP DOM + bắt API:
-//   1. API: response GraphQL do crawl-sniffer.js (MAIN world) bắt được khi trang tự gọi
-//      lúc cuộn (chỉ có khi đã đăng nhập) -> "dịch ngược" JSON ra bài viết.
+//   1. API: response GraphQL / route-definition do crawl-sniffer.js (MAIN world) bắt được khi trang tự gọi
+//      lúc cuộn (chỉ có khi đã đăng nhập) -> "dịch ngược" JSON ra bài viết GỐC (loại bỏ hoàn toàn reply/comment).
 //   2. JSON nhúng sẵn trong HTML (<script type="application/json">) - trang kết quả đầu tiên.
 //   3. DOM: vừa là "tay lái" (cuộn tới bài cuối để trang tự gọi API trang sau, giống người
 //      thật — không tự bắn request), vừa là nguồn dữ liệu: đọc mỗi vòng cuộn, lấy được bài
 //      mà API/JSON không có + bổ sung số like/bình luận/đăng lại đọc từ nút tương tác.
 // Gộp 3 nguồn theo post_url: dữ liệu API/JSON (chính xác) ghi đè dữ liệu DOM (ước lượng),
-// DOM chỉ điền vào chỗ còn trống. Bài mới/bài được cập nhật được đẩy dần về background
-// (MK_TH_COLLECT_BATCH) để trang web hiện danh sách ngay trong lúc cào - cùng tinh thần
-// LI_CRAWL_POST của luồng LinkedIn (crawler.js + Voyager sniffer).
-// Dữ liệu bài Threads có dạng { code, taken_at, user: { username, full_name }, caption,
-// like_count, text_post_app_info: { direct_reply_count, repost_count, quote_count } }.
-// Tìm theo "hình dạng" object thay vì đường dẫn cố định để không gãy khi Threads đổi
-// cấu trúc bọc ngoài (thread_items / edges / node...).
-// Chạy chung tab với platforms/threads/content.js (bình luận) - lệnh riêng MK_TH_COLLECT_*,
-// không đụng EXECUTE_COMMENT của file đó.
+// DOM chỉ điền vào chỗ còn trống. Mọi post được xác định là reply/comment (is_reply === true,
+// reply_to_author != null, root_post_author != null, hoặc nằm ở thread_items[1..N]) đều bị
+// đưa vào danh sách chặn knownReplyUrls để DOM không bao giờ cào nhầm comment thành bài viết.
 (function () {
     if (window.__mkThreadsCrawlInstalled) return;
     window.__mkThreadsCrawlInstalled = true;
@@ -35,14 +29,31 @@
 
     // post_url -> { post, rank, sources: Set }
     const store = new Map();
+    // Danh sách post_url đã xác định là bình luận/reply để chặn cả ở API, JSON và DOM.
+    const knownReplyUrls = new Set();
     const stats = { domEnriched: 0, apiResponses: 0 };
     const apiNames = new Map();
-    const parsedScripts = new WeakSet();
+    let parsedScripts = new WeakSet();
     // post_url của bài mới/vừa cập nhật, chưa đẩy về background.
     const pendingStream = new Set();
     let activityWaiter = null;
     let stopRequested = false;
     let collecting = false;
+    let lastTrackedHref = window.location.href;
+
+    // Các query GraphQL chỉ trả về bình luận hoặc dữ liệu phụ, không phải bài viết kết quả tìm kiếm.
+    const IGNORED_API_NAMES = /^(BarcelonaPostPageDirectRepliesRefetchQuery|BarcelonaPostPageDownwardQuery|BarcelonaPostPageRefetchableDirectRepliesQuery|useBarcelonaBatchedPolls)$/i;
+    // Các nhánh con trong JSON chứa bài trích dẫn hoặc danh sách bình luận -> tuyệt đối không đệ quy vào.
+    const SKIP_WALK_KEYS = new Set([
+        'quoted_post',
+        'reposted_post',
+        'share_info',
+        'direct_replies',
+        'reply_threads',
+        'reply_to_author',
+        'root_post_author',
+        'pinned_post_info',
+    ]);
 
     function sleep(ms) {
         return new Promise((resolve) => setTimeout(resolve, ms));
@@ -91,7 +102,7 @@
     }
 
     function upsert(post, source) {
-        if (!post || !post.post_url) return;
+        if (!post || !post.post_url || knownReplyUrls.has(post.post_url)) return;
         const rank = SOURCE_RANK[source];
         const cur = store.get(post.post_url);
         if (!cur) {
@@ -143,6 +154,33 @@
         );
     }
 
+    // Kiểm tra xem post object của Threads có phải là bình luận / trả lời (reply) hay không.
+    function isReplyPostObject(o) {
+        if (!o || typeof o !== 'object') return false;
+        const info = o.text_post_app_info;
+        if (info && typeof info === 'object') {
+            if (info.is_reply === true) return true;
+            if (info.reply_to_author != null) return true;
+            if (info.root_post_author != null) return true;
+        }
+        if (o.is_reply === true || o.reply_to_post_id != null) return true;
+        return false;
+    }
+
+    function markReplyPostObject(o) {
+        if (!o || typeof o !== 'object') return;
+        const username = o.user && typeof o.user.username === 'string' ? o.user.username : '';
+        const code = typeof o.code === 'string' ? o.code : '';
+        if (USERNAME_RE.test(username) && CODE_RE.test(code)) {
+            const url = `https://www.threads.com/@${username}/post/${code}`;
+            knownReplyUrls.add(url);
+            if (store.has(url)) {
+                store.delete(url);
+                pendingStream.delete(url);
+            }
+        }
+    }
+
     function toPost(o) {
         const username = o.user.username;
         const code = o.code;
@@ -186,14 +224,38 @@
             for (const item of node) walk(item, depth + 1, source);
             return;
         }
+        // Trong cấu trúc Threads: thread_items[0] là bài gốc (hoặc bài chính của luồng),
+        // còn thread_items[1..N] là các bình luận trả lời nối tiếp bên dưới -> đưa vào blacklist.
+        if (Array.isArray(node.thread_items) && node.thread_items.length > 0) {
+            for (let i = 1; i < node.thread_items.length; i++) {
+                const replyItem = node.thread_items[i];
+                if (replyItem && replyItem.post) markReplyPostObject(replyItem.post);
+            }
+            const firstItem = node.thread_items[0];
+            if (firstItem && firstItem.post) {
+                if (isReplyPostObject(firstItem.post)) {
+                    markReplyPostObject(firstItem.post);
+                } else if (isPostObject(firstItem.post)) {
+                    upsert(toPost(firstItem.post), source);
+                }
+            } else if (firstItem) {
+                walk(firstItem, depth + 1, source);
+            }
+        }
         if (isPostObject(node)) {
+            if (isReplyPostObject(node)) {
+                markReplyPostObject(node);
+                return;
+            }
             upsert(toPost(node), source);
             // Không đi tiếp vào bên trong: bài được trích dẫn/đăng lại (quoted_post,
             // reposted_post) nằm lồng trong đây KHÔNG phải kết quả tìm kiếm.
             return;
         }
         for (const key in node) {
-            if (Object.prototype.hasOwnProperty.call(node, key)) walk(node[key], depth + 1, source);
+            if (!Object.prototype.hasOwnProperty.call(node, key)) continue;
+            if (key === 'thread_items' || SKIP_WALK_KEYS.has(key)) continue;
+            walk(node[key], depth + 1, source);
         }
     }
 
@@ -282,13 +344,39 @@
 
     function readDomPosts() {
         const posts = [];
+        const currentPath = window.location.pathname || '';
+        const isPostDetailPage = POST_HREF_RE.test(currentPath);
+
         document.querySelectorAll('[data-pressable-container]').forEach((box) => {
             // Khung con (bài trích dẫn) nằm trong khung khác -> để khung cha xử lý.
             if (box.parentElement && box.parentElement.closest('[data-pressable-container]')) return;
             const found = mainPostLink(box);
             if (!found) return;
-            const m = (found.link.getAttribute('href') || '').match(POST_HREF_RE);
+            const href = found.link.getAttribute('href') || '';
+            const m = href.match(POST_HREF_RE);
             if (!m) return;
+            const postUrl = `https://www.threads.com/@${m[1]}/post/${m[2]}`;
+
+            // 1. Nếu URL đã nằm trong danh sách bình luận/reply từ GraphQL/JSON -> bỏ qua ngay.
+            if (knownReplyUrls.has(postUrl)) return;
+
+            // 2. Nếu đang ở trang chi tiết 1 bài viết (/post/CODE), mọi khối khác CODE của trang đều là comment.
+            if (isPostDetailPage && currentPath.indexOf(`/post/${m[2]}`) === -1) {
+                knownReplyUrls.add(postUrl);
+                return;
+            }
+
+            // 3. Nếu khối DOM hiển thị chỉ báo trả lời ("Đang trả lời @...", "Replying to @...") -> là comment.
+            const rawBoxText = box.innerText || '';
+            if (/^\s*(Đang trả lời|Replying to)\s+@?[A-Za-z0-9._]+/im.test(rawBoxText)) {
+                knownReplyUrls.add(postUrl);
+                if (store.has(postUrl)) {
+                    store.delete(postUrl);
+                    pendingStream.delete(postUrl);
+                }
+                return;
+            }
+
             const timeLabel = found.time ? (found.time.innerText || '').trim() : '';
             // DOM không thấy tên hiển thị tách biệt với username -> để trống, finalize() điền.
             const counts = readActionCounts(box);
@@ -296,7 +384,7 @@
             const avatarImg = box.querySelector('img[alt*="profile picture"], img[alt*="ảnh đại diện"]');
             const avatarUrl = avatarImg ? (avatarImg.currentSrc || avatarImg.src) : null;
             posts.push({
-                post_url: `https://www.threads.com/@${m[1]}/post/${m[2]}`,
+                post_url: postUrl,
                 author_username: m[1],
                 author_name: '',
                 author_avatar: avatarUrl || null,
@@ -338,19 +426,38 @@
         if (pendingStream.size === 0) return;
         const posts = [];
         for (const url of pendingStream) {
+            if (knownReplyUrls.has(url)) continue;
             const rec = store.get(url);
             if (rec) posts.push({ ...finalize(rec.post), _sources: Array.from(rec.sources) });
         }
         pendingStream.clear();
+        if (posts.length === 0) return;
         try {
             chrome.runtime.sendMessage({ action: 'MK_TH_COLLECT_BATCH', posts, total: store.size }).catch(() => {});
         } catch (e) {}
+    }
+
+    function resetStoreIfNavigated() {
+        if (window.location.href !== lastTrackedHref) {
+            lastTrackedHref = window.location.href;
+            store.clear();
+            knownReplyUrls.clear();
+            pendingStream.clear();
+            parsedScripts = new WeakSet();
+            stats.domEnriched = 0;
+            stats.apiResponses = 0;
+            apiNames.clear();
+        }
     }
 
     window.addEventListener('message', (event) => {
         if (event.source !== window) return;
         const data = event.data;
         if (!data || data.source !== SNIFFER_SOURCE) return;
+        resetStoreIfNavigated();
+        if (data.name && IGNORED_API_NAMES.test(data.name)) return;
+        // Chỉ thu thập khi đang ở trang /search hoặc đang trong phiên collect chủ động.
+        if (!collecting && !(window.location.pathname || '').startsWith('/search')) return;
         stats.apiResponses++;
         if (data.name) apiNames.set(data.name, (apiNames.get(data.name) || 0) + 1);
         ingestText(data.text, 'api');
@@ -372,6 +479,7 @@
     }
 
     async function collect(targetCount, maxScrolls) {
+        resetStoreIfNavigated();
         collecting = true;
         stopRequested = false;
         // Chờ trang render xong kết quả (tối đa ~10s).
@@ -407,6 +515,11 @@
             }
         }
         collecting = false;
+
+        // Dọn dẹp lần cuối: loại bỏ mọi bài nằm trong knownReplyUrls trước khi trả về.
+        for (const replyUrl of knownReplyUrls) {
+            store.delete(replyUrl);
+        }
 
         const records = Array.from(store.values());
         const bySource = countByBestSource();
@@ -446,9 +559,8 @@
         return false;
     });
 
-    // Cho test tự động / debug từ DevTools (world cô lập, không lộ ra trang Threads).
-    // Cho test tu dong / debug tu DevTools khi co co bat chu dong (world co lap, an toan).
+    // Cho test tự động / debug từ DevTools khi có cờ bật chủ động (world cô lập, an toàn).
     if (typeof window !== 'undefined' && window.__MK_DEV_DEBUG__) {
-        window.__mkThreadsCrawlDebug = { parseCount, readDomPosts, store, stats };
+        window.__mkThreadsCrawlDebug = { parseCount, readDomPosts, store, knownReplyUrls, stats };
     }
 })();

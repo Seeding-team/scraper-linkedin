@@ -172,6 +172,8 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
         post_url = p.post_url or p.url
         if not post_url or post_url in existing_urls:
             continue
+        if 'comment_id=' in post_url or 'reply_comment_id=' in post_url:
+            continue
 
         raw_time = p.timestamp_raw or p.date or None
         if not raw_time:

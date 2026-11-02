@@ -14,7 +14,7 @@ const FALLBACK_VARIABLES = {
     referringStoryRenderLocation: null,
     renderLocation: "group",
     scale: 1.5,
-    sortingSetting: "RECENT_ACTIVITY",
+    sortingSetting: "CHRONOLOGICAL",
     useDefaultActor: false,
     __relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider: true,
     __relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider: true,
@@ -202,6 +202,7 @@ async function fetchPosts(count = 20) {
 
         const variables = {
             ...templateVariables,
+            sortingSetting: "CHRONOLOGICAL",
             count: 15, // Tăng lên 15 để cào 100 bài nhanh hơn
             cursor: cursor,
             id: tokens.groupId,
@@ -252,7 +253,13 @@ async function fetchPosts(count = 20) {
         const lines = text.trim().split("\n");
         let parsedInThisPage = 0;
         
-        // Cập nhật hàm đệ quy để xài chung
+        const STORY_SKIP_KEYS = new Set([
+            'feedback', 'ufi', 'comment_rendering_instance',
+            'comment_rendering_instance_for_feed_location',
+            'interesting_top_level_comments', 'display_comments',
+            'comments', 'reply_comment', 'top_level_comments',
+            'attached_story', 'bump_reason'
+        ]);
         function getDeepValue(obj, targetKeys) {
             if (!obj || typeof obj !== 'object') return null;
             for (const k of targetKeys) {
@@ -264,53 +271,77 @@ async function fetchPosts(count = 20) {
             }
             return null;
         }
+        function getStoryValue(obj, targetKeys) {
+            if (!obj || typeof obj !== 'object') return null;
+            for (const k of targetKeys) {
+                if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+            }
+            for (const key in obj) {
+                if (STORY_SKIP_KEYS.has(key)) continue;
+                const res = getStoryValue(obj[key], targetKeys);
+                if (res !== null) return res;
+            }
+            return null;
+        }
     
         for (const line of lines) {
             try {
                 const data = JSON.parse(line);
                 
-                // Lấy page_info để phân trang
-                const pageInfo = getDeepValue(data, ['page_info']);
+                // Lấy page_info để phân trang (chỉ lấy từ group_feed)
+                const pageInfo = data?.data?.node?.group_feed?.page_info || (Array.isArray(data?.path) && data.path.includes('group_feed') ? getDeepValue(data, ['page_info']) : null);
                 if (pageInfo) {
                     if (pageInfo.has_next_page !== undefined) hasNextPage = pageInfo.has_next_page;
                     if (pageInfo.end_cursor) cursor = pageInfo.end_cursor;
                 }
                 
-                // Tìm mảng edges. 
+                // Chỉ lấy các edge thuộc group_feed hoặc Story, tuyệt đối bỏ qua chunk @defer của comment/UFI
                 let edges = [];
-                if (data?.data?.node?.group_feed?.edges) {
+                if (Array.isArray(data?.data?.node?.group_feed?.edges)) {
                     edges = data.data.node.group_feed.edges;
-                } else if (Array.isArray(data?.data)) {
-                    edges = data.data; 
-                } else if (data?.data?.edges) {
-                    edges = data.data.edges;
-                } else if (data?.node) {
-                    edges = [{ node: data.node }]; 
+                } else if (
+                    data?.data?.node &&
+                    (data.data.node.__typename === 'Story' ||
+                        (Array.isArray(data?.path) && data.path.includes('group_feed')))
+                ) {
+                    edges = [{ node: data.data.node }];
+                } else if (
+                    data?.data &&
+                    data.data.__typename === 'Story' &&
+                    Array.isArray(data?.path) &&
+                    data.path.includes('group_feed')
+                ) {
+                    edges = [{ node: data.data }];
                 }
                 
                 for (const edge of edges) {
-                    const node = edge.node;
-                    if (!node) continue;
+                    const node = edge && edge.node ? edge.node : edge;
+                    if (!node || typeof node !== 'object') continue;
+                    if (node.__typename && node.__typename !== 'Story') continue;
+                    if (String(node.id || '').startsWith('Y29tbWVudD')) continue;
+                    if (node.comment_parent !== undefined) continue;
                     
-                    const postId = node.post_id || node.id || node.legacy_post_id || getDeepValue(node, ['post_id']);
+                    const rawPostId = node.post_id || node.legacy_post_id || getStoryValue(node, ['post_id', 'legacy_post_id']) || (!String(node.id || '').startsWith('Y29tbWVudD') ? node.id : null);
+                    const postId = rawPostId ? String(rawPostId).trim() : '';
                     if (!postId) continue; 
 
                     // Nếu đã đủ số lượng thì bỏ qua parse
                     if (allPosts.length >= targetCount) continue;
 
-                    // Lấy thông tin tác giả từ actors[0] (đúng theo cấu trúc GraphQL Facebook)
-                    const actorsArr = getDeepValue(node, ['actors']);
+                    const rawUrl = node.url || node.share_url || getStoryValue(node, ['url', 'share_url', 'wwwURL']) || `https://www.facebook.com/groups/${tokens.groupId}/posts/${postId}`;
+                    if (/([?&])(comment_id|reply_comment_id)=/i.test(rawUrl)) continue;
+                    const url = rawUrl;
+
+                    // Lấy thông tin tác giả từ Story (không quét vào feedback/comments)
+                    const actorsArr = getStoryValue(node, ['actors']);
                     const actorObj = (Array.isArray(actorsArr) ? actorsArr[0] : actorsArr) || {};
-                    const author = actorObj?.name || getDeepValue(node, ['actors', 'owning_profile', 'name']) || "Ẩn danh";
-                    // Ưu tiên lấy url profile trực tiếp từ actor, nếu không có thì dùng numeric ID
+                    const author = actorObj?.name || getStoryValue(node, ['actors', 'owning_profile', 'name']) || "Ẩn danh";
                     const actorProfileUrl = actorObj?.url || actorObj?.profile_url || "";
                     const actorId = actorObj?.id || actorObj?.profile_id || "";
                     
-                    const messageObj = getDeepValue(node, ['message']);
+                    const messageObj = getStoryValue(node, ['message']);
                     const message = messageObj?.text || "";
-                    
-                    const url = node.url || node.share_url || `https://www.facebook.com/groups/${tokens.groupId}/posts/${postId}`;
-                    const creationTime = node.creation_time || getDeepValue(node, ['creation_time']); 
+                    const creationTime = node.creation_time || getStoryValue(node, ['creation_time']); 
                     
                     const reactionObj = getDeepValue(node, ['reaction_count']);
                     const reactionCount = reactionObj?.count || 0;
@@ -324,33 +355,26 @@ async function fetchPosts(count = 20) {
                     let images = [];
                     let videoUrl = null;
                     
-                    // Hàm đệ quy lục lọi toàn bộ ảnh và video trong cục attachments
                     function extractMedia(obj) {
                         if (!obj || typeof obj !== 'object') return;
-                        // Nếu tìm thấy link ảnh
                         if (obj.image && typeof obj.image.uri === 'string') {
-                            // Tránh lấy ảnh trùng lặp
                             if (!images.includes(obj.image.uri)) images.push(obj.image.uri);
                         } 
-                        // Nếu tìm thấy link video
                         if (obj.playable_url && typeof obj.playable_url === 'string') {
                             videoUrl = obj.playable_url;
                         }
-                        
                         for (const k in obj) {
                             extractMedia(obj[k]);
                         }
                     }
                     
-                    const attachments = getDeepValue(node, ['attachments']);
+                    const attachments = getStoryValue(node, ['attachments']);
                     if (attachments) extractMedia(attachments);
                     
-                    // Lưu vào mảng tổng
                     allPosts.push({
                         post_id: postId,
                         post_url: url,
                         author_name: author,
-                        // Ưu tiên URL profile thật (fb.com/username), fallback sang numeric ID URL
                         author_url: actorProfileUrl || (actorId ? `https://www.facebook.com/profile.php?id=${actorId}` : ""),
                         timestamp_raw: new Date((creationTime || 0) * 1000).toISOString(),
                         is_today: creationTime ? isToday(creationTime) : false,
@@ -482,15 +506,17 @@ function isToday(unixSeconds) {
             try {
                 const data = JSON.parse(line);
                 let edges = [];
-                if (data?.data?.node?.group_feed?.edges) edges = data.data.node.group_feed.edges;
-                else if (Array.isArray(data?.data)) edges = data.data;
-                else if (data?.data?.edges) edges = data.data.edges;
-                else if (data?.node) edges = [{ node: data.node }];
+                if (Array.isArray(data?.data?.node?.group_feed?.edges)) edges = data.data.node.group_feed.edges;
+                else if (data?.data?.node && (data.data.node.__typename === "Story" || (Array.isArray(data?.path) && data.path.includes("group_feed")))) edges = [{ node: data.data.node }];
+                else if (data?.data && data.data.__typename === "Story" && Array.isArray(data?.path) && data.path.includes("group_feed")) edges = [{ node: data.data }];
 
                 for (const edge of edges) {
-                    const node = edge.node;
-                    if (!node) continue;
-                    const postId = node.post_id || node.id || node.legacy_post_id;
+                    const node = edge && edge.node ? edge.node : edge;
+                    if (!node || typeof node !== "object") continue;
+                    if (node.__typename && node.__typename !== "Story") continue;
+                    if (String(node.id || "").startsWith("Y29tbWVudD")) continue;
+                    if (node.comment_parent !== undefined) continue;
+                    const postId = node.post_id || node.legacy_post_id || (!String(node.id || "").startsWith("Y29tbWVudD") ? node.id : null);
                     if (!postId || window.__mkSeenPostIds.has(postId)) continue;
                     window.__mkSeenPostIds.add(postId);
 
@@ -547,7 +573,7 @@ function isToday(unixSeconds) {
             updateHudStatus(`Đang chấm điểm bài: ${post.author_name}...`);
             const backendUrl = await getActiveBackendUrl();
 
-            const res = await fetch(`${backendUrl}/api/all-platform/extension-crawl/score-post`, {
+            const res = await fetch(`${backendUrl}/api/all-platform/extension/score-post`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -599,7 +625,7 @@ function isToday(unixSeconds) {
     // Tự động lưu bài điểm cao về CSDL Backend
     async function saveHighScoredPostToBackend(post, backendUrl) {
         try {
-            await fetch(`${backendUrl}/api/all-platform/extension-crawl/save-posts`, {
+            await fetch(`${backendUrl}/api/all-platform/extension/save-posts`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
