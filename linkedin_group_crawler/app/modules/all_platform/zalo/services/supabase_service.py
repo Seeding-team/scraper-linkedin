@@ -727,6 +727,10 @@ async def _hard_delete_zalo_account_data_fallback(account_id: str) -> Dict[str, 
 # Realtime: phân quyền user/role + share conversation
 # ----------------------------------------------------------------------------
 
+_USER_BY_EMAIL_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_USER_BY_EMAIL_CACHE_TTL = 60.0  # 60 giây
+
+
 async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Tra cứu ``public.app_users`` theo email (case-insensitive).
 
@@ -736,11 +740,18 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     Lưu ý: bảng ``app_users`` nằm ngoài schema zalo, có thể chưa được tạo trên
     một số môi trường. Hàm fail-soft trả về ``None`` thay vì raise.
     """
+    import time
+    import copy
     if not is_supabase_configured():
         return None
-    email_norm = (email or "").strip()
+    email_norm = (email or "").strip().lower()
     if not email_norm:
         return None
+    cached = _USER_BY_EMAIL_CACHE.get(email_norm)
+    if cached:
+        c_time, c_user = cached
+        if (time.time() - c_time) < _USER_BY_EMAIL_CACHE_TTL:
+            return copy.deepcopy(c_user)
     try:
         rows = await _rest(
             "GET",
@@ -761,6 +772,7 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     row = rows[0]
     if not isinstance(row, dict):
         return None
+    _USER_BY_EMAIL_CACHE[email_norm] = (time.time(), copy.deepcopy(row))
     return row
 
 

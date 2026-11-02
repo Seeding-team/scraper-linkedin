@@ -351,14 +351,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
               label: "Lịch cào & Hàng đợi",
               matchStartsWith: ["/all-platform/lich-cao-hang-doi"],
             },
-            {
-              type: "item",
-              id: "quick-comments",
-              href: "/all-platform/quick-comments",
-              icon: "chat_bubble",
-              label: "Thư viện mẫu câu",
-              matchStartsWith: ["/all-platform/quick-comments"],
-            },
           ],
         },
         {

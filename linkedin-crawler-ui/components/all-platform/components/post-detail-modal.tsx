@@ -200,7 +200,12 @@ export function PostDetailModal({
                   </span>
                 )}
                 {post.auto_seeding_comment.zalo_status === "sent" ? (
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700">✓ Đã nhắn tư vấn Zalo</span>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span>✓ Đã nhắn tin Zalo với số {post.auto_seeding_comment.phone_number}</span>
+                    {post.auto_seeding_comment.zalo_sent_by && (
+                      <span className="font-semibold opacity-90">({post.auto_seeding_comment.zalo_sent_by})</span>
+                    )}
+                  </span>
                 ) : post.auto_seeding_comment.zalo_status === "failed" ? (
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700" title={post.auto_seeding_comment.zalo_error || undefined}>
                     ⚠️ Chưa nhắn được qua Zalo

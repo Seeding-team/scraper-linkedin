@@ -100,6 +100,8 @@ export interface UnifiedPost {
     /** Tên hiển thị Zalo của khách (tìm được qua SĐT) — null nếu Zalo không trả về tên
      * riêng (migration 172). Hiện cùng SĐT trên post card cho rõ thông tin khách. */
     zalo_display_name?: string | null;
+    /** Tên người dùng trong hệ thống đã gửi tin nhắn Zalo tới SĐT này (migration 214). */
+    zalo_sent_by?: string | null;
   } | null;
 }
 

@@ -8,7 +8,7 @@
  * các block thông tin tách bạch).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { allPlatformPostsService } from "@/services/all-platform.service";
@@ -43,8 +43,19 @@ export function SeedingAccountsOverview() {
   const [selected, setSelected] = useState<MemberSeedingAccount | null>(null);
   const [timeRange, setTimeRange] = useState<"today" | "this_week" | "last_week" | "last_month" | "all">("all");
 
+  // In-memory SWR Cache: Render tức thì 0ms khi bấm qua lại giữa các mốc thời gian
+  const cacheRef = useRef<Record<string, MemberSeedingAccount[]>>({});
+
   const load = useCallback(() => {
     if (!user?.email) return;
+    const cachedData = cacheRef.current[timeRange];
+    if (cachedData && cachedData.length > 0) {
+      setAccounts(cachedData);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     allPlatformPostsService
       .getMemberSeedingOverview(user.email, timeRange)
       .then((res) => {
@@ -52,7 +63,9 @@ export function SeedingAccountsOverview() {
           setError(res.message || "Không tải được danh sách tài khoản seeding.");
           return;
         }
-        setAccounts(res.data?.accounts || []);
+        const accs = res.data?.accounts || [];
+        cacheRef.current[timeRange] = accs;
+        setAccounts(accs);
         setError(null);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Không tải được danh sách tài khoản seeding."))

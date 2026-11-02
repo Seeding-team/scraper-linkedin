@@ -135,6 +135,21 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [showZaloContactModal, setShowZaloContactModal] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
 
+  const [localZaloStatus, setLocalZaloStatus] = useState<string | null>(
+    post.auto_seeding_comment?.zalo_status || null
+  );
+  const [localZaloSentBy, setLocalZaloSentBy] = useState<string | null>(
+    post.auto_seeding_comment?.zalo_sent_by || null
+  );
+
+  useEffect(() => {
+    setLocalZaloStatus(post.auto_seeding_comment?.zalo_status || null);
+    setLocalZaloSentBy(post.auto_seeding_comment?.zalo_sent_by || null);
+  }, [post.auto_seeding_comment?.zalo_status, post.auto_seeding_comment?.zalo_sent_by]);
+
+  const effectiveZaloStatus = localZaloStatus;
+  const effectiveZaloSentBy = localZaloSentBy;
+
   const detectedPhone = useMemo(() => {
     return (
       normalizeDisplayPhone(post.auto_seeding_comment?.phone_number) ||
@@ -589,14 +604,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 </span>
               )}
 
-              {post.auto_seeding_comment?.zalo_status === "sent" ? (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300">
-                  ✓ Đã nhắn tư vấn
+              {effectiveZaloStatus === "sent" ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300/60 shadow-xs">
+                  <span>✓ Đã nhắn tin Zalo với số {detectedPhone || post.auto_seeding_comment?.phone_number}</span>
+                  {effectiveZaloSentBy && (
+                    <span className="font-semibold opacity-90">({effectiveZaloSentBy})</span>
+                  )}
                 </span>
-              ) : post.auto_seeding_comment?.zalo_status === "failed" ? (
+              ) : effectiveZaloStatus === "failed" ? (
                 <span
                   className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-                  title={post.auto_seeding_comment.zalo_error || undefined}
+                  title={post.auto_seeding_comment?.zalo_error || undefined}
                 >
                   ⚠️ Chưa nhắn được qua Zalo
                 </span>
@@ -608,11 +626,20 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               <button
                 type="button"
                 onClick={() => setShowZaloContactModal(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 px-3 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all"
-                title="Chọn tài khoản Zalo đang kết nối để nhắn tin tới khách hàng"
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold shadow-xs active:scale-95 transition-all",
+                  effectiveZaloStatus === "sent"
+                    ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                    : "bg-sky-600 hover:bg-sky-500 text-white"
+                )}
+                title={
+                  effectiveZaloStatus === "sent"
+                    ? `Đã được nhắn tin Zalo bởi ${effectiveZaloSentBy || "thành viên"}. Bấm để xem hoặc nhắn thêm.`
+                    : "Chọn tài khoản Zalo đang kết nối để nhắn tin tới khách hàng"
+                }
               >
                 <FiMessageSquare className="w-3.5 h-3.5" />
-                <span>Nhắn tin Zalo</span>
+                <span>{effectiveZaloStatus === "sent" ? "✓ Đã nhắn Zalo" : "Nhắn tin Zalo"}</span>
               </button>
 
               {post.auto_seeding_comment?.zalo_conversation_id && (
@@ -868,6 +895,16 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         postContent={post.content}
         groupName={post.group_name}
         postUrl={post.post_url}
+        postId={post.id}
+        platform={post.platform}
+        onSentSuccess={(info) => {
+          setLocalZaloStatus("sent");
+          if (info.sentBy) setLocalZaloSentBy(info.sentBy);
+          if (post.auto_seeding_comment) {
+            post.auto_seeding_comment.zalo_status = "sent";
+            post.auto_seeding_comment.zalo_sent_by = info.sentBy;
+          }
+        }}
       />
     </div>
   );

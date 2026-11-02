@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import { FiX, FiMessageSquare, FiExternalLink, FiPhone, FiCheck, FiAlertCircle, FiSend } from "react-icons/fi";
 import { useZaloAccountOptions } from "@/components/all-platform/zalo/centralized-shared/useZaloAccountOptions";
 import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/zaloCrawlerService";
-import { allPlatformQuickCommentService } from "@/services/all-platform.service";
+import { allPlatformQuickCommentService, allPlatformPostsService } from "@/services/all-platform.service";
 import { QuickCommentTemplate } from "@/types/unified.types";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { toast } from "sonner";
@@ -17,6 +17,9 @@ interface ZaloContactModalProps {
   postContent?: string;
   groupName?: string;
   postUrl?: string;
+  postId?: string;
+  platform?: string;
+  onSentSuccess?: (info: { phoneNumber: string; sentBy: string; zaloDisplayName?: string }) => void;
 }
 
 export function ZaloContactModal({
@@ -27,6 +30,9 @@ export function ZaloContactModal({
   postContent,
   groupName,
   postUrl,
+  postId,
+  platform,
+  onSentSuccess,
 }: ZaloContactModalProps) {
   const { user } = useAppAuth();
   const { accounts, selectedAccountId, setSelectedAccountId, loading } = useZaloAccountOptions();
@@ -148,6 +154,25 @@ export function ZaloContactModal({
         if (sendRes && (sendRes as any).error) {
           throw new Error((sendRes as any).error || "Tài khoản Zalo người nhận chặn tin nhắn từ người lạ.");
         }
+      }
+
+      const senderName = user?.name || (user?.email ? user.email.split("@")[0] : "Thành viên hệ thống");
+      try {
+        await allPlatformPostsService.recordZaloSent({
+          post_id: postId,
+          platform: platform || "facebook",
+          phone_number: phoneNumber,
+          zalo_display_name: dName,
+          zalo_conversation_id: convId,
+          message_content: message.trim(),
+          sent_by: senderName,
+        });
+      } catch (recErr) {
+        console.warn("Could not record zalo sent:", recErr);
+      }
+
+      if (onSentSuccess) {
+        onSentSuccess({ phoneNumber, sentBy: senderName, zaloDisplayName: dName });
       }
 
       toast.success(`Đã nhắn tin với ${dName} (${phoneNumber}) thành công!`, { id: toastId, duration: 4000 });
