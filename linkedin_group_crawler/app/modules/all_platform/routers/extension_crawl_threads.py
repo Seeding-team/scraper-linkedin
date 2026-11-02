@@ -29,11 +29,37 @@ EXTENSION_API_KEY = "markee-extension-key-2024"
 
 
 @router.get("/keywords")
-async def get_keywords() -> dict:
-    """Danh sách từ khoá/chủ đề Threads đang active (registry tự khám phá, migration 160) —
-    bg/rotation-crawl.js gọi NGAY ĐẦU 1 vòng (song song lúc cào Facebook/LinkedIn, không
-    chặn) để có sẵn danh sách khi tới lượt Threads. Không yêu cầu x-api-key (chỉ đọc, không
-    nhạy cảm) để extension gọi thẳng không cần thêm config."""
+async def get_keywords(topic_ids: Optional[str] = None) -> dict:
+    """Danh sách từ khoá/chủ đề Threads đang active.
+    Ưu tiên lấy từ Thư viện từ khoá người dùng đã tạo (bảng categories, category_type='keyword_item',
+    lọc theo topic_ids nếu có). Chỉ fallback sang threads_keyword_registry khi thư viện trống."""
+    try:
+        from app.core.supabase_client import get_supabase_client
+        supabase = get_supabase_client()
+        query = (
+            supabase.table("categories")
+            .select("name, code, is_active")
+            .eq("category_type", "keyword_item")
+        )
+        if topic_ids and topic_ids.strip():
+            clean_tids = [t.strip() for t in topic_ids.split(",") if t.strip()]
+            if clean_tids:
+                query = query.in_("code", clean_tids)
+        res = query.order("created_at", desc=False).execute()
+        lib_keywords: list[str] = []
+        seen: set[str] = set()
+        for row in (res.data or []):
+            if row.get("is_active") is False:
+                continue
+            kw = str(row.get("name") or "").strip()
+            if kw and kw.lower() not in seen:
+                seen.add(kw.lower())
+                lib_keywords.append(kw)
+        if lib_keywords or (topic_ids and topic_ids.strip()):
+            return {"success": True, "data": {"keywords": lib_keywords}}
+    except Exception as e:
+        logger.warning(f"[THREADS-KEYWORDS] Lỗi đọc thư viện từ khoá categories: {e}")
+
     try:
         await threads_keyword_service.ensure_daily_expansion()
     except Exception as e:
@@ -94,7 +120,7 @@ async def save_posts(
     # Field noi bo, khong duoc tra ve qua HTTP cho extension.
     inserted_rows = result.pop("_inserted_rows", [])
     if inserted_rows:
-        score_summary = await score_and_save_posts(TABLE, inserted_rows, id_member=payload.id_member)
+        score_summary = await score_and_save_posts(TABLE, inserted_rows, id_member=payload.id_member, keywords=[payload.keyword] if payload.keyword else None)
         if payload.keyword:
             threads_keyword_service.record_keyword_result(
                 payload.keyword, score_summary.get("total", 0), score_summary.get("high", 0)

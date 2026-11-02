@@ -442,7 +442,7 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
 
     # Cham diem "tiem nang seeding" (LLM) CHAY NEN, khong cho response - xem lead_score_service.py.
     if inserted_rows:
-        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name))
+        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name, keywords=payload.keywords))
 
     if payload.job_id:
         try:

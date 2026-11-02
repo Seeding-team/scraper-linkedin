@@ -153,6 +153,7 @@ export function RotationCrawlPanel() {
   const { status, version, isReady, features } = useSeedingExtensionStatus();
   const rot = useRotationSchedules();
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingSchedule, setEditingSchedule] = useState<RotationSchedule | null>(null);
 
   // Central Backend Schedules state (Filtered by RBAC from server)
   const [backendSchedules, setBackendSchedules] = useState<RotationSchedule[]>([]);
@@ -235,6 +236,16 @@ export function RotationCrawlPanel() {
       return false;
     },
     [user]
+  );
+
+  // Can edit: Admin, Leader (cho cả team và thành viên), hoặc chính chủ tạo lịch
+  const canEditSchedule = useCallback(
+    (s: RotationSchedule) => {
+      if (!user) return false;
+      if (isAdmin || isLeader) return true;
+      return isMySchedule(s);
+    },
+    [user, isAdmin, isLeader, isMySchedule]
   );
 
   // Filtered schedules for display
@@ -436,7 +447,7 @@ export function RotationCrawlPanel() {
         </div>
       </div>
 
-      {/* Schedules List */}
+      {/* Schedules Table */}
       <div className="p-4 flex flex-col gap-3">
         {isLoadingBackend && mergedSchedules.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12">
@@ -452,16 +463,36 @@ export function RotationCrawlPanel() {
               : "Chưa có lịch cào nào trong phạm vi này."}
           </div>
         ) : (
-          displayedSchedules.map((s) => (
-            <ScheduleCard
-              key={s.id}
-              schedule={s}
-              currentUser={user}
-              onToggle={handleToggle}
-              onStop={handleStop}
-              onDelete={handleDelete}
-            />
-          ))
+          <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-2xs">
+            <table className="w-full text-left text-xs text-foreground divide-y divide-border/60">
+              <thead className="bg-muted/50 text-[11px] font-bold text-muted-foreground uppercase tracking-wider">
+                <tr>
+                  <th scope="col" className="px-3 py-3 w-10 text-center">#</th>
+                  <th scope="col" className="px-3.5 py-3 min-w-[200px]">Lịch cào & Người tạo</th>
+                  <th scope="col" className="px-3.5 py-3 min-w-[180px]">Nền tảng & Mục tiêu</th>
+                  <th scope="col" className="px-3.5 py-3 min-w-[240px]">Thông số Extension Setup</th>
+                  <th scope="col" className="px-3.5 py-3 min-w-[130px]">Chu kỳ & Vòng</th>
+                  <th scope="col" className="px-3.5 py-3 min-w-[130px]">Trạng thái</th>
+                  <th scope="col" className="px-3.5 py-3 w-32 text-right">Thao tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {displayedSchedules.map((s, idx) => (
+                  <ScheduleTableRow
+                    key={s.id}
+                    index={idx + 1}
+                    schedule={s}
+                    currentUser={user}
+                    canEdit={canEditSchedule(s)}
+                    onToggle={handleToggle}
+                    onStop={handleStop}
+                    onDelete={handleDelete}
+                    onEdit={() => setEditingSchedule(s)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         {/* Realtime Extension Logs */}
@@ -482,6 +513,19 @@ export function RotationCrawlPanel() {
           onClose={() => setShowAddModal(false)}
           onCreated={() => loadBackendSchedules()}
           addSchedule={rot.addSchedule}
+        />
+      ) : null}
+
+      {/* Edit Schedule Modal */}
+      {editingSchedule ? (
+        <EditScheduleModal
+          schedule={editingSchedule}
+          onClose={() => setEditingSchedule(null)}
+          onSaved={() => {
+            setEditingSchedule(null);
+            loadBackendSchedules();
+          }}
+          updateSchedule={rot.updateSchedule}
         />
       ) : null}
     </div>
@@ -686,6 +730,629 @@ const INTERVAL_PRESETS = [
   { label: "6 giờ", hours: 6 },
 ];
 
+
+function ScheduleTableRow({
+  index,
+  schedule,
+  currentUser,
+  canEdit,
+  onToggle,
+  onStop,
+  onDelete,
+  onEdit,
+}: {
+  index: number;
+  schedule: RotationSchedule;
+  currentUser: any;
+  canEdit: boolean;
+  onToggle: (id: string, enabled: boolean) => void;
+  onStop: (id: string) => void;
+  onDelete: (id: string) => void;
+  onEdit: () => void;
+}) {
+  const meta = scheduleStatusMeta(schedule);
+  const nextRunText = schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : null;
+  const isActive = schedule.status === "running" || schedule.status === "waiting_interval" || schedule.status === "waiting_online";
+
+  const creator = schedule.creator;
+  const creatorEmail = creator?.email || schedule.cfg?.email || "";
+  const creatorName = creator?.name || (creatorEmail ? creatorEmail.split("@")[0] : "Thành viên");
+  const creatorRole = creator?.role || "member";
+  const creatorAvatar = creator?.avatar;
+  const isSystem = Boolean(creator?.is_system || creatorRole === "system" || creatorEmail === "seeding.crawler@markeeai.com");
+
+  const isSelf = Boolean(
+    currentUser &&
+      ((currentUser.id && creator?.user_id && String(currentUser.id) === String(creator.user_id)) ||
+        (currentUser.email && creatorEmail && currentUser.email.toLowerCase() === creatorEmail.toLowerCase()))
+  );
+
+  const cfg = schedule.cfg || ({} as any);
+  const scrollDistance = cfg.scrollDistance || 1600;
+  const delayMin = (cfg.scrollDelayMinMs ? cfg.scrollDelayMinMs / 1000 : 1.5).toFixed(1);
+  const delayMax = (cfg.scrollDelayMaxMs ? cfg.scrollDelayMaxMs / 1000 : 2.8).toFixed(1);
+  const groupRest = cfg.groupRestSec || 45;
+  const oldPostsLimit = cfg.oldPostsLimit || 15;
+  const maxPostsPerGroup = cfg.maxPostsPerGroup || 30;
+  const maxScrollTimeSec = cfg.maxScrollTimeSec || 90;
+
+  const fbCount = cfg.fbGroups?.length || 0;
+  const liCount = cfg.liGroups?.length || 0;
+  const thCount = cfg.threadsKeywords?.length || 0;
+  const thTopics = cfg.threadsTopicNames || [];
+
+  return (
+    <tr className="hover:bg-muted/30 transition-colors">
+      <td className="px-3 py-3 text-center text-muted-foreground font-mono text-[11px]">{index}</td>
+      
+      {/* Cột 1: Lịch cào & Người tạo */}
+      <td className="px-3.5 py-3">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-bold text-foreground text-xs">{schedule.label}</span>
+            {isSelf && (
+              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-[var(--color-markee-primary)]">
+                Bạn
+              </span>
+            )}
+            {isSystem && (
+              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-purple-100 text-purple-700">
+                VPS
+              </span>
+            )}
+            {!isSystem && !isSelf && (
+              <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-slate-700">
+                {creatorRole === "leader" ? "Leader" : "Member"}
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <div className="w-4 h-4 rounded-full bg-muted flex items-center justify-center text-[9px] font-bold shrink-0 uppercase">
+              {creatorAvatar ? (
+                <img src={creatorAvatar} alt="" className="w-4 h-4 rounded-full object-cover" />
+              ) : isSystem ? (
+                <span className="material-symbols-outlined text-[11px]">dns</span>
+              ) : (
+                creatorName.charAt(0)
+              )}
+            </div>
+            <span className="truncate max-w-[140px] font-medium text-foreground">{creatorName}</span>
+            {creatorEmail && <span className="truncate max-w-[120px] opacity-75 hidden sm:inline">({creatorEmail.split("@")[0]})</span>}
+          </div>
+        </div>
+      </td>
+
+      {/* Cột 2: Nền tảng & Mục tiêu */}
+      <td className="px-3.5 py-3">
+        <div className="flex flex-col gap-1 text-[11px]">
+          <div className="flex items-center gap-1 flex-wrap">
+            {fbCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-semibold">
+                FB: {fbCount} nhóm
+              </span>
+            )}
+            {liCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-800 border border-sky-200 text-[10px] font-semibold">
+                LI: {liCount} nhóm
+              </span>
+            )}
+            {thCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-md bg-slate-900 text-white text-[10px] font-semibold">
+                Threads: {thCount} từ khoá
+              </span>
+            )}
+            {fbCount === 0 && liCount === 0 && thCount === 0 && (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </div>
+          {thTopics.length > 0 && (
+            <div className="text-[10px] text-muted-foreground truncate max-w-[170px]" title={thTopics.join(", ")}>
+              Chủ đề: {thTopics.join(", ")}
+            </div>
+          )}
+        </div>
+      </td>
+
+      {/* Cột 3: Thông số Extension Setup */}
+      <td className="px-3.5 py-3">
+        <div className="flex flex-col gap-1 text-[11px]">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="px-1.5 py-0.5 rounded bg-muted/60 text-foreground font-mono text-[10px] border border-border" title="Cuộn mỗi nhịp">
+              {scrollDistance}px
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-muted/60 text-foreground font-mono text-[10px] border border-border" title="Độ trễ cuộn">
+              ⏱ {delayMin}-{delayMax}s
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 font-mono text-[10px] border border-amber-200" title="Nghỉ giữa 2 nhóm">
+              🛡 Nghỉ {groupRest}s
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap text-[10px] text-muted-foreground">
+            <span>Cắt bài cũ: <b>{oldPostsLimit}</b></span>
+            <span>•</span>
+            <span>Tối đa: <b>{maxPostsPerGroup} bài/nhóm</b></span>
+            <span>•</span>
+            <span>Max {maxScrollTimeSec}s</span>
+          </div>
+        </div>
+      </td>
+
+      {/* Cột 4: Chu kỳ & Vòng */}
+      <td className="px-3.5 py-3 text-[11px]">
+        <div className="flex flex-col gap-0.5">
+          <span className="font-semibold text-foreground">
+            {cfg.repeatEnabled ? `Lặp mỗi ${cfg.intervalHours}h` : "Chỉ chạy 1 lần"}
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            Đã chạy: <b>{schedule.roundNumber || 0} vòng</b>
+          </span>
+          {schedule.lastRoundSummary && (
+            <span className="text-[10px] font-semibold text-emerald-600">
+              +{schedule.lastRoundSummary.totalSaved} bài mới
+            </span>
+          )}
+        </div>
+      </td>
+
+      {/* Cột 5: Trạng thái & Live Progress */}
+      <td className="px-3.5 py-3">
+        <div className="flex flex-col gap-1">
+          <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 w-fit", meta.color)}>
+            {schedule.status === "running" && <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />}
+            {meta.label}
+          </span>
+          {nextRunText && schedule.status === "waiting_interval" && (
+            <span className="text-[10px] text-muted-foreground">Chạy tiếp lúc {nextRunText}</span>
+          )}
+          {schedule.status === "running" && schedule.progress && (
+            <div className="w-28 mt-0.5">
+              <div className="h-1 bg-blue-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{
+                    width: `${schedule.progress.totalGroups > 0 ? (schedule.progress.groupIndex / schedule.progress.totalGroups) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </td>
+
+      {/* Cột 6: Thao tác & Tùy chỉnh thông số */}
+      <td className="px-3.5 py-3 text-right">
+        <div className="flex items-center justify-end gap-1.5">
+          {/* Switch Bật/Tắt */}
+          <label className="inline-flex items-center cursor-pointer" title={schedule.enabled ? "Đang bật" : "Đang tắt"}>
+            <input
+              type="checkbox"
+              checked={schedule.enabled}
+              onChange={(e) => onToggle(schedule.id, e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-8 h-4.5 rounded-full bg-muted peer-checked:bg-primary transition-colors relative">
+              <div className="absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-3.5" />
+            </div>
+          </label>
+
+          {/* Nút Dừng */}
+          {isActive && (
+            <button
+              type="button"
+              onClick={() => onStop(schedule.id)}
+              className="p-1 rounded-md hover:bg-red-50 text-red-500 cursor-pointer"
+              title="Dừng lịch cào này"
+            >
+              <span className="material-symbols-outlined text-[16px]">stop_circle</span>
+            </button>
+          )}
+
+          {/* Nút Sửa Thông Số */}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-primary transition cursor-pointer"
+              title="Tùy chỉnh thông số lịch cào & Extension"
+            >
+              <span className="material-symbols-outlined text-[16px]">tune</span>
+            </button>
+          )}
+
+          {/* Nút Xoá */}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm(`Xoá lịch cào "${schedule.label}"? Nếu đang chạy sẽ dừng ngay.`)) {
+                  onDelete(schedule.id);
+                }
+              }}
+              className="p-1 rounded-md hover:bg-red-50 text-muted-foreground hover:text-red-600 transition cursor-pointer"
+              title="Xoá lịch"
+            >
+              <span className="material-symbols-outlined text-[16px]">delete</span>
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function EditScheduleModal({
+  schedule,
+  onClose,
+  onSaved,
+  updateSchedule,
+}: {
+  schedule: RotationSchedule;
+  onClose: () => void;
+  onSaved: () => void;
+  updateSchedule: (
+    id: string,
+    label: string,
+    fbGroups: RotationGroupInput[],
+    liGroups: RotationGroupInput[],
+    threadsKeywords: string[],
+    config: Record<string, unknown>
+  ) => Promise<{ success: boolean; error?: string }>;
+}) {
+  const fb = useGroupOptions("facebook");
+  const li = useGroupOptions("linkedin");
+
+  const origCfg = schedule.cfg || ({} as any);
+
+  const [label, setLabel] = useState(schedule.label || "");
+  const [intervalHours, setIntervalHours] = useState<number>(origCfg.intervalHours || 2);
+  const [repeatEnabled, setRepeatEnabled] = useState(origCfg.repeatEnabled !== false);
+  const [antiBotEnabled, setAntiBotEnabled] = useState(origCfg.antiBotEnabled !== false);
+  const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(origCfg.threadsAutoDiscover === true);
+
+  // Thông số cuộn & chống checkpoint
+  const [scrollDistance, setScrollDistance] = useState<number>(origCfg.scrollDistance || 1600);
+  const [scrollDelayMin, setScrollDelayMin] = useState<number>(origCfg.scrollDelayMinMs ? origCfg.scrollDelayMinMs / 1000 : 1.5);
+  const [scrollDelayMax, setScrollDelayMax] = useState<number>(origCfg.scrollDelayMaxMs ? origCfg.scrollDelayMaxMs / 1000 : 2.8);
+  const [groupRestSec, setGroupRestSec] = useState<number>(origCfg.groupRestSec || 45);
+  const [maxScrolls, setMaxScrolls] = useState<number>(origCfg.maxScrolls || 25);
+  const [oldPostsLimit, setOldPostsLimit] = useState<number>(origCfg.oldPostsLimit || 15);
+  const [maxPostsPerGroup, setMaxPostsPerGroup] = useState<number>(origCfg.maxPostsPerGroup || 30);
+  const [maxScrollTimeSec, setMaxScrollTimeSec] = useState<number>(origCfg.maxScrollTimeSec || 90);
+
+  // Từ khóa Threads
+  const [threadsKeywordsInput, setThreadsKeywordsInput] = useState<string>(
+    (origCfg.threadsKeywords || []).join("\n")
+  );
+
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Init fb & li selected IDs
+  useEffect(() => {
+    if (origCfg.fbGroups && Array.isArray(origCfg.fbGroups)) {
+      fb.setSelectedIds(origCfg.fbGroups.map((g: any) => g.id).filter(Boolean));
+    }
+    if (origCfg.liGroups && Array.isArray(origCfg.liGroups)) {
+      li.setSelectedIds(origCfg.liGroups.map((g: any) => g.id).filter(Boolean));
+    }
+  }, []);
+
+  const handleSave = async () => {
+    if (!label.trim()) {
+      setError("Vui lòng nhập tên lịch cào.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+
+    const updatedFbGroups = fb.groups
+      .filter((g) => fb.selectedIds.includes(g.id))
+      .map((g) => ({
+        id: g.id,
+        name: g.group_name || g.group_url,
+        url: g.group_url,
+        post_limit: maxPostsPerGroup,
+      }));
+
+    const updatedLiGroups = li.groups
+      .filter((g) => li.selectedIds.includes(g.id))
+      .map((g) => ({
+        id: g.id,
+        name: g.group_name || g.group_url,
+        url: g.group_url,
+      }));
+
+    const parsedKeywords = parseKeywords(threadsKeywordsInput);
+
+    const updatedConfig: Record<string, unknown> = {
+      ...origCfg,
+      id: schedule.id,
+      intervalHours,
+      repeatEnabled,
+      antiBotEnabled,
+      threadsAutoDiscover,
+      scrollDistance,
+      scrollDelayMinMs: Math.round(scrollDelayMin * 1000),
+      scrollDelayMaxMs: Math.round(scrollDelayMax * 1000),
+      groupRestSec,
+      maxScrolls,
+      oldPostsLimit,
+      maxPostsPerGroup,
+      maxScrollTimeSec,
+    };
+
+    try {
+      // 1. Update Extension
+      await updateSchedule(
+        schedule.id,
+        label.trim(),
+        updatedFbGroups,
+        updatedLiGroups,
+        parsedKeywords,
+        updatedConfig
+      );
+
+      // 2. Update Backend Database
+      await allPlatformRotationSchedulesService.updateSchedule(schedule.id, {
+        id: schedule.id,
+        label: label.trim(),
+        cfg: {
+          ...updatedConfig,
+          fbGroups: updatedFbGroups,
+          liGroups: updatedLiGroups,
+          threadsKeywords: parsedKeywords,
+        },
+      });
+
+      setSaving(false);
+      onSaved();
+    } catch (e: any) {
+      setSaving(false);
+      setError(e?.message || "Lỗi khi lưu thông số lịch cào.");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div
+        className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-3xl max-h-[90vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between p-4 border-b border-border bg-card">
+          <div className="flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-[20px]">tune</span>
+            <h3 className="font-bold text-sm text-foreground">
+              Tùy chỉnh thông số Extension & Lịch cào: <span className="text-primary">{schedule.label}</span>
+            </h3>
+          </div>
+          <button type="button" onClick={onClose} className="p-1 rounded-lg hover:bg-muted cursor-pointer">
+            <span className="material-symbols-outlined text-[18px] text-muted-foreground">close</span>
+          </button>
+        </div>
+
+        <div className="p-4 flex-1 overflow-y-auto flex flex-col gap-4">
+          <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 leading-relaxed">
+            ℹ️ Bạn có thể tùy chỉnh lại toàn bộ thông số cuộn, độ trễ, giới hạn bài viết và từ khóa. Sau khi bấm <b>&quot;Lưu thay đổi&quot;</b>, thông số mới sẽ được áp dụng cho lượt chạy tiếp theo của lịch cào này!
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-foreground block mb-1">Tên lịch cào</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+
+          {/* Thông số Extension chuyên sâu */}
+          <div className="rounded-xl border border-border bg-muted/20 p-3.5 flex flex-col gap-3">
+            <div className="flex items-center gap-2 pb-1 border-b border-border/60">
+              <span className="text-xs font-bold text-foreground">⚙️ Thông số cuộn & Chống Checkpoint né bot</span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                Áp dụng Extension
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Cuộn mỗi nhịp (px)</label>
+                <input
+                  type="number"
+                  min={800}
+                  max={3000}
+                  step={100}
+                  value={scrollDistance}
+                  onChange={(e) => setScrollDistance(Number(e.target.value) || 1600)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Độ trễ cuộn Min (s)</label>
+                <input
+                  type="number"
+                  min={0.5}
+                  max={10}
+                  step={0.1}
+                  value={scrollDelayMin}
+                  onChange={(e) => setScrollDelayMin(Number(e.target.value) || 1.5)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Độ trễ cuộn Max (s)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  step={0.1}
+                  value={scrollDelayMax}
+                  onChange={(e) => setScrollDelayMax(Number(e.target.value) || 2.8)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Nghỉ giữa 2 nhóm (s)</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={600}
+                  step={5}
+                  value={groupRestSec}
+                  onChange={(e) => setGroupRestSec(Number(e.target.value) || 45)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Số nhịp cuộn tối đa</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={100}
+                  step={5}
+                  value={maxScrolls}
+                  onChange={(e) => setMaxScrolls(Number(e.target.value) || 25)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Cắt khi gặp bài cũ</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={50}
+                  step={1}
+                  value={oldPostsLimit}
+                  onChange={(e) => setOldPostsLimit(Number(e.target.value) || 15)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Số bài tối đa / nhóm</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={200}
+                  step={5}
+                  value={maxPostsPerGroup}
+                  onChange={(e) => setMaxPostsPerGroup(Number(e.target.value) || 30)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] font-bold text-foreground block mb-1">Thời gian cuộn max (s)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={600}
+                  step={15}
+                  value={maxScrollTimeSec}
+                  onChange={(e) => setMaxScrollTimeSec(Number(e.target.value) || 90)}
+                  className="w-full rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-foreground focus:border-primary focus:outline-none"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Chu kỳ lặp lại */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-foreground block mb-1">Chu kỳ lặp lại (giờ)</label>
+              <input
+                type="number"
+                min={0.25}
+                step={0.25}
+                value={intervalHours}
+                onChange={(e) => setIntervalHours(Number(e.target.value) || 1)}
+                className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center gap-4 pt-6">
+              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                <input
+                  type="checkbox"
+                  checked={repeatEnabled}
+                  onChange={(e) => setRepeatEnabled(e.target.checked)}
+                  className="rounded border-border text-primary"
+                />
+                <span>Lặp lại tự động</span>
+              </label>
+              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-semibold text-foreground">
+                <input
+                  type="checkbox"
+                  checked={antiBotEnabled}
+                  onChange={(e) => setAntiBotEnabled(e.target.checked)}
+                  className="rounded border-border text-primary"
+                />
+                <span>Chống bot & Jitter</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Từ khóa Threads */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs font-bold text-foreground">
+                Từ khoá cào Threads ({parseKeywords(threadsKeywordsInput).length} từ khoá)
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={threadsAutoDiscover}
+                  onChange={(e) => setThreadsAutoDiscover(e.target.checked)}
+                  className="rounded border-border text-primary"
+                />
+                <span>Tự kết hợp AI Registry</span>
+              </label>
+            </div>
+            <textarea
+              rows={3}
+              value={threadsKeywordsInput}
+              onChange={(e) => setThreadsKeywordsInput(e.target.value)}
+              placeholder="Mỗi dòng 1 từ khoá..."
+              className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs text-foreground focus:border-primary focus:outline-none"
+            />
+          </div>
+
+          {error && (
+            <div className="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">
+              {error}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-border bg-card">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="px-4 py-2 rounded-xl border border-border text-xs font-semibold text-foreground hover:bg-muted cursor-pointer"
+          >
+            Đóng
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-primary text-white text-xs font-bold disabled:opacity-50 cursor-pointer shadow-sm hover:opacity-95"
+          >
+            {saving && <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
+            <span>Lưu thay đổi & Áp dụng ngay</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddScheduleModal({
   onClose,
   onCreated,
@@ -693,7 +1360,7 @@ function AddScheduleModal({
 }: {
   onClose: () => void;
   onCreated?: () => void;
-  addSchedule: (label: string, fbGroups: RotationGroupInput[], liGroups: RotationGroupInput[], threadsKeywords: string[], config: Record<string, unknown>) => Promise<{ success: boolean; error?: string }>;
+  addSchedule: (label: string, fbGroups: RotationGroupInput[], liGroups: RotationGroupInput[], threadsKeywords: string[], config: Record<string, unknown>) => Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }>;
 }) {
   const { user } = useAppAuth();
   const fb = useGroupOptions("facebook");
@@ -704,7 +1371,7 @@ function AddScheduleModal({
   const [repeatEnabled, setRepeatEnabled] = useState(true);
   const [intervalHours, setIntervalHours] = useState<number>(2);
   const [intervalInput, setIntervalInput] = useState<string>("2");
-  const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(true);
+  const [threadsAutoDiscover, setThreadsAutoDiscover] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // ── THÔNG SỐ CÀO & CUỘN CHỐNG CHECKPOINT (ĐỒNG BỘ EXTENSION) ──
@@ -761,9 +1428,15 @@ function AddScheduleModal({
       nextSelected.delete(topicId);
       setSelectedTopicIds(nextSelected);
       const items = topicKeywordsMap[topicId] || [];
+      const stillSelectedKeywords = new Set<string>();
+      nextSelected.forEach((otherId) => {
+        (topicKeywordsMap[otherId] || []).forEach((it) => stillSelectedKeywords.add(it.keyword));
+      });
       setSelectedKeywords((prev) => {
         const next = new Set(prev);
-        items.forEach((it) => next.delete(it.keyword));
+        items.forEach((it) => {
+          if (!stillSelectedKeywords.has(it.keyword)) next.delete(it.keyword);
+        });
         return next;
       });
     } else {
@@ -906,7 +1579,8 @@ function AddScheduleModal({
     }
   }, [minIntervalHours, intervalHours]);
 
-  const canSubmit = totalSelected > 0 && !!user?.id && !!user?.email && !submitting;
+  const isAnyTopicKeywordsLoading = Object.values(loadingTopicKeywords).some(Boolean);
+  const canSubmit = totalSelected > 0 && !isAnyTopicKeywordsLoading && !!user?.id && !!user?.email && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit || !user?.id || !user?.email) return;
@@ -916,15 +1590,22 @@ function AddScheduleModal({
       window.localStorage.setItem(INTERVAL_STORAGE_KEY, intervalInput);
     } catch {}
 
+    const generatedScheduleId = `sch_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     const fbGroups: RotationGroupInput[] = enabledPlatforms.has("facebook")
-      ? fb.groups.filter((g) => fb.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
+      ? fb.groups.filter((g) => fb.selectedIds.includes(g.id)).map((g) => ({
+          id: g.id,
+          name: g.group_name || g.group_url,
+          url: g.group_url,
+          post_limit: maxPostsPerGroup,
+        }))
       : [];
     const liGroups: RotationGroupInput[] = enabledPlatforms.has("linkedin")
       ? li.groups.filter((g) => li.selectedIds.includes(g.id)).map((g) => ({ id: g.id, name: g.group_name || g.group_url, url: g.group_url }))
       : [];
     const threadsKeywords = enabledPlatforms.has("threads") ? finalThreadsKeywords : [];
-    const threadsTopicNames = topics.filter((t) => selectedTopicIds.has(t.id)).map((t) => t.name);
-    const threadsTopicIds = Array.from(selectedTopicIds);
+    const effectiveAutoDiscover = enabledPlatforms.has("threads") ? threadsAutoDiscover : false;
+    const threadsTopicNames = enabledPlatforms.has("threads") ? topics.filter((t) => selectedTopicIds.has(t.id)).map((t) => t.name) : [];
+    const threadsTopicIds = enabledPlatforms.has("threads") ? Array.from(selectedTopicIds) : [];
 
     const schedulePayload = {
       label: label.trim() || "Lịch cào xoay vòng",
@@ -932,11 +1613,12 @@ function AddScheduleModal({
       liGroups,
       threadsKeywords,
       config: {
+        id: generatedScheduleId,
         email: user.email,
         idMember: user.id,
         intervalHours,
         repeatEnabled,
-        threadsAutoDiscover,
+        threadsAutoDiscover: effectiveAutoDiscover,
         threadsTopicIds,
         threadsTopicNames,
         scrollDistance,
@@ -952,15 +1634,21 @@ function AddScheduleModal({
 
     // 1. Post to Extension
     const res = await addSchedule(schedulePayload.label, fbGroups, liGroups, threadsKeywords, schedulePayload.config);
+    if (!res.success) {
+      setSubmitting(false);
+      setError(res.error || "Không tạo được lịch cào.");
+      return;
+    }
 
-    // 2. Persist to Backend Supabase (RBAC + Creator Identity)
+    // 2. Persist to Backend Supabase (RBAC + Creator Identity) using exact same schedule ID as Extension
+    const scheduleId = res.schedule?.id || generatedScheduleId;
     try {
-      const scheduleId = `sch_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       await allPlatformRotationSchedulesService.saveSchedule({
         id: scheduleId,
         label: schedulePayload.label,
         cfg: {
           ...schedulePayload.config,
+          id: scheduleId,
           fbGroups,
           liGroups,
           threadsKeywords,
@@ -979,10 +1667,6 @@ function AddScheduleModal({
     } catch {}
 
     setSubmitting(false);
-    if (!res.success) {
-      setError(res.error || "Không tạo được lịch cào.");
-      return;
-    }
     if (onCreated) onCreated();
     onClose();
   };

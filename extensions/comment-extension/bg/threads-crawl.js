@@ -72,8 +72,8 @@
         return `https://www.threads.com/search?${params.toString()}`;
     }
 
-    async function collectFromTab(tabId, targetCount) {
-        const message = { action: "MK_TH_COLLECT_POSTS", targetCount, maxScrolls: 15 };
+    async function collectFromTab(tabId, targetCount, maxScrolls = 15) {
+        const message = { action: "MK_TH_COLLECT_POSTS", targetCount, maxScrolls: Number(maxScrolls) > 0 ? Number(maxScrolls) : 15 };
         try {
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (e) {
@@ -166,7 +166,7 @@
 
                 let result;
                 try {
-                    result = await collectFromTab(crawlTabId, targetCount);
+                    result = await collectFromTab(crawlTabId, targetCount, config.maxScrolls || 15);
                 } catch (e) {
                     log(`Không đọc được trang kết quả: ${e.message}`, "error");
                     continue;

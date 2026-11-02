@@ -154,19 +154,18 @@ window.addEventListener("message", function(event) {
         safeSendMessage({ action, ...(payload || {}) }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
-    } else if (action === "MK_ROTATE_SCHEDULE_ADD") {
-        // Tao 1 lich cao xoay vong moi: khac MK_FB/LI_CRAWL_START o cho nhan 3 danh sach
-        // rieng (fbGroups/liGroups/threadsKeywords) thay vi 1 "groups" chung, vi Threads
-        // dung tu khoa chu khong phai group.
+    } else if (action === "MK_ROTATE_SCHEDULE_ADD" || action === "MK_ROTATE_SCHEDULE_UPDATE") {
+        const resultAction = action === "MK_ROTATE_SCHEDULE_ADD" ? "MK_ROTATE_SCHEDULE_ADD_RESULT" : "MK_ROTATE_SCHEDULE_UPDATE_RESULT";
         safeSendMessage({
             action,
+            id: payload?.id || "",
             label: payload?.label || "",
             fbGroups: payload?.fbGroups || [],
             liGroups: payload?.liGroups || [],
             threadsKeywords: payload?.threadsKeywords || [],
             config: payload?.config || {},
         }, response => {
-            window.postMessage({ action: "MK_ROTATE_SCHEDULE_ADD_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+            window.postMessage({ action: resultAction, payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
         });
     } else if (action === "LI_FETCH_POST_INFO") {
         // Tương thích luồng "Thêm bài viết" LinkedIn ở trang Tương tác nội bộ (lib/li-ext-bridge.ts),

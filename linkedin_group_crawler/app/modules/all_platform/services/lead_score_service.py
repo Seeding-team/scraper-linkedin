@@ -88,12 +88,22 @@ def _clean_content(text: str) -> str:
     return "".join(ch for ch in (text or "") if ch in ("\n", "\t") or ord(ch) >= 32)
 
 
-async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
+async def score_text_for_lead(content: str, *, keywords: Optional[list[str]] = None) -> Optional[dict[str, Any]]:
     """Trả {"score": int, "reason": str} hoặc None nếu chưa cấu hình/lỗi (KHÔNG raise —
     chấm điểm là tiện ích phụ, lỗi ở đây không được làm hỏng luồng lưu bài chính)."""
     content = _clean_content(content)
     if not settings.openai_api_key or not content.strip():
         return None
+
+    clean_kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    system_prompt = _SYSTEM_PROMPT
+    if clean_kws:
+        kw_str = ", ".join(clean_kws[:20])
+        system_prompt = (
+            f"{_SYSTEM_PROMPT}\n\n"
+            f"LƯU Ý QUAN TRỌNG THEO TỪ KHOÁ ĐÃ CHỌN: Người dùng đang chủ động cào bài theo từ khoá/chủ đề: [{kw_str}]. "
+            f"Nếu bài viết có nội dung phù hợp hoặc đang tìm kiếm nhu cầu liên quan tới từ khoá [{kw_str}], hãy ưu tiên chấm điểm CAO (70-100) sát với từ khoá đã chọn."
+        )
 
     url = f"{settings.openai_base_url}/chat/completions"
     headers = {
@@ -103,7 +113,7 @@ async def score_text_for_lead(content: str) -> Optional[dict[str, Any]]:
     body = {
         "model": settings.ai_model,
         "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": content[:3000]},
         ],
         "temperature": 0.2,
@@ -164,6 +174,7 @@ async def score_and_save_posts(
     *,
     id_member: Optional[str] = None,
     group_name: Optional[str] = None,
+    keywords: Optional[list[str]] = None,
 ) -> dict[str, int]:
     """Chấm điểm + lưu lead_score/lead_score_reason/lead_need_category cho các bài vừa
     insert (`rows` = list {"id", "content", "post_url"?}). Thường gọi qua asyncio.create_task
@@ -189,14 +200,15 @@ async def score_and_save_posts(
         if not post_id or not content.strip():
             return
         async with semaphore:
-            result = await score_text_for_lead(content)
+            result = await score_text_for_lead(content, keywords=keywords)
         if not result:
             return
         summary["total"] += 1
         try:
-            if result["score"] < _DELETE_BELOW_SCORE:
-                # Bai diem thap khong co gia tri cho seeding - xoa luon thay vi chi luu
-                # diem, giu feed sach (yeu cau 2026-10-01).
+            if result["score"] < _DELETE_BELOW_SCORE and table != "threads_posts" and not keywords:
+                # Bai diem thap khong co gia tri cho seeding (tren group FB/LI chung) - xoa luon
+                # Rieng threads_posts da duoc loc nghiem ngat theo dung tu khoa nguoi dung chon
+                # (co the thuoc chu de ngoai web/app) nen giu lai va luu diem thay vi xoa mat bai!
                 await asyncio.to_thread(lambda: supabase.table(table).delete().eq("id", post_id).execute())
                 logger.info(f"lead_score: xoá bài {table}#{post_id} (điểm {result['score']} - {result['reason']})")
                 summary["deleted"] += 1

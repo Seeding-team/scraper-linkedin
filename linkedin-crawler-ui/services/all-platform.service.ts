@@ -3045,6 +3045,13 @@ export const allPlatformRotationSchedulesService = {
     });
   },
 
+  updateSchedule: (scheduleId: string, schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
   toggleSchedule: (scheduleId: string, enabled: boolean): Promise<ApiResponse<{ id: string; enabled: boolean }>> => {
     return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}/toggle`, {
       method: "PUT",

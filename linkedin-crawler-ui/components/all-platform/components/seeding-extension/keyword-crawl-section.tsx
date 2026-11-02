@@ -11,7 +11,8 @@
  *   LINK video thì extension mở thẳng video đó, lưu luôn (không lọc theo thời gian/số lượng).
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { allPlatformKeywordsService, type KeywordTopic } from "@/services/all-platform.service";
 import { ExternalLink, Heart, MessageCircle, Repeat2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -113,6 +114,65 @@ export function KeywordCrawlSection({ platform, isReady, needsUpdate, runtime, o
   const [limitInput, setLimitInput] = useState("20");
   const [maxAgeDays, setMaxAgeDays] = useState("7");
   const [sortRecent, setSortRecent] = useState(true);
+  const [topics, setTopics] = useState<KeywordTopic[]>([]);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<Set<string>>(new Set());
+  const [topicKeywordsCache, setTopicKeywordsCache] = useState<Record<string, string[]>>({});
+  const [loadingTopicId, setLoadingTopicId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    allPlatformKeywordsService.getTopics().then((res) => {
+      if (!active) return;
+      if (res.success && Array.isArray(res.data)) {
+        setTopics(res.data);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const handleToggleTopic = async (topicId: string) => {
+    const isSelected = selectedTopicIds.has(topicId);
+    let kwsForTopic = topicKeywordsCache[topicId];
+    if (!kwsForTopic) {
+      setLoadingTopicId(topicId);
+      try {
+        const res = await allPlatformKeywordsService.getKeywordsInTopic(topicId);
+        if (res.success && Array.isArray(res.data)) {
+          kwsForTopic = res.data.map((it) => it.keyword.trim()).filter(Boolean);
+          setTopicKeywordsCache((prev) => ({ ...prev, [topicId]: kwsForTopic }));
+        } else {
+          kwsForTopic = [];
+        }
+      } catch {
+        kwsForTopic = [];
+      } finally {
+        setLoadingTopicId(null);
+      }
+    }
+
+    const nextTopicIds = new Set(selectedTopicIds);
+    const currentLines = parseKeywords(keywordsInput, platform);
+    if (isSelected) {
+      nextTopicIds.delete(topicId);
+      const removeSet = new Set(kwsForTopic.map((k) => k.toLowerCase()));
+      const remaining = currentLines.filter((k) => !removeSet.has(k.toLowerCase()));
+      setKeywordsInput(remaining.join("\n"));
+    } else {
+      // Nếu chưa có chủ đề nào được chọn trước đó, thay thế danh sách cũ trong localStorage bằng đúng chủ đề người dùng vừa chọn
+      const baseList = nextTopicIds.size === 0 ? [] : currentLines;
+      nextTopicIds.add(topicId);
+      const seen = new Set(baseList.map((k) => k.toLowerCase()));
+      const merged = [...baseList];
+      for (const kw of kwsForTopic) {
+        if (!seen.has(kw.toLowerCase())) {
+          seen.add(kw.toLowerCase());
+          merged.push(kw);
+        }
+      }
+      setKeywordsInput(merged.join("\n"));
+    }
+    setSelectedTopicIds(nextTopicIds);
+  };
 
   const keywords = useMemo(() => parseKeywords(keywordsInput, platform), [keywordsInput, platform]);
   const linkCount = useMemo(
@@ -157,9 +217,55 @@ export function KeywordCrawlSection({ platform, isReady, needsUpdate, runtime, o
 
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 flex flex-col gap-2 min-w-0">
-          <label htmlFor={`${idPrefix}-keywords`} className="text-sm font-bold text-foreground">
-            {copy.label} ({countLabel}) <span className="text-red-500">*</span>
-          </label>
+          <div className="flex items-center justify-between gap-2">
+            <label htmlFor={`${idPrefix}-keywords`} className="text-sm font-bold text-foreground">
+              {copy.label} ({countLabel}) <span className="text-red-500">*</span>
+            </label>
+            {keywordsInput.trim() && (
+              <button
+                type="button"
+                disabled={runtime.running}
+                onClick={() => {
+                  setSelectedTopicIds(new Set());
+                  setKeywordsInput("");
+                  try { window.localStorage.removeItem(copy.storageKey); } catch {}
+                }}
+                className="text-xs font-semibold text-muted-foreground hover:text-red-600 cursor-pointer"
+              >
+                Xoá trắng từ khoá
+              </button>
+            )}
+          </div>
+          {topics.length > 0 && (
+            <div className="flex flex-col gap-1.5 rounded-xl border border-border/80 bg-muted/20 p-2.5">
+              <div className="text-[11px] font-bold text-foreground">
+                Chọn nhanh từ Thư viện chủ đề ({selectedTopicIds.size}/{topics.length}):
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-[88px] overflow-y-auto">
+                {topics.map((t) => {
+                  const active = selectedTopicIds.has(t.id);
+                  const loading = loadingTopicId === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      disabled={runtime.running || loading}
+                      onClick={() => handleToggleTopic(t.id)}
+                      className={cn(
+                        "px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition cursor-pointer flex items-center gap-1",
+                        active
+                          ? "bg-primary text-white border-primary shadow-2xs"
+                          : "bg-card text-foreground border-border hover:bg-muted"
+                      )}
+                    >
+                      <span>{t.name}</span>
+                      <span className="text-[10px] opacity-75">{loading ? "..." : `(${t.keywords_count || 0})`}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           <textarea
             id={`${idPrefix}-keywords`}
             rows={6}

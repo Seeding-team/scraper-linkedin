@@ -16,6 +16,7 @@ Các bước lọc (chạy đồng bộ, router gọi qua `asyncio.to_thread`):
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -79,6 +80,38 @@ def _engagement_score(p: dict) -> int:
     return p["comments"] * 2 + p["reactions"] + p["shares"] * 3
 
 
+def _strip_accents(text: str) -> str:
+    norm = unicodedata.normalize("NFD", text or "")
+    no_acc = "".join(ch for ch in norm if unicodedata.category(ch) != "Mn")
+    return no_acc.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _content_matches_keyword(content: Optional[str], keyword: Optional[str]) -> bool:
+    """Kiểm tra nội dung bài Threads có thực sự khớp với từ khoá đang tìm hay không.
+    Loại bỏ các bài gợi ý/nổi bật không liên quan mà trang search Threads tự chèn vào."""
+    kw_clean = (keyword or "").strip().lower()
+    if not kw_clean:
+        return True
+    text_lower = (content or "").strip().lower()
+    if not text_lower:
+        return False
+    # 1. Khớp nguyên cụm từ (có dấu hoặc không dấu)
+    if kw_clean in text_lower:
+        return True
+    kw_unaccent = _strip_accents(kw_clean)
+    text_unaccent = _strip_accents(text_lower)
+    if kw_unaccent and kw_unaccent in text_unaccent:
+        return True
+    # 2. Khớp toàn bộ các từ đơn có nghĩa (>= 2 ký tự) trong cụm từ khoá
+    tokens = [tok for tok in re.split(r"\s+", kw_clean) if len(tok) >= 2]
+    if tokens and all(tok in text_lower for tok in tokens):
+        return True
+    tokens_unaccent = [tok for tok in re.split(r"\s+", kw_unaccent) if len(tok) >= 2]
+    if tokens_unaccent and all(tok in text_unaccent for tok in tokens_unaccent):
+        return True
+    return False
+
+
 def save_threads_crawl_batch(
     *,
     posts: list[dict],
@@ -106,6 +139,11 @@ def save_threads_crawl_batch(
             continue
         url, username, code = norm
         if url in candidates:
+            continue
+
+        # 2c. Kiểm tra bài viết thực sự chứa từ khoá đã chọn (loại bài gợi ý/trending lệch từ khoá của Threads)
+        if keyword and not _content_matches_keyword(raw.get("content"), keyword):
+            skipped_invalid += 1
             continue
 
         post_time = _parse_post_time(raw.get("post_time"))

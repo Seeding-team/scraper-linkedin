@@ -73,6 +73,24 @@ def create_or_update_schedule(
         return BaseResponse(success=False, message=str(exc))
 
 
+@router.put("/{schedule_id}")
+def update_schedule(
+    schedule_id: str,
+    payload: SaveScheduleRequest,
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    """Update an existing rotation schedule with team/RBAC permissions."""
+    try:
+        sch_data = dict(payload.schedule)
+        sch_data["id"] = schedule_id
+        data = save_or_update_rotation_schedule(sch_data, current_user)
+        return BaseResponse(success=True, message="Đã cập nhật thông số lịch cào thành công", data=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        return BaseResponse(success=False, message=str(exc))
+
+
 @router.put("/{schedule_id}/toggle")
 def toggle_schedule(
     schedule_id: str,

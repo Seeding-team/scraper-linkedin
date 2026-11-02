@@ -322,6 +322,17 @@ export interface RotationScheduleCfg {
   fbGroups: RotationGroupInput[];
   liGroups: RotationGroupInput[];
   threadsKeywords: string[];
+  threadsAutoDiscover?: boolean;
+  threadsTopicIds?: string[];
+  threadsTopicNames?: string[];
+  scrollDistance?: number;
+  scrollDelayMinMs?: number;
+  scrollDelayMaxMs?: number;
+  groupRestSec?: number;
+  maxScrolls?: number;
+  oldPostsLimit?: number;
+  maxPostsPerGroup?: number;
+  maxScrollTimeSec?: number;
 }
 
 export interface ScheduleProgress {
@@ -425,7 +436,7 @@ export function useRotationSchedules() {
       liGroups: RotationGroupInput[],
       threadsKeywords: string[],
       config: Record<string, unknown>,
-    ): Promise<{ success: boolean; error?: string }> => {
+    ): Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }> => {
       return new Promise((resolve) => {
         let settled = false;
         const onMsg = (e: MessageEvent) => {
@@ -436,7 +447,7 @@ export function useRotationSchedules() {
           resolve(e.data.payload || { success: false, error: "Không nhận được phản hồi từ Extension." });
         };
         window.addEventListener("message", onMsg);
-        postToExtension("MK_ROTATE_SCHEDULE_ADD", { label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
+        postToExtension("MK_ROTATE_SCHEDULE_ADD", { id: config.id, label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
         window.setTimeout(() => {
           if (settled) return;
           settled = true;
@@ -460,11 +471,42 @@ export function useRotationSchedules() {
     [addLog],
   );
 
+  const updateSchedule = useCallback(
+    (
+      id: string,
+      label: string,
+      fbGroups: RotationGroupInput[],
+      liGroups: RotationGroupInput[],
+      threadsKeywords: string[],
+      config: Record<string, unknown>,
+    ): Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }> => {
+      return new Promise((resolve) => {
+        let settled = false;
+        const onMsg = (e: MessageEvent) => {
+          if (e.source !== window || e.data?.action !== "MK_ROTATE_SCHEDULE_UPDATE_RESULT") return;
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("message", onMsg);
+          resolve(e.data.payload || { success: false, error: "Không nhận được phản hồi từ Extension." });
+        };
+        window.addEventListener("message", onMsg);
+        postToExtension("MK_ROTATE_SCHEDULE_UPDATE", { id, label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
+        window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("message", onMsg);
+          resolve({ success: true }); // Không để timeout chặn flow web nếu extension chưa phản hồi ngay
+        }, 5000);
+      });
+    },
+    [],
+  );
+
   const deleteSchedule = useCallback((id: string) => {
     postToExtension("MK_ROTATE_SCHEDULE_DELETE", { id });
   }, []);
 
-  return { schedules, logs, loaded, addSchedule, toggleSchedule, stopSchedule, deleteSchedule };
+  return { schedules, logs, loaded, addSchedule, updateSchedule, toggleSchedule, stopSchedule, deleteSchedule };
 }
 
 // ── Bình luận hàng loạt (Facebook + LinkedIn) + hẹn giờ Facebook ─────────────

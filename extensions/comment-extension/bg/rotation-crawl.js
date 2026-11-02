@@ -152,9 +152,12 @@
     // threads_keyword_service.py) - goi NGAY DAU vong (khong await o day) de chay SONG SONG
     // voi luc dang cao Facebook/LinkedIn, toi luc vao stage Threads thi da co san, khong mat
     // them thoi gian cho (yeu cau 2026-10-02).
-    async function fetchAutoThreadsKeywords(apiBase) {
+    async function fetchAutoThreadsKeywords(apiBase, topicIds) {
         try {
-            const res = await fetch(`${apiBase}/api/all-platform/extension/threads/keywords`);
+            const qs = Array.isArray(topicIds) && topicIds.length > 0
+                ? `?topic_ids=${encodeURIComponent(topicIds.join(","))}`
+                : "";
+            const res = await fetch(`${apiBase}/api/all-platform/extension/threads/keywords${qs}`);
             const data = await res.json();
             const keywords = data && data.data && Array.isArray(data.data.keywords) ? data.data.keywords : [];
             return keywords.filter(Boolean);
@@ -166,7 +169,11 @@
     async function runOneRound(scheduleId, label, cfg, roundNumber) {
         const summary = { roundNumber, facebook: null, linkedin: null, threads: null };
         const isCancelled = () => cancelRequestedIds.has(scheduleId);
-        const autoThreadsKeywordsPromise = cfg.threadsAutoDiscover ? fetchAutoThreadsKeywords(cfg.apiBase) : Promise.resolve([]);
+        const hasExplicitKeywords = Array.isArray(cfg.threadsKeywords) && cfg.threadsKeywords.length > 0;
+        // Chỉ lấy từ khoá tự động khi người dùng KHÔNG chọn từ khoá cụ thể nào VÀ bật rõ threadsAutoDiscover === true
+        const autoThreadsKeywordsPromise = (!hasExplicitKeywords && cfg.threadsAutoDiscover === true)
+            ? fetchAutoThreadsKeywords(cfg.apiBase, cfg.threadsTopicIds)
+            : Promise.resolve([]);
 
         // ── THÔNG SỐ CÀO & CUỘN TÙY CHỈNH THEO CÀI ĐẶT EXTENSION ──
         const scrollDistance = cfg.scrollDistance || 1600;
@@ -475,10 +482,20 @@
                     fbGroups,
                     liGroups,
                     threadsKeywords,
-                    threadsAutoDiscover,
+                    threadsAutoDiscover: msg.config.threadsAutoDiscover === true,
+                    threadsTopicIds: Array.isArray(msg.config.threadsTopicIds) ? msg.config.threadsTopicIds : [],
+                    threadsTopicNames: Array.isArray(msg.config.threadsTopicNames) ? msg.config.threadsTopicNames : [],
+                    scrollDistance: msg.config.scrollDistance || 1600,
+                    scrollDelayMinMs: msg.config.scrollDelayMinMs || 1500,
+                    scrollDelayMaxMs: msg.config.scrollDelayMaxMs || 2800,
+                    groupRestSec: msg.config.groupRestSec || 45,
+                    maxScrolls: msg.config.maxScrolls || 25,
+                    oldPostsLimit: msg.config.oldPostsLimit || 15,
+                    maxPostsPerGroup: msg.config.maxPostsPerGroup || 30,
+                    maxScrollTimeSec: msg.config.maxScrollTimeSec || 90,
                 };
                 const schedule = {
-                    id: genId(),
+                    id: msg.id || (msg.config && msg.config.id) || genId(),
                     label: (msg.label || "").trim() || `Lịch cào ${new Date().toLocaleTimeString("vi-VN")}`,
                     cfg,
                     enabled: true,
@@ -496,6 +513,56 @@
                 await writeSchedules(list);
                 sendResponse({ success: true, schedule });
                 await tryRunDueSchedules();
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_UPDATE") {
+            (async () => {
+                const list = await readSchedulesRaw();
+                const idx = list.findIndex((s) => s.id === msg.id);
+                if (idx === -1) {
+                    sendResponse({ success: false, error: "Không tìm thấy lịch cào này trong Extension." });
+                    return;
+                }
+                const oldSch = list[idx];
+                const patchCfg = msg.config || {};
+                const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : (oldSch.cfg?.fbGroups || []);
+                const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : (oldSch.cfg?.liGroups || []);
+                const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : (oldSch.cfg?.threadsKeywords || []);
+                
+                const updatedCfg = {
+                    ...oldSch.cfg,
+                    ...patchCfg,
+                    fbGroups,
+                    liGroups,
+                    threadsKeywords,
+                    intervalHours: patchCfg.intervalHours != null ? Math.max(0.05, Number(patchCfg.intervalHours) || 1) : (oldSch.cfg?.intervalHours || 1),
+                    repeatEnabled: patchCfg.repeatEnabled != null ? !!patchCfg.repeatEnabled : (oldSch.cfg?.repeatEnabled ?? true),
+                    antiBotEnabled: patchCfg.antiBotEnabled != null ? patchCfg.antiBotEnabled !== false : (oldSch.cfg?.antiBotEnabled !== false),
+                    threadsAutoDiscover: patchCfg.threadsAutoDiscover === true,
+                    threadsTopicIds: Array.isArray(patchCfg.threadsTopicIds) ? patchCfg.threadsTopicIds : (oldSch.cfg?.threadsTopicIds || []),
+                    threadsTopicNames: Array.isArray(patchCfg.threadsTopicNames) ? patchCfg.threadsTopicNames : (oldSch.cfg?.threadsTopicNames || []),
+                    scrollDistance: Number(patchCfg.scrollDistance) || oldSch.cfg?.scrollDistance || 1600,
+                    scrollDelayMinMs: Number(patchCfg.scrollDelayMinMs) || oldSch.cfg?.scrollDelayMinMs || 1500,
+                    scrollDelayMaxMs: Number(patchCfg.scrollDelayMaxMs) || oldSch.cfg?.scrollDelayMaxMs || 2800,
+                    groupRestSec: Number(patchCfg.groupRestSec) || oldSch.cfg?.groupRestSec || 45,
+                    maxScrolls: Number(patchCfg.maxScrolls) || oldSch.cfg?.maxScrolls || 25,
+                    oldPostsLimit: Number(patchCfg.oldPostsLimit) || oldSch.cfg?.oldPostsLimit || 15,
+                    maxPostsPerGroup: Number(patchCfg.maxPostsPerGroup) || oldSch.cfg?.maxPostsPerGroup || 30,
+                    maxScrollTimeSec: Number(patchCfg.maxScrollTimeSec) || oldSch.cfg?.maxScrollTimeSec || 90,
+                };
+
+                const updatedSchedule = {
+                    ...oldSch,
+                    label: (msg.label || "").trim() || oldSch.label,
+                    cfg: updatedCfg,
+                };
+
+                list[idx] = updatedSchedule;
+                await writeSchedules(list);
+                sendResponse({ success: true, schedule: updatedSchedule });
+                log(msg.id, updatedSchedule.label, "Đã cập nhật thông số cào mới cho các lượt chạy tiếp theo.", "info");
             })();
             return true;
         }
