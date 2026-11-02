@@ -574,19 +574,11 @@ def can_manage_service_catalog_pricing(user: dict[str, Any] | None) -> bool:
 
 
 def can_manage_shared_master_data(user: dict[str, Any] | None) -> bool:
-    """Quyen quan tri master data dung chung CRM/Quote:
-    - admin/leader: full.
-    - member co quote_business_role sale/presale/both: duoc them/sua/ngung dung.
-    - member thuong: chi xem/chon.
-
-    Ham nay KHONG lien quan tenant business data; chi dung cho bang dung chung
-    nhu categories, service_catalog, quote_forms/issuer companies."""
-    if not user:
-        return False
-    role = str(user.get("role") or "").strip().lower()
-    if role in ("admin", "leader"):
-        return True
-    return has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale")
+    """Quyen quan tri master data dung chung CRM/Quote (categories,
+    service_catalog, quote_forms/issuer companies, vendor import, MSC sync):
+    bat ky user da dang nhap nao cung duoc them/sua/xoa (mo full quyen theo
+    yeu cau 2026-11-02)."""
+    return user is not None
 
 
 def can_view_price_book_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:

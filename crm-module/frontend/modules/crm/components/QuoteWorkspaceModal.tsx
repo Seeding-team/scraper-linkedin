@@ -9197,7 +9197,20 @@ export function QuoteWorkspaceModal({
             </div>
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Tổng thanh toán</span>
-              <strong>{formatMoney(quote.totalAmount)}</strong>
+              {/* quote.totalAmount la tong TRUOC "Giam gia toan bao gia"
+                  (overall discount) - dung calculateOverallDiscountSummary (cung
+                  cong thuc QuoteDocumentRenderer dung de in) de hien dung so
+                  khach phai tra, khong phai tong truoc giam (task 2026-11-02).
+                  Totals tinh lai TU items, KHONG dung thang
+                  quote.totalAmount/vatAmount (co the lech voi tong tinh tu
+                  items that). */}
+              <strong>{formatMoney(calculateOverallDiscountSummary(
+                calculateQuoteTotals(quote.items || [], 0, quote.currency),
+                quote.overallDiscountPercent,
+                quote.currency,
+                quote.data?.overallDiscountAmount ?? null,
+                quote.overallDiscountType ?? null
+              ).grandTotal)}</strong>
             </div>
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Margin</span>

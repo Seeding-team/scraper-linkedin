@@ -13,7 +13,7 @@
 import { X, ExternalLink, Pencil } from "lucide-react";
 import { QuoteDocumentRenderer } from "@/modules/quotes/components/QuoteDocumentRenderer";
 import type { Quote, QuoteItem } from "@/modules/quotes";
-import { calculateQuoteTotals } from "@/modules/quotes/utils/quoteCalculations";
+import { calculateQuoteTotals, calculateOverallDiscountSummary } from "@/modules/quotes/utils/quoteCalculations";
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
 import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
@@ -37,6 +37,30 @@ function flattenQuoteLineItems(items: QuoteItem[] | undefined): QuoteItem[] {
   }
   walk(items);
   return result;
+}
+
+/** quote.totalAmount/customerPriceBeforeVat la so TRUOC "Giam gia toan bao
+ * gia" (overall discount, migration 106) - dung calculateOverallDiscountSummary
+ * (CUNG cong thuc voi QuoteDocumentRenderer dung de in) de ra dung so
+ * THANH TOAN CUOI CUNG thay vi tong truoc giam (task 2026-11-02). Totals
+ * tinh lai TU items (calculateQuoteTotals) giong het QuoteDocumentRenderer,
+ * KHONG dung thang quote.totalAmount/vatAmount (co the lech voi tong tinh
+ * tu items that - da gap bug thuc te khi dung thang 2 field DB nay). */
+function resolveQuoteDiscountSummary(quote: Quote | null | undefined) {
+  if (!quote) return null;
+  // Uu tien tinh lai TU items (khop PDF) - chi fallback ve totalAmount/vatAmount
+  // DB khi khong co items (vd quote chua load day du du lieu).
+  const totals = quote.items?.length
+    ? calculateQuoteTotals(quote.items, 0, quote.currency)
+    : { totalAmount: quote.totalAmount ?? quote.customerPriceBeforeVat ?? 0, totalVatAmount: quote.vatAmount ?? 0 };
+  if (!quote.items?.length && quote.totalAmount == null && quote.customerPriceBeforeVat == null) return null;
+  return calculateOverallDiscountSummary(
+    { totalAmount: totals.totalAmount, totalVatAmount: totals.totalVatAmount },
+    quote.overallDiscountPercent ?? null,
+    quote.currency,
+    quote.data?.overallDiscountAmount ?? null,
+    quote.overallDiscountType ?? null
+  );
 }
 
 function formatDeltaVND(value: number | null | undefined): string {
@@ -119,7 +143,7 @@ function VersionHistoryList({
                 <span className="font-semibold text-slate-700">V{v.versionNumber || 1}{idx === 0 ? " · mới nhất" : ""}</span>
                 <span className="text-slate-400">{formatDate(v.updatedAt)}</span>
                 <span className={`quote-badge ${internalQuoteStatusClass(v.status)}`}>{internalQuoteStatusLabel(v.status)}</span>
-                <span className="text-slate-500">{formatQuoteAmountOr(v.customerPriceBeforeVat ?? v.totalAmount ?? null, v.currency, formatVNDShort)}</span>
+                <span className="text-slate-500">{formatQuoteAmountOr(resolveQuoteDiscountSummary(v)?.grandTotal ?? v.customerPriceBeforeVat ?? v.totalAmount ?? null, v.currency, formatVNDShort)}</span>
               </div>
               {!isSelected && onSelectVersion ? (
                 <button
@@ -178,7 +202,8 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
     return idx >= 0 && idx + 1 < versions.length ? versions[idx + 1] : null;
   })();
   const customerPriceDelta = previousVersion
-    ? (quote!.customerPriceBeforeVat ?? quote!.totalAmount ?? 0) - (previousVersion.customerPriceBeforeVat ?? previousVersion.totalAmount ?? 0)
+    ? (resolveQuoteDiscountSummary(quote)?.grandTotal ?? quote!.customerPriceBeforeVat ?? quote!.totalAmount ?? 0)
+      - (resolveQuoteDiscountSummary(previousVersion)?.grandTotal ?? previousVersion.customerPriceBeforeVat ?? previousVersion.totalAmount ?? 0)
     : null;
   // Giá vốn/lợi nhuận/margin: gate bang DUNG 2 co (costViewAllowed rieng cho
   // gia von, profitabilityViewAllowed rieng cho loi nhuan/margin - khac
@@ -275,20 +300,31 @@ export function QuoteQuickViewDrawer({ quote, open, customerName, dealName, onCl
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="rounded-lg border border-slate-200 p-3">
                   <div className="text-xs text-slate-400">Giá khách</div>
-                  <div className="mt-1">
-                    <span className="inline-block whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Chưa VAT</span>
-                    <div className="whitespace-nowrap text-base font-bold leading-tight text-slate-800">
-                      {formatQuoteAmountOr(quote.customerPriceBeforeVat ?? quote.totalAmount ?? null, quote.currency, formatVNDShort)}
-                    </div>
-                  </div>
-                  {quote.totalAmount != null ? (
-                    <div className="mt-2 border-t border-slate-100 pt-1.5">
-                      <span className="inline-block whitespace-nowrap rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">Gồm VAT</span>
-                      <div className="whitespace-nowrap text-base font-bold leading-tight text-indigo-700">
-                        {formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVNDShort)}
-                      </div>
-                    </div>
-                  ) : null}
+                  {(() => {
+                    const summary = resolveQuoteDiscountSummary(quote);
+                    const subtotal = summary?.subtotalAfterDiscount ?? quote.customerPriceBeforeVat ?? quote.totalAmount ?? null;
+                    const grand = summary?.grandTotal ?? quote.totalAmount ?? null;
+                    return (
+                      <>
+                        <div className="mt-1">
+                          <span className="inline-block whitespace-nowrap rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600">Chưa VAT</span>
+                          <div className="whitespace-nowrap text-base font-bold leading-tight text-slate-800">
+                            {formatQuoteAmountOr(subtotal, quote.currency, formatVNDShort)}
+                          </div>
+                        </div>
+                        {grand != null ? (
+                          <div className="mt-2 border-t border-slate-100 pt-1.5">
+                            <span className="inline-block whitespace-nowrap rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">
+                              Giá sau giảm · Gồm VAT
+                            </span>
+                            <div className="whitespace-nowrap text-base font-bold leading-tight text-indigo-700">
+                              {formatQuoteAmountOr(grand, quote.currency, formatVNDShort)}
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                 </div>
                 {quote.costViewAllowed !== false ? (
                   <div className="rounded-lg border border-slate-200 p-3">

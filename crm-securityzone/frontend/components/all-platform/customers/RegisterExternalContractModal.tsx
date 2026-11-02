@@ -30,7 +30,7 @@ import {
 } from "@/modules/contracts/utils/warrantyCalc";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Contract, ContractOcrReconcileResult, ContractStatus } from "@/modules/contracts";
-import { seedingQuoteRepository } from "@/modules/quotes";
+import { seedingQuoteRepository, calculateOverallDiscountSummary, calculateQuoteTotals } from "@/modules/quotes";
 import type { Quote } from "@/modules/quotes";
 import { internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
 import { QuoteQuickViewDrawer } from "./QuoteQuickViewDrawer";
@@ -117,6 +117,33 @@ function quoteAmountVnd(
   if (String(quote.currency || 'VND').toUpperCase() !== 'USD') return amount;
   const vnd = quoteCurrencyToVnd(amount, 'USD', quote.exchangeRate);
   return vnd == null ? amount : Math.round(vnd);
+}
+
+// quote.totalAmount la tong TRUOC "Giam gia toan bao gia" (overall discount,
+// migration 106) - dung calculateOverallDiscountSummary (CUNG cong thuc voi
+// QuoteDocumentRenderer/ban in) de ra dung so THANH TOAN CUOI CUNG, khop
+// voi comment "Gia tri hop dong = so THANH TOAN CUOI CUNG" o duoi
+// (task 2026-11-02, trc do dang lay nham totalAmount truoc giam). Totals
+// tinh lai TU items (calculateQuoteTotals) giong het QuoteDocumentRenderer,
+// KHONG dung thang version.totalAmount/vatAmount (co the lech voi tong tinh
+// tu items that - da gap bug thuc te khi dung thang 2 field DB nay).
+function resolveQuoteDiscountSummary(version: Quote | null) {
+  if (!version) return null;
+  const totals = version.items?.length
+    ? calculateQuoteTotals(version.items, 0, version.currency)
+    : { totalAmount: version.totalAmount ?? version.customerPriceBeforeVat ?? 0, totalVatAmount: version.vatAmount ?? 0 };
+  if (!version.items?.length && version.totalAmount == null && version.customerPriceBeforeVat == null) return null;
+  return calculateOverallDiscountSummary(
+    { totalAmount: totals.totalAmount, totalVatAmount: totals.totalVatAmount },
+    version.overallDiscountPercent ?? null,
+    version.currency,
+    version.data?.overallDiscountAmount ?? null,
+    version.overallDiscountType ?? null
+  );
+}
+
+function resolveQuoteGrandTotal(version: Quote | null): number | null {
+  return resolveQuoteDiscountSummary(version)?.grandTotal ?? null;
 }
 
 function formatVND(value?: number | null) {
@@ -312,8 +339,18 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
       setActiveContactId(contract.contact_id || deal.primary_contact_id || ALL);
       if (contract.quote_id) {
         editVersionRef.current = contract.quote_id;
+        // Bug thuc te (2026-11-02, "gán lộn báo giá"): quoteOptions CHI liet
+        // ke ban "current" (version moi nhat) cua moi chuoi bao gia - neu
+        // contract.quote_id tro toi 1 version CU (khong phai current nua),
+        // match o day se KHONG tim thay, truoc day thi khong set gi ca ->
+        // 1 effect khac (dong 1 bao gia hop le sau loc) se tu y gan dai 1
+        // bao gia KHAC sai hoan toan. Fix: luon set thang contract.quote_id
+        // (khong doi hoi phai co trong quoteOptions) - getQuoteVersions()
+        // backend tu resolve dung chuoi version tu BAT KY id nao trong chuoi
+        // do (quotes_list_versions -> get_quote(id) -> versionChainId), nen
+        // van ra dung du lieu ke ca id nay la version cu.
         const match = (quoteOptions || []).find(q => q.id === contract.quote_id);
-        if (match) setSelectedQuoteId(match.id);
+        setSelectedQuoteId(match ? match.id : contract.quote_id);
       }
     }
     setChainVersions(null);
@@ -413,7 +450,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // totalAmount) de biet co can bat buoc ly do dieu chinh hay khong.
   // Hop dong luon tinh bang VND: bao gia USD quy doi theo ty gia DA CHOT cua chinh bao gia do.
   // Gia tri hop dong = so THANH TOAN CUOI CUNG (gom VAT) = totalAmount cua bao gia (khop ContractAIWizard); fallback gia chua VAT.
-  const quotePrice = selectedVersion ? quoteAmountVnd(selectedVersion.totalAmount ?? selectedVersion.customerPriceBeforeVat ?? null, selectedVersion) : null;
+  const quotePrice = selectedVersion ? quoteAmountVnd(resolveQuoteGrandTotal(selectedVersion), selectedVersion) : null;
   const valueDiffersFromQuote = quotePrice != null && contractValue != null && contractValue !== quotePrice;
   const isLatestVersion = chainVersions && chainVersions.length > 0 ? chainVersions[0]?.id === selectedVersionId : true;
 
@@ -470,7 +507,7 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
   // Center) - chi ghi de khi nguoi dung CHUA tu sua gia tri nay.
   useEffect(() => {
     if (!open || !selectedVersion) return;
-    const price = quoteAmountVnd(selectedVersion.totalAmount ?? selectedVersion.customerPriceBeforeVat ?? null, selectedVersion);
+    const price = quoteAmountVnd(resolveQuoteGrandTotal(selectedVersion), selectedVersion);
     if (price == null) return;
     setContractValue(current => {
       if (current !== null && current !== lastAutoValueRef.current) return current;
@@ -503,12 +540,22 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
 
   // Chi co DUNG 1 bao gia hop le (sau loc theo Lien he/Du an) va chua chon gi -> tu dong chon
   // luon, khong bat nguoi dung phai tu mo dropdown chon 1 muc duy nhat.
+  // Bug thuc te (2026-11-02, "gán lộn báo giá"): khi SUA 1 hop dong co san ma
+  // contract.quote_id tro toi 1 version KHONG PHAI ban "current" cua chuoi
+  // (vd V1 khi chuoi da co V2+), quoteOptions (chi liet ke ban current moi
+  // chuoi) khong match duoc -> selectedQuoteId o lai NONE_QUOTE -> effect nay
+  // tuong "chua chon gi" roi TU Y gan dai 1 bao gia KHAC (bao gia duy nhat
+  // con lai sau loc) - sai hoan toan voi bao gia THAT su da dung de tao hop
+  // dong. Khi dang sua hop dong co san va contract co quote_id rieng, KHONG
+  // duoc chay heuristic nay - de nguyen NONE_QUOTE (hien "chua xac dinh
+  // duoc bao gia goc") thay vi gan nham.
   useEffect(() => {
     if (!open) return;
+    if (editing && contract?.quote_id) return;
     if (selectedQuoteId === NONE_QUOTE && filteredQuotes.length === 1) {
       setSelectedQuoteId(filteredQuotes[0].id);
     }
-  }, [open, filteredQuotes, selectedQuoteId]);
+  }, [open, filteredQuotes, selectedQuoteId, editing, contract?.quote_id]);
 
   // Cơ hội nao) thi fallback ve toan bo dealOptions - KHONG duoc de dropdown
   // Cơ hội trong rong khong co gi de chon.
@@ -909,12 +956,21 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                   <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
                     <div>
                       <div className="text-slate-400">GIÁ KHÁCH</div>
-                      <div className="font-medium text-slate-700">
-                        Chưa VAT: {formatQuoteAmountOr(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null, selectedVersion.currency, formatVND)}
-                      </div>
-                      {selectedVersion.totalAmount != null ? (
-                        <div className="font-medium text-slate-700">Gồm VAT: {formatQuoteAmountOr(selectedVersion.totalAmount, selectedVersion.currency, formatVND)}</div>
-                      ) : null}
+                      {(() => {
+                        const summary = resolveQuoteDiscountSummary(selectedVersion);
+                        const subtotal = summary?.subtotalAfterDiscount ?? selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null;
+                        const grand = summary?.grandTotal ?? selectedVersion.totalAmount ?? null;
+                        return (
+                          <>
+                            <div className="font-medium text-slate-700">
+                              Chưa VAT: {formatQuoteAmountOr(subtotal, selectedVersion.currency, formatVND)}
+                            </div>
+                            {grand != null ? (
+                              <div className="font-medium text-slate-700">Giá sau giảm · Gồm VAT: {formatQuoteAmountOr(grand, selectedVersion.currency, formatVND)}</div>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div>
                       <div className="text-slate-400">LIÊN HỆ CHÍNH</div>
@@ -979,7 +1035,12 @@ export function RegisterExternalContractModal({ contract, open, deal, onClose, o
                   <div className="mt-1 flex items-center justify-between">
                     <span className="text-[11px] text-slate-400">
                       Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1} · <strong className="font-semibold text-slate-500">gồm VAT</strong>
-                      {selectedVersion?.customerPriceBeforeVat != null && selectedVersion?.totalAmount != null ? ` (chưa VAT: ${formatVND(quoteAmountVnd(selectedVersion.customerPriceBeforeVat, selectedVersion))})` : ""}
+                      {(() => {
+                        const summary = resolveQuoteDiscountSummary(selectedVersion);
+                        if (!summary) return "";
+                        const subtotal = quoteAmountVnd(summary.subtotalAfterDiscount, selectedVersion as Quote);
+                        return subtotal != null ? ` (chưa VAT: ${formatVND(subtotal)})` : "";
+                      })()}
                     </span>
                     {!showAdjustReason && !valueDiffersFromQuote ? (
                       <button type="button" onClick={() => setShowAdjustReason(true)} className="text-[11px] font-semibold text-primary hover:underline">

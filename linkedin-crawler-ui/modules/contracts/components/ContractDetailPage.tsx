@@ -450,6 +450,20 @@ export function ContractDetailContent({
             </div>
           </div>
 
+          {/* Ghi chú (2026-11-02) - truoc gio `contract.note` (vd ly do dieu
+           * chinh "Giá trị hợp đồng" khac bao gia, xem finalNote trong
+           * RegisterExternalContractModal.tsx) duoc LUU xuong DB nhung
+           * KHONG hien o dau ca tren trang nay - nguoi dung ghi ly do xong
+           * khong co cho xem lai. Chi hien READ-ONLY o day (khong phai 1
+           * bang lich su that - note van la 1 chuoi duy nhat, lan sua sau
+           * se GHI DE lan truoc, chua phai audit log day du). */}
+          {contract.note ? (
+            <div className="cp-card">
+              <b style={{ fontSize: '0.9rem' }}>Ghi chú</b>
+              <p style={{ margin: '8px 0 0', fontSize: '0.85rem', color: '#334155', whiteSpace: 'pre-wrap' }}>{contract.note}</p>
+            </div>
+          ) : null}
+
           <div className="cp-card" ref={editCardRef} data-testid="detail-edit-card" style={{ display: 'grid', gap: 10, ...(focusEdit ? { borderColor: '#be1e4b', boxShadow: '0 0 0 2px #fdf2f8' } : {}) }}>
             <b style={{ fontSize: '0.9rem' }}>Chỉnh sửa quản lý thực hiện</b>
             <div className="cp-grid3">
@@ -457,7 +471,6 @@ export function ContractDetailContent({
                 {valueMismatch ? <small style={{ color: '#b45309' }}>Khác tổng báo giá — tài liệu đã lưu không tự đổi theo.</small> : null}</label>
               <label className="cp-field"><span>Bắt đầu</span><input type="date" className="cp-input" value={startDate} onChange={e => setStartDate(e.target.value)} /></label>
               <label className="cp-field"><span>Kết thúc</span><input type="date" className="cp-input" value={endDate} onChange={e => setEndDate(e.target.value)} /></label>
-              <label className="cp-field"><span>Tiến độ thực hiện (%)</span><input type="number" min={0} max={100} className="cp-input" value={progressPercent} onChange={e => setProgressPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} /></label>
               <label className="cp-field"><span>Đã thu thanh toán (%)</span><input type="number" min={0} max={100} className="cp-input" value={paymentCollectedPercent} onChange={e => setPaymentCollectedPercent(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} /></label>
             </div>
             <small style={{ color: '#64748b' }}>Các thông tin này phục vụ quản lý, không làm thay đổi tài liệu hợp đồng đã lưu. Muốn đổi nội dung pháp lý: tab Tài liệu → tạo phiên bản mới.</small>

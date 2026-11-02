@@ -5,7 +5,7 @@ import { useAppAuth } from '@/contexts/AppAuthContext';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useQuoteColumnPreferences, type QuoteColumnKey } from '../hooks/useQuoteColumnPreferences';
-import { seedingQuoteRepository, CopyQuoteCrossWorkspaceModal, MoveQuoteModal } from '../../quotes';
+import { seedingQuoteRepository, CopyQuoteCrossWorkspaceModal, MoveQuoteModal, calculateOverallDiscountSummary } from '../../quotes';
 import type { Quote } from '../../quotes';
 import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
@@ -612,13 +612,27 @@ export function CustomerQuotesTab({
                         </div>
                       </td>
 
-                      {/* GIÁ KHÁCH Column - KHONG doi field/logic o day (van
-                          total_amount || customer_price_before_vat nhu cu),
-                          4 cot moi ben duoi CHI ADD THEM, khong dung chung field
-                          nay. */}
+                      {/* GIÁ KHÁCH Column - total_amount (raw row) la tong
+                          TRUOC khi tru "Giam gia toan bao gia" (overall discount,
+                          migration 106). Dung calculateOverallDiscountSummary
+                          (CUNG cong thuc voi QuoteDocumentRenderer/ban in) thay vi
+                          backend-enriched discountAmount (xap xi, sai co so khi co
+                          chiet khau tung dong - lech vai tram d) de khop DUNG
+                          TONG THANH TOAN tren ban in/PDF (task 2026-11-02). */}
                       <td className="py-3 px-3 text-right">
                         <span className="font-bold text-xs text-emerald-600">
-                          {formatQuoteAmountOr(Number(current.total_amount || current.customer_price_before_vat || 0), current.currency, formatVND) || '0 đ'}
+                          {(() => {
+                            const totalAmount = Number(current.total_amount || current.customer_price_before_vat || 0);
+                            const totalVatAmount = Number(current.vat_amount || 0);
+                            const grandTotal = calculateOverallDiscountSummary(
+                              { totalAmount, totalVatAmount },
+                              current.overall_discount_percent ?? current.discountPercent ?? null,
+                              current.currency,
+                              current.data?.overallDiscountAmount ?? null,
+                              current.data?.overallDiscountType ?? null
+                            ).grandTotal;
+                            return formatQuoteAmountOr(grandTotal, current.currency, formatVND) || '0 đ';
+                          })()}
                         </span>
                       </td>
 
