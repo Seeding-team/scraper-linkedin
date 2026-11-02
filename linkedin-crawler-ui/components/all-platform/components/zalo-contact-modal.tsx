@@ -4,8 +4,16 @@ import React, { useState, useEffect } from "react";
 import { FiX, FiMessageSquare, FiExternalLink, FiPhone, FiCheck, FiAlertCircle, FiSend } from "react-icons/fi";
 import { useZaloAccountOptions } from "@/components/all-platform/zalo/centralized-shared/useZaloAccountOptions";
 import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/zaloCrawlerService";
-import { allPlatformQuickCommentService, allPlatformPostsService } from "@/services/all-platform.service";
-import { QuickCommentTemplate } from "@/types/unified.types";
+import { allPlatformQuickCommentService, allPlatformQuickInboxService, allPlatformPostsService } from "@/services/all-platform.service";
+import { QuickCommentTemplate, QuickInboxTemplate } from "@/types/unified.types";
+
+interface TemplateItem {
+  id: string;
+  title: string;
+  label?: string;
+  content: string;
+  source: "inbox" | "comment";
+}
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { toast } from "sonner";
 
@@ -42,20 +50,44 @@ export function ZaloContactModal({
   const [statusText, setStatusText] = useState<string | null>(null);
 
   // Danh sách mẫu câu chào Zalo & Mặc định cá nhân
-  const [templates, setTemplates] = useState<QuickCommentTemplate[]>([]);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [defaultTemplateId, setDefaultTemplateId] = useState<string | null>(null);
 
   const userEmail = user?.email || "default_user";
   const defaultStorageKey = `zalo_default_greeting_id_${userEmail}`;
 
-  // Tải danh sách mẫu câu Zalo từ thư viện mẫu câu chung
+  // Tải danh sách mẫu tin nhắn inbox Zalo & mẫu câu Zalo từ thư viện chung
   useEffect(() => {
     if (!open) return;
-    allPlatformQuickCommentService.getAll("zalo").then((res) => {
-      if (res?.success && Array.isArray(res.data)) {
-        setTemplates(res.data);
+    Promise.all([
+      allPlatformQuickInboxService.getAll().catch(() => null),
+      allPlatformQuickCommentService.getAll("zalo").catch(() => null),
+    ]).then(([inboxRes, commentRes]) => {
+      const list: TemplateItem[] = [];
+      if (inboxRes?.success && Array.isArray(inboxRes.data)) {
+        inboxRes.data.forEach((item) => {
+          list.push({
+            id: `inbox_${item.id}`,
+            title: item.title,
+            label: item.label,
+            content: item.content,
+            source: "inbox",
+          });
+        });
       }
+      if (commentRes?.success && Array.isArray(commentRes.data)) {
+        commentRes.data.forEach((item) => {
+          list.push({
+            id: `comment_${item.id}`,
+            title: item.title,
+            label: item.label,
+            content: item.content,
+            source: "comment",
+          });
+        });
+      }
+      setTemplates(list);
     }).catch(() => {});
   }, [open]);
 
@@ -94,10 +126,11 @@ export function ZaloContactModal({
   }, [open, groupName, templates, defaultStorageKey]);
 
   // Chọn mẫu câu
-  const handleSelectTemplate = (tpl: QuickCommentTemplate) => {
+  const handleSelectTemplate = (tpl: TemplateItem) => {
     setSelectedTemplateId(tpl.id);
     const formatted = tpl.content.replace(/\{group_name\}/g, groupName || "nhóm");
     setMessage(formatted);
+    toast.success(`Đã chọn mẫu: "${tpl.title}"`);
   };
 
   // Thiết lập mẫu câu hiện tại làm mặc định cho cá nhân
@@ -298,10 +331,22 @@ export function ZaloContactModal({
 
           {/* Ô soạn lời chào & Danh sách mẫu câu chọn nhanh */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                Lời chào mẫu gửi tới khách hàng:
-              </label>
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+              <div className="flex items-center gap-2">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  Mẫu tin nhắn inbox Zalo (Click chọn nhanh):
+                </label>
+                <a
+                  href="/all-platform/quick-comments?tab=inbox"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-bold text-sky-600 hover:text-sky-700 dark:text-sky-400 bg-sky-50 dark:bg-sky-950/40 px-2 py-0.5 rounded-full border border-sky-200 dark:border-sky-800 flex items-center gap-1 cursor-pointer transition hover:scale-105"
+                  title="Mở thư viện mẫu inbox để thêm hoặc chỉnh sửa mẫu tin nhắn"
+                >
+                  <span>+ Quản lý mẫu inbox</span>
+                  <span className="text-[9px]">↗</span>
+                </a>
+              </div>
               {selectedTemplateId && (
                 <button
                   type="button"
@@ -325,14 +370,22 @@ export function ZaloContactModal({
                       key={tpl.id}
                       type="button"
                       onClick={() => handleSelectTemplate(tpl)}
-                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
                         isSelected
                           ? "bg-sky-600 text-white shadow-xs ring-1 ring-sky-500"
                           : "bg-slate-100 hover:bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
                       }`}
+                      title={tpl.content}
                     >
                       {isDefault && <span className="text-amber-300 font-bold">★</span>}
-                      <span className="truncate max-w-[150px]">{tpl.title}</span>
+                      {tpl.label && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded font-bold uppercase ${
+                          isSelected ? "bg-white/20 text-white" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                        }`}>
+                          {tpl.label}
+                        </span>
+                      )}
+                      <span className="truncate max-w-[140px]">{tpl.title}</span>
                     </button>
                   );
                 })}
