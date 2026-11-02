@@ -6,7 +6,7 @@ import shutil
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import re
 from loguru import logger
 
@@ -79,67 +79,101 @@ def _normalize_user_id(value: Optional[str]) -> str:
     return raw or "default"
 
 
+
+# ==============================================================================
+# ⚡ ACCELERATOR CACHE (Tối ưu hoá truy vấn & loại bỏ Supabase round-trip)
+# ==============================================================================
+_AUTH_USER_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_ACCOUNT_META_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_PERM_CACHE: Dict[Tuple[str, str, str], Tuple[float, Optional[set[str]]]] = {}
+_MESSAGE_CACHE: Dict[Tuple[str, str, int, int], Tuple[float, Dict[str, Any]]] = {}
+
+AUTH_CACHE_TTL = 60.0  # 60s cache cho app_user và zalo_account metadata
+MESSAGE_CACHE_TTL = 3.0  # 3s cache cho danh sách tin nhắn đang xem/click liên tục
+
+def invalidate_conversation_message_cache(user_id: str, conversation_id: Optional[str] = None) -> None:
+    """Xoá cache tin nhắn khi có tin nhắn mới hoặc thao tác gửi/thu hồi."""
+    u_id = user_id.strip().lower()
+    c_id = conversation_id.strip() if conversation_id else None
+    keys_to_del = [
+        k for k in list(_MESSAGE_CACHE.keys())
+        if k[0].strip().lower() == u_id and (c_id is None or k[1] == c_id)
+    ]
+    for k in keys_to_del:
+        _MESSAGE_CACHE.pop(k, None)
+
+
 async def check_caller_conversation_access(
     account_id: str,
     caller_email: Optional[str],
 ) -> Optional[set[str]]:
-    """Kiểm tra quyền truy cập của người gọi đối với tài khoản zalo account_id.
-    
-    Trả về:
-        - None: Nếu người gọi là chủ sở hữu tài khoản (full quyền).
-        - set[str]: Danh sách conversation_id được phép truy cập (được share).
-        - Ném HTTPException(403) nếu không có quyền.
-    """
+    """Kiểm tra quyền truy cập của người gọi đối với tài khoản zalo account_id (kèm TTL Cache 60s)."""
     if not caller_email:
-        # Nếu không có caller_email, cho phép truy cập full để tương thích ngược
         return None
 
-    # 1. Tìm thông tin app_user của người gọi
+    now = time.time()
     caller_email_clean = caller_email.strip().lower()
-    user_rows = await _rest(
-        "GET",
-        "app_users",
-        params={
-            "select": "id,role",
-            "email": f"eq.{caller_email_clean}",
-            "limit": "1",
-        },
-    )
-    if not user_rows:
+
+    # 1. Tìm thông tin app_user từ cache (TTL 60s)
+    user_cached = _AUTH_USER_CACHE.get(caller_email_clean)
+    if user_cached and (now - user_cached[0] < AUTH_CACHE_TTL):
+        caller_user = user_cached[1]
+    else:
+        user_rows = await _rest(
+            "GET",
+            "app_users",
+            params={
+                "select": "id,role",
+                "email": f"eq.{caller_email_clean}",
+                "limit": "1",
+            },
+        )
+        caller_user = user_rows[0] if user_rows else None
+        _AUTH_USER_CACHE[caller_email_clean] = (now, caller_user)
+
+    if not caller_user:
         raise HTTPException(status_code=403, detail="Không tìm thấy thông tin tài khoản người gọi.")
         
-    caller_user = user_rows[0]
     caller_user_id = str(caller_user.get("id"))
     caller_role = str(caller_user.get("role") or "").strip().lower()
 
-    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_accounts)
-    account_rows = await _rest(
-        "GET",
-        "zalo_accounts",
-        params={
-            "select": "owner_id,is_shared_with_all",
-            "account_id": f"eq.{account_id}",
-            "limit": "1",
-        },
-    )
-    owner_user_id = None
-    if account_rows:
-        owner_user_id = str(account_rows[0].get("owner_id") or "")
+    # 2. Tìm chủ sở hữu của tài khoản Zalo từ cache (TTL 60s)
+    acc_cached = _ACCOUNT_META_CACHE.get(account_id)
+    if acc_cached and (now - acc_cached[0] < AUTH_CACHE_TTL):
+        acc_data = acc_cached[1]
+    else:
+        account_rows = await _rest(
+            "GET",
+            "zalo_accounts",
+            params={
+                "select": "owner_id,is_shared_with_all",
+                "account_id": f"eq.{account_id}",
+                "limit": "1",
+            },
+        )
+        acc_data = account_rows[0] if account_rows else None
+        _ACCOUNT_META_CACHE[account_id] = (now, acc_data)
+
+    owner_user_id = str(acc_data.get("owner_id") or "") if acc_data else None
 
     # 3. Nếu là chủ sở hữu, cho phép xem toàn bộ
     if owner_user_id and caller_user_id == owner_user_id:
         return None
 
-    # 3b. Tài khoản đánh dấu "dùng chung toàn công ty" -> mọi nhân viên đều full quyền,
-    # không cần là owner/admin/leader hay được share riêng từng hội thoại.
-    if account_rows and bool(account_rows[0].get("is_shared_with_all")):
+    # 3b. Tài khoản đánh dấu "dùng chung toàn công ty" -> mọi nhân viên đều full quyền
+    if acc_data and bool(acc_data.get("is_shared_with_all")):
         return None
 
-    # 4. Nếu không phải chủ sở hữu, chỉ admin và leader được xem (nhưng bị giới hạn bởi các chat được share)
+    # 4. Nếu không phải chủ sở hữu, chỉ admin và leader được xem
     if caller_role not in ["admin", "superadmin", "leader"]:
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập dữ liệu của tài khoản này.")
 
-    # 5. Truy vấn danh sách cuộc hội thoại được share
+    # 5. Truy vấn danh sách cuộc hội thoại được share từ cache (TTL 60s)
+    perm_cache_key = (account_id, caller_user_id, caller_role)
+    perm_cached = _PERM_CACHE.get(perm_cache_key)
+    if perm_cached and (now - perm_cached[0] < AUTH_CACHE_TTL):
+        return perm_cached[1]
+
     perm_params = {
         "select": "conversation_id,id_leader",
         "account_id": f"eq.{account_id}",
@@ -147,7 +181,6 @@ async def check_caller_conversation_access(
         "limit": "5000",
     }
     if caller_role == "leader":
-        # Leader chỉ được xem nếu id_leader khớp hoặc là NULL (share chung)
         perm_params["or"] = f"(id_leader.eq.{caller_user_id},id_leader.is.null)"
 
     perm_rows = await _rest(
@@ -157,6 +190,7 @@ async def check_caller_conversation_access(
     ) or []
 
     allowed_ids = {str(row.get("conversation_id") or "").strip() for row in perm_rows if row.get("conversation_id")}
+    _PERM_CACHE[perm_cache_key] = (now, allowed_ids)
     return allowed_ids
 
 
@@ -738,6 +772,13 @@ async def get_conversation_messages(
     # if offset == 0:
     #     background_tasks.add_task(_background_sync_conversation_messages, user_id, conversation_id)
         
+    # ⚡ ACCELERATOR: In-memory short TTL cache (3s) cho việc xem/click tin nhắn
+    now = time.time()
+    cache_key = (user_id, conversation_id.strip(), limit, offset)
+    cached_entry = _MESSAGE_CACHE.get(cache_key)
+    if cached_entry and (now - cached_entry[0] < MESSAGE_CACHE_TTL):
+        return cached_entry[1]
+
     try:
         rows, total = await list_conversation_messages(
             user_id,
@@ -745,7 +786,7 @@ async def get_conversation_messages(
             limit=limit,
             offset=offset,
         )
-        return {
+        response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
             "total": total,
@@ -753,6 +794,11 @@ async def get_conversation_messages(
             "offset": offset,
             "has_more": offset + len(rows) < total,
         }
+        _MESSAGE_CACHE[cache_key] = (now, response_payload)
+        if len(_MESSAGE_CACHE) > 500:
+            for ok in sorted(_MESSAGE_CACHE.keys(), key=lambda k: _MESSAGE_CACHE[k][0])[:100]:
+                _MESSAGE_CACHE.pop(ok, None)
+        return response_payload
     except SupabaseNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
@@ -1393,6 +1439,7 @@ async def recall_conversation_message(
     except Exception as exc:
         logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
 
+    invalidate_conversation_message_cache(user_id, conversation_id.strip())
     return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
 
 
@@ -1700,6 +1747,7 @@ async def _persist_outgoing_message(
             logger.warning(
                 f"Could not persist outgoing message assets for user={user_id} conv={conversation_id}: {exc}"
             )
+    invalidate_conversation_message_cache(user_id, conversation_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

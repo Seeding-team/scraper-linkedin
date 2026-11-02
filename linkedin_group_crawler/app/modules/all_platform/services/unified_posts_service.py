@@ -403,7 +403,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 .select(
                     f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
                     "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
-                    "zalo_error, zalo_display_name"
+                    "zalo_error, zalo_display_name, zalo_sent_by"
                 )
                 .in_(id_column, batch_ids)
                 .execute()
@@ -430,7 +430,58 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 "zalo_conversation_id": row.get("zalo_conversation_id"),
                 "zalo_error": row.get("zalo_error"),
                 "zalo_display_name": row.get("zalo_display_name"),
+                "zalo_sent_by": row.get("zalo_sent_by"),
             }
+
+    # 2. Đồng bộ trạng thái đã nhắn tin Zalo theo SĐT cho toàn bộ bài viết trên feed:
+    # Nếu bất kỳ bài viết nào có SĐT đã từng được nhắn tin Zalo tư vấn (zalo_status = 'sent'),
+    # hiển thị ngay cho toàn bộ các bài khác có cùng SĐT để không ai nhắn lại.
+    all_phones = set()
+    for p in posts:
+        ph = (p.get("auto_seeding_comment") or {}).get("phone_number") or p.get("phone_number")
+        if not ph and p.get("content"):
+            ph = _extract_phone_from_text(p["content"])
+        if ph:
+            norm_ph = _normalize_display_phone(ph) or str(ph).strip()
+            if norm_ph:
+                all_phones.add(norm_ph)
+                if norm_ph.startswith("0") and len(norm_ph) == 10:
+                    all_phones.add("+84" + norm_ph[1:])
+                elif norm_ph.startswith("+84") and len(norm_ph) == 12:
+                    all_phones.add("0" + norm_ph[3:])
+
+    if all_phones:
+        try:
+            sent_res = (
+                sb.table("auto_seeding_comments")
+                .select("phone_number, zalo_status, zalo_sent_by, zalo_sent_at, zalo_display_name")
+                .in_("phone_number", list(all_phones))
+                .eq("zalo_status", "sent")
+                .execute()
+            )
+            sent_map = {}
+            for r in (sent_res.data or []):
+                p_norm = _normalize_display_phone(r.get("phone_number")) or r.get("phone_number")
+                if p_norm:
+                    sent_map[p_norm] = r
+
+            if sent_map:
+                for p in posts:
+                    ph = (p.get("auto_seeding_comment") or {}).get("phone_number") or p.get("phone_number")
+                    if not ph and p.get("content"):
+                        ph = _extract_phone_from_text(p["content"])
+                    p_norm = _normalize_display_phone(ph) if ph else None
+                    if p_norm and p_norm in sent_map:
+                        match_info = sent_map[p_norm]
+                        if not p.get("auto_seeding_comment"):
+                            p["auto_seeding_comment"] = {}
+                        p["auto_seeding_comment"]["zalo_status"] = "sent"
+                        p["auto_seeding_comment"]["phone_number"] = p_norm
+                        p["auto_seeding_comment"]["zalo_sent_by"] = match_info.get("zalo_sent_by") or p["auto_seeding_comment"].get("zalo_sent_by")
+                        p["auto_seeding_comment"]["zalo_sent_at"] = match_info.get("zalo_sent_at") or p["auto_seeding_comment"].get("zalo_sent_at")
+                        p["auto_seeding_comment"]["zalo_display_name"] = match_info.get("zalo_display_name") or p["auto_seeding_comment"].get("zalo_display_name")
+        except Exception as e:
+            _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi đồng bộ trạng thái Zalo sent theo SĐT: {e}")
 
 
 # Nền tảng không có "group" — bài tìm theo từ khoá qua "Markee Seeding Extension":
@@ -996,15 +1047,11 @@ def get_unified_posts(
                     kpi_data = []
                     
                     # Chia batch 25 post_ids de tranh 502 Bad Gateway / URI Too Long
+                    # Truy van toan bo seeding comment de member, leader, admin deu thay full minh chung ai da seeding
                     for batch_pids in [post_ids[i:i+25] for i in range(0, len(post_ids), 25)]:
-                        if role in ["admin", "leader"]:
-                            b_res = execute_supabase_query(
-                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", b).execute()
-                            )
-                        else:
-                            b_res = execute_supabase_query(
-                                lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("id_post", b).execute()
-                            )
+                        b_res = execute_supabase_query(
+                            lambda b=batch_pids: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("id_post", b).execute()
+                        )
                         if b_res.data:
                             kpi_data.extend(b_res.data)
 
@@ -1013,14 +1060,9 @@ def get_unified_posts(
                     if missing_urls:
                         # Chia batch 15 missing_urls vi URL rat dai
                         for batch_urls in [missing_urls[i:i+15] for i in range(0, len(missing_urls), 15)]:
-                            if role in ["admin", "leader"]:
-                                url_kpi_res = execute_supabase_query(
-                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", b).execute()
-                                )
-                            else:
-                                url_kpi_res = execute_supabase_query(
-                                    lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).eq("id_member", id_member).in_("link_post", b).execute()
-                                )
+                            url_kpi_res = execute_supabase_query(
+                                lambda b=batch_urls: _supabase().table("seeding_content_kpi").select(seeding_sel).in_("link_post", b).execute()
+                            )
                             if url_kpi_res.data:
                                 kpi_data.extend(url_kpi_res.data)
 
@@ -1514,25 +1556,37 @@ def get_teams_seeding_efficiency(email: str) -> dict:
 
 def _resolve_overview_scope(sb, email: str) -> tuple[str, list[dict]]:
     """Dùng chung cho get_member_seeding_overview/get_member_crawl_history — admin thấy
-    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình)."""
-    user_res = sb.table("app_users").select("id, role").eq("email", (email or "").strip().lower()).limit(1).execute()
+    mọi thành viên active, leader chỉ thấy team mình quản lý (+ chính mình), member thấy chính mình."""
+    user_res = sb.table("app_users").select("id, name, email, role").eq("email", (email or "").strip().lower()).limit(1).execute()
     if not user_res.data:
         return "member", []
     caller_id = user_res.data[0]["id"]
     role = user_res.data[0].get("role", "member")
-    if role not in ("admin", "leader"):
-        return role, []
     if role == "admin":
         members = sb.table("app_users").select("id, name, email").eq("is_active", True).execute().data or []
         return role, members
-    teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
-    team_ids = [t["id"] for t in (teams_res.data or [])]
-    member_ids_set = {caller_id}
-    if team_ids:
-        mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
-        member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
-    members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
-    return role, members
+    elif role == "leader":
+        teams_res = sb.table("teams").select("id").eq("id_leader", caller_id).execute()
+        team_ids = [t["id"] for t in (teams_res.data or [])]
+        member_ids_set = {caller_id}
+        if team_ids:
+            mot_res = sb.table("member_of_teams").select("id_member").in_("id_teams", team_ids).execute()
+            member_ids_set.update(m["id_member"] for m in (mot_res.data or []) if m.get("id_member"))
+        members = sb.table("app_users").select("id, name, email").in_("id", list(member_ids_set)).execute().data or []
+        return role, members
+    else:
+        # Member xem tài khoản của chính mình
+        return role, [user_res.data[0]]
+
+
+# TTL Cache cho Overview thành viên seeding (tránh lặp 7-9 queries Supabase REST nặng)
+_OVERVIEW_CACHE: dict[str, tuple[float, dict]] = {}
+_OVERVIEW_CACHE_TTL = 30.0  # 30 giây
+
+
+def invalidate_overview_cache():
+    """Xóa cache khi có bài cào mới hoặc cập nhật nhóm/thành viên."""
+    _OVERVIEW_CACHE.clear()
 
 
 def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
@@ -1541,23 +1595,33 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
     tổng số bài đã cào theo mốc thời gian (Ngày, Tuần này, Tuần trước, Tháng trước, Tất cả),
     số bài viết vượt AI check (score >= 70) + lần cào gần nhất.
     """
+    import copy
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    cache_key = f"{(email or '').strip().lower()}:{time_range}"
+    cached = _OVERVIEW_CACHE.get(cache_key)
+    if cached:
+        cached_time, cached_data = cached
+        if (time.time() - cached_time) < _OVERVIEW_CACHE_TTL:
+            return copy.deepcopy(cached_data)
+
     sb = _supabase()
     role, members = _resolve_overview_scope(sb, email)
-    if role not in ("admin", "leader") or not members:
+    if not members:
         return {"role": role, "accounts": [], "time_range": time_range}
 
     member_ids = [m["id"] for m in members]
-    fb_groups = sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or []
-    li_groups = sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or []
-    tg_accounts = (
-        sb.table("telegram_accounts")
-        .select("id_member")
-        .in_("id_member", member_ids)
-        .eq("status", "connected")
-        .execute()
-        .data
-        or []
-    )
+
+    # Giai đoạn 1: Lấy nhóm FB, nhóm LinkedIn, tài khoản Telegram đồng thời (Parallel Stage 1)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or [])
+        f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or [])
+        f_tg_a = executor.submit(lambda: sb.table("telegram_accounts").select("id_member").in_("id_member", member_ids).eq("status", "connected").execute().data or [])
+
+        fb_groups = f_fb_g.result()
+        li_groups = f_li_g.result()
+        tg_accounts = f_tg_a.result()
 
     fb_group_owner_map: dict[str, str] = {}
     fb_group_count: dict[str, int] = {}
@@ -1605,33 +1669,55 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         start_iso = first_prev_month.isoformat()
         end_iso = first_this_month.isoformat()
 
-    query = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
-    if fb_group_owner_map:
-        group_ids = list(fb_group_owner_map.keys())[:100]
-        query = query.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
-    else:
-        query = query.in_("id_member", member_ids)
+    # Giai đoạn 2: Lấy bài viết FB, Threads, LinkedIn đồng thời (Parallel Stage 2)
+    def _fetch_fb_posts():
+        q = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
+        if fb_group_owner_map:
+            group_ids = list(fb_group_owner_map.keys())[:100]
+            q = q.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
+        else:
+            q = q.in_("id_member", member_ids)
+        if start_iso:
+            q = q.gte("crawl_date", start_iso)
+        if end_iso:
+            q = q.lt("crawl_date", end_iso)
+        return q.order("crawl_date", desc=True).limit(5000).execute().data or []
 
-    if start_iso:
-        query = query.gte("crawl_date", start_iso)
-    if end_iso:
-        query = query.lt("crawl_date", end_iso)
+    def _fetch_th_posts():
+        tq = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score").in_("id_member", member_ids)
+        if start_iso:
+            tq = tq.gte("created_at", start_iso)
+        if end_iso:
+            tq = tq.lt("created_at", end_iso)
+        try:
+            return tq.limit(2000).execute().data or []
+        except Exception:
+            return []
 
-    fb_posts = query.order("crawl_date", desc=True).limit(5000).execute().data or []
+    def _fetch_li_posts():
+        lq = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score").in_("id_member", member_ids)
+        if start_iso:
+            lq = lq.gte("crawl_date", start_iso)
+        if end_iso:
+            lq = lq.lt("crawl_date", end_iso)
+        try:
+            return lq.limit(2000).execute().data or []
+        except Exception:
+            return []
 
-    th_query = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score").in_("id_member", member_ids)
-    if start_iso:
-        th_query = th_query.gte("created_at", start_iso)
-    if end_iso:
-        th_query = th_query.lt("created_at", end_iso)
-    try:
-        th_posts = th_query.limit(2000).execute().data or []
-    except Exception:
-        th_posts = []
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        f_fb_p = executor.submit(_fetch_fb_posts)
+        f_th_p = executor.submit(_fetch_th_posts)
+        f_li_p = executor.submit(_fetch_li_posts)
+
+        fb_posts = f_fb_p.result()
+        th_posts = f_th_p.result()
+        li_posts = f_li_p.result()
 
     post_count: dict[str, int] = {}
     ai_passed_count: dict[str, int] = {}
     last_crawled: dict[str, str] = {}
+    ai_threshold = 40
 
     for p in fb_posts:
         mid = p.get("id_member") or fb_group_owner_map.get(p.get("group_id"))
@@ -1657,15 +1743,7 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         if d and (mid not in last_crawled or d > last_crawled[mid]):
             last_crawled[mid] = d
 
-    li_query = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score").in_("id_member", member_ids)
-    if start_iso:
-        li_query = li_query.gte("crawl_date", start_iso)
-    if end_iso:
-        li_query = li_query.lt("crawl_date", end_iso)
-    try:
-        li_posts = li_query.limit(2000).execute().data or []
-    except Exception:
-        li_posts = []
+
 
     for p in li_posts:
         mid = p.get("id_member")
@@ -1702,7 +1780,9 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
             }
         )
     accounts.sort(key=lambda a: (-a["total_crawled_posts"], a["name"]))
-    return {"role": role, "accounts": accounts, "time_range": time_range}
+    result = {"role": role, "accounts": accounts, "time_range": time_range}
+    _OVERVIEW_CACHE[cache_key] = (time.time(), copy.deepcopy(result))
+    return result
 
 
 def get_member_crawl_history(email: str, id_member: str, limit: int = 30) -> dict:

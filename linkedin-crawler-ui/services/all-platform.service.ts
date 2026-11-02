@@ -1126,6 +1126,21 @@ export const zaloInboxShareService = {
 // ── UNIFIED POSTS (Tong-hop — no cache, all server-side) ─────────────────────
 
 export const allPlatformPostsService = {
+  /** Ghi nhận việc người dùng đã nhắn tin Zalo tới số điện thoại này */
+  recordZaloSent: (data: {
+    post_id?: string;
+    platform?: string;
+    phone_number: string;
+    zalo_display_name?: string;
+    zalo_conversation_id?: string;
+    message_content?: string;
+    sent_by?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/auto-seeding-comments/record-zalo-sent`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
   /** Fetch + filter in one call — server-side, no cache */
   getAll: (payload: {
     email: string;

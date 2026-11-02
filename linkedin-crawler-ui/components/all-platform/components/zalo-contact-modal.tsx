@@ -4,7 +4,17 @@ import React, { useState, useEffect } from "react";
 import { FiX, FiMessageSquare, FiExternalLink, FiPhone, FiCheck, FiAlertCircle, FiSend } from "react-icons/fi";
 import { useZaloAccountOptions } from "@/components/all-platform/zalo/centralized-shared/useZaloAccountOptions";
 import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/zaloCrawlerService";
-import { useRouter } from "next/navigation";
+import { allPlatformQuickCommentService, allPlatformQuickInboxService, allPlatformPostsService } from "@/services/all-platform.service";
+import { QuickCommentTemplate, QuickInboxTemplate } from "@/types/unified.types";
+
+interface TemplateItem {
+  id: string;
+  title: string;
+  label?: string;
+  content: string;
+  source: "inbox" | "comment";
+}
+import { useAppAuth } from "@/contexts/AppAuthContext";
 import { toast } from "sonner";
 
 interface ZaloContactModalProps {
@@ -15,6 +25,9 @@ interface ZaloContactModalProps {
   postContent?: string;
   groupName?: string;
   postUrl?: string;
+  postId?: string;
+  platform?: string;
+  onSentSuccess?: (info: { phoneNumber: string; sentBy: string; zaloDisplayName?: string }) => void;
 }
 
 export function ZaloContactModal({
@@ -25,24 +38,110 @@ export function ZaloContactModal({
   postContent,
   groupName,
   postUrl,
+  postId,
+  platform,
+  onSentSuccess,
 }: ZaloContactModalProps) {
-  const router = useRouter();
+  const { user } = useAppAuth();
   const { accounts, selectedAccountId, setSelectedAccountId, loading } = useZaloAccountOptions();
   
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
 
-  // Chuẩn bị tin nhắn chào hỏi mẫu thông minh
+  // Danh sách mẫu câu chào Zalo & Mặc định cá nhân
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [defaultTemplateId, setDefaultTemplateId] = useState<string | null>(null);
+
+  const userEmail = user?.email || "default_user";
+  const defaultStorageKey = `zalo_default_greeting_id_${userEmail}`;
+
+  // Tải danh sách mẫu tin nhắn inbox Zalo & mẫu câu Zalo từ thư viện chung
+  useEffect(() => {
+    if (!open) return;
+    Promise.all([
+      allPlatformQuickInboxService.getAll().catch(() => null),
+      allPlatformQuickCommentService.getAll("zalo").catch(() => null),
+    ]).then(([inboxRes, commentRes]) => {
+      const list: TemplateItem[] = [];
+      if (inboxRes?.success && Array.isArray(inboxRes.data)) {
+        inboxRes.data.forEach((item) => {
+          list.push({
+            id: `inbox_${item.id}`,
+            title: item.title,
+            label: item.label,
+            content: item.content,
+            source: "inbox",
+          });
+        });
+      }
+      if (commentRes?.success && Array.isArray(commentRes.data)) {
+        commentRes.data.forEach((item) => {
+          list.push({
+            id: `comment_${item.id}`,
+            title: item.title,
+            label: item.label,
+            content: item.content,
+            source: "comment",
+          });
+        });
+      }
+      setTemplates(list);
+    }).catch(() => {});
+  }, [open]);
+
+  // Chuẩn bị tin nhắn chào hỏi mẫu thông minh và áp dụng mẫu mặc định của cá nhân
   useEffect(() => {
     if (open) {
-      const gName = groupName ? ` trong nhóm "${groupName}"` : "";
-      const defaultMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
-      setMessage(defaultMsg);
       setStatusText(null);
       setSubmitting(false);
+
+      const savedDefaultId = typeof window !== "undefined" ? localStorage.getItem(defaultStorageKey) : null;
+      setDefaultTemplateId(savedDefaultId);
+
+      const gName = groupName ? ` trong nhóm "${groupName}"` : "";
+      const fallbackMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
+
+      if (savedDefaultId && templates.length > 0) {
+        const found = templates.find((t) => t.id === savedDefaultId);
+        if (found) {
+          setSelectedTemplateId(found.id);
+          const formatted = found.content.replace(/\{group_name\}/g, groupName || "nhóm");
+          setMessage(formatted);
+          return;
+        }
+      }
+
+      // Nếu có mẫu Zalo đầu tiên hoặc fallback
+      if (templates.length > 0 && !selectedTemplateId) {
+        const first = templates[0];
+        setSelectedTemplateId(first.id);
+        const formatted = first.content.replace(/\{group_name\}/g, groupName || "nhóm");
+        setMessage(formatted);
+      } else if (!message) {
+        setMessage(fallbackMsg);
+      }
     }
-  }, [open, groupName]);
+  }, [open, groupName, templates, defaultStorageKey]);
+
+  // Chọn mẫu câu
+  const handleSelectTemplate = (tpl: TemplateItem) => {
+    setSelectedTemplateId(tpl.id);
+    const formatted = tpl.content.replace(/\{group_name\}/g, groupName || "nhóm");
+    setMessage(formatted);
+    toast.success(`Đã chọn mẫu: "${tpl.title}"`);
+  };
+
+  // Thiết lập mẫu câu hiện tại làm mặc định cho cá nhân
+  const handleSetAsDefault = (tplId: string) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem(defaultStorageKey, tplId);
+      setDefaultTemplateId(tplId);
+      const tpl = templates.find((t) => t.id === tplId);
+      toast.success(`Đã đặt mẫu "${tpl?.title || "chào hỏi"}" làm mặc định Zalo cho bạn!`);
+    }
+  };
 
   if (!open) return null;
 
@@ -59,6 +158,7 @@ export function ZaloContactModal({
 
     setSubmitting(true);
     setStatusText("Đang tìm kiếm tài khoản Zalo theo SĐT...");
+    const toastId = toast.loading(`Đang gửi tin nhắn qua Zalo tới ${phoneNumber}...`);
 
     try {
       // 1. Tìm user Zalo theo số điện thoại
@@ -66,11 +166,11 @@ export function ZaloContactModal({
       const targetUid = found?.user_id;
 
       if (!targetUid) {
-        throw new Error("Không tìm thấy người dùng Zalo với số điện thoại này hoặc người dùng chặn tìm kiếm qua SĐT.");
+        throw new Error("Số điện thoại chưa kích hoạt Zalo hoặc cài đặt chặn tìm kiếm qua số điện thoại.");
       }
 
-      const dName = found.display_name || found.zalo_name || phoneNumber;
-      setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang mở hộp thoại...`);
+      const dName = found.display_name || found.zalo_name || zaloDisplayName || "Khách hàng";
+      setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang gửi tin nhắn...`);
 
       // 2. Mở / tạo thread chat 1-1
       const threadRes = await createZaloUserThread(selectedAccountId, {
@@ -83,21 +183,47 @@ export function ZaloContactModal({
       // 3. Nếu người dùng có nhập tin nhắn, gửi tin nhắn đi
       if (message.trim()) {
         setStatusText("Đang gửi tin nhắn chào hỏi...");
-        await sendZaloMessage(selectedAccountId, convId, { text: message.trim() }).catch((err) => {
-          console.warn("Lỗi gửi tin nhắn Zalo ban đầu:", err);
-        });
+        const sendRes = await sendZaloMessage(selectedAccountId, convId, { text: message.trim() });
+        if (sendRes && (sendRes as any).error) {
+          throw new Error((sendRes as any).error || "Tài khoản Zalo người nhận chặn tin nhắn từ người lạ.");
+        }
       }
 
-      toast.success(`Đã kết nối Zalo với ${dName}!`);
-      onClose();
+      const senderName = user?.name || (user?.email ? user.email.split("@")[0] : "Thành viên hệ thống");
+      try {
+        await allPlatformPostsService.recordZaloSent({
+          post_id: postId,
+          platform: platform || "facebook",
+          phone_number: phoneNumber,
+          zalo_display_name: dName,
+          zalo_conversation_id: convId,
+          message_content: message.trim(),
+          sent_by: senderName,
+        });
+      } catch (recErr) {
+        console.warn("Could not record zalo sent:", recErr);
+      }
 
-      // 4. Chuyển hướng tới trang Zalo Inbox của hệ thống
-      router.push(`/all-platform/zalo-inbox?conv=${encodeURIComponent(convId)}&acc=${encodeURIComponent(selectedAccountId)}`);
+      if (onSentSuccess) {
+        onSentSuccess({ phoneNumber, sentBy: senderName, zaloDisplayName: dName });
+      }
+
+      toast.success(`Đã nhắn tin với ${dName} (${phoneNumber}) thành công!`, { id: toastId, duration: 4000 });
+      onClose();
     } catch (err: any) {
       console.error("Zalo connect error:", err);
-      const errMsg = err?.message || "Không thể kết nối tới Zalo qua số điện thoại này.";
-      toast.error(errMsg);
-      setStatusText(errMsg);
+      const rawMsg = err?.message || String(err || "");
+      let reason = rawMsg;
+      if (rawMsg.includes("not found") || rawMsg.includes("Không tìm thấy") || rawMsg.includes("404")) {
+        reason = "số điện thoại chưa kích hoạt Zalo hoặc cài đặt chặn tìm kiếm qua số điện thoại";
+      } else if (rawMsg.includes("stranger") || rawMsg.includes("người lạ") || rawMsg.includes("chặn") || rawMsg.includes("block")) {
+        reason = "tài khoản Zalo khách hàng đang chặn nhận tin nhắn từ người lạ";
+      } else if (rawMsg.includes("session") || rawMsg.includes("auth") || rawMsg.includes("login") || rawMsg.includes("401")) {
+        reason = "phiên đăng nhập Zalo của tài khoản gửi đã hết hạn, vui lòng đăng nhập lại";
+      }
+      const fullError = `Nhắn tin thất bại do ${reason}`;
+      toast.error(fullError, { id: toastId, duration: 6000 });
+      setStatusText(fullError);
     } finally {
       setSubmitting(false);
     }
@@ -106,22 +232,22 @@ export function ZaloContactModal({
   const cleanPhone = phoneNumber.replace(/\D/g, "");
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4 animate-in fade-in duration-150">
       <div
         className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4 bg-sky-50/50 dark:bg-sky-950/20">
+        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 px-5 py-4 bg-rose-50/60 dark:bg-rose-950/20">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full bg-sky-600 text-white flex items-center justify-center font-bold text-sm shadow-xs">
+            <div className="w-9 h-9 rounded-full bg-[#be123c] text-white flex items-center justify-center font-bold text-sm shadow-xs">
               Z
             </div>
             <div>
               <h3 className="font-bold text-slate-800 dark:text-slate-100 text-base leading-tight">
                 Nhắn tin Zalo tới khách hàng
               </h3>
-              <p className="text-xs text-sky-700 dark:text-sky-300 font-semibold mt-0.5">
+              <p className="text-xs text-rose-700 dark:text-rose-300 font-semibold mt-0.5">
                 📞 {phoneNumber} {zaloDisplayName ? `· Zalo: ${zaloDisplayName}` : ""}
               </p>
             </div>
@@ -166,7 +292,7 @@ export function ZaloContactModal({
                       onClick={() => setSelectedAccountId(acc.account_id)}
                       className={`flex items-center justify-between p-2.5 rounded-xl border cursor-pointer transition-all ${
                         isSelected
-                          ? "border-sky-500 bg-sky-50/70 dark:bg-sky-950/30 text-sky-900 dark:text-sky-100 shadow-xs ring-1 ring-sky-500"
+                          ? "border-[#be123c] bg-rose-50/70 dark:bg-rose-950/30 text-rose-950 dark:text-rose-100 shadow-xs ring-1 ring-[#be123c]"
                           : "border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-700 dark:text-slate-300"
                       }`}
                     >
@@ -178,7 +304,7 @@ export function ZaloContactModal({
                             className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-200"
                           />
                         ) : (
-                          <div className="w-8 h-8 rounded-full bg-sky-100 text-sky-700 font-bold text-xs flex items-center justify-center shrink-0">
+                          <div className="w-8 h-8 rounded-full bg-rose-100 text-[#be123c] font-bold text-xs flex items-center justify-center shrink-0">
                             {(((acc as any).display_name || acc.label) || "Z").charAt(0).toUpperCase()}
                           </div>
                         )}
@@ -194,7 +320,7 @@ export function ZaloContactModal({
                       <div className="shrink-0 flex items-center gap-1.5">
                         <span className="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
                         <span className="text-[10px] text-emerald-600 font-medium">Sẵn sàng</span>
-                        {isSelected && <FiCheck className="w-4 h-4 text-sky-600 ml-1" />}
+                        {isSelected && <FiCheck className="w-4 h-4 text-[#be123c] ml-1" />}
                       </div>
                     </div>
                   );
@@ -203,23 +329,83 @@ export function ZaloContactModal({
             )}
           </div>
 
-          {/* Ô soạn lời chào */}
+          {/* Ô soạn lời chào & Danh sách mẫu câu chọn nhanh */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wider">
-              Lời chào mẫu gửi tới khách hàng:
-            </label>
+            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
+              <div className="flex items-center gap-2">
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  Mẫu tin nhắn inbox Zalo (Click chọn nhanh):
+                </label>
+                <a
+                  href="/all-platform/quick-comments?tab=inbox"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-bold text-[#be123c] hover:text-[#9f1239] dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-800 flex items-center gap-1 cursor-pointer transition hover:scale-105"
+                  title="Mở thư viện mẫu inbox để thêm hoặc chỉnh sửa mẫu tin nhắn"
+                >
+                  <span>+ Quản lý mẫu inbox</span>
+                  <span className="text-[9px]">↗</span>
+                </a>
+              </div>
+              {selectedTemplateId && (
+                <button
+                  type="button"
+                  onClick={() => handleSetAsDefault(selectedTemplateId)}
+                  className="text-[11px] font-semibold text-[#be123c] hover:text-[#9f1239] dark:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
+                  title="Đặt mẫu này làm mặc định cho các lần nhắn tin sau của bạn"
+                >
+                  <span>{defaultTemplateId === selectedTemplateId ? "★ Đang là mặc định" : "☆ Đặt làm mặc định"}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Danh sách các mẫu câu Zalo từ thư viện chung */}
+            {templates.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2 max-h-24 overflow-y-auto pr-1">
+                {templates.map((tpl) => {
+                  const isSelected = selectedTemplateId === tpl.id;
+                  const isDefault = defaultTemplateId === tpl.id;
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => handleSelectTemplate(tpl)}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all cursor-pointer ${
+                        isSelected
+                          ? "bg-[#be123c] text-white shadow-xs ring-1 ring-[#be123c]"
+                          : "bg-slate-100 hover:bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                      }`}
+                      title={tpl.content}
+                    >
+                      {isDefault && <span className="text-amber-300 font-bold">★</span>}
+                      {tpl.label && (
+                        <span className={`text-[9px] px-1 py-0.2 rounded font-bold uppercase ${
+                          isSelected ? "bg-white/20 text-white" : tpl.source === "inbox" ? "bg-rose-100 text-[#be123c] dark:bg-rose-950/40 dark:text-rose-300" : "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                        }`}>
+                          {tpl.label}
+                        </span>
+                      )}
+                      <span className="truncate max-w-[140px]">{tpl.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => {
+                setMessage(e.target.value);
+              }}
               rows={3}
               placeholder="Nhập nội dung tin nhắn mở đầu..."
-              className="w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-slate-800 dark:text-slate-100 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-sky-500 resize-none"
+              className="w-full text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-2.5 text-slate-800 dark:text-slate-100 placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[#be123c]/20 focus:border-[#be123c] resize-none"
             />
           </div>
 
           {statusText && (
-            <div className="rounded-lg bg-sky-50 dark:bg-sky-950/30 p-2.5 text-xs text-sky-800 dark:text-sky-200 flex items-center gap-2 animate-in fade-in">
-              <span className="inline-block w-2 h-2 rounded-full bg-sky-500 animate-ping"></span>
+            <div className="rounded-lg bg-rose-50 dark:bg-rose-950/30 p-2.5 text-xs text-rose-800 dark:text-rose-200 flex items-center gap-2 animate-in fade-in border border-rose-100">
+              <span className="inline-block w-2 h-2 rounded-full bg-[#be123c] animate-ping"></span>
               <span>{statusText}</span>
             </div>
           )}
@@ -260,7 +446,7 @@ export function ZaloContactModal({
             type="button"
             onClick={handleStartChat}
             disabled={submitting || accounts.length === 0}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-500 shadow-md shadow-sky-600/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold text-white bg-[#be123c] hover:bg-[#9f1239] shadow-md shadow-rose-900/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none transition-all cursor-pointer"
           >
             {submitting ? (
               <>

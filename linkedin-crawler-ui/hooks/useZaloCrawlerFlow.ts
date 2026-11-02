@@ -457,6 +457,8 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ZaloAccountInfo[]>([]);
+  const accountsRef = useRef<ZaloAccountInfo[]>([]);
+  accountsRef.current = accounts;
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [isUserIdReady, setIsUserIdReady] = useState(false);
@@ -577,7 +579,10 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
   }, []);
 
   const loadAccounts = useCallback(async () => {
-    setIsLoadingAccounts(true);
+    // SWR: Chỉ hiện spinner nếu danh sách đang rỗng, nếu đã có dữ liệu thì cập nhật ngầm không làm đơ UI
+    if (accountsRef.current.length === 0) {
+      setIsLoadingAccounts(true);
+    }
     setAccountsError(null);
     try {
       const ownerId = appUser?.id ?? "default";
@@ -588,7 +593,7 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     } finally {
       setIsLoadingAccounts(false);
     }
-  }, [appUser?.id]);
+  }, [appUser?.id, appUser?.email]);
 
   useEffect(() => {
     if (!isUserIdReady) return;
