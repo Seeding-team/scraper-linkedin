@@ -62,9 +62,9 @@ jobs:
       - name: Build and apply CRM containers
         working-directory: /opt/apps/crm-module
         run: |
-          docker compose -p crm-markee build frontend backend
-          docker compose -p crm-markee up -d frontend backend
-          docker compose -p crm-markee restart router
+          docker compose -p crm-module build frontend backend
+          docker compose -p crm-module up -d frontend backend
+          docker compose -p crm-module restart router
 
       - name: Verify CRM production
         run: |
