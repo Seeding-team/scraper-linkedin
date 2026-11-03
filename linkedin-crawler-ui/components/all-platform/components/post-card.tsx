@@ -863,7 +863,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           onClose={() => setIsMoreMenuOpen(false)}
           onViewDetail={handleView}
           onSchedule={onSchedule}
-          onDelete={(userRole === "admin" || userRole === "leader") ? onDelete : undefined}
+          onDelete={onDelete}
         />
       )}
 

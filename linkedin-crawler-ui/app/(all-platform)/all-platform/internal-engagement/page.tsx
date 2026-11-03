@@ -1006,7 +1006,8 @@ export default function InternalEngagementPage() {
     taskLinkedInMetricsRef.current = {};
     setTaskCampaignId("");
     setTaskDeadline("");
-    setTaskAssignedTeams([]);
+    // Mặc định chọn tất cả Teams theo yêu cầu Master
+    setTaskAssignedTeams(dbTeams.map((t) => t.id));
     setTaskTargetLikes(0);
     setTaskTargetComments(0);
     setIsCreateTaskModalOpen(true);
@@ -1016,6 +1017,13 @@ export default function InternalEngagementPage() {
     if (dbTeams.length === 0) return false;
     return dbTeams.every((t) => taskAssignedTeams.includes(t.id) || taskAssignedTeams.includes(t.name_team));
   }, [dbTeams, taskAssignedTeams]);
+
+  // Luôn đảm bảo mặc định chọn tất cả Teams khi mở Modal
+  useEffect(() => {
+    if (isCreateTaskModalOpen && taskAssignedTeams.length === 0 && dbTeams.length > 0) {
+      setTaskAssignedTeams(dbTeams.map((t) => t.id));
+    }
+  }, [isCreateTaskModalOpen, dbTeams, taskAssignedTeams.length]);
 
   const toggleSelectAllTeams = () => {
     if (isAllTeamsSelected) {
@@ -3162,7 +3170,7 @@ export default function InternalEngagementPage() {
 
                   <div>
                     <label className="text-xs font-bold text-gray-700 block mb-1">
-                      Hạn chót (Deadline) <span className="text-red-500">*</span>:
+                      Hạn chót (Deadline) <span className="text-[11px] text-gray-400 font-normal">(Không bắt buộc)</span>:
                     </label>
                     <input
                       type="datetime-local"
