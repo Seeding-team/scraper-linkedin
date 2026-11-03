@@ -75,6 +75,21 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
+
+/** Chuẩn hóa và format số điện thoại dạng đẹp mắt: 0245 123 456 hoặc 0902 355 083 */
+function formatZaloPhoneDisplay(rawPhone?: string | null): string {
+  if (!rawPhone) return "";
+  let digits = rawPhone.replace(/\D/g, "");
+  if (digits.startsWith("84") && digits.length >= 10) {
+    digits = "0" + digits.slice(2);
+  }
+  if (!digits.startsWith("0")) return rawPhone.trim();
+  if (digits.length === 10 || digits.length === 11) {
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  return digits;
+}
+
 // ─── Constants & Templates ──────────────────────────────────────────────────
 
 const QUICK_REPLY_GROUPS = [
@@ -353,6 +368,7 @@ export function ZaloInboxAdminShell() {
   const [showSalesAssetPicker, setShowSalesAssetPicker] = useState(false);
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [currentLead, setCurrentLead] = useState<Customer | null>(null);
+  const [convPhoneMap, setConvPhoneMap] = useState<Record<string, string>>({});
   // Danh sach Sale/Presale cho form "Tạo cơ hội" (DealFormModal yeu cau chon
   // "Sale phu trach" o nhanh tao moi) - truoc day modal mo voi agents={[]}
   // hardcode (xem thao/CRM_KNOWN_BUGS_FIXED.md muc 3), dropdown rong khong
@@ -383,6 +399,35 @@ export function ZaloInboxAdminShell() {
       cancelled = true;
     };
   }, [inbox.openConv]);
+
+  
+  // Tự động tìm kiếm và lưu số điện thoại cho hội thoại Zalo đang mở
+  useEffect(() => {
+    const convId = inbox.openConv;
+    if (!convId) return;
+    let cancelled = false;
+    if (currentLead?.phone) {
+      const formatted = formatZaloPhoneDisplay(currentLead.phone);
+      if (formatted) {
+        setConvPhoneMap((prev) => (prev[convId] === formatted ? prev : { ...prev, [convId]: formatted }));
+        return;
+      }
+    }
+    void (async () => {
+      try {
+        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data?.success && data?.phone) {
+          const formatted = formatZaloPhoneDisplay(data.phone);
+          if (formatted) {
+            setConvPhoneMap((prev) => (prev[convId] === formatted ? prev : { ...prev, [convId]: formatted }));
+          }
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [inbox.openConv, currentLead?.phone]);
 
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
@@ -493,6 +538,13 @@ export function ZaloInboxAdminShell() {
   const selectedConv = inbox.filtered.find((c) => c.conv_id === inbox.openConv);
   const selectedArchive = inbox.archives.find((a) => a.conv_id === inbox.openConv);
   const selectedName = inbox.archiveReading ? selectedArchive?.name : selectedConv?.name;
+  const activeConvPhone = useMemo(() => {
+    const convId = inbox.openConv;
+    if (!convId) return "";
+    if (convPhoneMap[convId]) return convPhoneMap[convId];
+    if (currentLead?.phone) return formatZaloPhoneDisplay(currentLead.phone);
+    return "";
+  }, [inbox.openConv, convPhoneMap, currentLead?.phone]);
   const selectedPreview = inbox.archiveReading ? selectedArchive?.preview : selectedConv?.preview;
   const selectedNote = inbox.openConv ? inbox.customerNotes[inbox.openConv] ?? selectedArchive?.note ?? "" : "";
   const activeTemplateGroup = QUICK_REPLY_GROUPS.find((g) => g.id === templateGroupId) || QUICK_REPLY_GROUPS[0];
@@ -930,7 +982,17 @@ export function ZaloInboxAdminShell() {
                 <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs" />
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="truncate text-sm font-bold text-slate-900">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</h2>
+                    <h2
+                    className="truncate text-sm font-bold text-slate-900 flex items-center gap-1.5"
+                    title={selectedName ? `${selectedName}${activeConvPhone ? ` (${activeConvPhone})` : ""}` : ""}
+                  >
+                    <span className="truncate">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</span>
+                    {activeConvPhone && (
+                      <span className="shrink-0 font-bold font-mono tracking-tight text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-lg text-xs shadow-2xs">
+                        ({activeConvPhone})
+                      </span>
+                    )}
+                  </h2>
                     {selectedConv?.is_customer && <span className="text-amber-500 text-sm" title="Khách hàng">⭐</span>}
                   </div>
                   {inbox.openConv && (

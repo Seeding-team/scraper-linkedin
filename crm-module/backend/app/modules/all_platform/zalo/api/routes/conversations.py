@@ -1320,3 +1320,63 @@ async def get_group_members(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể quét thành viên nhóm: {exc}")
     return result
+
+
+@router.get("/conversations/{conversation_id}/phone")
+async def get_conversation_phone(
+    conversation_id: str,
+):
+    """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign."""
+    conv_id = (conversation_id or "").strip()
+    if not conv_id:
+        return {"success": False, "phone": None}
+
+    phone: Optional[str] = None
+
+    # 1. Tra trong customer_leads theo conv_id
+    try:
+        lead_rows = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "phone,phone_normalized",
+                "limit": 1,
+            },
+        )
+        if lead_rows and isinstance(lead_rows, list) and len(lead_rows) > 0:
+            phone = lead_rows[0].get("phone") or lead_rows[0].get("phone_normalized")
+    except Exception as e:
+        logger.debug(f"lookup phone in customer_leads failed: {e}")
+
+    # 2. Tra trong auto_seeding_comments theo zalo_conversation_id
+    if not phone:
+        try:
+            seeding_rows = await _rest(
+                "GET",
+                "auto_seeding_comments",
+                params={
+                    "zalo_conversation_id": f"eq.{conv_id}",
+                    "select": "phone_number",
+                    "limit": 1,
+                },
+            )
+            if seeding_rows and isinstance(seeding_rows, list) and len(seeding_rows) > 0:
+                phone = seeding_rows[0].get("phone_number")
+        except Exception as e:
+            logger.debug(f"lookup phone in auto_seeding_comments failed: {e}")
+
+    # 3. Nếu conv_id chính là số điện thoại
+    if not phone:
+        digits = re.sub(r"\D", "", conv_id)
+        if (len(digits) == 10 and digits.startswith("0")) or (len(digits) == 11 and digits.startswith("84")):
+            phone = digits
+
+    # Chuẩn hóa về dạng 0...
+    if phone:
+        clean = re.sub(r"\D", "", str(phone))
+        if clean.startswith("84") and len(clean) >= 10:
+            clean = "0" + clean[2:]
+        return {"success": True, "phone": clean}
+
+    return {"success": True, "phone": None}
