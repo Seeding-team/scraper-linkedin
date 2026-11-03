@@ -162,8 +162,16 @@
             if (info.is_reply === true) return true;
             if (info.reply_to_author != null) return true;
             if (info.root_post_author != null) return true;
+            if (info.show_reply_context === true) return true;
+            if (info.has_parent_post === true) return true;
         }
         if (o.is_reply === true || o.reply_to_post_id != null) return true;
+        if (o.has_parent_post === true || o.parent_post_id != null || o.reply_to_author != null) return true;
+        
+        // Bắt đầu bằng mention @username trong caption hoặc text fragments
+        const captionText = (o.caption && typeof o.caption.text === 'string') ? o.caption.text.trim() : '';
+        if (captionText.startsWith('@') || /^(?:đang trả lời|replying to|trả lời)\s+@/i.test(captionText)) return true;
+        
         return false;
     }
 
@@ -366,14 +374,21 @@
                 return;
             }
 
-            // 3. Nếu khối DOM hiển thị chỉ báo trả lời ("Đang trả lời @...", "Replying to @...") -> là comment.
-            const rawBoxText = box.innerText || '';
-            if (/^\s*(Đang trả lời|Replying to)\s+@?[A-Za-z0-9._]+/im.test(rawBoxText)) {
+            // 3. Nếu khối DOM hiển thị chỉ báo trả lời hoặc bắt đầu bằng @username -> là comment.
+            const rawBoxText = (box.innerText || '').trim();
+            if (/^(?:đang trả lời|replying to|trả lời)\s+@?[A-Za-z0-9._]+/im.test(rawBoxText) || /^@[A-Za-z0-9._]+\s+/i.test(rawBoxText)) {
                 knownReplyUrls.add(postUrl);
                 if (store.has(postUrl)) {
                     store.delete(postUrl);
                     pendingStream.delete(postUrl);
                 }
+                return;
+            }
+
+            // 4. Nếu trong box có thẻ liên kết trả lời hoặc connector line nối lên bài cha
+            const hasReplySignal = !!box.querySelector('a[href^="/@"][role="link"][tabindex="-1"], [data-connector], [class*="connector"]');
+            if (hasReplySignal && !isPostDetailPage) {
+                knownReplyUrls.add(postUrl);
                 return;
             }
 

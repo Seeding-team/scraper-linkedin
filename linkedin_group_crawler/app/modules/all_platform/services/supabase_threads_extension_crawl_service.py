@@ -86,29 +86,45 @@ def _strip_accents(text: str) -> str:
     return no_acc.replace("đ", "d").replace("Đ", "D").lower()
 
 
+def _is_comment_or_reply(raw: dict) -> bool:
+    """Kiểm tra bài viết có phải là bình luận/reply hay không để loại bỏ triệt để."""
+    if not raw or not isinstance(raw, dict):
+        return False
+    if raw.get("is_reply") is True:
+        return True
+    content = str(raw.get("content") or "").strip()
+    if not content:
+        return False
+    # 1. Bắt đầu bằng mention @username (đặc trưng 100% của comment/reply trên Threads)
+    if re.match(r"^@[A-Za-z0-9._]+", content):
+        return True
+    # 2. Bắt đầu bằng chỉ báo trả lời (Đang trả lời / Replying to / Trả lời)
+    if re.match(r"^(?:đang trả lời|replying to|trả lời)\s+@?[A-Za-z0-9._]+", content, re.IGNORECASE):
+        return True
+    return False
+
+
 def _content_matches_keyword(content: Optional[str], keyword: Optional[str]) -> bool:
-    """Kiểm tra nội dung bài Threads có thực sự khớp với từ khoá đang tìm hay không.
-    Loại bỏ các bài gợi ý/nổi bật không liên quan mà trang search Threads tự chèn vào."""
+    """Kiểm tra nội dung bài Threads có THỰC SỰ khớp chuẩn xác với từ khoá đang tìm hay không.
+    BẮT BUỘC KHỚP CỤM TỪ (PHRASE MATCH): Từ khoá phải xuất hiện liền nhau trong bài viết.
+    Tuyệt đối không bẻ từ đơn lẻ tránh cào sai từ khoá theo yêu cầu Master."""
     kw_clean = (keyword or "").strip().lower()
     if not kw_clean:
         return True
     text_lower = (content or "").strip().lower()
     if not text_lower:
         return False
-    # 1. Khớp nguyên cụm từ (có dấu hoặc không dấu)
+
+    # 1. Khớp nguyên cụm từ có dấu
     if kw_clean in text_lower:
         return True
+
+    # 2. Khớp nguyên cụm từ không dấu (hỗ trợ gõ tiếng Việt không dấu)
     kw_unaccent = _strip_accents(kw_clean)
     text_unaccent = _strip_accents(text_lower)
     if kw_unaccent and kw_unaccent in text_unaccent:
         return True
-    # 2. Khớp toàn bộ các từ đơn có nghĩa (>= 2 ký tự) trong cụm từ khoá
-    tokens = [tok for tok in re.split(r"\s+", kw_clean) if len(tok) >= 2]
-    if tokens and all(tok in text_lower for tok in tokens):
-        return True
-    tokens_unaccent = [tok for tok in re.split(r"\s+", kw_unaccent) if len(tok) >= 2]
-    if tokens_unaccent and all(tok in text_unaccent for tok in tokens_unaccent):
-        return True
+
     return False
 
 
@@ -139,6 +155,11 @@ def save_threads_crawl_batch(
             continue
         url, username, code = norm
         if url in candidates:
+            continue
+
+        # 2b-reply. LOẠI BỎ TRIỆT ĐỂ BÌNH LUẬN / COMMENT TRÊN THREADS
+        if _is_comment_or_reply(raw):
+            skipped_invalid += 1
             continue
 
         # 2c. Kiểm tra bài viết thực sự chứa từ khoá đã chọn (loại bài gợi ý/trending lệch từ khoá của Threads)
