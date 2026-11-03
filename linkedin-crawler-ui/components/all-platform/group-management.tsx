@@ -1262,13 +1262,7 @@ export function GroupManagementContent() {
   const filteredFb = useMemo(() => {
     return fbGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -1326,13 +1320,7 @@ export function GroupManagementContent() {
   const filteredLi = useMemo(() => {
     return liGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||

@@ -15,9 +15,15 @@ import {
 } from "@/services/all-platform.service";
 import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category } from "@/types/unified.types";
 
-const PLATFORMS: { key: FeedPlatform; label: string; Icon: typeof FaFacebook }[] = [
+import { SiThreads } from "react-icons/si";
+import { ThreadsKeywordsTab } from "./threads-keywords-tab";
+
+type GroupPlatformTab = FeedPlatform | "threads";
+
+const PLATFORMS: { key: GroupPlatformTab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "facebook", label: "Facebook Groups", Icon: FaFacebook },
   { key: "linkedin", label: "LinkedIn Groups", Icon: FaLinkedin },
+  { key: "threads", label: "Threads (Từ khóa)", Icon: SiThreads },
 ];
 
 // ── Searchable Dropdown Component ─────────────────────────────────────────────
@@ -153,6 +159,120 @@ function SearchableDropdown({
               </button>
             ))
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Inline "+ Người phụ trách" quick-assign (ngay trên hàng, không cần mở modal sửa) ─────────
+interface InlineAssigneeCellProps {
+  value: string | null | undefined;
+  nameHint: string | null | undefined;
+  options: Category[];
+  nameHintById: Record<string, string>;
+  displayName: string;
+  saving: boolean;
+  onAssign: (userId: string, nameHint: string) => void;
+}
+
+function InlineAssigneeCell({
+  value,
+  nameHint,
+  options,
+  nameHintById,
+  displayName,
+  saving,
+  onAssign,
+}: InlineAssigneeCellProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    if (!search) return options;
+    const s = search.toLowerCase();
+    return options.filter((o) => (o.name || "").toLowerCase().includes(s) || (o.code || "").toLowerCase().includes(s));
+  }, [options, search]);
+
+  const isEmpty = !value && !nameHint;
+
+  const pick = (optId: string) => {
+    setOpen(false);
+    setSearch("");
+    onAssign(optId, optId ? nameHintById[optId] || "" : "");
+  };
+
+  return (
+    <div ref={containerRef} className="relative inline-block">
+      <button
+        type="button"
+        disabled={saving}
+        onClick={() => setOpen((o) => !o)}
+        title="Bấm để gán/đổi người phụ trách"
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium transition-all duration-150 cursor-pointer ${
+          isEmpty
+            ? "text-primary font-bold border border-dashed border-primary/40 hover:bg-primary/10"
+            : "text-on-surface hover:bg-surface-container-low border border-transparent hover:border-outline-variant"
+        } ${saving ? "opacity-50 pointer-events-none" : ""}`}
+      >
+        {isEmpty ? (
+          <>
+            <FaPlus size={8} /> Thêm
+          </>
+        ) : (
+          displayName
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute z-40 top-full left-0 mt-1 w-56 bg-surface border border-outline-variant rounded-xl shadow-lg p-2">
+          <input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Tìm theo tên/email..."
+            className="w-full border border-outline-variant rounded-lg px-2 py-1.5 text-xs mb-1.5 outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
+          />
+          <div className="max-h-48 overflow-y-auto">
+            {!isEmpty && (
+              <button
+                type="button"
+                onClick={() => pick("")}
+                className="w-full text-left px-2 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded-md"
+              >
+                Bỏ gán
+              </button>
+            )}
+            {filtered.length === 0 ? (
+              <div className="px-2 py-2 text-[11px] text-on-surface-variant text-center">Không tìm thấy</div>
+            ) : (
+              filtered.map((o) => (
+                <button
+                  key={String(o.id)}
+                  type="button"
+                  onClick={() => pick(String(o.id))}
+                  className={`w-full text-left px-2 py-1.5 text-[11px] rounded-md truncate hover:bg-primary/10 ${
+                    String(o.id) === String(value) ? "bg-primary/10 font-bold text-primary" : "text-on-surface"
+                  }`}
+                >
+                  {o.name}
+                </button>
+              ))
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -908,7 +1028,16 @@ export function GroupManagementContent() {
   const isAdmin = user?.role === "admin";
   const isLeader = user?.role === "leader";
 
-  const [platform, setPlatform] = useState<FeedPlatform>("facebook");
+  const [platform, setPlatform] = useState<GroupPlatformTab>(() => {
+    if (typeof window !== "undefined") {
+      const tabParam = new URLSearchParams(window.location.search).get("tab");
+      if (tabParam === "threads" || tabParam === "linkedin" || tabParam === "facebook") {
+        return tabParam as GroupPlatformTab;
+      }
+    }
+    return "facebook";
+  });
+  const [threadsCount, setThreadsCount] = useState<number>(0);
   const [fbGroups, setFbGroups] = useState<FacebookGroup[]>([]);
   const [liGroups, setLiGroups] = useState<LinkedInGroup[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1066,12 +1195,49 @@ export function GroupManagementContent() {
     return team.name_team || "—";
   }, [teamsData]);
 
-  const getUserTeamName = useCallback((idMember: string | null | undefined) => {
-    if (!idMember) return "—";
-    const team = teamsData.find(t => t.members?.some(m => String(m.id) === String(idMember)));
-    if (!team) return "—";
-    return team.name_team || "—";
-  }, [teamsData]);
+  // Gán nhanh "Người phụ trách"/"Đồng phụ trách" ngay trên hàng, không cần mở modal
+  // sửa đầy đủ — chỉ PATCH đúng 2 field liên quan (assignee_id/co_assignee_id +
+  // name_hint), backend update_*_group() đã hỗ trợ partial update theo whitelist.
+  const [savingAssigneeIds, setSavingAssigneeIds] = useState<Set<string>>(new Set());
+
+  const handleInlineAssign = useCallback(
+    async (
+      group: FacebookGroup | LinkedInGroup,
+      platform: FeedPlatform,
+      field: "assignee" | "co_assignee",
+      userId: string,
+      hint: string,
+    ) => {
+      const idKey = `${field}_id` as const;
+      const hintKey = `${field}_name_hint` as const;
+      const savingKey = `${group.id}:${field}`;
+
+      setSavingAssigneeIds((prev) => new Set(prev).add(savingKey));
+      try {
+        const res = await allPlatformGroupsService.update(
+          { id: group.id, [idKey]: userId, [hintKey]: userId ? hint : "" },
+          platform,
+        );
+        if (!res.success) {
+          setError(res.message || "Không thể cập nhật người phụ trách");
+          return;
+        }
+        const applyLocal = (list: any[]) =>
+          list.map((g) => (g.id === group.id ? { ...g, [idKey]: userId || null, [hintKey]: userId ? hint : null } : g));
+        if (platform === "facebook") setFbGroups((prev) => applyLocal(prev) as FacebookGroup[]);
+        else setLiGroups((prev) => applyLocal(prev) as LinkedInGroup[]);
+      } catch {
+        setError("Không thể cập nhật người phụ trách");
+      } finally {
+        setSavingAssigneeIds((prev) => {
+          const next = new Set(prev);
+          next.delete(savingKey);
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   // Mapping helper từ id hoặc code sang name danh mục
   const categoryNameMap = useMemo(() => {
@@ -1096,13 +1262,7 @@ export function GroupManagementContent() {
   const filteredFb = useMemo(() => {
     return fbGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -1131,6 +1291,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1157,13 +1320,7 @@ export function GroupManagementContent() {
   const filteredLi = useMemo(() => {
     return liGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -1191,6 +1348,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1271,6 +1431,7 @@ export function GroupManagementContent() {
   };
 
   const currentGroups = platform === "facebook" ? filteredFb : filteredLi;
+  const hasLeadStatsError = currentGroups.some((g) => (g as any).lead_stats_error);
   const totalItems = currentGroups.length;
   const totalPages = Math.ceil(totalItems / pageSize);
   const paginatedGroups = currentGroups.slice((page - 1) * pageSize, page * pageSize);
@@ -1290,22 +1451,28 @@ export function GroupManagementContent() {
               <MaterialIcon name="groups" className="text-primary text-3xl" />
             </div>
             <div>
-              <h1 className="text-h1 text-on-surface font-bold tracking-tight">Quản lý nhóm</h1>
+              <h1 className="text-h1 text-on-surface font-bold tracking-tight">
+                {platform === "threads" ? "Từ khóa Threads & Seeding" : "Quản lý nhóm"}
+              </h1>
               <p className="text-body-md text-on-surface-variant">
-                Danh sách nhóm Facebook &amp; LinkedIn dùng để thu thập dữ liệu
+                {platform === "threads"
+                  ? "Quản lý các loại từ khóa theo chủ đề, đóng góp từ khóa cộng đồng và hỗ trợ cào bài viết chuẩn xác"
+                  : "Danh sách nhóm Facebook & LinkedIn dùng để thu thập dữ liệu"}
               </p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setShowAddForm(true);
-              setEditingGroup(null);
-            }}
-            className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
-          >
-            <FaPlus />
-            Thêm nhóm
-          </button>
+          {platform !== "threads" && (
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setEditingGroup(null);
+              }}
+              className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
+            >
+              <FaPlus />
+              Thêm nhóm
+            </button>
+          )}
         </div>
       </div>
 
@@ -1328,6 +1495,11 @@ export function GroupManagementContent() {
               setIcpFilter("all");
               setContentTypeFilter("all");
               setProductSeedingFilter("all");
+              if (typeof window !== "undefined") {
+                const url = new URL(window.location.href);
+                url.searchParams.set("tab", key);
+                window.history.replaceState({}, "", url.toString());
+              }
             }}
             className={`flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ease-out cursor-pointer ${
               platform === key
@@ -1340,12 +1512,16 @@ export function GroupManagementContent() {
             <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black ${
               platform === key ? "bg-white/20 text-white" : "bg-surface-container-highest text-on-surface-variant"
             }`}>
-              {key === "facebook" ? filteredFb.length : filteredLi.length}
+              {key === "facebook" ? filteredFb.length : key === "linkedin" ? filteredLi.length : threadsCount}
             </span>
           </button>
         ))}
       </div>
 
+      {platform === "threads" ? (
+        <ThreadsKeywordsTab onTopicCountChange={setThreadsCount} />
+      ) : (
+        <>
       {/* Alerts */}
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-[0_1px_2px_rgba(16,24,40,0.04)] animate-in fade-in">
@@ -1667,6 +1843,13 @@ export function GroupManagementContent() {
         </div>
       )}
 
+      {hasLeadStatsError && (
+        <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
+          <MaterialIcon name="warning" className="text-base text-amber-600" />
+          Không tính được điểm AI (🎯) cho một số nhóm lúc này — danh sách nhóm vẫn đầy đủ, chỉ tạm thời thiếu badge điểm. Không có nhóm nào bị xoá hay ẩn.
+        </div>
+      )}
+
       {/* Groups table */}
       {loading ? (
         <div className="text-center py-16">
@@ -1698,7 +1881,7 @@ export function GroupManagementContent() {
                 <th className="text-left px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[280px]">
                   Phân loại
                 </th>
-                {isLeader ? (
+                {(isAdmin || isLeader) ? (
                   <>
                     <th className="text-left px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[150px]">
                       Người phụ trách
@@ -1713,10 +1896,10 @@ export function GroupManagementContent() {
                 ) : (
                   <>
                     <th className="text-left px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[150px]">
-                      {isAdmin ? "Thành viên" : "Người phụ trách"}
+                      Người phụ trách
                     </th>
                     <th className="text-left px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[150px]">
-                      {isAdmin ? "Team" : "Đồng phụ trách"}
+                      Đồng phụ trách
                     </th>
                   </>
                 )}
@@ -1747,6 +1930,22 @@ export function GroupManagementContent() {
                       >
                         {g.group_name || "—"}
                       </a>
+                      {(g as any).high_lead_post_count > 0 && (
+                        <span
+                          title={`Điểm AI trung bình các bài trong nhóm: ${(g as any).avg_lead_score ?? "—"}`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        >
+                          🎯 {(g as any).high_lead_post_count} bài điểm cao
+                        </span>
+                      )}
+                      {(g as any).lead_stats_warning && (
+                        <span
+                          title={`Đã chấm điểm ${(g as any).scored_post_count ?? 0} bài trong nhóm này nhưng chưa có bài nào điểm cao — nhóm KHÔNG bị xoá tự động, chỉ cảnh báo để bạn tự quyết định (giữ/bỏ/đổi nguồn)`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200"
+                        >
+                          ⚠️ Ít/không ra lead ({(g as any).scored_post_count} bài đã chấm)
+                        </span>
+                      )}
                       {platform === "facebook" && (
                         <div className="mt-1.5 text-xs text-on-surface-variant">
                           Thành viên: <span className="font-semibold text-on-surface">{Number((g as FacebookGroup).members) > 0 ? Number((g as FacebookGroup).members).toLocaleString("vi-VN") : "?"}</span> thành viên
@@ -1789,13 +1988,29 @@ export function GroupManagementContent() {
                         </button>
                       </div>
                     </td>
-                    {isLeader ? (
+                    {(isAdmin || isLeader) ? (
                       <>
-                        <td className="px-4 py-3 text-xs font-medium text-on-surface">
-                          {getUserName((g as any).assignee_id, (g as any).assignee_name_hint)}
+                        <td className="px-4 py-3">
+                          <InlineAssigneeCell
+                            value={(g as any).assignee_id}
+                            nameHint={(g as any).assignee_name_hint}
+                            options={userOptions}
+                            nameHintById={nameHintById}
+                            displayName={getUserName((g as any).assignee_id, (g as any).assignee_name_hint)}
+                            saving={savingAssigneeIds.has(`${g.id}:assignee`)}
+                            onAssign={(userId, hint) => handleInlineAssign(g, platform, "assignee", userId, hint)}
+                          />
                         </td>
-                        <td className="px-4 py-3 text-xs font-medium text-on-surface">
-                          {getUserName((g as any).co_assignee_id, (g as any).co_assignee_name_hint)}
+                        <td className="px-4 py-3">
+                          <InlineAssigneeCell
+                            value={(g as any).co_assignee_id}
+                            nameHint={(g as any).co_assignee_name_hint}
+                            options={userOptions}
+                            nameHintById={nameHintById}
+                            displayName={getUserName((g as any).co_assignee_id, (g as any).co_assignee_name_hint)}
+                            saving={savingAssigneeIds.has(`${g.id}:co_assignee`)}
+                            onAssign={(userId, hint) => handleInlineAssign(g, platform, "co_assignee", userId, hint)}
+                          />
                         </td>
                         <td className="px-4 py-3 text-xs font-medium text-on-surface">
                           {getUserName((g as any).id_member, (g as any).id_member_name_hint)}
@@ -1804,10 +2019,10 @@ export function GroupManagementContent() {
                     ) : (
                       <>
                         <td className="px-4 py-3 text-xs font-medium text-on-surface">
-                          {isAdmin ? getUserName((g as any).id_member, (g as any).id_member_name_hint) : getUserName((g as any).assignee_id, (g as any).assignee_name_hint)}
+                          {getUserName((g as any).assignee_id, (g as any).assignee_name_hint)}
                         </td>
                         <td className="px-4 py-3 text-xs font-medium text-on-surface">
-                          {isAdmin ? getUserTeamName((g as any).id_member) : getUserName((g as any).co_assignee_id, (g as any).co_assignee_name_hint)}
+                          {getUserName((g as any).co_assignee_id, (g as any).co_assignee_name_hint)}
                         </td>
                       </>
                     )}
@@ -2133,6 +2348,8 @@ export function GroupManagementContent() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

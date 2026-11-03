@@ -354,6 +354,16 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     const evMap: Record<string, string> = {};
     const cMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
 
+    // [Master Requirement 2026-11-03]: Nạp đánh giá bài viết từ server để TẤT CẢ mọi người (Admin, Leader, Staff) đều thấy như nhau
+    void fetch("/api/all-platform/posts/evaluations")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.success && data?.data) {
+          setEvaluationsMap((prev) => ({ ...data.data, ...prev }));
+        }
+      })
+      .catch((err) => console.debug("Fetch evaluations failed:", err));
+
     posts.forEach((p) => {
       const pid = String(p.id || p.post_url || "");
       const idKey = p.id ? String(p.id) : "";
@@ -864,7 +874,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       "chua_danh_gia";
 
     if (rating === "Cần liên hệ") rating = "can_lien_he";
-    if (rating === "Không phù hợp") rating = "khong_phu_hop";
+    if (rating === "Cần xem xét") rating = "can_xem_xet";
+    if (rating === "Phù hợp") rating = "phu_hop";
+    if (rating === "Không phù hợp" || rating === "Chưa phù hợp") rating = "khong_phu_hop";
+    if (rating === "chua_phu_hop") rating = "khong_phu_hop";
     if (rating === "Chưa đánh giá") rating = "chua_danh_gia";
 
     const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
@@ -1307,6 +1320,28 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </div>
               <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-emerald-600">
                 {seedingMetrics.done}
+              </strong>
+            </div>
+
+            {/* Card 5: Chưa phù hợp / Bỏ qua (Đầy đủ 5 cột theo đúng Master Requirement) */}
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("skip");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "skip" ? "border-rose-500 ring-2 ring-rose-100 bg-rose-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Chưa phù hợp (Bỏ qua)</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#f43f5e]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-rose-600">
+                {seedingMetrics.skip}
               </strong>
             </div>
           </div>

@@ -551,3 +551,7 @@ all_platform_router.include_router(
     tags=["All-Platform Email Inbox"],
 )
 
+
+# ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role) ──
+from app.modules.all_platform.routers.post_evaluations import router as post_evaluations_router
+all_platform_router.include_router(post_evaluations_router)

@@ -10,15 +10,18 @@ export interface EvaluationOption {
   color?: string;
 }
 
-// Chuẩn 3 trạng thái đánh giá bài viết theo đúng Ảnh 1 của Master
+// Chuẩn các trạng thái đánh giá bài viết theo Master Requirement (đồng bộ 100% tất cả mọi người)
 export const EVALUATION_OPTIONS: EvaluationOption[] = [
   { value: "chua_danh_gia", label: "Chưa đánh giá" },
   { value: "can_lien_he", label: "Cần liên hệ" },
-  { value: "khong_phu_hop", label: "Không phù hợp" },
+  { value: "can_xem_xet", label: "Cần xem xét" },
+  { value: "phu_hop", label: "Phù hợp" },
+  { value: "khong_phu_hop", label: "Chưa phù hợp (Bỏ qua)" },
 ];
 
 interface PostEvaluationDropdownProps {
   postId: string;
+  postUrl?: string;
   initialStatus?: string;
   onStatusChange?: (status: string) => void;
   className?: string;
@@ -26,6 +29,7 @@ interface PostEvaluationDropdownProps {
 
 export function PostEvaluationDropdown({
   postId,
+  postUrl,
   initialStatus,
   onStatusChange,
   className,
@@ -89,9 +93,15 @@ export function PostEvaluationDropdown({
     setIsOpen(false);
 
     if (typeof window !== "undefined" && postId) {
+      // 1. Lưu localStorage để phản hồi tức thì
       localStorage.setItem(`post_eval_${postId}`, option.value);
       localStorage.setItem(`evaluation_${postId}`, option.value);
-      // Dispatch sync event for other views/modals
+      if (postUrl) {
+        localStorage.setItem(`post_eval_${postUrl}`, option.value);
+        localStorage.setItem(`evaluation_${postUrl}`, option.value);
+      }
+
+      // 2. Dispatch sync event trong client
       window.dispatchEvent(
         new CustomEvent("seeding_post_eval_updated", {
           detail: { postId, status: option.value, evaluation: option.value },
@@ -102,6 +112,19 @@ export function PostEvaluationDropdown({
           detail: { postId, status: option.value, evaluation: option.value },
         })
       );
+
+      // 3. Gọi Backend API lưu persistent vào server để TẤT CẢ mọi người đều thấy
+      void fetch("/api/all-platform/posts/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          post_id: postId,
+          post_url: postUrl || null,
+          status: option.value,
+        }),
+      }).catch((err) => {
+        console.error("Lưu đánh giá bài viết lên server thất bại:", err);
+      });
     }
 
     if (onStatusChange) {
@@ -113,7 +136,7 @@ export function PostEvaluationDropdown({
 
   return (
     <div className={cn("relative inline-block text-left", className)} ref={containerRef}>
-      {/* Trigger Button - Phong cách chuẩn khớp Ảnh 2 */}
+      {/* Trigger Button */}
       <button
         type="button"
         onClick={(e) => {
@@ -124,17 +147,18 @@ export function PostEvaluationDropdown({
           "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer select-none",
           currentValue === "chua_danh_gia"
             ? "bg-background text-foreground border-border hover:bg-muted shadow-2xs"
-            : currentValue === "khong_phu_hop"
-            ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 font-semibold shadow-xs"
-            : currentValue === "tham_gia" || currentValue === "trung"
-            ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 font-semibold shadow-xs"
-            : currentValue === "ko_tham_gia" || currentValue === "rot"
+            : currentValue === "khong_phu_hop" || currentValue === "chua_phu_hop"
             ? "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 font-semibold shadow-xs"
-            : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 font-semibold shadow-xs"
+            : currentValue === "can_lien_he"
+            ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 font-semibold shadow-xs"
+            : currentValue === "can_xem_xet"
+            ? "bg-indigo-50 text-indigo-700 border-indigo-200 dark:bg-indigo-950/40 dark:text-indigo-300 font-semibold shadow-xs"
+            : currentValue === "phu_hop"
+            ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 font-semibold shadow-xs"
+            : "bg-slate-50 text-slate-700 border-slate-200 font-semibold shadow-xs"
         )}
         title="Đổi tình trạng đánh giá bài viết"
       >
-        {/* Vòng tròn Icon rỗng như ảnh 2 */}
         <span
           className={cn(
             "inline-block w-3 h-3 rounded-full border border-current shrink-0 opacity-80"
@@ -146,10 +170,10 @@ export function PostEvaluationDropdown({
         </span>
       </button>
 
-      {/* Dropdown Menu - Chuẩn Ảnh 2 */}
+      {/* Dropdown Menu */}
       {isOpen && (
         <div
-          className="absolute left-0 bottom-full mb-1 z-50 w-44 rounded-xl border border-border bg-card shadow-xl py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100"
+          className="absolute left-0 bottom-full mb-1 z-50 w-52 rounded-xl border border-border bg-card shadow-xl py-1 overflow-hidden animate-in fade-in zoom-in-95 duration-100"
           onClick={(e) => e.stopPropagation()}
         >
           {EVALUATION_OPTIONS.map((opt) => {

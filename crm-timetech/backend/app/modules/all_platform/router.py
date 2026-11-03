@@ -1,100 +1,369 @@
-"""Router tổng cho module CRM độc lập — chỉ mount đúng các sub-router thuộc
-khu vực "Quản lý CRM" + phần phụ thuộc bắt buộc (auth, users/teams, members,
-categories) để dropdown/gán việc hoạt động. KHÔNG import router.py gốc của
-app seeding (bản đó import ~40 router gồm cả facebook/linkedin/zalo/kpi/
-extension/websocket/admin/phone-bridge — sẽ kéo theo toàn bộ Playwright/
-gspread/asyncssh không cần thiết cho 1 service chỉ-CRM).
-
-Giữ nguyên prefix/tag y hệt app gốc để frontend không cần đổi 1 dòng path nào.
-
-2026-09-23: thêm `fb`/`fb_inbox_accounts` (Inbox FB, phần đầu của module
-"Quản lý kênh & CSKH" đang được gộp dần vào — xem yêu cầu user). 2 router này
-KHÔNG cần Playwright: `fb.py` chỉ là proxy httpx sang service Markee ngoài
-(MARKEE_FB_BASE_URL), không tự crawl. Không vi phạm mục tiêu "nhẹ" ở trên.
-"""
+"""Main all-platform router — mounts platform-specific and shared sub-routers."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.modules.all_platform.routers.auth import router as auth_router
-from app.modules.all_platform.routers.social_accounts import router as social_accounts_router
+from app.modules.all_platform.routers import (
+    seeding_router,
+    kpi_router,
+    categories_router,
+    members_router,
+    quick_comment_router,
+    quick_inbox_router,
+    users_router,
+    teams_router,
+    auth_router,
+    social_accounts_router,
+    keywords_library_router,
+    rotation_schedules_router,
+)
 from app.modules.all_platform.routers.platforms import router as platforms_router
-from app.modules.all_platform.routers.categories import router as categories_router
-from app.modules.all_platform.routers.members import router as members_router
-from app.modules.all_platform.routers.users import router as users_router, teams_router
+from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
+from app.modules.all_platform.routers.posts import facebook_posts_router
+from app.modules.all_platform.routers.posts_linkedin import linkedin_posts_router
+from app.modules.all_platform.routers.posts_unified import router as unified_posts_router
+from app.modules.all_platform.routers.groups import facebook_groups_router
+from app.modules.all_platform.routers.groups_linkedin import linkedin_groups_router
+from app.modules.all_platform.routers.crawl_linkedin import crawl_linkedin_router
+from app.modules.all_platform.routers.linkedin_legacy import router as linkedin_legacy_router
+from app.modules.all_platform.routers.crawl_facebook import crawl_facebook_router
+from app.modules.all_platform.routers.extension_crawl import router as extension_crawl_router
+from app.modules.all_platform.routers.extension_crawl_linkedin import router as extension_crawl_linkedin_router
+from app.modules.all_platform.routers.extension_crawl_threads import router as extension_crawl_threads_router
+from app.modules.all_platform.routers.extension_crawl_youtube import router as extension_crawl_youtube_router
+from app.modules.all_platform.routers.youtube_seeding import router as youtube_seeding_router
+from app.modules.all_platform.routers.crawl_queue import router as crawl_queue_router
+from app.modules.all_platform.routers.fb_account_pool import router as fb_account_pool_router
+from app.modules.all_platform.routers.fb import router as fb_automation_router
+from app.modules.all_platform.routers.websocket import router as websocket_router
+from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbox_accounts_router
+from app.modules.all_platform.routers.crawl_fb_dashboard import router as crawl_fb_dashboard_router
 from app.modules.all_platform.routers.customer_lead import router as customer_lead_router
+from app.modules.all_platform.routers.project import router as project_router
+from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
+from app.modules.all_platform.routers.vendors import router as vendors_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
 from app.modules.all_platform.routers.crm_scope_items import router as crm_scope_items_router
-# MSC → CRM product sync (migration 175): dong bo thu cong (button) + xem trang thai.
-from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
-from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
+from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
 from app.modules.all_platform.routers.crm_team import router as crm_team_router
-from app.modules.all_platform.routers.quote import (
-    quote_forms_router,
-    quotes_router,
-    quote_email_provider_router,
-    quote_approval_rules_router,
-)
+from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
-from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.contract import contracts_router
-# (2026-10-27) Da TAT theo yeu cau sep ("bo chuc nang, khong xai nua") sau khi gap
-# InsecureTransportError luc test dev - xem google_oauth_service.py/google_oauth.py (van giu
-# nguyen code, chi KHONG mount router nua) de bat lai sau neu can.
-# from app.modules.all_platform.routers.google_oauth import google_oauth_router
 from app.modules.all_platform.routers.contract_docx import contract_docx_router
 from app.modules.all_platform.routers.contract_versions import contract_versions_router
 from app.modules.all_platform.routers.contract_edit import contract_edit_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
+from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
-from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
-from app.modules.all_platform.routers.vendors import router as vendors_router
-from app.modules.all_platform.routers.fb import router as fb_automation_router
-from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbox_accounts_router
-from app.modules.all_platform.zalo.api.routes.auth import router as zalo_auth_router
-from app.modules.all_platform.zalo.api.routes.accounts import router as zalo_accounts_router
-from app.modules.all_platform.zalo.api.routes.conversations import router as zalo_conversations_router
-from app.modules.all_platform.zalo.api.routes.events import router as zalo_events_router
-from app.modules.all_platform.zalo.api.routes.listener import router as zalo_listener_router
-from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_inbox_share_router
-from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
-from app.modules.all_platform.zalo.api.routes.forward_rules import router as zalo_forward_rules_router
-from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
-from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
-from app.modules.all_platform.zalo.api.routes.broadcasts import router as zalo_broadcasts_router
+from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
+from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
+from app.modules.all_platform.routers.auto_seeding_comments import router as auto_seeding_comments_router
+from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
+from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
+from app.modules.all_platform.routers.presence import router as presence_router
+from app.modules.all_platform.phone_bridge.router import router as phone_bridge_router
+from app.modules.all_platform.mobile_proxy.router import router as mobile_proxy_router
 
 all_platform_router = APIRouter()
 
-# ── Categories (dropdown danh mục dùng chung, kể cả "Danh mục CRM") ───────────
-all_platform_router.include_router(categories_router, prefix="/categories", tags=["All-Platform Categories"])
+# ── Delete posts ────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    posts_delete_router,
+    prefix="/unified",
+    tags=["All-Platform Posts Delete"],
+)
 
-# ── Members (nguồn dữ liệu dropdown gán việc/SDR) ─────────────────────────────
-all_platform_router.include_router(members_router, prefix="/members", tags=["All-Platform Members"])
+
+
+# ── Facebook ────────────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    seeding_router,
+    prefix="/facebook",
+    tags=["All-Platform Facebook Seeding"],
+)
+all_platform_router.include_router(
+    facebook_posts_router,
+    prefix="/facebook",
+    tags=["All-Platform Facebook Posts"],
+)
+all_platform_router.include_router(
+    facebook_groups_router,
+    prefix="/facebook",
+    tags=["All-Platform Facebook Groups"],
+)
+all_platform_router.include_router(
+    crawl_facebook_router,
+    prefix="/facebook",
+    tags=["All-Platform Facebook Crawl"],
+)
+all_platform_router.include_router(
+    crawl_fb_dashboard_router,
+    prefix="/facebook",
+    tags=["All-Platform Facebook Crawl Queue Dashboard"],
+)
+all_platform_router.include_router(
+    extension_crawl_router,
+    prefix="/extension",
+    tags=["All-Platform Extension Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_linkedin_router,
+    prefix="/extension/linkedin",
+    tags=["All-Platform Extension LinkedIn Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_threads_router,
+    prefix="/extension/threads",
+    tags=["All-Platform Extension Threads Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_youtube_router,
+    prefix="/extension/youtube",
+    tags=["All-Platform Extension YouTube Crawl"],
+)
+all_platform_router.include_router(
+    youtube_seeding_router,
+    prefix="/youtube",
+    tags=["All-Platform YouTube Seeding"],
+)
+all_platform_router.include_router(
+    crawl_queue_router,
+    prefix="/extension/queue",
+    tags=["All-Platform Extension Crawl Queue"],
+)
+all_platform_router.include_router(
+    fb_account_pool_router,
+    prefix="/extension/accounts",
+    tags=["All-Platform Extension FB Account Pool"],
+)
+all_platform_router.include_router(
+    fb_automation_router,
+    prefix="/fb",
+    tags=["All-Platform Facebook Automation"],
+)
+from app.modules.facebook.src.modules.crawl_fb.router.vps_router import router as vps_fb_router
+all_platform_router.include_router(
+    vps_fb_router,
+    tags=["All-Platform Facebook VPS"],
+)
+
+from app.modules.facebook.src.modules.crawl_fb.router.vps import router as vps_vnc_router
+all_platform_router.include_router(
+    vps_vnc_router,
+    tags=["All-Platform Facebook VPS VNC"],
+)
+
+# ── LinkedIn ───────────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    seeding_router,
+    prefix="/linkedin",
+    tags=["All-Platform LinkedIn Seeding"],
+)
+all_platform_router.include_router(
+    linkedin_posts_router,
+    prefix="/linkedin",
+    tags=["All-Platform LinkedIn Posts"],
+)
+all_platform_router.include_router(
+    linkedin_groups_router,
+    prefix="/linkedin",
+    tags=["All-Platform LinkedIn Groups"],
+)
+all_platform_router.include_router(
+    crawl_linkedin_router,
+    prefix="/linkedin",
+    tags=["All-Platform LinkedIn Crawl"],
+)
+all_platform_router.include_router(
+    linkedin_auth_router,
+    prefix="/linkedin",
+    tags=["All-Platform LinkedIn Auth"],
+)
+all_platform_router.include_router(
+    linkedin_legacy_router,
+    prefix="/linkedin",
+)
+
+# ── Unified Posts (Tong-hop page — no cache, all filters server-side) ──────────
+all_platform_router.include_router(
+    unified_posts_router,
+    prefix="/unified",
+    tags=["All-Platform Unified Posts"],
+)
+
+# ── Presence (thoi gian online thanh vien — Dashboard leader) ─────────────────
+all_platform_router.include_router(
+    presence_router,
+    prefix="/presence",
+    tags=["All-Platform Presence"],
+)
+
+# ── KPI (platform-agnostic) ───────────────────────────────────────────────────
+all_platform_router.include_router(
+    kpi_router,
+    prefix="/kpi",
+    tags=["All-Platform KPI"],
+)
+all_platform_router.include_router(
+    kpi_reward_router,
+    prefix="/kpi-rewards",
+    tags=["All-Platform KPI Rewards"],
+)
+
+# ── Categories (platform-agnostic) ────────────────────────────────────────────
+all_platform_router.include_router(
+    categories_router,
+    prefix="/categories",
+    tags=["All-Platform Categories"],
+)
+
+# ── Members (HR roster, platform-agnostic) ────────────────────────────────────
+all_platform_router.include_router(
+    members_router,
+    prefix="/members",
+    tags=["All-Platform Members"],
+)
+
+# ── Quick Comment Library (platform-agnostic) ─────────────────────────────────
+all_platform_router.include_router(
+    quick_comment_router,
+    prefix="/quick-comments",
+    tags=["All-Platform Quick Comments"],
+)
+
+# ── Quick Inbox Library (platform-agnostic) ───────────────────────────────────
+all_platform_router.include_router(
+    quick_inbox_router,
+    prefix="/quick-inbox",
+    tags=["All-Platform Quick Inbox"],
+)
+
+# ── Keywords Library (platform-agnostic) ──────────────────────────────────────
+all_platform_router.include_router(
+    keywords_library_router,
+    prefix="/keywords-library",
+    tags=["All-Platform Keywords Library"],
+)
+
+# ── Rotation Crawl Schedules (RBAC + Creator Identity) ───────────────────────
+all_platform_router.include_router(
+    rotation_schedules_router,
+    prefix="/rotation-schedules",
+    tags=["All-Platform Rotation Schedules"],
+)
 
 # ── Users & Teams ──────────────────────────────────────────────────────────────
-all_platform_router.include_router(users_router, prefix="/users", tags=["All-Platform Users"])
-all_platform_router.include_router(teams_router, prefix="/teams", tags=["All-Platform Teams"])
+all_platform_router.include_router(
+    users_router,
+    prefix="/users",
+    tags=["All-Platform Users"],
+)
+all_platform_router.include_router(
+    teams_router,
+    prefix="/teams",
+    tags=["All-Platform Teams"],
+)
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
-all_platform_router.include_router(auth_router, prefix="/auth", tags=["All-Platform Auth"])
+# ── Auth ─────────────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    auth_router,
+    prefix="/auth",
+    tags=["All-Platform Auth"],
+)
 
-# ── Social Accounts (port tu main, feedback mentor 2026-10-03 "Quan ly tai
-#    khoan" - chi tab nay thuc su portable, khong Playwright/VPS) ──────────────
-all_platform_router.include_router(social_accounts_router, prefix="/social-accounts", tags=["All-Platform Social Accounts"])
-all_platform_router.include_router(platforms_router, prefix="/platforms", tags=["All-Platform Platforms"])
+# ── Social Accounts ───────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    social_accounts_router,
+    prefix="/social-accounts",
+    tags=["All-Platform Social Accounts"],
+)
 
-# ── Customer Leads (Deal / pipeline "Cơ hội") ─────────────────────────────────
-all_platform_router.include_router(customer_lead_router, tags=["Customer Leads"])
-all_platform_router.include_router(crm_customer_router, prefix="/crm/customers", tags=["All-Platform CRM Customers"])
-all_platform_router.include_router(crm_lead_router, prefix="/crm/leads", tags=["All-Platform CRM Leads"])
+# ── FB Inbox Accounts ──────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    fb_inbox_accounts_router,
+    tags=["All-Platform FB Inbox Accounts"],
+)
+
+# ── Internal Engagement (Tương tác nội bộ — MarkeeAI FB Page posts) ────────────
+all_platform_router.include_router(
+    internal_engagement_router,
+    prefix="/internal-engagement",
+    tags=["All-Platform Internal Engagement"],
+)
+
+# ── Account Online Summary (Facebook + Zalo online/total, cross-platform) ──────
+from app.modules.all_platform.routers.account_online_summary import router as account_online_summary_router
+all_platform_router.include_router(
+    account_online_summary_router,
+    prefix="/accounts",
+    tags=["All-Platform Account Online Summary"],
+)
+
+# ── FB Post KPI ────────────────────────────────────────────────────────────────
+from app.modules.all_platform.routers.fb_post_kpi import router as fb_post_kpi_router
+all_platform_router.include_router(
+    fb_post_kpi_router,
+    prefix="/fb/post-kpi",
+    tags=["All-Platform FB Post KPI"],
+)
+
+# ── Platforms ─────────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    platforms_router,
+    prefix="/platforms",
+    tags=["All-Platform Platforms"],
+)
+
+# ── Admin Dashboard ────────────────────────────────────────────────────────────
+from app.modules.all_platform.routers.admin_dashboard import router as admin_dashboard_router
+all_platform_router.include_router(
+    admin_dashboard_router,
+    prefix="/admin/dashboard",
+    tags=["All-Platform Admin Dashboard"],
+)
+all_platform_router.include_router(
+    phone_bridge_router,
+    prefix="/admin/phone-bridge",
+    tags=["All-Platform Admin Phone Bridge"],
+)
+all_platform_router.include_router(
+    mobile_proxy_router,
+    prefix="/admin/mobile-proxy",
+    tags=["All-Platform Admin Mobile Proxy"],
+)
+
+# ── Customer Leads ─────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    customer_lead_router,
+    tags=["Customer Leads"]
+)
+all_platform_router.include_router(
+    vendor_imports_router,
+    prefix="/crm/vendor-imports",
+    tags=["All-Platform CRM Vendor Imports"],
+)
+all_platform_router.include_router(
+    vendors_router,
+    prefix="/crm/vendors",
+    tags=["All-Platform CRM Vendors"],
+)
+all_platform_router.include_router(
+    crm_customer_router,
+    prefix="/crm/customers",
+    tags=["All-Platform CRM Customers"],
+)
+all_platform_router.include_router(
+    crm_lead_router,
+    prefix="/crm/leads",
+    tags=["All-Platform CRM Leads"],
+)
 all_platform_router.include_router(crm_scope_items_router, prefix="/crm/scope-items", tags=["All-Platform CRM Scope Items"])
-all_platform_router.include_router(msc_sync_router, prefix="/msc-sync", tags=["All-Platform MSC Sync"])
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
@@ -105,12 +374,33 @@ all_platform_router.include_router(
     prefix="/crm/contacts",
     tags=["All-Platform CRM Contacts"],
 )
-all_platform_router.include_router(crm_permission_group_router, prefix="/crm/permission-groups", tags=["All-Platform CRM Permission Groups"])
-all_platform_router.include_router(crm_team_router, prefix="/crm/teams", tags=["All-Platform CRM Teams"])
+all_platform_router.include_router(
+    crm_permission_group_router,
+    prefix="/crm/permission-groups",
+    tags=["All-Platform CRM Permission Groups"],
+)
+all_platform_router.include_router(
+    crm_team_router,
+    prefix="/crm/teams",
+    tags=["All-Platform CRM Teams"],
+)
 
 # ── Quote Forms + Quotes ───────────────────────────────────────────────────────
-all_platform_router.include_router(quote_forms_router, prefix="/quote-forms", tags=["All-Platform Quote Forms"])
-all_platform_router.include_router(quotes_router, prefix="/quotes", tags=["All-Platform Quotes"])
+all_platform_router.include_router(
+    quote_forms_router,
+    prefix="/quote-forms",
+    tags=["All-Platform Quote Forms"],
+)
+all_platform_router.include_router(
+    quotes_router,
+    prefix="/quotes",
+    tags=["All-Platform Quotes"],
+)
+all_platform_router.include_router(
+    project_router,
+    prefix="/projects",
+    tags=["All-Platform Projects"],
+)
 all_platform_router.include_router(
     quote_email_provider_router,
     prefix="/quotes-email-provider",
@@ -132,12 +422,12 @@ all_platform_router.include_router(
     tags=["All-Platform Price Book Admin (VPS Zone)"],
 )
 
-# ── Dự án (Projects) ────────────────────────────────────────────────────────────
-all_platform_router.include_router(project_router, prefix="/projects", tags=["All-Platform Projects"])
-
 # ── Contracts (AI Contract Copilot) ────────────────────────────────────────────
-all_platform_router.include_router(contracts_router, prefix="/contracts", tags=["All-Platform Contracts"])
-# all_platform_router.include_router(google_oauth_router, prefix="/google-oauth", tags=["All-Platform Google OAuth"])
+all_platform_router.include_router(
+    contracts_router,
+    prefix="/contracts",
+    tags=["All-Platform Contracts"],
+)
 all_platform_router.include_router(
     contract_docx_router,
     prefix="/contract-docs",
@@ -158,32 +448,72 @@ all_platform_router.include_router(
     prefix="/contract-templates",
     tags=["All-Platform Contract Templates"],
 )
-all_platform_router.include_router(progress_router, prefix="/progress", tags=["All-Platform Progress Tracking"])
+
+# ── Quản lý tiến độ CRM (READ-only, không phải task management) ────────────────
+all_platform_router.include_router(
+    progress_router,
+    prefix="/progress",
+    tags=["All-Platform Progress Tracking"],
+)
 
 # ── Danh mục dịch vụ (Service Catalog) ─────────────────────────────────────────
-all_platform_router.include_router(service_catalog_router, prefix="/service-catalog", tags=["All-Platform Service Catalog"])
-all_platform_router.include_router(vendor_imports_router, prefix="/crm/vendor-imports", tags=["All-Platform CRM Vendor Imports"])
-all_platform_router.include_router(vendors_router, prefix="/crm/vendors", tags=["All-Platform CRM Vendors"])
+all_platform_router.include_router(
+    service_catalog_router,
+    prefix="/service-catalog",
+    tags=["All-Platform Service Catalog"],
+)
 
-# ── Tài liệu bán hàng (Sales Assets) ───────────────────────────────────────────
-all_platform_router.include_router(sales_asset_router, prefix="/sales-assets", tags=["All-Platform Sales Assets"])
+# ── Dong bo Hang hoa MSC → CRM (manual + xem trang thai; scheduled o jobs) ────
+all_platform_router.include_router(
+    msc_sync_router,
+    prefix="/msc-sync",
+    tags=["All-Platform MSC Sync"],
+)
 
-# ── Inbox FB (proxy httpx sang Markee ngoài, không Playwright) ─────────────────
-all_platform_router.include_router(fb_automation_router, prefix="/fb", tags=["All-Platform Facebook Automation"])
-all_platform_router.include_router(fb_inbox_accounts_router, tags=["All-Platform FB Inbox Accounts"])
+all_platform_router.include_router(
+    sales_asset_router,
+    prefix="/sales-assets",
+    tags=["All-Platform Sales Assets"],
+)
 
-# ── Zalo (Zalo Chat + Inbox Zalo Admin, phan tiep theo cua "Quan ly kenh & CSKH") ──
+# ── WebSocket ────────────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    websocket_router,
+    tags=["All-Platform WebSockets"]
+)
+
+# ── Zalo ───────────────────────────────────────────────────────────────────────
+from app.modules.all_platform.zalo.api.routes.auth import router as zalo_auth_router
+from app.modules.all_platform.zalo.api.routes.broadcasts import router as zalo_broadcasts_router
+from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
+from app.modules.all_platform.zalo.api.routes.listener import router as zalo_listener_router
+from app.modules.all_platform.zalo.api.routes.accounts import router as zalo_accounts_router
+from app.modules.all_platform.zalo.api.routes.conversations import router as zalo_conversations_router
+from app.modules.all_platform.zalo.api.routes.events import router as zalo_events_router
+from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_inbox_share_router
+from app.modules.all_platform.zalo.api.routes.forward_rules import router as zalo_forward_rules_router
+from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
+from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
+from app.modules.all_platform.zalo.api.routes.push import router as zalo_push_router
+from app.modules.all_platform.zalo.api.routes.quick_replies import router as zalo_quick_replies_router
+# Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md): crawler/groups/jobs/library/proxy
+# routers (luồng Playwright/QR/crawl-job/Google Sheet cũ) đã bỏ mount tại đây — file gốc
+# xóa hẳn ở bước dọn dẹp cuối cùng sau khi broadcasts.py được viết lại (không còn phụ
+# thuộc crawler/broadcast_sender.py Playwright).
+
 all_platform_router.include_router(zalo_auth_router, prefix="/zalo", tags=["Zalo Auth"])
+all_platform_router.include_router(zalo_broadcasts_router, prefix="/zalo", tags=["Zalo Broadcasts"])
+all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])
+all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
 all_platform_router.include_router(zalo_accounts_router, prefix="/zalo", tags=["Zalo Accounts"])
 all_platform_router.include_router(zalo_conversations_router, prefix="/zalo", tags=["Zalo Conversations"])
 all_platform_router.include_router(zalo_events_router, prefix="/zalo", tags=["Zalo Events"])
-all_platform_router.include_router(zalo_listener_router, prefix="/zalo", tags=["Zalo Listener"])
 all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags=["Zalo Inbox Share"])
-all_platform_router.include_router(zalo_maintenance_router, prefix="/zalo", tags=["Zalo Maintenance"])
 all_platform_router.include_router(zalo_forward_rules_router, prefix="/zalo", tags=["Zalo Forward Rules"])
 all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=["Zalo Bulk Jobs"])
 all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
-all_platform_router.include_router(zalo_broadcasts_router, prefix="/zalo", tags=["Zalo Broadcasts"])
+all_platform_router.include_router(zalo_push_router, prefix="/zalo", tags=["Zalo Push"])
+all_platform_router.include_router(zalo_quick_replies_router, prefix="/zalo", tags=["Zalo Quick Replies"])
 
 # ── Telegram Chat (Telethon) ────────────────────────────────────────────────────
 from app.modules.all_platform.telegram.api.routes.auth import router as telegram_auth_router
@@ -198,7 +528,21 @@ all_platform_router.include_router(telegram_conversations_router, prefix="/teleg
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
 
-# ── Email Inbox (IMAP/SMTP Omnichannel) ─────────────────────────────────────────
+# ── Scheduled Comments ─────────────────────────────────────────────────────────
+all_platform_router.include_router(
+    scheduled_comments_router,
+    prefix="/scheduled-comments",
+    tags=["All-Platform Scheduled Comments"],
+)
+
+# ── Auto Seeding Comments (tu dong trigger khi bai Facebook diem AI cao) ────────
+all_platform_router.include_router(
+    auto_seeding_comments_router,
+    prefix="/auto-seeding-comments",
+    tags=["All-Platform Auto Seeding Comments"],
+)
+
+# ── Email Inbox (IMAP/SMTP & Google OAuth Omnichannel) ────────────────────────
 from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
 
 all_platform_router.include_router(
@@ -206,3 +550,8 @@ all_platform_router.include_router(
     prefix="/email-inbox",
     tags=["All-Platform Email Inbox"],
 )
+
+
+# ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role) ──
+from app.modules.all_platform.routers.post_evaluations import router as post_evaluations_router
+all_platform_router.include_router(post_evaluations_router)
