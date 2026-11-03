@@ -921,7 +921,7 @@ export function ZaloInboxAdminShell() {
     if (!convId) return;
     const cleanDigits = inputPhoneDraft.replace(/\D/g, "");
     if (!cleanDigits) {
-      toast.error("Vui lòng nhập số điện thoại hợp lệ");
+      inbox.showToast("Vui lòng nhập số điện thoại hợp lệ", false);
       return;
     }
     const formatted = formatZaloPhoneDisplay(cleanDigits);
@@ -938,7 +938,7 @@ export function ZaloInboxAdminShell() {
         body: JSON.stringify({ phone: cleanDigits, name: selectedName || "Zalo User" }),
       });
       if (res.ok) {
-        toast.success("Đã lưu số điện thoại cho khách hàng");
+        inbox.showToast("Đã lưu số điện thoại cho khách hàng", true);
       }
     } catch (e) {
       console.error("Save phone failed:", e);
