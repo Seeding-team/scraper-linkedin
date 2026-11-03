@@ -71,6 +71,7 @@ import {
   Download,
   Search,
   Plus,
+  Pencil,
   RefreshCw,
   SlidersHorizontal,
   User,
@@ -911,6 +912,40 @@ export function ZaloInboxAdminShell() {
   const [selectedQuoteId, setSelectedQuoteId] = useState<string | null>(null);
   const [currentLead, setCurrentLead] = useState<Customer | null>(null);
   const [convPhoneMap, setConvPhoneMap] = useState<Record<string, string>>({});
+  const [editingPhoneConvId, setEditingPhoneConvId] = useState<string | null>(null);
+  const [inputPhoneDraft, setInputPhoneDraft] = useState<string>("");
+  const [isSavingPhone, setIsSavingPhone] = useState<boolean>(false);
+
+  const handleSavePhone = async () => {
+    const convId = inbox.openConv;
+    if (!convId) return;
+    const cleanDigits = inputPhoneDraft.replace(/\D/g, "");
+    if (!cleanDigits) {
+      toast.error("Vui lòng nhập số điện thoại hợp lệ");
+      return;
+    }
+    const formatted = formatZaloPhoneDisplay(cleanDigits);
+    setIsSavingPhone(true);
+    try {
+      // Cập nhật UI lạc quan ngay trong 0ms
+      setConvPhoneMap((prev) => ({ ...prev, [convId]: formatted }));
+      setEditingPhoneConvId(null);
+
+      // Gọi API lưu vĩnh viễn vào DB
+      const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: cleanDigits, name: selectedName || "Zalo User" }),
+      });
+      if (res.ok) {
+        toast.success("Đã lưu số điện thoại cho khách hàng");
+      }
+    } catch (e) {
+      console.error("Save phone failed:", e);
+    } finally {
+      setIsSavingPhone(false);
+    }
+  };
 
   // Danh sach Sale/Presale cho form "Tạo cơ hội" (DealFormModal yeu cau chon
   // "Sale phu trach" o nhanh tao moi) - truoc day modal mo voi agents={[]}
@@ -990,7 +1025,7 @@ export function ZaloInboxAdminShell() {
     // 3. Tra cứu từ backend API (customer_leads hoặc auto_seeding_comments)
     void (async () => {
       try {
-        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`);
+        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone?name=${encodeURIComponent(selectedName || "")}`);
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && data?.success && data?.phone) {
@@ -2223,17 +2258,73 @@ export function ZaloInboxAdminShell() {
               <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs shrink-0 ring-1 ring-slate-200/80" />
               <div className="min-w-0 flex-1 overflow-hidden">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <h2
-                    className="truncate text-sm font-bold text-slate-900 flex items-center gap-1.5"
-                    title={selectedName ? `${selectedName}${activeConvPhone ? ` (${activeConvPhone})` : ""}` : ""}
-                  >
-                    <span className="truncate">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</span>
-                    {activeConvPhone && (
-                      <span className="shrink-0 font-bold font-mono tracking-tight text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-lg text-xs shadow-2xs">
-                        ({activeConvPhone})
-                      </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <h2
+                      className="truncate text-sm font-bold text-slate-900 flex items-center gap-1.5 shrink-0"
+                      title={selectedName ? `${selectedName}${activeConvPhone ? ` (${activeConvPhone})` : ""}` : ""}
+                    >
+                      <span className="truncate">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</span>
+                    </h2>
+                    {inbox.openConv && (
+                      editingPhoneConvId === inbox.openConv ? (
+                        <div className="flex items-center gap-1 shrink-0 bg-white p-0.5 rounded-lg border border-rose-300 shadow-sm z-10">
+                          <input
+                            type="text"
+                            className="w-28 sm:w-32 px-1.5 py-0.5 text-xs font-mono font-bold border border-slate-200 rounded text-slate-800 focus:outline-none focus:ring-1 focus:ring-rose-500"
+                            placeholder="Nhập SĐT..."
+                            value={inputPhoneDraft}
+                            onChange={(e) => setInputPhoneDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSavePhone();
+                              if (e.key === "Escape") setEditingPhoneConvId(null);
+                            }}
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSavePhone}
+                            disabled={isSavingPhone}
+                            className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-bold"
+                          >
+                            {isSavingPhone ? "..." : "Lưu"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingPhoneConvId(null)}
+                            className="px-1 py-0.5 text-slate-400 hover:text-slate-600 text-[11px]"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : activeConvPhone ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputPhoneDraft(activeConvPhone);
+                            setEditingPhoneConvId(inbox.openConv);
+                          }}
+                          title="Click để chỉnh sửa số điện thoại"
+                          className="group inline-flex items-center gap-1 shrink-0 font-bold font-mono tracking-tight text-rose-700 bg-rose-50 hover:bg-rose-100/90 border border-rose-200/80 px-2 py-0.5 rounded-lg text-xs shadow-2xs transition cursor-pointer"
+                        >
+                          <span>({activeConvPhone})</span>
+                          <Pencil className="h-2.5 w-2.5 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputPhoneDraft("");
+                            setEditingPhoneConvId(inbox.openConv);
+                          }}
+                          title="Bấm để thêm số điện thoại cho khách hàng này"
+                          className="inline-flex items-center gap-1 shrink-0 font-medium text-slate-500 hover:text-rose-700 bg-slate-50 hover:bg-rose-50 border border-dashed border-slate-300 hover:border-rose-300 px-2 py-0.5 rounded-lg text-xs transition cursor-pointer"
+                        >
+                          <Plus className="h-3 w-3 text-slate-400" />
+                          <span>Thêm SĐT</span>
+                        </button>
+                      )
                     )}
-                  </h2>
+                  </div>
                   {selectedConv?.is_customer && <span className="text-amber-500 text-xs shrink-0" title="Khách hàng">⭐</span>}
                 </div>
                 {inbox.openConv && (

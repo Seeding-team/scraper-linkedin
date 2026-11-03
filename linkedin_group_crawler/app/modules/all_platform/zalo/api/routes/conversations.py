@@ -2099,15 +2099,17 @@ async def get_stickers_detail(
     return {"stickers": stickers}
 
 
-@router.get("/conversations/{conversation_id}/phone")
+@router.get("/{conversation_id}/phone")
 async def get_conversation_phone(
     conversation_id: str,
+    name: Optional[str] = Query(None),
 ):
     """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign."""
     conv_id = (conversation_id or "").strip()
     if not conv_id:
         return {"success": False, "phone": None}
 
+    clean_name = (name or "").strip()
     phone: Optional[str] = None
 
     # 1. Tra trong customer_leads theo conv_id
@@ -2124,9 +2126,45 @@ async def get_conversation_phone(
         if lead_rows and isinstance(lead_rows, list) and len(lead_rows) > 0:
             phone = lead_rows[0].get("phone") or lead_rows[0].get("phone_normalized")
     except Exception as e:
-        logger.debug(f"lookup phone in customer_leads failed: {e}")
+        logger.debug(f"lookup phone in customer_leads by conv_id failed: {e}")
 
-    # 2. Tra trong auto_seeding_comments theo zalo_conversation_id
+    # 2. Tra trong customer_leads theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            name_lead_rows = await _rest(
+                "GET",
+                "customer_leads",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if name_lead_rows and isinstance(name_lead_rows, list) and len(name_lead_rows) > 0:
+                phone = name_lead_rows[0].get("phone") or name_lead_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in customer_leads by name failed: {e}")
+
+    # 3. Tra trong crm_customers theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            cust_rows = await _rest(
+                "GET",
+                "crm_customers",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if cust_rows and isinstance(cust_rows, list) and len(cust_rows) > 0:
+                phone = cust_rows[0].get("phone") or cust_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in crm_customers by name failed: {e}")
+
+    # 4. Tra trong auto_seeding_comments theo zalo_conversation_id
     if not phone:
         try:
             seeding_rows = await _rest(
@@ -2143,7 +2181,32 @@ async def get_conversation_phone(
         except Exception as e:
             logger.debug(f"lookup phone in auto_seeding_comments failed: {e}")
 
-    # 3. Nếu conv_id chính là số điện thoại
+    # 5. Tra trong zalo_messages của conversation xem có tin nhắn chứa SĐT
+    if not phone:
+        try:
+            msgs = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "group_id": f"eq.{conv_id}",
+                    "content": "not.is.null",
+                    "select": "content",
+                    "order": "created_at.desc",
+                    "limit": 20,
+                },
+            )
+            if msgs and isinstance(msgs, list):
+                phone_pattern = re.compile(r"(?:(?:+?84|0)[235789](?:[.s-]?d){8,9})")
+                for m in msgs:
+                    text = m.get("content") or ""
+                    match = phone_pattern.search(text)
+                    if match:
+                        phone = match.group(0)
+                        break
+        except Exception as e:
+            logger.debug(f"lookup phone in zalo_messages failed: {e}")
+
+    # 6. Nếu conv_id chính là số điện thoại
     if not phone:
         digits = re.sub(r"\D", "", conv_id)
         if (len(digits) == 10 and digits.startswith("0")) or (len(digits) == 11 and digits.startswith("84")):
@@ -2157,3 +2220,70 @@ async def get_conversation_phone(
         return {"success": True, "phone": clean}
 
     return {"success": True, "phone": None}
+
+
+class SaveConversationPhoneRequest(BaseModel):
+    phone: str
+    name: Optional[str] = None
+
+
+@router.post("/{conversation_id}/phone")
+async def save_conversation_phone(
+    conversation_id: str,
+    payload: SaveConversationPhoneRequest,
+):
+    """Lưu hoặc cập nhật số điện thoại cho hội thoại Zalo vào customer_leads."""
+    conv_id = (conversation_id or "").strip()
+    raw_phone = (payload.phone or "").strip()
+    clean_digits = re.sub(r"\D", "", raw_phone)
+    if clean_digits.startswith("84") and len(clean_digits) >= 10:
+        clean_digits = "0" + clean_digits[2:]
+
+    if not conv_id or not clean_digits:
+        raise HTTPException(status_code=400, detail="Thiếu conversation_id hoặc phone")
+
+    clean_name = (payload.name or "").strip() or f"Zalo User {clean_digits[-4:]}"
+
+    # 1. Kiểm tra xem đã có lead với conv_id này chưa
+    try:
+        existing = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "id,customer_name,phone",
+                "limit": 1,
+            },
+        )
+        if existing and isinstance(existing, list) and len(existing) > 0:
+            lead_id = existing[0]["id"]
+            await _rest(
+                "PATCH",
+                "customer_leads",
+                params={"id": f"eq.{lead_id}"},
+                payload={
+                    "phone": clean_digits,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return {"success": True, "phone": clean_digits, "lead_id": lead_id, "action": "updated"}
+    except Exception as e:
+        logger.error(f"update existing lead by conv_id failed: {e}")
+
+    # 2. Tạo mới lead trong customer_leads
+    try:
+        new_lead = {
+            "customer_name": clean_name,
+            "phone": clean_digits,
+            "conv_id": conv_id,
+            "source_platform": "zalo",
+            "status": "new",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        res = await _rest("POST", "customer_leads", payload=new_lead)
+        return {"success": True, "phone": clean_digits, "action": "created", "lead": res}
+    except Exception as e:
+        logger.error(f"create customer_leads for conv_id failed: {e}")
+        # Vẫn trả về phone để UI hiển thị được ngay lập tức
+        return {"success": True, "phone": clean_digits, "action": "fallback_local"}
