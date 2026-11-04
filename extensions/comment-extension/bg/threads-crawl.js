@@ -154,7 +154,15 @@
                 if (crawlTabId == null) {
                     // Mo 1 cua so rieng, thu nho/khong focus - khong cuop focus cua
                     // tab/cua so nguoi dung dang dung (xem giai thich o fb-crawl.js).
-                    const win = await chrome.windows.create({ url, focused: false, state: "minimized", type: "normal" });
+                    const win = await chrome.windows.create({
+                        url,
+                        focused: false,
+                        width: 1280,
+                        height: 850,
+                        left: 100,
+                        top: 100,
+                        type: "normal"
+                    });
                     crawlWindowId = win.id;
                     crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
                 } else {
@@ -171,6 +179,17 @@
                     log(`Không đọc được trang kết quả: ${e.message}`, "error");
                     continue;
                 }
+                                if (result && result.circuitBreaker) {
+                    log(`🚨 [CẦU DAO KHẨN CẤP THREADS] Instagram/Threads phát hiện hoạt động bất thường: "${result.error || 'Challenge/Checkpoint'}". DỪNG CÀO ĐỂ BẢO VỆ TÀI KHOẢN TUYỆT ĐỐI!`, "error");
+                    notifyApp({
+                        action: "MK_TH_CRAWL_CIRCUIT_BREAKER",
+                        reason: result.error,
+                        keyword
+                    });
+                    shouldStop = true;
+                    break;
+                }
+
                 if (!result || !result.success) {
                     log(`Lỗi gom bài: ${(result && result.error) || "không có phản hồi"}`, "error");
                     continue;
@@ -206,7 +225,11 @@
                     log(`Lỗi lưu bài cho "${keyword}": ${e.message}`, "error");
                 }
                 reportProgress(i + 1);
-                await sleep(INTER_KEYWORD_DELAY_MS);
+                const kwDelayMs = (config.groupRestSec != null && Number(config.groupRestSec) >= 15)
+                    ? Number(config.groupRestSec) * 1000
+                    : (Math.floor(Math.random() * 17000) + 18000);
+                log(`🛡️ Chống bot sinh học Threads: Chờ an toàn ${(kwDelayMs / 1000).toFixed(1)}s trước khi tìm từ khoá tiếp theo...`);
+                await sleep(kwDelayMs);
             }
             log(shouldStop ? `Đã dừng. Tổng đã lưu: ${totalSaved} bài mới.` : `Hoàn tất! Tổng đã lưu: ${totalSaved} bài mới.`, "success");
         } catch (e) {

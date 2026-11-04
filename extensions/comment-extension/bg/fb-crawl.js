@@ -104,7 +104,15 @@
             // Mo 1 CUA SO RIENG, thu nho/khong focus - khong cuop focus cua tab/cua so
             // nguoi dung dang dung (acc he thong cao xoay vong khong duoc dung cham tab
             // cua acc/nguoi khac dang lam viec cung may/trinh duyet).
-            const win = await chrome.windows.create({ url: "https://www.facebook.com/", focused: false, state: "minimized", type: "normal" });
+            const win = await chrome.windows.create({
+                url: "https://www.facebook.com/",
+                focused: false,
+                width: 1280,
+                height: 850,
+                left: 100,
+                top: 100,
+                type: "normal"
+            });
             crawlWindowId = win.id;
             crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
 
@@ -126,11 +134,8 @@
                 await chrome.tabs.update(crawlTabId, { url: group.url });
                 await sleep(5000);
                 if (shouldStop) break;
-                // Giữ nguyên quy trình bản gốc: reload 2 lần để làm sạch session/state trang nhóm.
-                await chrome.tabs.reload(crawlTabId);
-                await sleep(5000);
-                await chrome.tabs.reload(crawlTabId);
-                await sleep(6000);
+                // Chờ trang nhóm Facebook tải tự nhiên như người dùng thật (6s - 9s), tuyệt đối không reload 2 lần dồn dập
+                await sleep(6000 + Math.floor(Math.random() * 3000));
                 if (shouldStop) break;
 
                 const injected = await injectCrawlScript(crawlTabId);
@@ -146,6 +151,19 @@
                 } catch (err) {
                     log(`Lỗi giao tiếp với tab cào: ${err.message}`, "error");
                     continue;
+                }
+
+                                // CẦU DAO KHẨN CẤP (Circuit Breaker): Phát hiện Meta kích hoạt checkpoint / chặn tạm thời
+                if (response && response.circuitBreaker) {
+                    log(`🚨 [CẦU DAO KHẨN CẤP] Meta cảnh báo bảo mật / checkpoint: "${response.error || 'Yêu cầu xác minh tài khoản'}". TỰ ĐỘNG DỪNG CÀO ĐỂ BẢO VỆ TÀI KHOẢN TUYỆT ĐỐI!`, "error");
+                    notifyApp({
+                        action: "MK_FB_CRAWL_CIRCUIT_BREAKER",
+                        reason: response.error,
+                        groupId: group.id || "",
+                        groupUrl: group.url
+                    });
+                    shouldStop = true;
+                    break;
                 }
 
                 if (!response || !response.success || !response.data) {
@@ -166,9 +184,10 @@
                 reportProgress(i + 1);
 
                 // Nghỉ an toàn giữa các nhóm Facebook né bot
-                const delayMs = (config.groupRestSec != null && Number(config.groupRestSec) > 0)
-                    ? Number(config.groupRestSec) * 1000
-                    : (Math.floor(Math.random() * 12000) + 10000); // Tùy chỉnh hoặc 10s - 22s
+                const baseRest = (config.groupRestSec != null && Number(config.groupRestSec) >= 20)
+                    ? Number(config.groupRestSec)
+                    : (Math.floor(Math.random() * 25) + 25);
+                const delayMs = baseRest * 1000; // Tùy chỉnh hoặc 10s - 22s
                 log(`🛡️ Chống bot: Chờ an toàn ${(delayMs / 1000).toFixed(1)}s trước khi mở nhóm Facebook tiếp theo...`);
                 await sleep(delayMs);
             }

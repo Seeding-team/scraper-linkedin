@@ -480,14 +480,71 @@
         if (activityWaiter) activityWaiter();
     });
 
-    function scrollStep() {
-        // Cuộn tới khung bài cuối cùng (kích hoạt IntersectionObserver tải trang sau của
-        // Threads như người thật kéo xuống), rồi cuộn thêm 1 đoạn cho chắc.
-        const boxes = document.querySelectorAll('[data-pressable-container]');
-        const last = boxes[boxes.length - 1];
-        if (last) last.scrollIntoView({ block: 'end' });
-        window.scrollBy(0, Math.round(window.innerHeight * 0.8));
+        function checkSecurityInterception() {
+        const href = window.location.href;
+        if (/\/challenge\//i.test(href) || /\/login/i.test(href) || /checkpoint/i.test(href)) {
+            return { blocked: true, reason: "Trình duyệt bị chuyển hướng tới trang xác minh/challenge của Threads: " + href };
+        }
+        const bodyText = (document.body && document.body.innerText) || "";
+        const alertPatterns = [
+            /help us confirm that you're human/i,
+            /action blocked/i,
+            /try again later/i,
+            /chúng tôi nhận thấy hoạt động bất thường/i,
+            /vui lòng xác minh bạn là người thật/i,
+            /thao tác này đã bị chặn/i,
+        ];
+        for (const pattern of alertPatterns) {
+            if (pattern.test(bodyText)) {
+                return { blocked: true, reason: "Phát hiện thông báo chặn/thử thách người thật từ Threads trên trang" };
+            }
+        }
+        return { blocked: false };
     }
+
+    function humanSmoothScroll(targetDelta, durationMs = 800) {
+        return new Promise((resolve) => {
+            const startY = window.scrollY;
+            const startTime = performance.now();
+            const easeOutCubic = (t) => (--t) * t * t + 1;
+
+            function step(currentTime) {
+                const elapsed = currentTime - startTime;
+                const progress = Math.min(1, elapsed / durationMs);
+                const easedProgress = easeOutCubic(progress);
+                const currentY = startY + targetDelta * easedProgress;
+                window.scrollTo(0, currentY);
+
+                if (Math.random() < 0.2) {
+                    try {
+                        const mouseEvent = new MouseEvent("mousemove", {
+                            bubbles: true,
+                            clientX: Math.floor(window.innerWidth * (0.3 + Math.random() * 0.4)),
+                            clientY: Math.floor(window.innerHeight * (0.2 + Math.random() * 0.6)),
+                        });
+                        document.dispatchEvent(mouseEvent);
+                    } catch (e) {}
+                }
+
+                if (progress < 1) {
+                    requestAnimationFrame(step);
+                } else {
+                    resolve();
+                }
+            }
+            requestAnimationFrame(step);
+        });
+    }
+
+    async function scrollStep() {
+        const scrollDistance = Math.round(window.innerHeight * (0.65 + Math.random() * 0.35));
+        await humanSmoothScroll(scrollDistance, 750 + Math.floor(Math.random() * 300));
+        if (Math.random() < 0.12) {
+            await sleep(500);
+            await humanSmoothScroll(-120 - Math.floor(Math.random() * 80), 400);
+        }
+    }
+
 
     function hasLoginWall() {
         return !!document.querySelector('a[href^="/login"], a[href*="threads.com/login"]');
@@ -497,6 +554,12 @@
         resetStoreIfNavigated();
         collecting = true;
         stopRequested = false;
+
+        const initialCheck = checkSecurityInterception();
+        if (initialCheck.blocked) {
+            collecting = false;
+            return { success: false, circuitBreaker: true, error: initialCheck.reason };
+        }
         // Chờ trang render xong kết quả (tối đa ~10s).
         for (let i = 0; i < 20 && !stopRequested; i++) {
             if (document.querySelector('[data-pressable-container]')) break;
@@ -513,12 +576,18 @@
         let idleRounds = 0;
         let scrolls = 0;
         while (scrolls < maxScrolls && store.size < targetCount && !stopRequested) {
+            const liveCheck = checkSecurityInterception();
+            if (liveCheck.blocked) {
+                collecting = false;
+                return { success: false, circuitBreaker: true, error: liveCheck.reason };
+            }
             const before = store.size;
-            scrollStep();
+            await scrollStep();
             scrolls++;
             const gotApi = await waitForActivity(3000);
             // Có response API: chờ thêm chút cho DOM render xong + các response nối tiếp.
-            await sleep(gotApi ? 900 : 300);
+            const humanReadPause = 2400 + Math.floor(Math.random() * 2200);
+            await sleep(humanReadPause);
             ingestEmbeddedJson();
             ingestDom();
             flushStream();
