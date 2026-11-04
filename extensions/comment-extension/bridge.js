@@ -148,7 +148,7 @@ window.addEventListener("message", function(event) {
         safeSendMessage({ action }, response => {
             window.postMessage({ action: action + "_RESULT", payload: response }, "*");
         });
-    } else if (action === "MK_ROTATE_SCHEDULE_LIST" || action === "MK_ROTATE_SCHEDULE_TOGGLE" || action === "MK_ROTATE_SCHEDULE_STOP" || action === "MK_ROTATE_SCHEDULE_DELETE") {
+    } else if (action === "MK_ROTATE_SCHEDULE_LIST" || action === "MK_ROTATE_SCHEDULE_TOGGLE" || action === "MK_ROTATE_SCHEDULE_STOP" || action === "MK_ROTATE_SCHEDULE_DELETE" || action === "MK_ROTATE_SCHEDULE_RUN_NOW" || action === "MK_ROTATE_SCHEDULE_STOP_ALL") {
         // Cac lenh CRUD lich cao xoay vong (nhieu lich doc lap, xem bg/rotation-crawl.js) -
         // request/response don gian, chi can relay nguyen payload va tra ket qua ve dung khuon.
         safeSendMessage({ action, ...(payload || {}) }, response => {

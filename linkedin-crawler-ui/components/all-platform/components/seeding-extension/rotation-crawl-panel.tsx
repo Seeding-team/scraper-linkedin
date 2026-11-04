@@ -128,7 +128,7 @@ function useGroupOptions(platform: "facebook" | "linkedin") {
         }
         const list = ((res.data as GroupOption[] | undefined) || []).filter((g) => g && g.id && g.group_url);
         setGroups(list);
-        setSelectedIds(list.map((g) => g.id));
+        setSelectedIds([]); // Mặc định không auto-select toàn bộ 129 nhóm, để người dùng tự chọn nhóm cần cào
       })
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : "Không tải được danh sách nhóm."))
       .finally(() => !cancelled && setLoading(false));
@@ -285,6 +285,29 @@ export function RotationCrawlPanel() {
   // Handle Stop Schedule
   const handleStop = (id: string) => {
     rot.stopSchedule(id);
+  };
+
+  const handleRunNow = async (id: string) => {
+    rot.runNow(id);
+    try {
+      await allPlatformRotationSchedulesService.toggleSchedule(id, true);
+    } catch {}
+    setBackendSchedules((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, enabled: true, status: "waiting_interval" } : s))
+    );
+  };
+
+  const handleStopAll = async () => {
+    rot.stopAll();
+    const active = mergedSchedules.filter((s) => s.status === "running" || s.enabled);
+    for (const s of active) {
+      try {
+        await allPlatformRotationSchedulesService.toggleSchedule(s.id, false);
+      } catch {}
+    }
+    setBackendSchedules((prev) =>
+      prev.map((s) => ({ ...s, enabled: false, status: "stopped", nextRunAt: null }))
+    );
   };
 
   // Handle Delete Schedule
@@ -488,6 +511,7 @@ export function RotationCrawlPanel() {
                     onStop={handleStop}
                     onDelete={handleDelete}
                     onEdit={() => setEditingSchedule(s)}
+                        onRunNow={handleRunNow}
                   />
                 ))}
               </tbody>
@@ -513,6 +537,7 @@ export function RotationCrawlPanel() {
           onClose={() => setShowAddModal(false)}
           onCreated={() => loadBackendSchedules()}
           addSchedule={rot.addSchedule}
+            runNow={rot.runNow}
         />
       ) : null}
 
@@ -740,6 +765,7 @@ function ScheduleTableRow({
   onStop,
   onDelete,
   onEdit,
+  onRunNow,
 }: {
   index: number;
   schedule: RotationSchedule;
@@ -749,6 +775,7 @@ function ScheduleTableRow({
   onStop: (id: string) => void;
   onDelete: (id: string) => void;
   onEdit: () => void;
+  onRunNow: (id: string) => void;
 }) {
   const meta = scheduleStatusMeta(schedule);
   const nextRunText = schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : null;
@@ -782,7 +809,7 @@ function ScheduleTableRow({
   const thTopics = cfg.threadsTopicNames || [];
 
   return (
-    <tr className="hover:bg-muted/30 transition-colors">
+    <tr className={cn("transition-colors", schedule.status === "running" ? "bg-blue-50/50 hover:bg-blue-50/70 border-l-4 border-l-blue-600 shadow-sm" : "hover:bg-muted/30")}>
       <td className="px-3 py-3 text-center text-muted-foreground font-mono text-[11px]">{index}</td>
       
       {/* Cột 1: Lịch cào & Người tạo */}
@@ -923,6 +950,16 @@ function ScheduleTableRow({
       {/* Cột 6: Thao tác & Tùy chỉnh thông số */}
       <td className="px-3.5 py-3 text-right">
         <div className="flex items-center justify-end gap-1.5">
+          {/* Nút Chạy Ngay */}
+          <button
+            type="button"
+            onClick={() => onRunNow(schedule.id)}
+            className="p-1 rounded-md hover:bg-emerald-50 text-emerald-600 transition cursor-pointer"
+            title="Ưu tiên chạy ngay lịch cào này (tự động tạm dừng lịch khác nếu có)"
+          >
+            <span className="material-symbols-outlined text-[16px]">play_circle</span>
+          </button>
+
           {/* Switch Bật/Tắt */}
           <label className="inline-flex items-center cursor-pointer" title={schedule.enabled ? "Đang bật" : "Đang tắt"}>
             <input
@@ -1357,10 +1394,12 @@ function AddScheduleModal({
   onClose,
   onCreated,
   addSchedule,
+  runNow,
 }: {
   onClose: () => void;
   onCreated?: () => void;
   addSchedule: (label: string, fbGroups: RotationGroupInput[], liGroups: RotationGroupInput[], threadsKeywords: string[], config: Record<string, unknown>) => Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }>;
+  runNow?: (id: string) => void;
 }) {
   const { user } = useAppAuth();
   const fb = useGroupOptions("facebook");
@@ -1384,6 +1423,7 @@ function AddScheduleModal({
   const [maxPostsPerGroup, setMaxPostsPerGroup] = useState<number>(30);
   const [maxScrollTimeSec, setMaxScrollTimeSec] = useState<number>(90);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState<boolean>(true);
+  const [runImmediately, setRunImmediately] = useState<boolean>(true);
 
   const resetCrawlSettingsToDefault = () => {
     setScrollDistance(1600);
@@ -1634,6 +1674,10 @@ function AddScheduleModal({
 
     // 1. Post to Extension
     const res = await addSchedule(schedulePayload.label, fbGroups, liGroups, threadsKeywords, schedulePayload.config);
+    if (res.success && runImmediately) {
+      const schId = res.schedule?.id || generatedScheduleId;
+      runNow?.(schId);
+    }
     if (!res.success) {
       setSubmitting(false);
       setError(res.error || "Không tạo được lịch cào.");

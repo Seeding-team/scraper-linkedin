@@ -506,7 +506,20 @@ export function useRotationSchedules() {
     postToExtension("MK_ROTATE_SCHEDULE_DELETE", { id });
   }, []);
 
-  return { schedules, logs, loaded, addSchedule, updateSchedule, toggleSchedule, stopSchedule, deleteSchedule };
+  const runNow = useCallback(
+    (id: string) => {
+      postToExtension("MK_ROTATE_SCHEDULE_RUN_NOW", { id });
+      addLog("info", "Đã gửi lệnh ưu tiên chạy ngay lịch cào này tới Extension.");
+    },
+    [addLog],
+  );
+
+  const stopAll = useCallback(() => {
+    postToExtension("MK_ROTATE_SCHEDULE_STOP_ALL");
+    addLog("warn", "Đã gửi lệnh dừng toàn bộ các lịch cào tới Extension.");
+  }, [addLog]);
+
+  return { schedules, logs, loaded, addSchedule, updateSchedule, toggleSchedule, stopSchedule, deleteSchedule, runNow, stopAll };
 }
 
 // ── Bình luận hàng loạt (Facebook + LinkedIn) + hẹn giờ Facebook ─────────────

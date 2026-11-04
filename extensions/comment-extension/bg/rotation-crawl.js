@@ -192,7 +192,7 @@
 
         if (!isCancelled() && fbGroupsToRun.length > 0) {
             stage(scheduleId, "facebook", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${fbGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu cào Facebook (${fbGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkFbProgressHook = (p) => progress(scheduleId, "facebook", p);
             try {
                 summary.facebook = await self.__mkStartFbCrawl(fbGroupsToRun, {
@@ -232,7 +232,7 @@
 
         if (!isCancelled() && liGroupsToRun.length > 0) {
             stage(scheduleId, "linkedin", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${liGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${liGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
             self.__mkLiProgressHook = (p) => progress(scheduleId, "linkedin", p);
             try {
                 summary.linkedin = await self.__mkStartLiCrawl(liGroupsToRun, {
@@ -271,7 +271,7 @@
 
         if (!isCancelled() && effectiveThreadsKeywords.length > 0) {
             stage(scheduleId, "threads", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
             self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
                 summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, {
@@ -494,6 +494,15 @@
                     maxPostsPerGroup: msg.config.maxPostsPerGroup || 30,
                     maxScrollTimeSec: msg.config.maxScrollTimeSec || 90,
                 };
+                if (msg.runImmediately || (msg.config && msg.config.runImmediately)) {
+                    if (activeScheduleId) {
+                        cancelRequestedIds.add(activeScheduleId);
+                        try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                        try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                        try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                        log(activeScheduleId, 'Hệ thống', 'Đã tạm dừng lịch cũ để ưu tiên chạy ngay lịch mới tạo: ' + (msg.label || 'Lịch mới'), 'warn');
+                    }
+                }
                 const schedule = {
                     id: msg.id || (msg.config && msg.config.id) || genId(),
                     label: (msg.label || "").trim() || `Lịch cào ${new Date().toLocaleTimeString("vi-VN")}`,
@@ -609,6 +618,56 @@
                     await scheduleNextAlarm();
                     sendResponse({ success: true });
                 }
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_RUN_NOW") {
+            (async () => {
+                const list = await readSchedulesRaw();
+                const schedule = findSchedule(list, msg.id);
+                if (!schedule) {
+                    sendResponse({ success: false, error: "Không tìm thấy lịch cào này." });
+                    return;
+                }
+                if (activeScheduleId && activeScheduleId !== msg.id) {
+                    cancelRequestedIds.add(activeScheduleId);
+                    try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                    try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                    try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                    log(activeScheduleId, "Hệ thống", `Đã tạm dừng lịch cũ để ưu tiên chạy ngay lịch: "${schedule.label}".`, "warn");
+                }
+                await updateSchedule(msg.id, {
+                    enabled: true,
+                    nextRunAt: Date.now(),
+                    status: "waiting_interval"
+                });
+                sendResponse({ success: true });
+                await tryRunDueSchedules();
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_STOP_ALL") {
+            (async () => {
+                if (activeScheduleId) {
+                    cancelRequestedIds.add(activeScheduleId);
+                    try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                    try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                    try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                }
+                const list = await readSchedulesRaw();
+                const stopped = list.map((s) => ({
+                    ...s,
+                    enabled: false,
+                    status: "stopped",
+                    nextRunAt: null,
+                    currentStage: null
+                }));
+                await writeSchedules(stopped);
+                await scheduleNextAlarm();
+                log("all", "Hệ thống", "Đã dừng toàn bộ các lịch cào xoay vòng.", "warn");
+                sendResponse({ success: true });
             })();
             return true;
         }
