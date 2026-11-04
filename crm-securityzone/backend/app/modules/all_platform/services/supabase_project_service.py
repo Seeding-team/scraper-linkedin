@@ -15,6 +15,7 @@ from typing import Any, Optional
 from supabase import Client
 
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
 from app.modules.all_platform.services.supabase_quote_service import VN_TZ, _crm_instance
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
 
@@ -391,7 +392,7 @@ def get_customer_projects_summary(customer_id: str) -> dict:
     if project_ids:
         quotes_result = (
             supabase.table("quotes")
-            .select("id, project_id, version_chain_id, version_number, processing_stage, status, sent_at, published_at, approved_at, total_amount")
+            .select("id, project_id, version_chain_id, version_number, processing_stage, status, sent_at, published_at, approved_at, total_amount, currency, exchange_rate")
             .eq("instance", _crm_instance())
             .in_("project_id", project_ids)
             .is_("deleted_at", "null")
@@ -424,7 +425,7 @@ def get_customer_projects_summary(customer_id: str) -> dict:
             if bucket == "sent":
                 sent_count += 1
             if bucket is not None:
-                current_value += float(row.get("total_amount") or 0)
+                current_value += quote_amount_to_vnd(row.get("total_amount"), row.get("currency"), row.get("exchange_rate"))
         return {
             **project,
             "opportunityCount": opportunity_count_by_project.get(pid, 0),

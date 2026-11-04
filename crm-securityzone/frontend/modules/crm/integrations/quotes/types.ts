@@ -17,6 +17,8 @@ export interface QuoteDraft {
    * Workspace. Mau MOI tao qua luong cu se khong co gia tri (undefined - dong
    * Giam gia tong tu an, dung hanh vi cu 100%). */
   overallDiscountPercent?: number | null;
+  /** Ty gia (VND / 1 USD) DA CHOT khi bao gia dung USD; null = VND. Tien te nam o data.currency. */
+  exchangeRate?: number | null;
 }
 
 export function emptyQuoteDraft(): QuoteDraft {
@@ -234,6 +236,8 @@ export function quoteDraftFromExistingQuote(quote: Quote): QuoteDraft {
   if (!data.visibleCustomerFields) {
     data.visibleCustomerFields = resolveVisibleCustomerFieldKeys(quote.formSnapshot, null);
   }
+  // Tien te that cua quote (quote.currency) moi la nguon, khong phai text tu do trong data.currency.
+  data.currency = quote.currency || 'VND';
   return {
     data,
     items: quote.items || [],
@@ -243,5 +247,6 @@ export function quoteDraftFromExistingQuote(quote: Quote): QuoteDraft {
     // hien nhu chua co chiet khau du quote da co gia tri that (vd sua qua luong
     // Workspace roi mo lai o luong cu).
     overallDiscountPercent: quote.overallDiscountPercent ?? null,
+    exchangeRate: quote.exchangeRate ?? null,
   };
 }

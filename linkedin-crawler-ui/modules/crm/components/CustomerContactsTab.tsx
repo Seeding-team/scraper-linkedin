@@ -1,4 +1,5 @@
 'use client';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
@@ -11,7 +12,7 @@ import { ChevronDown, ChevronUp, Loader2, Plus, X } from './icons';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Users, Phone, Mail, AlertCircle } from 'lucide-react';
+import { Users, Phone, Mail, AlertCircle, MessageCircle } from 'lucide-react';
 
 function headers() {
   const value: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -540,7 +541,9 @@ export function CustomerContactsTab({
     </Card>
 
       {formOpen ? (
-        <div className="crm-drawer-backdrop" onClick={closeForm}>
+        // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+        // portal ra document.body ben trong drawer - xem CustomerFormModal.tsx).
+        <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) closeForm(); }}>
           <aside
             className="crm-drawer crm-lead-drawer crm-lead-drawer--quick"
             data-testid="contact-form-drawer"

@@ -69,7 +69,11 @@ function AllPlatformShellInner({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated) return null;
 
   const isChatPage =
-    pathname === "/zalo-chat" || pathname.startsWith("/zalo-chat") || pathname.startsWith("/telegram-chat/");
+    pathname === "/zalo-chat" ||
+    pathname.startsWith("/zalo-chat") ||
+    pathname.startsWith("/telegram-chat/") ||
+    pathname === "/all-platform/omnichannel-inbox" ||
+    pathname.startsWith("/all-platform/omnichannel-inbox");
   const pageTitle = findCurrentPageLabel(ALL_ENTRIES_FOR_TITLE_LOOKUP, pathname) ?? "Marketing Agents";
 
   return (

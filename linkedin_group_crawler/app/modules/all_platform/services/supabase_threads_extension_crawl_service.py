@@ -16,6 +16,7 @@ Các bước lọc (chạy đồng bộ, router gọi qua `asyncio.to_thread`):
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -79,6 +80,54 @@ def _engagement_score(p: dict) -> int:
     return p["comments"] * 2 + p["reactions"] + p["shares"] * 3
 
 
+def _strip_accents(text: str) -> str:
+    norm = unicodedata.normalize("NFD", text or "")
+    no_acc = "".join(ch for ch in norm if unicodedata.category(ch) != "Mn")
+    return no_acc.replace("đ", "d").replace("Đ", "D").lower()
+
+
+def _is_comment_or_reply(raw: dict) -> bool:
+    """Kiểm tra bài viết có phải là bình luận/reply hay không để loại bỏ triệt để."""
+    if not raw or not isinstance(raw, dict):
+        return False
+    if raw.get("is_reply") is True:
+        return True
+    content = str(raw.get("content") or "").strip()
+    if not content:
+        return False
+    # 1. Bắt đầu bằng mention @username (đặc trưng 100% của comment/reply trên Threads)
+    if re.match(r"^@[A-Za-z0-9._]+", content):
+        return True
+    # 2. Bắt đầu bằng chỉ báo trả lời (Đang trả lời / Replying to / Trả lời)
+    if re.match(r"^(?:đang trả lời|replying to|trả lời)\s+@?[A-Za-z0-9._]+", content, re.IGNORECASE):
+        return True
+    return False
+
+
+def _content_matches_keyword(content: Optional[str], keyword: Optional[str]) -> bool:
+    """Kiểm tra nội dung bài Threads có THỰC SỰ khớp chuẩn xác với từ khoá đang tìm hay không.
+    BẮT BUỘC KHỚP CỤM TỪ (PHRASE MATCH): Từ khoá phải xuất hiện liền nhau trong bài viết.
+    Tuyệt đối không bẻ từ đơn lẻ tránh cào sai từ khoá theo yêu cầu Master."""
+    kw_clean = (keyword or "").strip().lower()
+    if not kw_clean:
+        return True
+    text_lower = (content or "").strip().lower()
+    if not text_lower:
+        return False
+
+    # 1. Khớp nguyên cụm từ có dấu
+    if kw_clean in text_lower:
+        return True
+
+    # 2. Khớp nguyên cụm từ không dấu (hỗ trợ gõ tiếng Việt không dấu)
+    kw_unaccent = _strip_accents(kw_clean)
+    text_unaccent = _strip_accents(text_lower)
+    if kw_unaccent and kw_unaccent in text_unaccent:
+        return True
+
+    return False
+
+
 def save_threads_crawl_batch(
     *,
     posts: list[dict],
@@ -106,6 +155,16 @@ def save_threads_crawl_batch(
             continue
         url, username, code = norm
         if url in candidates:
+            continue
+
+        # 2b-reply. LOẠI BỎ TRIỆT ĐỂ BÌNH LUẬN / COMMENT TRÊN THREADS
+        if _is_comment_or_reply(raw):
+            skipped_invalid += 1
+            continue
+
+        # 2c. Kiểm tra bài viết thực sự chứa từ khoá đã chọn (loại bài gợi ý/trending lệch từ khoá của Threads)
+        if keyword and not _content_matches_keyword(raw.get("content"), keyword):
+            skipped_invalid += 1
             continue
 
         post_time = _parse_post_time(raw.get("post_time"))
@@ -154,6 +213,12 @@ def save_threads_crawl_batch(
     fresh.sort(key=_engagement_score, reverse=True)
     selected = fresh[:limit]
 
+    # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết Threads (Content Deduplication)
+    from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+    selected, skipped_content_dups = filter_posts_by_unique_content(supabase, TABLE, selected)
+    if skipped_content_dups > 0:
+        logger.info(f'[DEDUPE-THREADS] Đã loại bỏ {skipped_content_dups} bài viết Threads do trùng nội dung content!')
+
     inserted_urls: list[str] = []
     if selected:
         # ignore_duplicates: 2 lần cào song song cùng tìm ra 1 bài -> lần sau bỏ qua
@@ -164,6 +229,9 @@ def save_threads_crawl_batch(
             .execute()
         )
         inserted_urls = [r["post_url"] for r in (res.data or []) if r.get("post_url")]
+        inserted_rows = [{"id": r.get("id"), "content": r.get("content")} for r in (res.data or []) if r.get("id")]
+    else:
+        inserted_rows = []
 
     logger.info(
         "[THREADS-EXT] keyword=%r | nhận=%d | URL lạ=%d | cũ=%d | đã có=%d | mới=%d | lưu=%d (limit=%d)",
@@ -178,4 +246,7 @@ def save_threads_crawl_batch(
         "skipped_invalid": skipped_invalid,
         "skipped_old": skipped_old,
         "skipped_existing": len(existing),
+        # Noi bo - khong tra ve qua HTTP (router pop() ra truoc khi tra response cho
+        # extension), dung de cham diem "tiem nang seeding" (LLM) chay nen sau khi luu.
+        "_inserted_rows": inserted_rows,
     }

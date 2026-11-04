@@ -32,6 +32,25 @@
     let activeScheduleId = null;
     // Tap hop id lich da duoc yeu cau DUNG NGAY trong luc dang chay (bam nut Dung).
     let cancelRequestedIds = new Set();
+    function isSystemCrawlerAccount(email) {
+        // Cho phép tất cả tài khoản (thành viên, leader, hệ thống) đều có quyền thêm và chạy lịch cào xoay vòng
+        return true;
+    }
+
+    // Thuat toan Fisher-Yates xao tron ngau nhien thu tu nhom de ne bot checkpoint
+    function shuffleArray(orig) {
+        const arr = [...orig];
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]];
+        }
+        return arr;
+    }
+
+    function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
 
     function genId() {
         return "sch_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -97,61 +116,183 @@
         notifyApp({ action: "MK_ROTATE_SCHEDULE_STAGE", scheduleId, stage: stageName, ...(extra || {}) });
     }
 
-    async function checkIsOnline(apiBase, email) {
+    // Tien do CHI TIET (nhom/tu khoa thu bao nhieu, da luu bao nhieu bai) trong luc 1 nen
+    // tang dang chay - cac module bg/fb-crawl.js, bg/li-crawl.js, bg/threads-crawl.js tu
+    // goi __mk*ProgressHook (gan o duoi) moi khi xong 1 nhom/tu khoa.
+    function progress(scheduleId, stageName, data) {
+        notifyApp({ action: "MK_ROTATE_SCHEDULE_PROGRESS", scheduleId, stage: stageName, ...(data || {}) });
+    }
+
+    function hostnameFromUrl(u) {
+        try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ""; }
+    }
+
+    // Dieu kien de acc He Thong tiep tuc cao xoay vong: CHI CAN tab trang Seeding con
+    // MO (ke ca dang chay NEN, khong phai tab dang active/hien thi - vd nguoi van hanh
+    // bat tab khac lam viec) - KHONG con doi hoi "online" theo kieu heartbeat cua nhan
+    // vien thuong (MemberOnlineTimeWidget.tsx - can tab o trang thai HIEN THI moi tinh,
+    // dung cho muc dich khac la theo doi gio lam viec nhan vien, khong lien quan o day).
+    // Dung chrome.tabs.query() (local, tuc thi, khong qua mang) thay vi goi backend check
+    // heartbeat - vua dung dung yeu cau "chi can bat tab" vua on dinh hon (khong phu
+    // thuoc TTL 120s + visibilityState cua heartbeat).
+    async function checkAppTabOpen(apiBase) {
         try {
-            const res = await fetch(`${apiBase}/api/all-platform/presence/online-summary`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email }),
-            });
-            const data = await res.json();
-            if (!data || !data.success || !data.data) return false;
-            const members = data.data.members || [];
-            const target = (email || "").toLowerCase();
-            const me = members.find((m) => (m.email || "").toLowerCase() === target);
-            return !!(me && me.is_online);
+            const targetHost = hostnameFromUrl(apiBase);
+            if (!targetHost) return true; // khong parse duoc apiBase thi khong chan vo ly do
+            const tabs = await chrome.tabs.query({});
+            return tabs.some((t) => t.url && hostnameFromUrl(t.url) === targetHost);
         } catch (e) {
-            // Loi mang khi kiem tra online KHONG duoc coi la "offline that su" - tranh
-            // dung ca vong lap chi vi 1 lan fetch tam thoi that bai. Coi nhu chua ro,
-            // se thu lai o lan alarm ke tiep.
+            // Loi khi truy van tab KHONG duoc coi la "tab da dong that su" - tranh dung ca
+            // vong lap chi vi 1 lan query tam thoi loi. Coi nhu chua ro, se thu lai sau.
             return { networkError: e.message };
+        }
+    }
+
+    // Lay danh sach tu khoa/chu de Threads tu dong kham pha (registry backend,
+    // threads_keyword_service.py) - goi NGAY DAU vong (khong await o day) de chay SONG SONG
+    // voi luc dang cao Facebook/LinkedIn, toi luc vao stage Threads thi da co san, khong mat
+    // them thoi gian cho (yeu cau 2026-10-02).
+    async function fetchAutoThreadsKeywords(apiBase, topicIds) {
+        try {
+            const qs = Array.isArray(topicIds) && topicIds.length > 0
+                ? `?topic_ids=${encodeURIComponent(topicIds.join(","))}`
+                : "";
+            const res = await fetch(`${apiBase}/api/all-platform/extension/threads/keywords${qs}`);
+            const data = await res.json();
+            const keywords = data && data.data && Array.isArray(data.data.keywords) ? data.data.keywords : [];
+            return keywords.filter(Boolean);
+        } catch (e) {
+            return [];
         }
     }
 
     async function runOneRound(scheduleId, label, cfg, roundNumber) {
         const summary = { roundNumber, facebook: null, linkedin: null, threads: null };
         const isCancelled = () => cancelRequestedIds.has(scheduleId);
+        const hasExplicitKeywords = Array.isArray(cfg.threadsKeywords) && cfg.threadsKeywords.length > 0;
+        // Chỉ lấy từ khoá tự động khi người dùng KHÔNG chọn từ khoá cụ thể nào VÀ bật rõ threadsAutoDiscover === true
+        const autoThreadsKeywordsPromise = (!hasExplicitKeywords && cfg.threadsAutoDiscover === true)
+            ? fetchAutoThreadsKeywords(cfg.apiBase, cfg.threadsTopicIds)
+            : Promise.resolve([]);
 
-        if (!isCancelled() && cfg.fbGroups.length > 0) {
+        // ── THÔNG SỐ CÀO & CUỘN TÙY CHỈNH THEO CÀI ĐẶT EXTENSION ──
+        const scrollDistance = cfg.scrollDistance || 1600;
+        const scrollDelayMinMs = cfg.scrollDelayMinMs || 1500;
+        const scrollDelayMaxMs = cfg.scrollDelayMaxMs || 2800;
+        const groupRestSec = cfg.groupRestSec || 45;
+        const maxScrolls = cfg.maxScrolls || 25;
+        const oldPostsLimit = cfg.oldPostsLimit || 15;
+        const maxPosts = cfg.maxPostsPerGroup || 30;
+        const maxScrollTimeSec = cfg.maxScrollTimeSec || 90;
+
+        // 1. CHỐNG BOT NÉ CHECKPOINT: XÁO TRỘN NGẪU NHIÊN THỨ TỰ NHÓM FACEBOOK MỖI VÒNG (FISHER-YATES)
+        const fbGroupsToRun = (cfg.antiBotEnabled !== false && cfg.fbGroups.length > 1)
+            ? shuffleArray(cfg.fbGroups)
+            : cfg.fbGroups;
+
+        if (!isCancelled() && fbGroupsToRun.length > 0) {
             stage(scheduleId, "facebook", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào Facebook (${cfg.fbGroups.length} nhóm)...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu cào Facebook (${fbGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
+            self.__mkFbProgressHook = (p) => progress(scheduleId, "facebook", p);
             try {
-                summary.facebook = await self.__mkStartFbCrawl(cfg.fbGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, fetchCount: 100 });
+                summary.facebook = await self.__mkStartFbCrawl(fbGroupsToRun, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    fetchCount: maxPosts || 100,
+                    maxPosts,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId,
+                    antiBotEnabled: cfg.antiBotEnabled !== false
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Facebook xong: lưu ${summary.facebook.totalSaved} bài mới${summary.facebook.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab Facebook bị đóng)" : ""}.`, summary.facebook.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào Facebook: ${e.message}`, "error");
+            } finally {
+                self.__mkFbProgressHook = null;
             }
         }
 
-        if (!isCancelled() && cfg.liGroups.length > 0) {
+        // 2. CHỐNG BOT: NGHỈ AN TOÀN CHUYỂN GIAO NỀN TẢNG (INTER-PLATFORM COOL-DOWN)
+        if (!isCancelled() && cfg.fbGroups.length > 0 && cfg.liGroups.length > 0) {
+            const pauseSec = Math.floor(Math.random() * 21) + 20; // 20s - 40s
+            log(scheduleId, label, `🛡️ Cơ chế chống bot: Nghỉ tự nhiên ${pauseSec}s trước khi chuyển sang cào LinkedIn...`);
+            await sleep(pauseSec * 1000);
+        }
+
+        // 3. CHỐNG BOT NÉ CHECKPOINT: XÁO TRỘN NGẪU NHIÊN THỨ TỰ NHÓM LINKEDIN MỖI VÒNG (FISHER-YATES)
+        const liGroupsToRun = (cfg.antiBotEnabled !== false && cfg.liGroups.length > 1)
+            ? shuffleArray(cfg.liGroups)
+            : cfg.liGroups;
+
+        if (!isCancelled() && liGroupsToRun.length > 0) {
             stage(scheduleId, "linkedin", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${cfg.liGroups.length} nhóm)...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu cào LinkedIn (${liGroupsToRun.length} nhóm${cfg.antiBotEnabled !== false ? " - đã xáo trộn thứ tự né bot" : ""})...`);
+            self.__mkLiProgressHook = (p) => progress(scheduleId, "linkedin", p);
             try {
-                summary.linkedin = await self.__mkStartLiCrawl(cfg.liGroups, { apiBase: cfg.apiBase, idMember: cfg.idMember, maxPosts: 40 });
+                summary.linkedin = await self.__mkStartLiCrawl(liGroupsToRun, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    maxPosts,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] LinkedIn xong: lưu ${summary.linkedin.totalSaved} bài mới${summary.linkedin.stopped ? " — BỊ DỪNG GIỮA CHỪNG (có thể do tab LinkedIn bị đóng)" : ""}.`, summary.linkedin.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi cào LinkedIn: ${e.message}`, "error");
+            } finally {
+                self.__mkLiProgressHook = null;
             }
         }
 
-        if (!isCancelled() && cfg.threadsKeywords.length > 0) {
+        // Gop tu khoa tay (neu co) voi tu khoa tu dong kham pha
+        const autoThreadsKeywords = await autoThreadsKeywordsPromise;
+        if (autoThreadsKeywords.length > 0) {
+            log(scheduleId, label, `Registry tự khám phá: ${autoThreadsKeywords.length} từ khoá/chủ đề Threads đang active.`);
+        }
+        const seenKw = new Set();
+        const effectiveThreadsKeywords = [...cfg.threadsKeywords, ...autoThreadsKeywords].filter((k) => {
+            const key = (k || "").trim().toLowerCase();
+            if (!key || seenKw.has(key)) return false;
+            seenKw.add(key);
+            return true;
+        });
+
+        if (!isCancelled() && effectiveThreadsKeywords.length > 0) {
             stage(scheduleId, "threads", { roundNumber });
-            log(scheduleId, label, `[Vòng ${roundNumber}] Bắt đầu tìm Threads (${cfg.threadsKeywords.length} từ khoá)...`);
+            log(scheduleId, label, `[Lịch: "${label || scheduleId}"] [Vòng ${roundNumber}] Bắt đầu tìm Threads (${effectiveThreadsKeywords.length} từ khoá)...`);
+            self.__mkThreadsProgressHook = (p) => progress(scheduleId, "threads", p);
             try {
-                summary.threads = await self.__mkStartThreadsCrawl(cfg.threadsKeywords, { apiBase: cfg.apiBase, idMember: cfg.idMember, postLimit: 20 });
+                summary.threads = await self.__mkStartThreadsCrawl(effectiveThreadsKeywords, {
+                    apiBase: cfg.apiBase,
+                    idMember: cfg.idMember,
+                    postLimit: maxPosts || 20,
+                    groupRestSec,
+                    scrollDistance,
+                    scrollDelayMinMs,
+                    scrollDelayMaxMs,
+                    maxScrolls,
+                    oldPostsLimit,
+                    maxScrollTimeSec,
+                    dashboardTabId,
+                    sortRecent: true
+                });
                 log(scheduleId, label, `[Vòng ${roundNumber}] Threads xong: lưu ${summary.threads.totalSaved} bài mới${summary.threads.stopped ? " — BỊ DỪNG GIỮA CHỪNG" : ""}.`, summary.threads.stopped ? "warn" : "success");
             } catch (e) {
                 log(scheduleId, label, `[Vòng ${roundNumber}] Lỗi tìm Threads: ${e.message}`, "error");
+            } finally {
+                self.__mkThreadsProgressHook = null;
             }
         }
 
@@ -185,6 +326,7 @@
     async function runScheduleRound(schedule) {
         activeScheduleId = schedule.id;
         cancelRequestedIds.delete(schedule.id);
+        const roundStartTime = Date.now();
         const roundNumber = (schedule.roundNumber || 0) + 1;
         await updateSchedule(schedule.id, { status: "running", roundNumber, nextRunAt: null, currentStage: null });
 
@@ -197,6 +339,47 @@
         log(schedule.id, schedule.label, `Hoàn tất vòng ${roundNumber} — tổng ${totalSaved} bài mới trên cả 3 nền tảng. Xem ở tab "Hoạt động seeding".`, "success");
         notifyApp({ action: "MK_ROTATE_SCHEDULE_ROUND_DONE", scheduleId: schedule.id, roundNumber, summary, totalSaved });
 
+        // Tự động đồng bộ báo cáo vòng cào về backend để hiển thị tab "Lịch sử cào từ lịch"
+        try {
+            const apiBase = schedule.cfg?.apiBase || "https://seeding.markeeai.com";
+            const durSec = Math.max(1, Math.round((Date.now() - roundStartTime) / 1000));
+            const durFormatted = durSec >= 60 ? `${Math.floor(durSec / 60)} phút ${durSec % 60} giây` : `${durSec} giây`;
+            fetch(`${apiBase}/api/all-platform/unified/crawl-schedule/record-round`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    schedule_id: schedule.id,
+                    schedule_label: schedule.label || "Lịch cào xoay vòng đa nền tảng",
+                    round_number: roundNumber,
+                    user_id: schedule.cfg?.idMember,
+                    user_email: schedule.cfg?.email,
+                    started_at: new Date(roundStartTime).toISOString(),
+                    finished_at: new Date().toISOString(),
+                    duration_seconds: durSec,
+                    duration_formatted: durFormatted,
+                    status: "done",
+                    facebook: {
+                        posts_count: summary.facebook?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    linkedin: {
+                        posts_count: summary.linkedin?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    threads: {
+                        posts_count: summary.threads?.totalSaved || 0,
+                        ai_passed_count: 0,
+                        ai_pass_rate: 0,
+                    },
+                    total_posts: totalSaved,
+                    total_ai_passed: 0,
+                    ai_pass_rate: 0,
+                }),
+            }).catch(() => {});
+        } catch (e) {}
+
         const list = await readSchedulesRaw();
         const stillExists = findSchedule(list, schedule.id);
         if (!stillExists) {
@@ -206,14 +389,24 @@
         } else if (!schedule.cfg.repeatEnabled) {
             await updateSchedule(schedule.id, { status: "done", enabled: false, nextRunAt: null, currentStage: null, lastRoundSummary: { roundNumber, totalSaved, at: Date.now() } });
         } else {
-            const nextRunAt = Date.now() + schedule.cfg.intervalHours * 3600 * 1000;
+            let baseHours = schedule.cfg.intervalHours || 1;
+            let intervalMs = baseHours * 3600 * 1000;
+            let jitterDesc = "";
+            if (schedule.cfg.antiBotEnabled !== false) {
+                // Jitter ngẫu nhiên +-8% (0.92 đến 1.08)
+                const jitterFactor = 0.92 + Math.random() * 0.16;
+                intervalMs = Math.round(intervalMs * jitterFactor);
+                const actualMinutes = Math.round(intervalMs / 60000);
+                jitterDesc = ` (đã thêm jitter né bot: thực tế ~${actualMinutes} phút)`;
+            }
+            const nextRunAt = Date.now() + intervalMs;
             await updateSchedule(schedule.id, {
                 status: "waiting_interval",
                 nextRunAt,
                 currentStage: null,
                 lastRoundSummary: { roundNumber, totalSaved, at: Date.now() },
             });
-            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")} (sau ${schedule.cfg.intervalHours} giờ) — CHỈ chạy nếu tài khoản vẫn đang online trên app Seeding lúc đó.`);
+            log(schedule.id, schedule.label, `Đã lên lịch vòng ${roundNumber + 1} lúc ${new Date(nextRunAt).toLocaleString("vi-VN")}${jitterDesc} — CHỈ chạy nếu tab Seeding vẫn còn mở lúc đó.`);
         }
 
         await scheduleNextAlarm();
@@ -234,15 +427,16 @@
             return;
         }
         const schedule = due[0];
-        const online = await checkIsOnline(schedule.cfg.apiBase, schedule.cfg.email);
-        if (online && typeof online === "object" && online.networkError) {
-            log(schedule.id, schedule.label, `Không kiểm tra được trạng thái online (lỗi mạng: ${online.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
+        // Cho phép thành viên và leader chạy lịch cào
+        const tabOpen = await checkAppTabOpen(schedule.cfg.apiBase);
+        if (tabOpen && typeof tabOpen === "object" && tabOpen.networkError) {
+            log(schedule.id, schedule.label, `Không kiểm tra được tab Seeding (lỗi: ${tabOpen.networkError}) — sẽ thử lại sau ${ONLINE_RETRY_MINUTES} phút.`, "warn");
             await updateSchedule(schedule.id, { nextRunAt: now + ONLINE_RETRY_MINUTES * 60 * 1000 });
             await scheduleNextAlarm();
             return;
         }
-        if (!online) {
-            log(schedule.id, schedule.label, `Đã tới giờ chạy nhưng tài khoản KHÔNG còn online trên app Seeding (có thể đã đóng tab/tắt trình duyệt/mất phiên đăng nhập) — tạm dừng, sẽ tự kiểm tra lại mỗi ${ONLINE_RETRY_MINUTES} phút.`, "warn");
+        if (!tabOpen) {
+            log(schedule.id, schedule.label, `Đã tới giờ chạy nhưng tab trang Seeding đã bị đóng (hoặc trình duyệt đã tắt) — tạm dừng, sẽ tự kiểm tra lại mỗi ${ONLINE_RETRY_MINUTES} phút. Mở lại tab Seeding (không cần để nó hiển thị) để tiếp tục.`, "warn");
             await updateSchedule(schedule.id, { status: "waiting_online", nextRunAt: now + ONLINE_RETRY_MINUTES * 60 * 1000 });
             stage(schedule.id, "waiting_online", { roundNumber: schedule.roundNumber });
             await scheduleNextAlarm();
@@ -265,29 +459,52 @@
 
         if (msg.action === "MK_ROTATE_SCHEDULE_ADD") {
             (async () => {
+                // Cho phép thành viên và leader thêm lịch cào
                 const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : [];
                 const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : [];
                 const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : [];
-                if (fbGroups.length === 0 && liGroups.length === 0 && threadsKeywords.length === 0) {
+                const threadsAutoDiscover = !!(msg.config && msg.config.threadsAutoDiscover);
+                if (fbGroups.length === 0 && liGroups.length === 0 && threadsKeywords.length === 0 && !threadsAutoDiscover) {
                     sendResponse({ success: false, error: "Chưa có nhóm Facebook/LinkedIn hoặc từ khoá Threads nào để cào." });
                     return;
                 }
                 if (!msg.config || !msg.config.email) {
-                    sendResponse({ success: false, error: "Thiếu email tài khoản — cần để kiểm tra điều kiện 'đang online' trước mỗi vòng lặp lại." });
+                    sendResponse({ success: false, error: "Thiếu email tài khoản — cần để gắn đúng tài khoản cho lịch cào này." });
                     return;
                 }
                 const cfg = {
                     apiBase: msg.config.apiBase || "https://seeding.markeeai.com",
                     email: msg.config.email,
                     idMember: msg.config.idMember || null,
-                    intervalHours: Math.max(0.25, Number(msg.config.intervalHours) || 2),
+                    intervalHours: Math.max(0.05, Number(msg.config.intervalHours) || 1),
                     repeatEnabled: !!msg.config.repeatEnabled,
+                    antiBotEnabled: msg.config.antiBotEnabled !== false,
                     fbGroups,
                     liGroups,
                     threadsKeywords,
+                    threadsAutoDiscover: msg.config.threadsAutoDiscover === true,
+                    threadsTopicIds: Array.isArray(msg.config.threadsTopicIds) ? msg.config.threadsTopicIds : [],
+                    threadsTopicNames: Array.isArray(msg.config.threadsTopicNames) ? msg.config.threadsTopicNames : [],
+                    scrollDistance: msg.config.scrollDistance || 1600,
+                    scrollDelayMinMs: msg.config.scrollDelayMinMs || 1500,
+                    scrollDelayMaxMs: msg.config.scrollDelayMaxMs || 2800,
+                    groupRestSec: msg.config.groupRestSec || 45,
+                    maxScrolls: msg.config.maxScrolls || 25,
+                    oldPostsLimit: msg.config.oldPostsLimit || 15,
+                    maxPostsPerGroup: msg.config.maxPostsPerGroup || 30,
+                    maxScrollTimeSec: msg.config.maxScrollTimeSec || 90,
                 };
+                if (msg.runImmediately || (msg.config && msg.config.runImmediately)) {
+                    if (activeScheduleId) {
+                        cancelRequestedIds.add(activeScheduleId);
+                        try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                        try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                        try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                        log(activeScheduleId, 'Hệ thống', 'Đã tạm dừng lịch cũ để ưu tiên chạy ngay lịch mới tạo: ' + (msg.label || 'Lịch mới'), 'warn');
+                    }
+                }
                 const schedule = {
-                    id: genId(),
+                    id: msg.id || (msg.config && msg.config.id) || genId(),
                     label: (msg.label || "").trim() || `Lịch cào ${new Date().toLocaleTimeString("vi-VN")}`,
                     cfg,
                     enabled: true,
@@ -305,6 +522,56 @@
                 await writeSchedules(list);
                 sendResponse({ success: true, schedule });
                 await tryRunDueSchedules();
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_UPDATE") {
+            (async () => {
+                const list = await readSchedulesRaw();
+                const idx = list.findIndex((s) => s.id === msg.id);
+                if (idx === -1) {
+                    sendResponse({ success: false, error: "Không tìm thấy lịch cào này trong Extension." });
+                    return;
+                }
+                const oldSch = list[idx];
+                const patchCfg = msg.config || {};
+                const fbGroups = Array.isArray(msg.fbGroups) ? msg.fbGroups.filter((g) => g && g.url) : (oldSch.cfg?.fbGroups || []);
+                const liGroups = Array.isArray(msg.liGroups) ? msg.liGroups.filter((g) => g && g.url) : (oldSch.cfg?.liGroups || []);
+                const threadsKeywords = Array.isArray(msg.threadsKeywords) ? msg.threadsKeywords.filter(Boolean) : (oldSch.cfg?.threadsKeywords || []);
+                
+                const updatedCfg = {
+                    ...oldSch.cfg,
+                    ...patchCfg,
+                    fbGroups,
+                    liGroups,
+                    threadsKeywords,
+                    intervalHours: patchCfg.intervalHours != null ? Math.max(0.05, Number(patchCfg.intervalHours) || 1) : (oldSch.cfg?.intervalHours || 1),
+                    repeatEnabled: patchCfg.repeatEnabled != null ? !!patchCfg.repeatEnabled : (oldSch.cfg?.repeatEnabled ?? true),
+                    antiBotEnabled: patchCfg.antiBotEnabled != null ? patchCfg.antiBotEnabled !== false : (oldSch.cfg?.antiBotEnabled !== false),
+                    threadsAutoDiscover: patchCfg.threadsAutoDiscover === true,
+                    threadsTopicIds: Array.isArray(patchCfg.threadsTopicIds) ? patchCfg.threadsTopicIds : (oldSch.cfg?.threadsTopicIds || []),
+                    threadsTopicNames: Array.isArray(patchCfg.threadsTopicNames) ? patchCfg.threadsTopicNames : (oldSch.cfg?.threadsTopicNames || []),
+                    scrollDistance: Number(patchCfg.scrollDistance) || oldSch.cfg?.scrollDistance || 1600,
+                    scrollDelayMinMs: Number(patchCfg.scrollDelayMinMs) || oldSch.cfg?.scrollDelayMinMs || 1500,
+                    scrollDelayMaxMs: Number(patchCfg.scrollDelayMaxMs) || oldSch.cfg?.scrollDelayMaxMs || 2800,
+                    groupRestSec: Number(patchCfg.groupRestSec) || oldSch.cfg?.groupRestSec || 45,
+                    maxScrolls: Number(patchCfg.maxScrolls) || oldSch.cfg?.maxScrolls || 25,
+                    oldPostsLimit: Number(patchCfg.oldPostsLimit) || oldSch.cfg?.oldPostsLimit || 15,
+                    maxPostsPerGroup: Number(patchCfg.maxPostsPerGroup) || oldSch.cfg?.maxPostsPerGroup || 30,
+                    maxScrollTimeSec: Number(patchCfg.maxScrollTimeSec) || oldSch.cfg?.maxScrollTimeSec || 90,
+                };
+
+                const updatedSchedule = {
+                    ...oldSch,
+                    label: (msg.label || "").trim() || oldSch.label,
+                    cfg: updatedCfg,
+                };
+
+                list[idx] = updatedSchedule;
+                await writeSchedules(list);
+                sendResponse({ success: true, schedule: updatedSchedule });
+                log(msg.id, updatedSchedule.label, "Đã cập nhật thông số cào mới cho các lượt chạy tiếp theo.", "info");
             })();
             return true;
         }
@@ -351,6 +618,56 @@
                     await scheduleNextAlarm();
                     sendResponse({ success: true });
                 }
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_RUN_NOW") {
+            (async () => {
+                const list = await readSchedulesRaw();
+                const schedule = findSchedule(list, msg.id);
+                if (!schedule) {
+                    sendResponse({ success: false, error: "Không tìm thấy lịch cào này." });
+                    return;
+                }
+                if (activeScheduleId && activeScheduleId !== msg.id) {
+                    cancelRequestedIds.add(activeScheduleId);
+                    try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                    try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                    try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                    log(activeScheduleId, "Hệ thống", `Đã tạm dừng lịch cũ để ưu tiên chạy ngay lịch: "${schedule.label}".`, "warn");
+                }
+                await updateSchedule(msg.id, {
+                    enabled: true,
+                    nextRunAt: Date.now(),
+                    status: "waiting_interval"
+                });
+                sendResponse({ success: true });
+                await tryRunDueSchedules();
+            })();
+            return true;
+        }
+
+        if (msg.action === "MK_ROTATE_SCHEDULE_STOP_ALL") {
+            (async () => {
+                if (activeScheduleId) {
+                    cancelRequestedIds.add(activeScheduleId);
+                    try { self.__mkStopFbCrawl && self.__mkStopFbCrawl(); } catch (e) {}
+                    try { self.__mkStopLiCrawl && self.__mkStopLiCrawl(); } catch (e) {}
+                    try { self.__mkStopThreadsCrawl && self.__mkStopThreadsCrawl(); } catch (e) {}
+                }
+                const list = await readSchedulesRaw();
+                const stopped = list.map((s) => ({
+                    ...s,
+                    enabled: false,
+                    status: "stopped",
+                    nextRunAt: null,
+                    currentStage: null
+                }));
+                await writeSchedules(stopped);
+                await scheduleNextAlarm();
+                log("all", "Hệ thống", "Đã dừng toàn bộ các lịch cào xoay vòng.", "warn");
+                sendResponse({ success: true });
             })();
             return true;
         }

@@ -140,6 +140,8 @@ async function handleAction(action, data) {
       return await checkZaloLogin();
     case "IMPORT_ZALO_SESSION":
       return await importZaloSession(data);
+    case "AUTO_IMPORT_ON_LOGIN":
+      return await importZaloSession(data);
     case "SYNC_ZALO_DOM_MESSAGES":
       return await syncZaloDomMessages(data);
     default:
@@ -569,21 +571,32 @@ let _lastCookieCount = -1;
 // — điều kiện dừng chỉ là "có ÍT NHẤT 1 cookie zalo.me nào", không quan tâm
 // tên. Bounded ở IMPORT_COOKIE_WAIT_MS để không bao giờ treo vô hạn; nếu hết
 // giờ mà vẫn chưa có cookie, trả về rỗng — caller tự quyết định báo lỗi gì.
-const IMPORT_COOKIE_WAIT_MS = 50000;
+function hasZaloLoginCookie(cookies) {
+  if (!Array.isArray(cookies) || cookies.length === 0) return false;
+  return cookies.some((c) => {
+    const name = String(c?.name || c?.key || "").toLowerCase();
+    return name === "zpw_sek" || name === "zpsid" || name === "zppsid" || name === "zpw_wsid";
+  });
+}
+
+const IMPORT_COOKIE_WAIT_MS = 90000;
 const IMPORT_COOKIE_POLL_INTERVAL_MS = 2000;
 
-async function waitForAnyZaloCookies(timeoutMs = IMPORT_COOKIE_WAIT_MS) {
+async function waitForZaloLoginCookies(timeoutMs = IMPORT_COOKIE_WAIT_MS) {
   const startedAt = Date.now();
   let cookies = await readZaloCookies();
   let attempt = 0;
   let lastLogAt = 0;
 
-  while (cookies.length === 0 && Date.now() - startedAt < timeoutMs) {
+  while (!hasZaloLoginCookie(cookies) && Date.now() - startedAt < timeoutMs) {
     attempt++;
-    if (attempt === 1 || Date.now() - lastLogAt >= 10000) {
+    if (attempt === 1 || Date.now() - lastLogAt >= 5000) {
       lastLogAt = Date.now();
-      logStep("import.waiting_for_cookies", {
+      logStep("import.waiting_for_login_cookies", {
         attempt,
+        hasLoginToken: false,
+        totalCookiesFound: cookies.length,
+        cookieNames: cookies.map((c) => c.name || c.key),
         elapsedMs: Date.now() - startedAt,
         remainingMs: timeoutMs - (Date.now() - startedAt),
       });
@@ -592,8 +605,15 @@ async function waitForAnyZaloCookies(timeoutMs = IMPORT_COOKIE_WAIT_MS) {
     cookies = await readZaloCookies();
   }
 
+  if (hasZaloLoginCookie(cookies)) {
+    await wait(1000);
+    cookies = await readZaloCookies();
+  }
+
   logStep("import.wait_done", {
+    hasLoginToken: hasZaloLoginCookie(cookies),
     found: cookies.length,
+    keys: cookieKeys(cookies),
     totalMs: Date.now() - startedAt,
   });
   return cookies;
@@ -676,13 +696,13 @@ async function importZaloSession(data) {
     // 2. Chờ cookie xuất hiện — nếu user CHƯA đăng nhập, tab vẫn mở để họ kịp
     //    quét QR (bounded ~50s, không phải chờ vô hạn). Không yêu cầu đúng
     //    tên key cụ thể — hễ có ÍT NHẤT 1 cookie zalo.me là coi như đủ.
-    const cookies = await waitForAnyZaloCookies();
+    const cookies = await waitForZaloLoginCookies(data.login_timeout_ms || 90000);
     const context = tabIdToClose ? await getZaloPageContext(tabIdToClose) : {};
     logStep("import.cookies_grabbed", { count: cookies.length, keys: cookieKeys(cookies) });
 
-    if (cookies.length === 0) {
+    if (!hasZaloLoginCookie(cookies)) {
       throw new Error(
-        "Hết thời gian chờ mà chưa đăng nhập Zalo Web. Hãy mở lại và quét QR / đăng nhập, sau đó bấm 'Đăng nhập lại' lần nữa.",
+        "Hết thời gian chờ mà chưa hoàn tất đăng nhập Zalo Web. Vui lòng quét mã QR hoặc xác nhận trên điện thoại trong tab Zalo vừa mở, sau đó bấm 'Kết nối 1-chạm' lại.",
       );
     }
 
@@ -724,17 +744,9 @@ async function importZaloSession(data) {
       keys: cookieKeys(cookies),
     };
   } finally {
-    // Luôn tự tắt tab dù thành công hay lỗi — lấy được cookie nào dùng cookie
-    // đó, không cần đúng key mới tắt, và tuyệt đối không để tab đứng treo lại
-    // chờ 1 điều kiện có thể không bao giờ xảy ra.
-    if (tabIdToClose) {
-      try {
-        await chrome.tabs.remove(tabIdToClose);
-        logStep("import.tab_closed", { tabId: tabIdToClose });
-      } catch (e) {
-        logStep("import.tab_close_failed", { tabId: tabIdToClose, error: e?.message });
-      }
-    }
+    // KHÔNG tự đóng tab Zalo Web của người dùng:
+    // 1. Tránh làm ngắt socket kết nối trực tiếp của trình duyệt khiến Zalo kick phiên.
+    // 2. Cho phép người dùng giữ tab để kiểm tra hoặc xác nhận 2FA trên điện thoại nếu cần.
     lastZaloTabId = null;
   }
 }

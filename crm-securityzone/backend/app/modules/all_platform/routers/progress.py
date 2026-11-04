@@ -21,6 +21,7 @@ from app.modules.all_platform.services.progress_service import (
     get_management_alerts,
     get_member_summary,
     get_progress_overview,
+    get_progress_overview_ranges,
     get_progress_team_detail,
     list_member_contracts,
     list_member_customers,
@@ -38,9 +39,19 @@ progress_router = APIRouter()
 
 
 @progress_router.get("/overview")
-def progress_overview(user: dict = Depends(require_admin_or_leader)) -> BaseResponse:
+def progress_overview(range: str = Query(""), user: dict = Depends(require_admin_or_leader)) -> BaseResponse:
     try:
-        return BaseResponse(success=True, data=get_progress_overview(user))
+        return BaseResponse(success=True, data=get_progress_overview(user, range or None))
+    except ProgressPermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@progress_router.get("/overview-ranges")
+def progress_overview_ranges(user: dict = Depends(require_admin_or_leader)) -> BaseResponse:
+    try:
+        return BaseResponse(success=True, data=get_progress_overview_ranges(user))
     except ProgressPermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:

@@ -259,7 +259,9 @@ export function StageModal({
   ];
 
   return (
-    <div className="crm-modal-backdrop crm-stage-modal-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop crm-stage-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className={`crm-stage-modal ${isOutcomeStage ? 'crm-stage-modal--wide' : ''}`} onClick={event => event.stopPropagation()}>
         <header className="crm-stage-modal-header" style={{ backgroundColor: meta.color }}>
           <div>

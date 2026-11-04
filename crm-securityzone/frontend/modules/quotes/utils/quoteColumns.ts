@@ -125,16 +125,31 @@ export function getLockedColumnKeys(schema: QuoteSchema): string[] {
   return LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY[getItemTableFieldKey(schema)] || ['order'];
 }
 
+/** 'subtotal' luôn ẩn tuyệt đối khỏi bản khách (trùng với amountAfterDiscount/
+ * total - xem QuoteDocumentRenderer.tsx) - KHÔNG hiện trong picker dù là khoá
+ * hay toggle, khác với các cột 'calculated' khác (vatAmount/total) nay đã cho
+ * toggle bình thường (xem resolveToggleableColumns bên dưới). */
+export const ALWAYS_HIDDEN_CALCULATED_KEYS = new Set(['subtotal']);
+
 export function resolveToggleableColumns(schema: QuoteSchema, quoteItems: QuoteItem[] = []): QuoteField[] {
   const itemFieldKey = getItemTableFieldKey(schema);
   const lockedKeys = new Set(LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || ['order']);
-  const hiddenKeys = new Set(HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || []);
+  const hiddenKeys = new Set([
+    ...(HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || []),
+    ...ALWAYS_HIDDEN_CALCULATED_KEYS,
+  ]);
+  // BUG THAT DA GAP ("báo giá có cột Thuế mà 'Cột hiển thị' không thấy đâu
+  // cả, chọn ẩn cũng không ẩn được"): cột kiểu 'calculated' (vatAmount/total)
+  // TRUOC DAY bị loại thẳng khỏi danh sách toggle (chỉ vì type 'calculated'),
+  // khiến QuoteDocumentRenderer coi chúng là "không thể tắt" (luôn in ra) VA
+  // picker không hề liệt kê chúng (không 🔒 cũng không checkbox) - Sale không
+  // thấy đâu, không tắt được. Bỏ dieu kien loai tru 'calculated' - cho toggle
+  // binh thuong nhu moi cot khac (tru 'subtotal' da loai o hiddenKeys tren).
   return resolveQuoteItemColumns(schema, quoteItems).filter(
     column =>
       !lockedKeys.has(column.key) &&
       !hiddenKeys.has(column.key) &&
-      column.type !== 'auto-number' &&
-      column.type !== 'calculated'
+      column.type !== 'auto-number'
   );
 }
 

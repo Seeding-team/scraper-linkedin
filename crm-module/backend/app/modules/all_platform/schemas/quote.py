@@ -25,6 +25,22 @@ def normalize_quote_data(data):
                                   for row in data["paymentPlan"]]}
 
 
+def optional_uuid_or_none(value):
+    """Normalize optional UUID fields before they reach PostgREST/Postgres.
+
+    Browser selects often send "" for "not selected"; Postgres UUID columns do
+    not accept empty strings. Keep real UUID strings unchanged, but consistently
+    turn empty/blank strings into None across quote create/update/assignment
+    payloads.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
 class QuoteFormCreateRequest(BaseModel):
     name: str
     description: Optional[str] = None
@@ -33,6 +49,8 @@ class QuoteFormCreateRequest(BaseModel):
     schema_version: int = 1
     schema_json: dict[str, Any]
     issuer_company_id: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
 
 
 class QuoteFormUpdateRequest(BaseModel):
@@ -44,6 +62,8 @@ class QuoteFormUpdateRequest(BaseModel):
     schema_json: Optional[dict[str, Any]] = None
     issuer_company_id: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
+
 
 class IssuerCompanyCreateRequest(BaseModel):
     code: str
@@ -51,6 +71,7 @@ class IssuerCompanyCreateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -65,6 +86,8 @@ class IssuerCompanyCreateRequest(BaseModel):
     # KHONG doc song - sua o day chi anh huong bao gia MOI tao sau do.
     payment_terms: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
+
 
 class IssuerCompanyUpdateRequest(BaseModel):
     code: Optional[str] = None
@@ -72,6 +95,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -81,6 +105,8 @@ class IssuerCompanyUpdateRequest(BaseModel):
     status: Optional[str] = None
     sort_order: Optional[int] = None
     payment_terms: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
 
 
 class QuoteItemInput(BaseModel):
@@ -105,6 +131,7 @@ class QuoteItemInput(BaseModel):
     quantity: float = 0
     unit_price: Optional[float] = Field(default=None, ge=0)
     discount_percent: float = Field(default=0, ge=0, le=100)
+    discount_amount: Optional[float] = Field(default=None, ge=0)
     vat_rate: float = Field(default=0, ge=0, le=100)
     children: list["QuoteItemInput"] = Field(default_factory=list)
     # Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá tại thời điểm chọn dịch vụ.
@@ -138,6 +165,31 @@ class QuoteItemInput(BaseModel):
     price_book_item_id: Optional[str] = None
     price_book_version_id: Optional[str] = None
     price_book_snapshot: Optional[dict[str, Any]] = None
+    cost_override_reason: Optional[str] = None
+    cost_override_by: Optional[str] = None
+    cost_override_at: Optional[str] = None
+    cost_price_original: Optional[float] = Field(default=None, ge=0)
+    # Gia von GOC bang VND (migration 169) - chi gui o bao gia USD de doi lai VND
+    # khong troi do lam tron. Gia ban goc VND dung lai unit_price_vnd co san.
+    cost_price_vnd: Optional[float] = Field(default=None, ge=0)
+    # Chu ky "tra thang/tra nam" (migration 189) - dung chung moi nhom san
+    # pham co ca 2 gia tu danh muc (vd Markee Chat MCHAT-AGENT). CANH BAO: neu
+    # khong khai bao o day, Pydantic se AM THAM bo field nay (y het bug
+    # row_type/price_book_item_id da ghi o tren) - moi lan Luu bao gia se mat
+    # sach du lieu Chu ky da chon, ca 2 ham quote.py/supabase_quote_service.py
+    # vua them cung vo tac dung.
+    billing_cycle: Optional[str] = None
+    billing_term_months: Optional[float] = Field(default=None, ge=1)
+    catalog_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
+    catalog_annual_commit_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
+
+    _normalize_optional_uuid = field_validator(
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteCreateRequest(BaseModel):
@@ -152,8 +204,19 @@ class QuoteCreateRequest(BaseModel):
     # "Loai bao gia" (migration 112) - multi-select code cua
     # category_type='crm_quote_type', chon duoc tu Buoc 1 luc tao.
     quote_type_codes: Optional[list[str]] = None
+    # Tien te cap Quote (migration 169): 'VND' (mac dinh) | 'USD'. exchange_rate = so
+    # VND cho 1 USD, bat buoc/duoc dong bang khi currency khac VND (neu bo trong dung
+    # ty gia he thong - xem quote_exchange_rate_service).
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
 
     _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "deal_id",
+        "issuer_company_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -180,8 +243,17 @@ class QuoteUpdateRequest(BaseModel):
     # o router (list rong [] la gia tri that su hop le "bo chon het", khac
     # "khong gui gi").
     quote_type_codes: Optional[list[str]] = None
+    # Doi tien te cua bao gia DRAFT: phai gui kem toan bo `items` da quy doi.
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
 
     _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "issuer_company_id",
+        "quote_form_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteStageUpdateRequest(BaseModel):
@@ -198,6 +270,12 @@ class QuoteOwnersUpdateRequest(BaseModel):
 
     technical_owner_id: Optional[str] = None
     quote_owner_id: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator(
+        "technical_owner_id",
+        "quote_owner_id",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteVersionReasonRequest(BaseModel):

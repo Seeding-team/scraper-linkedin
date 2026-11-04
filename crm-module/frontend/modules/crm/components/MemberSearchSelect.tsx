@@ -59,7 +59,10 @@ export function MemberSearchSelect({
   showAvatar?: boolean;
   testId?: string;
 }) {
-  const options = members.map(member => {
+  const uniqueMembers = members.filter((member, index, array) => (
+    member.id && array.findIndex(item => item.id === member.id) === index
+  ));
+  const options = uniqueMembers.map(member => {
     const label = member.displayName;
     const searchText = [member.displayName, member.email, member.code].filter(Boolean).join(' ');
     const richLabel = showAvatar ? (

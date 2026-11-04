@@ -70,6 +70,7 @@ from app.modules.all_platform.services.supabase_quote_service import (
     list_quotes,
     list_quotes_by_phase,
     get_quote,
+    get_access_suggestions,
     get_public_quote,
     create_quote,
     update_quote,
@@ -114,6 +115,7 @@ from app.modules.all_platform.services.supabase_service_catalog_service import (
     get_quote_form_catalog_links,
     set_quote_form_catalog_links,
     get_service_catalog_options_for_form,
+    assign_group_workspaces,
 )
 from app.modules.all_platform.services.quote_telegram_service import (
     send_quote_to_telegram,

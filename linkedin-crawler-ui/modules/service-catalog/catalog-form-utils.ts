@@ -1,9 +1,9 @@
 import type { ServiceCatalogItem, ServiceCatalogItemInput } from './types';
 import { formatCurrencyDisplay } from '@/lib/currency';
 import {
-  costFromTargetGrossMarginAndCustomer,
-  customerPriceFromTargetGrossMargin,
-  targetGrossMarginFromCustomerPrice,
+  costFromMarkupAndCustomer,
+  customerPriceFromMarkup,
+  markupFromCustomerPrice,
 } from './pricing-math';
 
 /** Helper dung chung cho form Nhom/San pham + tinh toan bo gia mac dinh
@@ -25,6 +25,7 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     defaultUnitPriceVnd: 0,
     defaultDiscountPercent: 0,
     defaultVatRate: null,
+    defaultCostVatRate: null,
     customerVisible: true,
     quoteDisplayName: '',
     quoteDescription: '',
@@ -71,9 +72,11 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
   };
 }
 
-export function emptyGroupForm(): ServiceCatalogItemInput {
+export function emptyGroupForm(defaultInstance?: string): ServiceCatalogItemInput {
   return {
     itemType: 'group',
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gán instance mặc định khi tạo mới nhóm
+    instance: defaultInstance || '',
     sku: '',
     name: '',
     description: '',
@@ -152,6 +155,8 @@ export function itemToForm(item: ServiceCatalogItem): ServiceCatalogItemInput {
     importFee: item.importFee ?? null,
     otherCost: item.otherCost ?? null,
     pricingPolicy: item.pricingPolicy || '',
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Giữ lại instance khi mở form chỉnh sửa
+    instance: item.instance,
   };
 }
 
@@ -175,16 +180,16 @@ export function formatMarkupOrMissing(value: number | undefined | null): string 
 }
 
 export function computeCustomerFromMarkup(cost: number | null, markup: number | null): number | null {
-  return customerPriceFromTargetGrossMargin(cost, markup);
+  return customerPriceFromMarkup(cost, markup);
 }
 
 export function computeMarkupFromCustomer(cost: number | null, customer: number | null): number | null {
-  return targetGrossMarginFromCustomerPrice(cost, customer);
+  return markupFromCustomerPrice(cost, customer);
 }
 
-/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu GM muc tieu + Gia khach. */
+/** Nguoc voi computeCustomerFromMarkup: suy Gia von tu Markup + Gia khach. */
 export function computeCostFromMarkupAndCustomer(markup: number | null, customer: number | null): number | null {
-  return costFromTargetGrossMarginAndCustomer(markup, customer);
+  return costFromMarkupAndCustomer(markup, customer);
 }
 
 export function parseNullableNumber(raw: string): number | null {

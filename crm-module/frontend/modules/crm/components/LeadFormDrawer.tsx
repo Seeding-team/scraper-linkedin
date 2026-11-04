@@ -11,13 +11,14 @@ import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
 import { getSourceLabel } from './DealFormFields';
 import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
-import { usersService } from '@/services/all-platform.service';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
 type FormState = {
   leadName: string;
   companyName: string;
+  taxCode: string;
   positionCategoryId: string;
   positionLabel: string;
   phone: string;
@@ -29,11 +30,8 @@ type FormState = {
   source: string;
   sdrId: string;
   sdrLabel: string;
-  /** "Sale phụ trách" (quality_ae_id / "Sale nhận bàn giao" o buoc qualify) -
-   * yeu cau rieng "cho thêm ng phụ trách sale kế bên phụ trách lead": truoc
-   * day CHI gan duoc luc Qualify Lead (LeadDetailDrawer.tsx), gio cho gan
-   * NGAY luc tao/sua Lead, cung 1 cot DB that (khong them cot moi). */
-  aeId: string;
+  /** Team Sale nhận bàn giao (crm_leads.team_id -> crm_teams). */
+  teamId: string;
   note: string;
 };
 
@@ -63,6 +61,7 @@ function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormS
   return {
     leadName: '',
     companyName: '',
+    taxCode: '',
     positionCategoryId: '',
     positionLabel: '',
     phone: '',
@@ -74,7 +73,7 @@ function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormS
     source: defaultSource || 'Manual',
     sdrId: currentUser?.id || '',
     sdrLabel: currentUser?.name || currentUser?.email || '',
-    aeId: '',
+    teamId: '',
     note: '',
   };
 }
@@ -211,6 +210,8 @@ export function LeadFormDrawer({
   onSaved,
   onOpenQualification,
   onOpenExistingLead,
+  initialValues,
+  suppressAutoCloseOnSave = false,
 }: {
   open: boolean;
   currentUser: AppUser | null;
@@ -220,6 +221,21 @@ export function LeadFormDrawer({
   /** Mo lead da co (tim thay khi check trung) bang chinh co che mo Lead hien
    * huu dang dung o LeadsDirectory (LeadDetailDrawer) - khong dung lai. */
   onOpenExistingLead?: (lead: CrmLeadRow) => void;
+  /** Dien san tu nguon ben ngoai (vd nut "Tao lead" tren post card seeding
+   * bai tu dong - da co san SDT + ten Zalo do bot tim duoc, khong bat go lai
+   * tu dau). SDT/email van di qua dung luong check-trung nhu go tay. `email`/
+   * `companyName` them cho luong "+ Tao co hoi" tu Omnichannel Inbox (Lead-
+   * first khi conv chua lien ket CRM) - KHONG anh huong cac nguon prefill cu
+   * (optional, chua truyen van hoat dong nhu truoc). */
+  initialValues?: { phone?: string; email?: string; leadName?: string; companyName?: string; note?: string; source?: string };
+  /** Nut "Tao Lead" (mode 'create') tu goi onClose() ngay sau onSaved() (xem
+   * handleAction() ben duoi) - dung khi drawer nay la MAN HINH DUY NHAT. Khi
+   * nhung vao 1 wizard nhieu buoc (QuickCreateOpportunityFromInbox), onSaved
+   * da tu chuyen buoc trong wizard cha - goi them onClose() se dong NHAM ca
+   * wizard. Bat cu nay de tat dung 1 nhanh do, KHONG doi hanh vi 'create-next'/
+   * 'create-qualify' (von da khong tu dong onClose san). Mac dinh false giu
+   * NGUYEN hanh vi cu cho 2 call site khac (LeadsDirectory, OmnichannelInboxView). */
+  suppressAutoCloseOnSave?: boolean;
 }) {
   const [checkPhone, setCheckPhone] = useState('');
   const [checkEmail, setCheckEmail] = useState('');
@@ -264,8 +280,8 @@ export function LeadFormDrawer({
   useEffect(() => {
     if (!open) return;
     setError('');
-    setCheckPhone('');
-    setCheckEmail('');
+    setCheckPhone(initialValues?.phone ? normalizePhoneInput(initialValues.phone) : '');
+    setCheckEmail(initialValues?.email?.trim() || '');
     setDupState('idle');
     setDuplicates([]);
     setOverrideCreate(false);
@@ -275,13 +291,22 @@ export function LeadFormDrawer({
     setMatchedCustomerId('');
     const storedDefaultSource = readLeadSourceDefault(currentUser);
     setDefaultLeadSource(storedDefaultSource);
-    setForm(emptyForm(currentUser, storedDefaultSource));
+    const base = emptyForm(currentUser, initialValues?.source || storedDefaultSource);
+    setForm({
+      ...base,
+      leadName: initialValues?.leadName || base.leadName,
+      companyName: initialValues?.companyName || base.companyName,
+      phone: initialValues?.phone ? normalizePhoneInput(initialValues.phone) : base.phone,
+      email: initialValues?.email?.trim() || base.email,
+      note: initialValues?.note || base.note,
+    });
     setExtraOpen(false);
     setInteractionForId('');
     setInteractionNote('');
     setInteractionSavedFor('');
     checkSeqRef.current += 1;
-  }, [open, currentUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentUser, initialValues?.phone, initialValues?.email, initialValues?.leadName, initialValues?.companyName, initialValues?.note, initialValues?.source]);
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
@@ -294,41 +319,113 @@ export function LeadFormDrawer({
   }
 
   const canPickOwner = isAdminOrLeader(currentUser);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
-  const sdrOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
+  const [leadOwnerUsers, setLeadOwnerUsers] = useState<Array<{ id: string; name: string; email?: string | null }>>([]);
   const memberName = useMemo(() => {
     const map = new Map<string, string>();
     members.forEach(m => {
       const key = m.linked_user_id || m.linked_user_id_2;
       if (key) map.set(key, m.display_name);
     });
+    leadOwnerUsers.forEach(u => map.set(u.id, u.name));
     if (currentUser?.id && !map.has(currentUser.id)) map.set(currentUser.id, currentUser.name || currentUser.email || 'Bạn');
     return map;
-  }, [members, currentUser]);
+  }, [members, leadOwnerUsers, currentUser]);
 
-  // "Sale phụ trách" (qualification_ae_id) - yeu cau rieng "ai có role sale
-  // thì hiện trong dropdown", dung LAI DUNG nguon "quote_business_role=sale"
-  // da co san (giong CrmCustomersDirectory.tsx saleManagerOptions, LeadDetailDrawer.tsx
-  // aeOptions), khong tu tao nguon rieng.
-  const [saleUsers, setSaleUsers] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
+    if (!open) return;
     let alive = true;
-    usersService
-      .getUsersByQuoteBusinessRole('sale')
-      .then(res => {
-        if (alive) setSaleUsers(res.success ? (res.data || []).map(u => ({ id: u.id, name: u.name })) : []);
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, { id: string; name: string; email?: string | null }>();
+        const rows = [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ];
+        rows.forEach(user => {
+          if (user.id && !byId.has(user.id)) byId.set(user.id, { id: user.id, name: user.name || 'Chưa đặt tên' });
+        });
+        setLeadOwnerUsers([...byId.values()].sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch(() => {
-        if (alive) setSaleUsers([]);
+        if (alive) setLeadOwnerUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !canPickOwner || leadOwnerUsers.length === 0) return;
+    if (leadOwnerUsers.some(user => user.id === form.sdrId)) return;
+    setForm(current => ({ ...current, sdrId: leadOwnerUsers[0]?.id || '' }));
+  }, [open, canPickOwner, leadOwnerUsers, form.sdrId]);
+
+  // Team Sale lấy từ Team CRM thật (crm_teams), không chọn một user Sale cá nhân.
+  const [saleTeams, setSaleTeams] = useState<CrmTeam[]>([]);
+  const [teamResolving, setTeamResolving] = useState(false);
+  const findTeamIdInLoadedTeams = (ownerId: string) => (
+    saleTeams.find(team => (
+      team.status === 'active' &&
+      (team.leader_user_id === ownerId || (team.member_ids || []).includes(ownerId))
+    ))?.id || ''
+  );
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (alive) setSaleTeams(res.success ? (res.data || []).filter(t => t.status === 'active') : []);
+      })
+      .catch(() => {
+        if (alive) setSaleTeams([]);
       });
     return () => {
       alive = false;
     };
   }, []);
+  useEffect(() => {
+    const ownerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+    if (!ownerId) {
+      setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      return;
+    }
+    const localTeamId = findTeamIdInLoadedTeams(ownerId);
+    if (localTeamId) {
+      setForm(current => (current.teamId === localTeamId ? current : { ...current, teamId: localTeamId }));
+    }
+    let alive = true;
+    setTeamResolving(true);
+    crmTeamsService
+      .getTeamIdForUser(ownerId)
+      .then(res => {
+        if (!alive) return;
+        const nextTeamId = (res.success ? res.data?.crm_team_id || '' : '') || localTeamId;
+        setForm(current => (current.teamId === nextTeamId ? current : { ...current, teamId: nextTeamId }));
+      })
+      .catch(() => {
+        if (alive && !localTeamId) setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      })
+      .finally(() => {
+        if (alive) setTeamResolving(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [form.sdrId, canPickOwner, currentUser?.id, saleTeams]);
+  const selectedOwnerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+  const locallyResolvedTeamId = selectedOwnerId ? findTeamIdInLoadedTeams(selectedOwnerId) : '';
+  const effectiveTeamId = form.teamId || locallyResolvedTeamId;
+  const teamOptionsForSelect = useMemo(() => {
+    const options = saleTeams.map(t => ({ id: t.id, displayName: t.name || t.code || 'Team Sale' }));
+    if (effectiveTeamId && !options.some(option => option.id === effectiveTeamId)) {
+      options.push({ id: effectiveTeamId, displayName: 'Team Sale đã gán' });
+    }
+    return options;
+  }, [saleTeams, effectiveTeamId]);
 
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
@@ -420,6 +517,43 @@ export function LeadFormDrawer({
     companyTimer.current = window.setTimeout(() => runCompanyMatch(value, form.website), 300);
   }
 
+  // Go ten khach hang trung voi khach hang da co trong CRM (cung ten voi Co hoi / danh sach Khach hang)
+  // -> o "Cong ty / To chuc" tu lay dung ten do. Khong ghi de khi nguoi dung da tu nhap cong ty khac.
+  const leadNameTimer = useRef<number | undefined>(undefined);
+  const companyAutoFilledRef = useRef('');
+  const formCompanyRef = useRef('');
+  formCompanyRef.current = form.companyName;
+  const foldName = (v?: string | null) =>
+    (v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/\s+/g, ' ').trim();
+  function handleLeadNameChange(value: string) {
+    setValue('leadName', value);
+    window.clearTimeout(leadNameTimer.current);
+    const name = value.trim();
+    if (name.length < 3) return;
+    leadNameTimer.current = window.setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/all-platform/crm/leads/company-match?name=${encodeURIComponent(name)}`, {
+        credentials: 'include',
+        headers: headers(),
+      })
+        .then(res => res.json())
+        .then(body => {
+          if (body.success === false) return;
+          const matches = (body.data?.matches || []) as CompanyMatchRow[];
+          const exact = matches.find(m => foldName(m.customer_name) === foldName(name) || foldName(m.company_name) === foldName(name));
+          if (!exact) return;
+          const current = formCompanyRef.current.trim();
+          if (current && current !== companyAutoFilledRef.current) return; // nguoi dung da tu nhap
+          const companyName = (exact.company_name || exact.customer_name || '').trim();
+          if (!companyName) return;
+          companyAutoFilledRef.current = companyName;
+          setValue('companyName', companyName);
+          setCompanyMatches(matches);
+          setMatchedCustomerId(exact.id);
+        })
+        .catch(() => { /* goi y khong bat buoc */ });
+    }, 400);
+  }
+
   function handleParsePaste() {
     const text = pasteText;
     const phoneMatch = text.match(PHONE_RE);
@@ -482,6 +616,7 @@ export function LeadFormDrawer({
     return {
       lead_name: form.leadName.trim(),
       company_name: form.companyName.trim() || null,
+      tax_code: form.taxCode.trim() || null,
       position_category_id: form.positionCategoryId || null,
       phone: phone || null,
       email: form.email.trim() || null,
@@ -492,7 +627,7 @@ export function LeadFormDrawer({
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
-      qualification_ae_id: form.aeId || null,
+      team_id: effectiveTeamId || null,
       note: form.note.trim() || null,
       // Backend is the final dedup gate.  This flag is only sent after the
       // user explicitly chose the existing manual-flow override.
@@ -548,7 +683,7 @@ export function LeadFormDrawer({
       if (!created) return;
       onSaved(created);
       if (mode === 'create') {
-        onClose();
+        if (!suppressAutoCloseOnSave) onClose();
       } else if (mode === 'create-next') {
         setCheckPhone('');
         setCheckEmail('');
@@ -824,10 +959,13 @@ export function LeadFormDrawer({
               <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
                 <div className="crm-form-grid">
                   <Field label="Họ và tên người liên hệ" required>
-                    <input ref={leadNameRef} value={form.leadName} onChange={e => setValue('leadName', e.target.value)} placeholder="Nguyễn Văn A" />
+                    <input ref={leadNameRef} value={form.leadName} onChange={e => handleLeadNameChange(e.target.value)} placeholder="Nguyễn Văn A" />
                   </Field>
                   <Field label="Công ty / Tổ chức">
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
+                  </Field>
+                  <Field label="MST (mã số thuế)">
+                    <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value.replace(/[^0-9-]/g, ''))} inputMode="numeric" placeholder="VD: 0312345678" />
                   </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
                     <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" inputMode="tel" autoComplete="tel" placeholder="Autofill từ kiểm tra trùng" />
@@ -871,16 +1009,11 @@ export function LeadFormDrawer({
                         hideClearOption
                         showAvatar={false}
                         members={[
-                          ...(currentUser?.id
-                            ? [{
-                                id: currentUser.id,
-                                displayName: `${currentUser.name || currentUser.email || 'Bạn'} (Chính bạn)`,
-                                email: currentUser.email,
-                              }]
-                            : []),
-                          ...sdrOptions
-                            .filter(m => selectionKeyOf(m) !== currentUser?.id)
-                            .map(m => ({ id: selectionKeyOf(m), displayName: m.display_name, email: m.email })),
+                          ...leadOwnerUsers.map(user => ({
+                            id: user.id,
+                            displayName: user.id === currentUser?.id ? `${user.name} (Chính bạn)` : user.name,
+                            email: user.email,
+                          })),
                         ]}
                       />
                     </Field>
@@ -889,12 +1022,15 @@ export function LeadFormDrawer({
                       <input value={currentUser?.name || currentUser?.email || 'Bạn'} disabled readOnly />
                     </Field>
                   )}
-                  <Field label="Người phụ trách Sale">
+                  <Field label="Team Sale">
                     <MemberSearchSelect
-                      value={form.aeId}
-                      onChange={value => setValue('aeId', value)}
+                      value={effectiveTeamId}
+                      onChange={() => {}}
                       showAvatar={false}
-                      members={saleUsers.map(u => ({ id: u.id, displayName: u.name }))}
+                      disabled
+                      loading={teamResolving}
+                      placeholder={teamResolving ? 'Đang tìm Team Sale...' : 'Chưa gán'}
+                      members={teamOptionsForSelect}
                     />
                   </Field>
                   <Field label="Trạng thái">
@@ -972,16 +1108,6 @@ export function LeadFormDrawer({
             >
               {saving === 'create-next' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo và thêm Lead tiếp theo
-            </button>
-            <button
-              type="button"
-              className="crm-secondary-button"
-              disabled={saving !== null || !dedupGatePassed}
-              title={dedupGatePassed ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}
-              onClick={() => void handleAction('create-qualify')}
-            >
-              {saving === 'create-qualify' ? <Loader2 className="crm-save-spinner" /> : null}
-              Tạo và mở Qualification
             </button>
             <button
               type="button"

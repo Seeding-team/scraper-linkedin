@@ -27,6 +27,7 @@ import { SelectCustomerStep } from './SelectCustomerStep';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
 import type { QuoteDraft } from './types';
 import { clearVisibleColumnsDraft } from './quoteColumnsDraft';
+import { normalizeQuoteCurrency } from '@/lib/currency';
 
 type CreateQuoteStep = 1 | 2 | 3 | 4;
 
@@ -510,9 +511,13 @@ export function CreateQuoteModal({
       block => block.title.trim() || block.content.trim()
     );
     const data = { ...quoteDraft.data, customBlocks };
+    // Tien te CAP QUOTE + ty gia da chot (xem QuoteFormFiller). Villa luon VND.
+    const currency = isVilla ? 'VND' : normalizeQuoteCurrency(quoteDraft.data.currency);
     return {
-      data: isVilla ? { ...data, solutionItems: quoteDraft.solutionItems } : data,
+      data: isVilla ? { ...data, currency, solutionItems: quoteDraft.solutionItems } : { ...data, currency },
       items: isVilla ? [] : quoteDraft.items,
+      currency,
+      exchangeRate: currency === 'USD' ? quoteDraft.exchangeRate ?? null : null,
     };
   }
 
@@ -555,7 +560,7 @@ export function CreateQuoteModal({
       if (draftEligible) clearQuoteWizardDraft();
     } catch (err) {
       if (createdQuoteId) await seedingQuoteRepository.deleteQuote(createdQuoteId).catch(() => {});
-      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId).catch(() => {});
+      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId, true).catch(() => {});
       setSubmitError(err instanceof Error ? err.message : 'Không thể tạo báo giá.');
     } finally {
       setSubmittingAction(null);
@@ -636,7 +641,9 @@ export function CreateQuoteModal({
   // width/max-width CSS khai bao la gi. Portal ra document.body de thoat
   // hoan toan containing block bi anh huong boi transform cua drawer cha.
   return createPortal(
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div
         className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
         onClick={event => event.stopPropagation()}

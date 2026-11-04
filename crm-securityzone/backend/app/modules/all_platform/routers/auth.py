@@ -46,6 +46,7 @@ from app.modules.all_platform.services import (
     is_sale_member,
     get_effective_permissions,
 )
+from app.modules.all_platform.services.auth_service import _resolve_crm_function_area
 
 router = APIRouter()
 
@@ -162,8 +163,13 @@ def auth_list_workspaces(request: Request) -> BaseResponse:
     frontend dùng để hiện switcher (chỉ render UI khi role=admin, kiểm tra
     quyền thật ở /workspace-handoff bên dưới)."""
     current_instance = settings.crm_instance
+    # So khop khong phan biet hoa/thuong: workspace_domains luon co key chu thuong
+    # (_parse trong workspace_domains.py), nhung crm_instance co the la "SECURITYZONE"
+    # (viet hoa) tuy workspace - khong lowercase ca 2 thi "current" se sai het (bug
+    # that da gap 2026-10-30: khong workspace nao duoc danh dau dang dung tren SecurityZone).
+    current_key = (current_instance or "").strip().lower()
     items = [
-        {"instance": instance, "url": url, "current": instance == current_instance}
+        {"instance": instance, "url": url, "current": instance.lower() == current_key}
         for instance, url in settings.workspace_domains.items()
     ]
     return BaseResponse(success=True, data={"items": items, "current_instance": current_instance})
@@ -219,6 +225,8 @@ def auth_consume_workspace_handoff(code: str, response: Response) -> BaseRespons
                 "email": user["email"],
                 "name": user.get("name"),
                 "role": user.get("role", "member"),
+                "quote_business_role": user.get("quote_business_role"),
+                "crm_function_area": _resolve_crm_function_area(user.get("id")),
             },
         },
     )
@@ -319,6 +327,9 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             # Both cua chinh user dang dang nhap (dung xuyen suot he thong
             # gan Deal/Quote owner - xem DealFormFields.tsx/QuoteWorkspaceModal.tsx).
             "quote_business_role": user.get("quote_business_role"),
+            # Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep) - dung de
+            # quyet dinh route mac dinh sau dang nhap (getDashboardHrefForRole).
+            "crm_function_area": _resolve_crm_function_area(user.get("id")),
 
         })
     except HTTPException as e:

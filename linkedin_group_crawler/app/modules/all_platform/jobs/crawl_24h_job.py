@@ -41,8 +41,12 @@ def _enqueue_due_groups_sync() -> Dict[str, int]:
         time_crawl = row.get("time_crawl")
         end_date_str = row.get("end_date_hour")
 
-        if start_time is None or end_time is None or time_crawl is None or time_crawl <= 0:
-            continue
+        if start_time is None:
+            start_time = 0
+        if end_time is None:
+            end_time = 24
+        if time_crawl is None or time_crawl <= 0:
+            time_crawl = 60
 
         if end_date_str:
             try:

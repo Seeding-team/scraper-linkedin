@@ -20,7 +20,10 @@ from supabase import Client
 from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
+from app.modules.all_platform.services.crm_position_service import resolve_position_category
 from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
+from app.modules.all_platform.services import quote_currency as qc
+from app.modules.all_platform.services.quote_exchange_rate_service import default_usd_vnd_rate
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,39 @@ def _crm_instance() -> str:
 
 def _ensure_quote_in_instance(quote_id: str, include_deleted: bool = False) -> dict:
     return get_quote(quote_id, include_deleted=include_deleted)
+
+
+def _optional_uuid(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
+def _normalize_optional_uuid_fields(payload: dict, fields: tuple[str, ...]) -> dict:
+    for field in fields:
+        if field in payload:
+            payload[field] = _optional_uuid(payload.get(field))
+    return payload
+
+
+def _normalize_quote_item_uuid_fields(items: list[dict] | None) -> list[dict] | None:
+    if items is None:
+        return None
+    uuid_fields = (
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+    )
+    for item in items:
+        _normalize_optional_uuid_fields(item, uuid_fields)
+        children = item.get("children")
+        if isinstance(children, list):
+            _normalize_quote_item_uuid_fields(children)
+    return items
 
 
 def _now_iso() -> str:
@@ -114,6 +150,19 @@ def _row_to_form(row: dict) -> dict:
     }
 
 
+def _item_billing_term_multiplier(row: dict) -> float:
+    """Giá vốn định kỳ phải tính đủ thời gian sử dụng (2026-10-14) - dùng CHUNG
+    hệ số với doanh thu (_calculate_item's `bt`): billing_cycle='annual' +
+    billing_term_months>1 thì nhân thêm, ngược lại he so 1 (giu NGUYEN hanh vi
+    cu cho moi hang muc khong co Chu ky). Khong doc billing_term_months khi
+    billing_cycle != 'annual' de tranh nham voi quantity (SL van la truc rieng,
+    KHONG phai so thang)."""
+    if row.get("billing_cycle") != "annual":
+        return 1.0
+    months = row.get("billing_term_months")
+    return float(months) if months and float(months) > 1 else 1.0
+
+
 def _row_to_item(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -138,6 +187,7 @@ def _row_to_item(row: dict) -> dict:
         "unitPrice": (float(row["unit_price"]) if row.get("unit_price") is not None else None),
         "discountPercent": float(row.get("discount_percent") or 0),
         "discountAmount": float(row.get("discount_amount") or 0),
+        "discountType": row.get("discount_type") or row.get("discountType"),
         "amountAfterDiscount": float(row.get("amount_after_discount") or 0),
         "vatRate": float(row.get("vat_rate") or 0),
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
@@ -156,9 +206,12 @@ def _row_to_item(row: dict) -> dict:
         # thua ham nay) nen an toan them truc tiep o day.
         "costPrice": (float(row["cost_price"]) if row.get("cost_price") is not None else None),
         "markupPercent": (float(row["markup_percent"]) if row.get("markup_percent") is not None else None),
+        # Gia von GOC bang VND (migration 169) - chi co o bao gia USD, de doi lai
+        # VND khong troi do lam tron.
+        "costPriceVnd": (float(row["cost_price_vnd"]) if row.get("cost_price_vnd") is not None else None),
         "costNotApplicable": bool(row.get("cost_not_applicable") or False),
         "costTotal": (
-            float(row["cost_price"]) * float(row.get("quantity") or 0)
+            float(row["cost_price"]) * float(row.get("quantity") or 0) * _item_billing_term_multiplier(row)
             if row.get("cost_price") is not None
             else None
         ),
@@ -174,6 +227,21 @@ def _row_to_item(row: dict) -> dict:
         "costOverrideAt": row.get("cost_override_at"),
         "costPriceOriginal": (
             float(row["cost_price_original"]) if row.get("cost_price_original") is not None else None
+        ),
+        # Chu ky (migration 189) - tra thang/nam cho hang muc co ca 2 gia tu
+        # danh muc (vd Markee Chat MCHAT-AGENT). NULL het = hang muc 1 gia
+        # hoac bao gia tao truoc tinh nang nay, khong anh huong tinh tien.
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
+        "catalogMonthlyPriceVnd": (
+            float(row["catalog_monthly_price_vnd"]) if row.get("catalog_monthly_price_vnd") is not None else None
+        ),
+        "catalogAnnualCommitMonthlyPriceVnd": (
+            float(row["catalog_annual_commit_monthly_price_vnd"])
+            if row.get("catalog_annual_commit_monthly_price_vnd") is not None
+            else None
         ),
         "children": [],
     }
@@ -222,7 +290,7 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     if not has_cost_data:
         return {"hasCostData": False, "costTotal": None, "netRevenue": net_revenue, "grossProfit": None, "grossMarginPercent": None}
     cost_total = sum(
-        float(item["cost_price"]) * float(item.get("quantity") or 0)
+        float(item["cost_price"]) * float(item.get("quantity") or 0) * _item_billing_term_multiplier(item)
         for item in real_items
         if item.get("cost_price") is not None
     )
@@ -237,7 +305,42 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     }
 
 
+
+def _lost_reason_label(code: str | None) -> str | None:
+    from app.modules.all_platform.services.quote_outcome_service import lost_reason_label
+
+    return lost_reason_label(code)
+
+
 def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
+    data = row.get("data") or {}
+    item_discount_types = data.get("itemDiscountTypes") or {}
+    quote_items = _quote_item_tree(items or [])
+    def _apply_discount_type(nodes: list[dict]):
+        for node in nodes:
+            node_id = node.get("id")
+            if node_id and node_id in item_discount_types:
+                node["discountType"] = item_discount_types[node_id]
+            elif not node.get("discountType"):
+                pct = node.get("discountPercent")
+                amt = node.get("discountAmount")
+                if pct is not None and float(pct) > 0 and amt is not None and float(amt) > 0:
+                    if float(pct) % 1 != 0:
+                        node["discountType"] = "amount"
+            _apply_discount_type(node.get("children") or [])
+    _apply_discount_type(quote_items)
+    overall_discount_type = data.get("overallDiscountType")
+    overall_discount_amount = data.get("overallDiscountAmount")
+    overall_discount_pct = row.get("overall_discount_percent")
+    if (
+        overall_discount_type != "amount"
+        and overall_discount_amount is not None
+        and float(overall_discount_amount) > 0
+        and overall_discount_pct is not None
+        and float(overall_discount_pct) % 1 != 0
+    ):
+        overall_discount_type = "amount"
+        data["overallDiscountType"] = "amount"
     return {
         "id": row["id"],
         "dealId": row.get("deal_id"),
@@ -247,12 +350,17 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "status": row["status"],
         "formSchemaVersion": row["form_schema_version"],
         "formSnapshot": _normalize_quote_schema(row.get("form_snapshot") or {}),
-        "data": row.get("data") or {},
-        "items": _quote_item_tree(items or []),
+        "data": data,
+        "items": quote_items,
+        "overallDiscountType": overall_discount_type,
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
         "currency": row.get("currency") or "VND",
+        # Ty gia (VND / 1 USD) DONG BANG luc tao/chuyen currency (migration 169) -
+        # NULL voi bao gia VND/bao gia cu. Khong bao gio doc lai ty gia he thong.
+        "exchangeRate": (float(row["exchange_rate"]) if row.get("exchange_rate") is not None else None),
+        "currencySnapshot": row.get("currency_snapshot"),
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdById": row.get("created_by"),
@@ -290,6 +398,15 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "cancellationReason": row.get("cancellation_reason"),
         "cancelledAt": row.get("cancelled_at"),
         "cancelledById": row.get("cancelled_by"),
+        # Ket qua bao gia sau phat hanh (migration 179): None = dang cho khach phan hoi; 'lost' = Khong chot / OUT.
+        "customerOutcome": row.get("customer_outcome"),
+        "lostReason": row.get("lost_reason"),
+        "lostReasonLabel": _lost_reason_label(row.get("lost_reason")),
+        "lostReasonOther": row.get("lost_reason_other"),
+        "lostNote": row.get("lost_note"),
+        "lostById": row.get("lost_by"),
+        "lostByName": row.get("lost_by_name"),
+        "lostAt": row.get("lost_at"),
         "publishedAt": row.get("published_at"),
         "publishedById": row.get("published_by"),
         "sentAt": row.get("sent_at"),
@@ -346,7 +463,7 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
 _QUOTE_COST_KEYS = ("costTotal", "hasCostData")
 _QUOTE_PRICING_KEYS: tuple[str, ...] = ()  # markupPercent chi o item-level, khong co field quote-level rieng
 _QUOTE_PROFIT_KEYS = ("grossProfit", "grossMarginPercent")
-_ITEM_COST_KEYS = ("costPrice", "costNotApplicable", "costTotal")
+_ITEM_COST_KEYS = ("costPrice", "costPriceVnd", "costNotApplicable", "costTotal")
 _ITEM_PRICING_KEYS = ("markupPercent",)
 
 
@@ -430,6 +547,12 @@ _PUBLIC_ITEM_KEYS = (
     "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
     "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
     "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
+    # Chu ky (migration 189) - CAN cong khai de QuoteDocumentRenderer ghi chu
+    # "Cam kết N tháng"/"trả năm" canh Don gia/Thanh tien, tranh khach hieu
+    # nham tinh sai (SL x Don gia khong khop Thanh tien da nhan them so thang).
+    # KHONG them 2 field snapshot catalogMonthlyPriceVnd/catalogAnnualCommit...
+    # (chi Sale can de doi qua lai Chu ky, khach khong can biet gia gon kia).
+    "billingCycle", "billingTermMonths",
 )
 
 
@@ -467,6 +590,10 @@ def _row_to_public_item(row: dict) -> dict:
         "unitPriceUsd": row.get("unit_price_usd"),
         "exchangeRate": row.get("exchange_rate"),
         "unitPriceVnd": row.get("unit_price_vnd"),
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
         "children": [],
     }
 
@@ -475,19 +602,7 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     """Ban sao doc lap cua _quote_item_tree() nhung dung _row_to_public_item -
     co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
     khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
-    khong the vo tinh lam lo field moi qua duong nay).
-
-    BUG THAT DA GAP (2026-09-22, user bao cao "Chưa có hạng mục báo giá"
-    du bao gia co tong tien > 0): than ham nay bi tach doi trong 1 lan sua
-    truoc - phan logic that (mapped/by_id/roots/return) bi lac xuong duoi,
-    nam SAU return cua _infer_missing_parent_ids() (dead code khong bao gio
-    chay, chi la trung indent nen khong loi cu phap), khien ham nay chi con
-    docstring -> Python tu tra ve None ngam dinh. API public
-    (get_public_quote) tra thang "items": None cho MOI bao gia, FE phai tu
-    ve chan (xem QuoteDocumentRenderer.tsx) nhung khach hang mat het bang
-    hang muc that. Ghep lai dung logic (giong het cau truc
-    _quote_item_tree() ben duoi, chi khac _row_to_public_item thay
-    _row_to_item)."""
+    khong the vo tinh lam lo field moi qua duong nay)."""
     mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
@@ -500,33 +615,6 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     for item in mapped:
         item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
-
-
-def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
-    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
-    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
-    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
-    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
-    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
-    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
-    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
-    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
-    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
-    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
-    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
-    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
-    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
-    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
-    current_section_id: str | None = None
-    for item in mapped:
-        if item.get("rowType") == "section":
-            current_section_id = item.get("id")
-            continue
-        if not item.get("parentItemId") and current_section_id:
-            item["parentItemId"] = current_section_id
-        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
-        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
-    return mapped
 
 
 def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
@@ -557,6 +645,7 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
         "visibleSummaryFields",
         "visibleCustomerFields",
         "printLayoutPrefs",
+        "overallDiscountAmount",
     }
     if form_snapshot.get("enableDynamicPaymentPlan"):
         allowed.add("paymentPlan")
@@ -585,6 +674,9 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
+        "overallDiscountPercent": (
+            float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
+        ),
         "currency": row.get("currency") or "VND",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
@@ -612,6 +704,8 @@ def _row_to_issuer_company(row: dict) -> dict:
         "brandName": row.get("brand_name"),
         "address": row.get("address"),
         "contactName": row.get("contact_name"),
+        "positionCategoryId": row.get("position_category_id"),
+        "positionLabel": row.get("position_label_snapshot"),
         "phone": row.get("phone"),
         "email": row.get("email"),
         "website": row.get("website"),
@@ -620,6 +714,9 @@ def _row_to_issuer_company(row: dict) -> dict:
         "defaultQuoteFormId": row.get("default_quote_form_id"),
         "status": row.get("status") or "active",
         "paymentTerms": row.get("payment_terms"),
+        # Nội bộ (không phải field nghiệp vụ mới) - để _issuer_of_quote() quyết định fallback có nên tự chọn công ty này cho
+        # workspace hiện tại hay không (KHÔNG tự lấy công ty của workspace khác khi quote chưa chọn issuer tường minh).
+        "instance": row.get("instance"),
     }
 
 
@@ -637,12 +734,15 @@ def list_issuer_companies(include_inactive: bool = False) -> list[dict]:
 
 def create_issuer_company(payload: dict) -> dict:
     supabase: Client = get_supabase_client()
+    position_id, position_label = resolve_position_category(payload.get("position_category_id"), require_active=True)
     insert_data = {
         "code": payload["code"],
         "legal_name": payload["legal_name"],
         "brand_name": payload.get("brand_name"),
         "address": payload.get("address"),
         "contact_name": payload.get("contact_name"),
+        "position_category_id": position_id,
+        "position_label_snapshot": position_label,
         "phone": payload.get("phone"),
         "email": payload.get("email"),
         "website": payload.get("website"),
@@ -669,6 +769,19 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
         "status": "status", "sort_order": "sort_order", "payment_terms": "payment_terms",
     }
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
+    if "default_quote_form_id" in payload:
+        update_data["default_quote_form_id"] = payload.get("default_quote_form_id")
+    # "position_category_id" rieng: co the la None (bo chon Chuc vu) nen khong qua loc "v is not None" o tren - chi
+    # resolve khi key THAT SU co trong payload (sua truong khac khong duoc dong cham Chuc vu dang luu). require_active
+    # chi bat buoc khi gia tri THAY DOI so voi ban ghi hien co - sua truong khac cua 1 ban ghi dang gan Chuc vu da bi
+    # ngung dung (is_active=false) khong duoc bao loi vo ly (dung khuon resolve_position_category() da dung cho CRM).
+    if "position_category_id" in payload:
+        current = supabase.table(ISSUER_COMPANIES_TABLE).select("position_category_id").eq("id", company_id).execute()
+        current_id = (current.data or [{}])[0].get("position_category_id")
+        incoming_id = str(payload.get("position_category_id") or "").strip() or None
+        position_id, position_label = resolve_position_category(incoming_id, require_active=(incoming_id != current_id))
+        update_data["position_category_id"] = position_id
+        update_data["position_label_snapshot"] = position_label
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi
     # loai None (khong gui field do len), khong loai chuoi rong.
     # Rieng default_quote_form_id la cot UUID: "" (bo chon mau mac dinh) phai
@@ -691,6 +804,33 @@ def _quote_items(quote_id: str) -> list[dict]:
     return result.data or []
 
 
+def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
+    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
+    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
+    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
+    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
+    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
+    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
+    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
+    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
+    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
+    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
+    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
+    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
+    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
+    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
+    current_section_id: str | None = None
+    for item in mapped:
+        if item.get("rowType") == "section":
+            current_section_id = item.get("id")
+            continue
+        if not item.get("parentItemId") and current_section_id:
+            item["parentItemId"] = current_section_id
+        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
+        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
+    return mapped
+
+
 def _quote_item_tree(rows: list[dict]) -> list[dict]:
     mapped = _infer_missing_parent_ids([_row_to_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
@@ -704,6 +844,21 @@ def _quote_item_tree(rows: list[dict]) -> list[dict]:
     for item in mapped:
         item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
+
+
+def flatten_quote_items(items: list[dict] | None) -> list[dict]:
+    """Nghich dao cua _quote_item_tree(): quote["items"] tra ve tu get_quote() la CAY long nhau
+    (hang muc that nam trong item["children"] cua Section). Module nao doc quote["items"] de tinh
+    toan/hien thi (AI contract context, bang Word hop dong, rule engine margin/discount, so sanh
+    quyen sua items...) PHAI flatten truoc, neu khong hang muc trong children bi bo sot hoan toan
+    (bug thuc te 2026-10-10: bao gia gom het hang muc vao 1 Section -> noi doc truc tiep quote["items"]
+    chi thay dung 1 dong Section rong, mat sach du lieu that). Giu NGUYEN THU TU: moi item roi toi
+    children cua no."""
+    out: list[dict] = []
+    for item in items or []:
+        out.append(item)
+        out.extend(flatten_quote_items(item.get("children") or []))
+    return out
 
 
 def _slug_code(name: str) -> str:
@@ -779,32 +934,64 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal(0)
 
 
-def _round_vnd(value: Decimal) -> float:
-    """VNĐ khong co phan thap phan - lam tron ve DONG NGUYEN (ROUND_HALF_UP)
-    truoc khi tra ra float de luu DB. Sua bug that phat hien qua UI (VD:
-    unitPrice tinh nguoc tu Margin muc tieu ra so co qua nhieu chu so thap
-    phan nhu 1428571.4285714286 - dung Decimal + quantize o day de moi so
-    tien server luu/tra ve LUON la dong nguyen, khong chi lam tron o tang
-    hien thi FE roi van luu so sai xuong DB)."""
-    return float(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+def _round_vnd(value: Decimal, currency: str = "VND") -> float:
+    """Lam tron theo TIEN TE CUA QUOTE: VND khong co phan thap phan - lam tron
+    ve DONG NGUYEN (ROUND_HALF_UP); USD (va tien te khac) giu 2 chu so thap phan.
+    Sua bug that phat hien qua UI (VD: unitPrice tinh nguoc tu Margin muc tieu ra
+    so co qua nhieu chu so thap phan nhu 1428571.4285714286 - dung Decimal +
+    quantize o day de moi so tien server luu/tra ve LUON dung quy uoc tien te,
+    khong chi lam tron o tang hien thi FE roi van luu so sai xuong DB)."""
+    return qc.round_money(value, currency)
 
 
-def _calculate_item(quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0) -> tuple[float, float, float, float, float]:
+def _calculate_item(
+    quantity: float,
+    unit_price: float,
+    vat_rate: float,
+    discount_percent: float = 0,
+    currency: str = "VND",
+    billing_term_months: float | None = None,
+    discount_amount: float | None = None,
+    discount_type: str | None = None,
+    vat_amount: float | None = None,
+) -> tuple[float, float, float, float, float]:
+    """billing_term_months (migration 189): he so nhan them vao subtotal khi
+    hang muc chon "Tra nam" (thuong la 12) - dung Gia tra nam/thang (da UU
+    DAI theo thang) nhung tinh tien ca nam. None/<=1 = khong nhan them, giong
+    het hanh vi cu (hang muc 1 gia, hoac bao gia tao truoc tinh nang nay)."""
     q = _to_decimal(quantity)
     u = _to_decimal(unit_price)
     d_pct = _to_decimal(discount_percent)
     v_pct = _to_decimal(vat_rate)
-    subtotal = q * u
-    discount = subtotal * d_pct / 100
+    bt = _to_decimal(billing_term_months) if billing_term_months and billing_term_months > 1 else _to_decimal(1)
+    subtotal = q * u * bt
+    if discount_type == "amount":
+        if discount_amount is not None and discount_amount >= 0:
+            discount = min(subtotal, _to_decimal(discount_amount))
+        else:
+            discount = _to_decimal(0)
+    elif discount_type == "percent":
+        discount = subtotal * d_pct / 100
+    elif discount_amount is not None:
+        d_amt = _to_decimal(discount_amount)
+        if d_amt >= 0 and not (d_amt == 0 and d_pct > 0):
+            discount = min(subtotal, d_amt)
+        else:
+            discount = subtotal * d_pct / 100
+    else:
+        discount = subtotal * d_pct / 100
     after_discount = subtotal - discount
-    vat = after_discount * v_pct / 100
+    if vat_amount is not None and vat_amount >= 0 and not (vat_amount == 0 and v_pct > 0):
+        vat = _to_decimal(vat_amount)
+    else:
+        vat = after_discount * v_pct / 100
     total = after_discount + vat
     return (
-        _round_vnd(subtotal),
-        _round_vnd(discount),
-        _round_vnd(after_discount),
-        _round_vnd(vat),
-        _round_vnd(total),
+        _round_vnd(subtotal, currency),
+        _round_vnd(discount, currency),
+        _round_vnd(after_discount, currency),
+        _round_vnd(vat, currency),
+        _round_vnd(total, currency),
     )
 
 
@@ -845,7 +1032,7 @@ def _bundle_snapshot_from_catalog_components(components: list[dict]) -> list[dic
     ]
 
 
-def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
+def _enrich_bundle_catalog_quote_item(item: dict, currency: str = "VND", exchange_rate: Any = None) -> dict:
     """Server-side fallback for catalog bundle quote rows.
 
     The UI normally sends description + full bundle_snapshot. This keeps API/RPC
@@ -885,32 +1072,36 @@ def _enrich_bundle_catalog_quote_item(item: dict) -> dict:
     if not next_item.get("service_description"):
         next_item["service_description"] = catalog_item.get("quoteDisplayName") or catalog_item.get("name")
     if next_item.get("cost_price") is None and catalog_item.get("defaultCostPriceVnd") is not None:
-        next_item["cost_price"] = catalog_item.get("defaultCostPriceVnd")
+        next_item["cost_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCostPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["cost_price_vnd"] = catalog_item.get("defaultCostPriceVnd")
         next_item["cost_not_applicable"] = False
     if next_item.get("markup_percent") is None and catalog_item.get("defaultMarkupPercent") is not None:
         next_item["markup_percent"] = catalog_item.get("defaultMarkupPercent")
     if next_item.get("unit_price") is None and catalog_item.get("defaultCustomerPriceVnd") is not None:
-        next_item["unit_price"] = catalog_item.get("defaultCustomerPriceVnd")
+        next_item["unit_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCustomerPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["unit_price_vnd"] = catalog_item.get("defaultCustomerPriceVnd")
     if next_item.get("unit_price") is None and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
-        divisor = 1 - float(next_item["markup_percent"]) / 100
-        next_item["unit_price"] = float(next_item["cost_price"]) / divisor if divisor > 0 else 0
+        multiplier = 1 + float(next_item["markup_percent"]) / 100
+        next_item["unit_price"] = float(next_item["cost_price"]) * multiplier if multiplier >= 0 else 0
     return next_item
 
 
-def _enrich_bundle_catalog_quote_items(items: list[dict]) -> list[dict]:
+def _enrich_bundle_catalog_quote_items(items: list[dict], currency: str = "VND", exchange_rate: Any = None) -> list[dict]:
     enriched: list[dict] = []
     for item in items:
-        next_item = _enrich_bundle_catalog_quote_item(item)
+        next_item = _enrich_bundle_catalog_quote_item(item, currency, exchange_rate)
         if next_item.get("children"):
             next_item = {
                 **next_item,
-                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or []),
+                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or [], currency, exchange_rate),
             }
         enriched.append(next_item)
     return enriched
 
 
-def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, float, float]:
+def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tuple[list[dict], float, float, float]:
     flattened: list[dict] = []
     subtotal = 0.0
     vat = 0.0
@@ -925,16 +1116,29 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             # khong tin gia tri client gui len cho dong nay.
             item = {
                 **item,
-                "quantity": 0, "unit_price": 0, "discount_percent": 0, "vat_rate": 0,
+                "quantity": 0, "unit_price": 0, "discount_percent": 0, "discount_amount": 0, "vat_rate": 0,
                 "cost_price": None, "markup_percent": None, "cost_not_applicable": False,
             }
-        discount_percent = _validate_percent(item.get("discount_percent"), "discount_percent")
+        # Chuẩn hoá dữ liệu lưu, không chỉ format ở UI: phép quy đổi tiền giảm
+        # sang % có thể tạo float rất dài. Báo giá cũ/mọi entry point đều đi
+        # qua đây nên luôn lưu tối đa 2 chữ số sau dấu thập phân.
+        discount_percent = round(_validate_percent(item.get("discount_percent"), "discount_percent"), 2)
         vat_rate = _validate_percent(item.get("vat_rate"), "vat_rate")
+        raw_discount_amount = item.get("discount_amount") if item.get("discount_amount") is not None else item.get("discountAmount")
+        discount_type = item.get("discount_type") or item.get("discountType")
+        raw_vat_amount = item.get("vat_amount") if item.get("vat_amount") is not None else item.get("vatAmount")
         item_subtotal, item_discount, item_after_discount, item_vat, item_total = _calculate_item(
             float(item.get("quantity") or 0),
-            float(item.get("unit_price") or 0),
+            float(item.get("unit_price") if item.get("unit_price") is not None else (item.get("unitPrice") or 0)),
             vat_rate,
             discount_percent,
+            currency,
+            billing_term_months=(
+                float(item["billing_term_months"]) if item.get("billing_term_months") is not None else None
+            ),
+            discount_amount=float(raw_discount_amount) if raw_discount_amount is not None else None,
+            discount_type=discount_type,
+            vat_amount=float(raw_vat_amount) if raw_vat_amount is not None else None,
         )
         row = {
             **item,
@@ -942,6 +1146,7 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             "parent_temp_index": parent_temp_index,
             "sort_order": sort_order,
             "discount_percent": discount_percent,
+            "discount_type": discount_type,
             "vat_rate": vat_rate,
             "subtotal": item_subtotal,
             "discount": item_discount,
@@ -1071,6 +1276,8 @@ def create_quote_form(payload: dict) -> dict:
 def update_quote_form(form_id: str, payload: dict) -> dict:
     supabase: Client = get_supabase_client()
     update_data = {k: v for k, v in payload.items() if v is not None}
+    if "issuer_company_id" in payload:
+        update_data["issuer_company_id"] = payload.get("issuer_company_id")
     if "layout_type" in update_data and not update_data["layout_type"]:
         update_data.pop("layout_type")
     update_data["updated_at"] = _now_iso()
@@ -1556,6 +1763,89 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     return _row_to_quote(_apply_default_phone_access(row), _quote_items(quote_id))
 
 
+def get_access_suggestions(quote_id: str) -> list[dict]:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (man Thong tin phat
+    hanh) - lay THAT tu CRM thay vi Sale phai go tay: khach hang cua bao
+    gia, Nguoi lien he thuoc khach hang do, Sale/Presale phu trach. CHI
+    trong pham vi dung 1 Khach hang + dung instance cua quote nay (khong
+    bao gio tra Nguoi lien he/Khach hang workspace khac) - dung
+    customer_id suy tu quotes.deal_id -> customer_leads.customer_id, KHONG
+    nhan client tu truyen customer_id rieng (tranh do tron tenant). Trung
+    email+sdt chi giu 1 dong dau tien gap."""
+    quote = get_quote(quote_id)
+    supabase: Client = get_supabase_client()
+    instance = _crm_instance()
+    results: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: str | None, role: str, email: str | None, phone: str | None) -> None:
+        email = (email or "").strip()
+        phone = (phone or "").strip()
+        if not email and not phone:
+            return
+        key = (email.lower(), phone)
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({"name": (name or "").strip() or role, "role": role, "email": email or None, "phone": phone or None})
+
+    deal_id = quote.get("dealId")
+    customer_id = None
+    if deal_id:
+        deal_rows = (
+            supabase.table("customer_leads")
+            .select("customer_id")
+            .eq("id", deal_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if deal_rows:
+            customer_id = deal_rows[0].get("customer_id")
+
+    if customer_id:
+        customer_rows = (
+            supabase.table("crm_customers")
+            .select("customer_name, phone, email")
+            .eq("id", customer_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if customer_rows:
+            c = customer_rows[0]
+            add(c.get("customer_name"), "Khách hàng", c.get("email"), c.get("phone"))
+        contact_rows = (
+            supabase.table("crm_contacts")
+            .select("name, phone, email")
+            .eq("customer_id", customer_id)
+            .eq("instance", instance)
+            .execute()
+            .data
+            or []
+        )
+        for contact in contact_rows:
+            add(contact.get("name"), "Người liên hệ", contact.get("email"), contact.get("phone"))
+
+    owner_specs = [(quote.get("quoteOwnerId"), "Sale phụ trách"), (quote.get("technicalOwnerId"), "Presale phụ trách")]
+    owner_ids = [uid for uid, _ in owner_specs if uid]
+    if owner_ids:
+        user_rows = supabase.table("app_users").select("id, name, email").in_("id", owner_ids).execute().data or []
+        users_by_id = {row["id"]: row for row in user_rows}
+        for uid, role in owner_specs:
+            if not uid:
+                continue
+            u = users_by_id.get(uid)
+            if u:
+                add(u.get("name"), role, u.get("email"), None)
+
+    return results
+
+
 class PublicQuoteVerificationRequiredError(Exception):
     """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
     118, thay the PublicQuoteEmailRequiredError cu chi ho tro email). Nem loi
@@ -1733,8 +2023,191 @@ def set_print_layout_prefs(
     return get_quote(quote_id)
 
 
+def _resolve_quote_fx(currency: str, requested_rate: Any) -> tuple[float | None, dict | None]:
+    """(exchange_rate, currency_snapshot) cho 1 quote. VND -> (None, None). Ngoai te:
+    uu tien ty gia client gui (nguoi dung nhap/xac nhan), neu khong thi ty gia he
+    thong; khong co ca 2 -> loi (KHONG bia ty gia)."""
+    if currency == "VND":
+        return None, None
+    rate = qc.to_rate(requested_rate) or qc.to_rate(default_usd_vnd_rate())
+    if rate is None:
+        raise ValueError("Chưa có tỷ giá USD→VND. Vui lòng nhập tỷ giá trước khi chuyển báo giá sang USD.")
+    qc.assert_plausible_usd_vnd_rate(rate)
+    return float(rate), qc.build_snapshot(currency, rate)
+
+
+def _apply_quote_currency_change(quote_id: str, current_quote: dict, payload: dict) -> dict | None:
+    """Doi currency cua quote DRAFT (neu payload yeu cau) TRUOC khi goi RPC quote_update
+    (RPC doc quotes.currency de lam tron). Tra ve gia tri cu de rollback neu RPC loi,
+    hoac None neu khong doi gi. Cung currency -> GIU NGUYEN snapshot (khong doi ty gia
+    khi reload/save/approve). Bao gia da duyet: bo qua - RPC se tu choi chinh sua."""
+    # CHI doi currency khi client gui RO `currency` - data.currency la field text tu do
+    # (co the la "VNĐ"...) nen khong duoc coi la yeu cau doi tien te.
+    requested = payload.get("currency")
+    if requested is None or current_quote.get("status") == "approved":
+        return None
+    target = qc.normalize_currency(requested)
+    current = current_quote.get("currency") or "VND"
+    if target == current:
+        if isinstance(payload.get("data"), dict):
+            payload["data"]["currency"] = current
+        return None
+    if payload.get("items") is None:
+        raise ValueError("Đổi tiền tệ báo giá phải gửi kèm toàn bộ hạng mục đã quy đổi.")
+    rate, snapshot = _resolve_quote_fx(target, payload.get("exchange_rate"))
+    previous = {
+        "currency": current,
+        "exchange_rate": current_quote.get("exchangeRate"),
+        "currency_snapshot": current_quote.get("currencySnapshot"),
+    }
+    get_supabase_client().table(QUOTES_TABLE).update({
+        "currency": target, "exchange_rate": rate, "currency_snapshot": snapshot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+    if isinstance(payload.get("data"), dict):
+        payload["data"]["currency"] = target
+    return previous
+
+
+def _rollback_quote_currency(quote_id: str, previous: dict | None) -> None:
+    if previous:
+        get_supabase_client().table(QUOTES_TABLE).update(previous).eq("id", quote_id).eq(
+            "instance", _crm_instance()
+        ).execute()
+
+
+
+def _apply_contact_to_quote_data(data: dict, deal_id: str | None) -> None:
+    """Luc tao bao gia: "Kinh gui"/"Nguoi lien he" PHAI la nguoi lien he THAT (crm_contacts), khong bao gio la ten
+    cong ty. Neu FE khong gui duoc ten nguoi (hoac chi roi ve ten cong ty cua co hoi) -> dung Lien he chinh cua co hoi.
+    Chi dien khi thieu/trung ten cong ty; khong ghi de ten ngoi dung da nhap tay khac."""
+    try:
+        supabase: Client = get_supabase_client()
+        deal = None
+        if deal_id:
+            deal = (supabase.table("customer_leads").select("customer_name, company_name, primary_contact_id")
+                    .eq("id", deal_id).limit(1).execute().data or [None])[0]
+        contact_id = data.get("customerContactId") or (deal or {}).get("primary_contact_id")
+        if not contact_id:
+            return
+        contact = (supabase.table("crm_contacts").select("id, name, phone, email").eq("id", contact_id).limit(1).execute().data or [None])[0]
+        if not contact or not (contact.get("name") or "").strip():
+            return
+        company_like = {str(v).strip() for v in (
+            data.get("customerCompanyName"), (deal or {}).get("customer_name"), (deal or {}).get("company_name")) if v}
+        recipient = str(data.get("customerRecipient") or "").strip()
+        if not recipient or recipient in company_like:
+            data["customerRecipient"] = contact["name"].strip()
+            data["customerContactName"] = contact["name"].strip()
+            data["customerContactId"] = contact["id"]
+            if contact.get("phone") and not data.get("customerPhone"):
+                data["customerPhone"] = contact["phone"]
+            if contact.get("email") and not data.get("customerEmail"):
+                data["customerEmail"] = contact["email"]
+    except Exception as exc:  # noqa: BLE001 - phu tro, khong chan tao bao gia
+        logger.warning("_apply_contact_to_quote_data failed: %s", exc)
+
+
+def sync_contact_snapshot_to_quotes(contact_row: dict | None, old_row: dict | None = None) -> int:
+    """Sua Nguoi lien he (crm_contacts) -> dong bo "Kinh gui"/SDT/Email trong snapshot cua cac bao gia da chon nguoi
+    lien he do (data.customerContactId) HOAC thuoc co hoi co lien he chinh la nguoi nay. Neu co `old_row`, chi ghi de
+    truong con la ban sao cua gia tri cu (hoac rong) - ten go tay rieng tren bao gia duoc giu nguyen.
+    Loi chi log, khong chan thao tac goc. Tra ve so bao gia da cap nhat."""
+    try:
+        row = contact_row or {}
+        old = old_row or {}
+        cid = row.get("id")
+        if not cid:
+            return 0
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        new_vals = {snap: str(row.get(col) or "").strip() for snap, col in pairs}
+        if not any(new_vals.values()):
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        by_id = {
+            q["id"]: q for q in (
+                supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                .eq("data->>customerContactId", str(cid)).is_("deleted_at", "null").execute().data or []
+            )
+        }
+        deal_ids = [d["id"] for d in (
+            supabase.table("customer_leads").select("id").eq("primary_contact_id", cid).eq("instance", instance).execute().data or []
+        )]
+        if deal_ids:
+            for q in (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                      .in_("deal_id", deal_ids).is_("deleted_at", "null").execute().data or []):
+                if not (q.get("data") or {}).get("customerContactId"):
+                    by_id.setdefault(q["id"], q)
+        changed = 0
+        for q in by_id.values():
+            data = dict(q.get("data") or {})
+            data_changed = False
+            for snap, col in pairs:
+                new_val = new_vals[snap]
+                if not new_val or data.get(snap) == new_val:
+                    continue
+                cur = str(data.get(snap) or "").strip()
+                old_val = str(old.get(col) or "").strip()
+                if old_row is not None and cur and cur != old_val:
+                    continue  # nguoi dung da go tay gia tri rieng tren bao gia nay
+                data[snap] = new_val
+                data_changed = True
+            if data_changed:
+                data["customerContactId"] = str(cid)
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_contact_snapshot_to_quotes failed: %s", exc)
+        return 0
+
+
+def sync_deal_primary_contact_to_quotes(deal_id: str, new_contact: dict | None, old_contact: dict | None = None) -> int:
+    """Doi lien he chinh cua Co hoi -> cac bao gia cua co hoi do doi "Kinh gui"/SDT/Email sang nguoi moi
+    (chi khi gia tri hien tai la cua nguoi cu, ten cong ty hoac rong; ten go tay khac duoc giu)."""
+    try:
+        new = new_contact or {}
+        if not (deal_id and new.get("id")):
+            return 0
+        old = old_contact or {}
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        supabase: Client = get_supabase_client()
+        quotes = (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", _crm_instance())
+                  .eq("deal_id", deal_id).is_("deleted_at", "null").execute().data or [])
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            company_like = {str(data.get("customerCompanyName") or "").strip()} - {""}
+            data_changed = False
+            for snap, col in pairs:
+                new_val = str(new.get(col) or "").strip()
+                cur = str(data.get(snap) or "").strip()
+                if not new_val or cur == new_val:
+                    continue
+                if cur and cur != str(old.get(col) or "").strip() and cur not in company_like:
+                    continue
+                data[snap] = new_val
+                data_changed = True
+            if data_changed or data.get("customerContactId") != str(new["id"]):
+                data["customerContactId"] = str(new["id"])
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_deal_primary_contact_to_quotes failed: %s", exc)
+        return 0
+
+
 def create_quote(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
+    _normalize_optional_uuid_fields(payload, ("deal_id", "quote_form_id", "issuer_company_id", "project_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
+    if not payload.get("quote_form_id"):
+        raise ValueError("Vui lòng chọn mẫu báo giá.")
+    if not payload.get("deal_id"):
+        raise ValueError("Vui lòng chọn cơ hội trước khi tạo báo giá.")
     form = supabase.table(FORMS_TABLE).select("*").eq("id", payload["quote_form_id"]).single().execute().data
     if not form or form["status"] != "active":
         raise ValueError("Mẫu báo giá không còn hoạt động.")
@@ -1743,13 +2216,26 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
 
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
-    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [])
+    _apply_contact_to_quote_data(data, payload.get("deal_id"))
+    # Tien te CAP QUOTE + dong bang ty gia (migration 169). Quote cu / khong gui
+    # currency -> VND, exchange_rate=NULL, hanh vi y het truoc day.
+    # CHI tin `currency` gui RO (data.currency la text go tay, KHONG phai nguon tien te he thong).
+    currency = qc.normalize_currency(payload["currency"]) if payload.get("currency") else "VND"
+    exchange_rate, currency_snapshot = _resolve_quote_fx(currency, payload.get("exchange_rate"))
+    data["currency"] = currency
+    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [], currency, exchange_rate)
 
     if is_villa:
         subtotal, vat, total = _calculate_villa_totals(data.get("solutionItems") or [])
         items_to_insert: list[dict] = []
     else:
-        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items)
+        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency)
+        overall_disc = _to_decimal(0)
+        if data.get("overallDiscountType") == "amount" or (data.get("overallDiscountAmount") is not None and float(data.get("overallDiscountAmount") or 0) > 0):
+            overall_disc = min(_to_decimal(subtotal), _to_decimal(data.get("overallDiscountAmount") or 0))
+        elif payload.get("overall_discount_percent"):
+            overall_disc = _round_vnd(_to_decimal(subtotal) * _to_decimal(payload.get("overall_discount_percent") or 0) / 100, currency)
+        total = _round_vnd((_to_decimal(subtotal) - overall_disc) + _to_decimal(vat), currency)
 
     quote_number = _next_quote_number()
     now = _now_iso()
@@ -1772,7 +2258,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         "subtotal_amount": subtotal,
         "vat_amount": vat,
         "total_amount": total,
-        "currency": str(data.get("currency") or "VND"),
+        "currency": currency,
         "issued_at": now,
         "public_token": None,
         "public_enabled": False,
@@ -1788,6 +2274,11 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # khong doi update_quote() duy nhat.
         "quote_type_codes": payload.get("quote_type_codes") or [],
     }
+    if currency != "VND":
+        # Chi them khi that su la ngoai te: DB chua chay migration 169 van tao duoc
+        # bao gia VND nhu cu (PostgREST bao loi neu gui cot khong ton tai).
+        insert_data["exchange_rate"] = exchange_rate
+        insert_data["currency_snapshot"] = currency_snapshot
     logger.info(
         "tenant_write table=quotes operation=insert settings.crm_instance=%s resolved_instance=%s",
         _crm_instance(),
@@ -1823,6 +2314,13 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "unit_price_usd": item.get("unit_price_usd"),
             "exchange_rate": item.get("exchange_rate"),
             "unit_price_vnd": item.get("unit_price_vnd"),
+            "price_book_item_id": item.get("price_book_item_id") or None,
+            "price_book_version_id": item.get("price_book_version_id") or None,
+            "price_book_snapshot": item.get("price_book_snapshot"),
+            "cost_override_reason": item.get("cost_override_reason"),
+            "cost_override_by": item.get("cost_override_by") or None,
+            "cost_override_at": item.get("cost_override_at"),
+            "cost_price_original": item.get("cost_price_original"),
         }
         # Chi them cost_price/markup_percent (migration 086) vao payload INSERT
         # khi THAT SU co gia tri - neu luon them ca key voi gia tri None,
@@ -1831,6 +2329,18 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         if item.get("cost_price") is not None:
             row["cost_price"] = item["cost_price"]
             row["markup_percent"] = item.get("markup_percent")
+        if item.get("cost_price_vnd") is not None:
+            row["cost_price_vnd"] = item["cost_price_vnd"]
+        # Chu ky (migration 189) - chi them key khi THAT SU co gia tri, dung
+        # pattern voi cost_price o tren: tranh loi "column does not exist" tren
+        # DB CHUA chay migration 189 cho hang muc KHONG dung tinh nang nay.
+        if item.get("billing_cycle") is not None:
+            row["billing_cycle"] = item["billing_cycle"]
+            row["billing_term_months"] = item.get("billing_term_months")
+        if item.get("catalog_monthly_price_vnd") is not None:
+            row["catalog_monthly_price_vnd"] = item["catalog_monthly_price_vnd"]
+        if item.get("catalog_annual_commit_monthly_price_vnd") is not None:
+            row["catalog_annual_commit_monthly_price_vnd"] = item["catalog_annual_commit_monthly_price_vnd"]
         inserted = supabase.table(ITEMS_TABLE).insert(row).execute().data[0]
         inserted_items.append(inserted)
         inserted_ids_by_flat_index[index] = inserted["id"]
@@ -1961,6 +2471,79 @@ def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
     return roots
 
 
+def _sync_computed_item_discounts_and_totals(
+    quote_id: str,
+    rpc_items: list[dict],
+    effective_currency: str,
+    quote_data: dict | None = None,
+    overall_discount_pct: float | None = None,
+) -> None:
+    """RPC quote_update (SQL) tính discount_amount = ROUND(subtotal * discount_percent / 100).
+    Khi người dùng nhập giảm giá bằng số tiền cố định (VNĐ/USD) hoặc có giảm giá toàn báo giá,
+    discount_percent đã bị làm tròn nên phép nhân ngược trong SQL bị lệch. Hàm này ghi đè lại chính xác
+    discount_amount, amount_after_discount, vat_amount, total_amount của từng dòng và subtotal_amount,
+    vat_amount, total_amount của báo giá."""
+    if not rpc_items:
+        return
+    computed_flat, calc_sub, calc_vat, calc_tot = _flatten_computed_items(rpc_items, effective_currency)
+    has_fixed_diff = False
+    for comp_row in computed_flat:
+        if comp_row.get("row_type") == "section":
+            continue
+        if comp_row.get("discount_type") == "amount" or comp_row.get("discountType") == "amount":
+            has_fixed_diff = True
+            break
+        if comp_row.get("vat_amount") is not None or comp_row.get("vatAmount") is not None:
+            has_fixed_diff = True
+            break
+        if comp_row.get("discount_amount") is not None or comp_row.get("discountAmount") is not None:
+            pct_discount = _round_vnd(
+                _to_decimal(comp_row.get("subtotal") or 0) * _to_decimal(comp_row.get("discount_percent") or 0) / 100,
+                effective_currency,
+            )
+            if float(comp_row.get("discount") or 0) != float(pct_discount or 0):
+                has_fixed_diff = True
+                break
+
+    overall_disc = _to_decimal(0)
+    if quote_data and (quote_data.get("overallDiscountType") == "amount" or (quote_data.get("overallDiscountAmount") is not None and float(quote_data.get("overallDiscountAmount") or 0) > 0)):
+        has_fixed_diff = True
+        overall_disc = min(_to_decimal(calc_sub), _to_decimal(quote_data.get("overallDiscountAmount") or 0))
+    elif overall_discount_pct is not None and float(overall_discount_pct) > 0:
+        has_fixed_diff = True
+        overall_disc = _round_vnd(_to_decimal(calc_sub) * _to_decimal(overall_discount_pct) / 100, effective_currency)
+
+    calc_tot = _round_vnd((_to_decimal(calc_sub) - overall_disc) + _to_decimal(calc_vat), effective_currency)
+
+    if not has_fixed_diff:
+        return
+
+    supabase: Client = get_supabase_client()
+    db_tree = _raw_items_for_rpc(_quote_items(quote_id))
+    db_flat = [node for root in db_tree for node in (root, *(root.get("children") or []))]
+    for db_row, comp_row in zip(db_flat, computed_flat):
+        if comp_row.get("row_type") == "section":
+            continue
+        if (
+            float(db_row.get("discount_amount") or 0) != float(comp_row.get("discount") or 0)
+            or float(db_row.get("amount_after_discount") or 0) != float(comp_row.get("after_discount") or 0)
+            or float(db_row.get("vat_amount") or 0) != float(comp_row.get("vat") or 0)
+            or float(db_row.get("total_amount") or 0) != float(comp_row.get("total") or 0)
+        ):
+            supabase.table(ITEMS_TABLE).update({
+                "discount_amount": comp_row["discount"],
+                "amount_after_discount": comp_row["after_discount"],
+                "vat_amount": comp_row["vat"],
+                "total_amount": comp_row["total"],
+            }).eq("id", db_row["id"]).execute()
+
+    supabase.table(QUOTES_TABLE).update({
+        "subtotal_amount": calc_sub,
+        "vat_amount": calc_vat,
+        "total_amount": calc_tot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+
+
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
     quote that trong phien nay, phat hien qua "GIA KHACH ve 0"): RPC
@@ -1972,6 +2555,8 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
     current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
     # Villa keeps its commercial rows in data.solutionItems, not quote_items.
     # quote_update is shared and recomputes totals from p_items, therefore a
     # metadata-only Villa save would otherwise persist 0 when p_items is empty.
@@ -1986,8 +2571,14 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         villa_totals = _calculate_villa_totals(effective_data.get("solutionItems") or [])
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
+    effective_currency = current_quote.get("currency") or "VND"
+    effective_rate = current_quote.get("exchangeRate")
+    if previous_fx is not None:
+        effective_currency = qc.normalize_currency(payload.get("currency"))
+        effective_rate = qc.to_rate(payload.get("exchange_rate")) or qc.to_rate(default_usd_vnd_rate())
     if items_changed:
-        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items])
+        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items], effective_currency, effective_rate)
     else:
         rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
     changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
@@ -2001,6 +2592,7 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
 
     if villa_totals is not None:
@@ -2010,6 +2602,13 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             "vat_amount": vat,
             "total_amount": total,
         }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+        )
 
     # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
     # (chi la metadata, khong can recompute gia/VAT nhu cac RPC khac) - update
@@ -2253,10 +2852,13 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
     roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
     Duyet se xoa sach hang muc."""
-    _ensure_quote_in_instance(quote_id)
+    current_quote = _ensure_quote_in_instance(quote_id)
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
     if items_changed:
         rpc_items = [item for item in items]
     else:
@@ -2273,7 +2875,22 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
+    is_villa = current_quote.get("formSnapshot", {}).get("layoutType") == "villa_solution_package"
+    if not is_villa:
+        effective_currency = (
+            qc.normalize_currency(payload.get("currency"))
+            if previous_fx is not None
+            else (current_quote.get("currency") or "VND")
+        )
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+        )
     quote = get_quote(quote_id)
     if quote.get("dealId"):
         link_quote_to_deal(quote_id, quote["dealId"], {
@@ -2391,6 +3008,61 @@ _RPC_ERROR_MESSAGES.update({
     "invalid_processing_stage": "Bước xử lý không hợp lệ.",
     "processing_stage_cannot_go_backward": "Không thể lùi về bước xử lý trước đó.",
 })
+
+
+
+# Truong "ho so khach hang" trong snapshot data cua bao gia (lay tu crm_customers luc tao bao gia).
+_CUSTOMER_SNAPSHOT_FIELD_MAP = {
+    "company_name": "customerCompanyName",
+    "address": "customerAddress",
+    "tax_code": "customerTaxCode",
+}
+
+
+def sync_customer_snapshot_to_quotes(customer_id: str | None = None, customer_row: dict | None = None, deal_ids: list[str] | None = None) -> int:
+    """Dong bo thong tin Khach hang (ten cong ty/dia chi/MST) vao snapshot `data` cua MOI bao gia
+    thuoc khach hang/co hoi do - sua ho so khach hang la moi bao gia (ke ca cu) cap nhat theo.
+
+    Chi ghi de cac key co gia tri khong rong trong `customer_row` (khong xoa du lieu quote khi ho so de trong);
+    "Kinh gui"/SDT/Email (theo Nguoi lien he) khong dong bo vi do Contact quyet dinh. Loi o day
+    KHONG duoc lam hong thao tac sua khach hang -> nuot loi + log. Tra ve so bao gia da cap nhat."""
+    try:
+        row = customer_row or {}
+        updates = {
+            snap_key: str(row.get(col)).strip()
+            for col, snap_key in _CUSTOMER_SNAPSHOT_FIELD_MAP.items()
+            if row.get(col) is not None and str(row.get(col)).strip()
+        }
+        if not updates:
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        ids = list(deal_ids or [])
+        if customer_id:
+            deals = (
+                supabase.table("customer_leads").select("id")
+                .eq("customer_id", customer_id).eq("instance", instance).execute().data or []
+            )
+            ids.extend(d["id"] for d in deals)
+        ids = list({i for i in ids if i})
+        if not ids:
+            return 0
+        quotes = (
+            supabase.table(QUOTES_TABLE).select("id, data")
+            .eq("instance", instance).in_("deal_id", ids).is_("deleted_at", "null").execute().data or []
+        )
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            if all(data.get(k) == v for k, v in updates.items()):
+                continue
+            data.update(updates)
+            supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+            changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001 - dong bo phu, khong chan luong chinh
+        logger.warning("sync_customer_snapshot_to_quotes failed: %s", exc)
+        return 0
 
 
 def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) -> dict:
@@ -2682,7 +3354,7 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
     trên customer_leads — Deal Card/Drawer đọc y hệt như tham chiếu thủ công cũ
     (rowToDeal() phía frontend không cần sửa gì), chỉ khác nguồn dữ liệu giờ là
     quote thật thay vì user tự gõ tay."""
-    _ensure_quote_in_instance(quote_id)
+    linked_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
@@ -2703,6 +3375,51 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
                 .data
             )
             if not (current or {}).get("estimated_budget"):
-                update_data["estimated_budget"] = reference["totalAmount"]
+                # estimated_budget cua Deal luon la VND - quote USD phai quy doi theo
+                # ty gia DA DONG BANG cua chinh quote (khong dung ty gia moi).
+                update_data["estimated_budget"] = qc.quote_amount_to_vnd(
+                    reference["totalAmount"], linked_quote.get("currency"), linked_quote.get("exchangeRate")
+                )
     supabase.table("customer_leads").update(update_data).eq("id", deal_id).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)
+
+
+# ── Dong bo Sales Pipeline (customer_leads.deal_stage) sau cac su kien bao gia ──────────────────────────────
+# Boc (wrap) cac ham nghiep vu: ket qua cu GIU NGUYEN, chi them buoc tinh lai stage cua DUNG Deal gan voi bao gia
+# (deal_stage_sync_service.sync_deal_stage - khong bao gio raise). Dat o CUOI module de moi noi import/goi noi bo deu di qua ban da boc.
+def _wrap_deal_stage_sync(fn, source: str):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        try:
+            deal_id = result.get("dealId") if isinstance(result, dict) else None
+            if not deal_id:
+                quote_id = (result.get("id") if isinstance(result, dict) else None) or (args[0] if args else kwargs.get("quote_id") or kwargs.get("clicked_quote_id"))
+                if quote_id:
+                    rows = get_supabase_client().table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).limit(1).execute().data or []
+                    deal_id = rows[0].get("deal_id") if rows else None
+            if deal_id:
+                from app.modules.all_platform.services.deal_stage_sync_service import sync_deal_stage
+
+                sync_deal_stage(deal_id, source=source)
+
+                from app.modules.all_platform.services.crm_customer_progress_service import recompute_customer_progress
+
+                rows = get_supabase_client().table("customer_leads").select("customer_id").eq("id", deal_id).limit(1).execute().data or []
+                customer_id = rows[0].get("customer_id") if rows else None
+                if customer_id:
+                    recompute_customer_progress(customer_id, source=source)
+        except Exception:  # noqa: BLE001 - dong bo stage khong duoc lam hong thao tac bao gia
+            logger.warning("deal stage sync sau %s that bai", source, exc_info=True)
+        return result
+
+    return inner
+
+
+for _name, _source in (
+    ("create_quote", "tạo báo giá"), ("approve_quote", "duyệt báo giá"), ("cancel_quote", "huỷ báo giá"),
+    ("soft_delete_quote", "xoá báo giá"), ("restore_quote", "khôi phục báo giá"), ("create_quote_version", "tạo phiên bản báo giá"),
+):
+    globals()[_name] = _wrap_deal_stage_sync(globals()[_name], _source)

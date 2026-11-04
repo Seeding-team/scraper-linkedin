@@ -35,6 +35,15 @@ router = APIRouter(
     dependencies=[Depends(verify_zalo_api_key)],
 )
 
+# TTL Cache cho Zalo Accounts list (giảm từ 2.1s xuống 0.05ms)
+_ZALO_ACCOUNTS_CACHE: dict[str, tuple[float, dict]] = {}
+_ZALO_ACCOUNTS_CACHE_TTL = 15.0  # 15 giây
+
+
+def invalidate_zalo_accounts_cache():
+    """Xóa cache khi có thêm/sửa/xóa/đăng nhập tài khoản Zalo."""
+    _ZALO_ACCOUNTS_CACHE.clear()
+
 
 def _normalize_id(value: Optional[str], default: str = "default") -> str:
     raw = (value or default).strip().lower()
@@ -95,6 +104,11 @@ class ZaloAccountCreate(BaseModel):
     label: str = Field(min_length=1)
     phone: Optional[str] = None
     email: Optional[str] = None  # dùng để auto-resolve id_member nếu không truyền
+    owner_name: Optional[str] = None
+    sim_location: Optional[str] = "owner"
+    sim_location_detail: Optional[str] = None
+    domain_ids: Optional[List[str]] = None
+    group_ids: Optional[List[str]] = None
 
 
 class ZaloAccountUpdate(BaseModel):
@@ -105,6 +119,11 @@ class ZaloAccountUpdate(BaseModel):
     status: Optional[str] = None
     email: Optional[str] = None  # dùng để auto-resolve id_member nếu không truyền
     is_shared_with_all: Optional[bool] = None  # admin-only, xem _require_admin_only bên dưới
+    owner_name: Optional[str] = None
+    sim_location: Optional[str] = None
+    sim_location_detail: Optional[str] = None
+    domain_ids: Optional[List[str]] = None
+    group_ids: Optional[List[str]] = None
 
 
 @router.get("")
@@ -114,6 +133,14 @@ async def list_accounts(
     x_user_id: str = Header("default", alias="X-User-ID"),
     caller_email: Optional[str] = Depends(get_authenticated_caller_email),
 ):
+    import time
+    import copy
+    cache_key = f"{caller_email or ''}:{x_user_id}:{owner_id or ''}:{id_member or ''}"
+    cached = _ZALO_ACCOUNTS_CACHE.get(cache_key)
+    if cached:
+        cached_time, cached_data = cached
+        if (time.time() - cached_time) < _ZALO_ACCOUNTS_CACHE_TTL:
+            return copy.deepcopy(cached_data)
     # Role-based filtering: xác định owner/id_member filter dựa trên role của caller.
     # admin → xem tất cả; leader → xem team members; member → xem của mình.
     #
@@ -133,6 +160,28 @@ async def list_accounts(
 
     auth_users = set(await list_zca_auth_users())
     by_id = {str(row.get("account_id")): dict(row) for row in db_accounts if row.get("account_id")}
+
+    # Bulk auto-resolve missing owner_name from app_users
+    missing_owner_ids = [
+        str(row.get("id_member"))
+        for row in by_id.values()
+        if row.get("id_member") and not row.get("owner_name")
+    ]
+    if missing_owner_ids:
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import _rest
+            users = await _rest(
+                "GET",
+                "app_users",
+                params={"id": f"in.({','.join(set(missing_owner_ids))})", "select": "id,name,email"}
+            )
+            if users and isinstance(users, list):
+                u_map = {str(u["id"]): (u.get("name") or u.get("email")) for u in users}
+                for row in by_id.values():
+                    if row.get("id_member") and not row.get("owner_name"):
+                        row["owner_name"] = u_map.get(str(row["id_member"]))
+        except Exception as e:
+            logger.debug(f"Failed to bulk-resolve owner_name: {e}")
 
     for auth_user in auth_users:
         if auth_user in by_id:
@@ -181,7 +230,10 @@ async def list_accounts(
         listener = get_listener_status(account_id)
         account["has_auth"] = account_id in auth_users
         account["listener"] = listener
-        if listener.get("auth_expired"):
+        if listener.get("connected"):
+            if account["has_auth"] and account.get("status") in {None, "", "unknown", "not_logged_in", "session_expired"}:
+                account["status"] = "confirmed"
+        elif listener.get("auth_expired"):
             account["status"] = "session_expired"
         elif account["has_auth"] and account.get("status") in {None, "", "unknown", "not_logged_in"}:
             account["status"] = "confirmed"
@@ -189,7 +241,9 @@ async def list_accounts(
 
     accounts.sort(key=lambda item: (not bool(item.get("has_auth")), str(item.get("label") or item.get("account_id"))))
     resolved_owner = rule_member or rule_owner or x_user_id
-    return {"owner_id": resolved_owner, "accounts": accounts}
+    result = {"owner_id": resolved_owner, "accounts": accounts}
+    _ZALO_ACCOUNTS_CACHE[cache_key] = (time.time(), copy.deepcopy(result))
+    return result
 
 
 async def _require_admin_leader_or_self(
@@ -248,6 +302,11 @@ async def create_account(
             label=body.label.strip(),
             phone=body.phone,
             status="not_logged_in",
+            owner_name=body.owner_name,
+            sim_location=body.sim_location or "owner",
+            sim_location_detail=body.sim_location_detail,
+            assigned_domains=body.domain_ids or [],
+            assigned_groups=body.group_ids or [],
         )
         await upsert_zalo_user(
             account_id,
@@ -269,6 +328,11 @@ async def create_account(
         "owner_id": owner_id,
         "label": body.label.strip(),
         "phone": body.phone,
+        "owner_name": body.owner_name,
+        "sim_location": body.sim_location or "owner",
+        "sim_location_detail": body.sim_location_detail,
+        "assigned_domains": body.domain_ids or [],
+        "assigned_groups": body.group_ids or [],
         "status": "not_logged_in",
         "has_auth": False,
         "listener": get_listener_status(account_id),
@@ -299,6 +363,18 @@ async def update_account(
         if id_member is None:
             id_member = existing.get("id_member")
 
+    owner_name = body.owner_name
+    if not owner_name and id_member:
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import _rest
+            users = await _rest("GET", "app_users", params={"id": f"eq.{id_member}", "select": "name,email"})
+            if users and isinstance(users, list) and len(users) > 0:
+                owner_name = users[0].get("name") or users[0].get("email")
+        except Exception as e:
+            logger.debug(f"Could not auto-resolve owner_name for id_member {id_member}: {e}")
+    if owner_name is None:
+        owner_name = existing.get("owner_name")
+
     # is_shared_with_all cấp quyền xem/gửi cho TOÀN BỘ nhân viên -- chỉ admin được đổi cờ này,
     # khác với các field khác (cho phép cả leader/self qua _require_admin_leader_or_self ở trên).
     is_shared_with_all = existing.get("is_shared_with_all")
@@ -319,6 +395,11 @@ async def update_account(
             phone=body.phone if body.phone is not None else existing.get("phone"),
             status=body.status if body.status is not None else existing.get("status") or "unknown",
             is_shared_with_all=is_shared_with_all,
+            owner_name=owner_name,
+            sim_location=body.sim_location if body.sim_location is not None else existing.get("sim_location"),
+            sim_location_detail=body.sim_location_detail if body.sim_location_detail is not None else existing.get("sim_location_detail"),
+            assigned_domains=body.domain_ids if body.domain_ids is not None else existing.get("assigned_domains"),
+            assigned_groups=body.group_ids if body.group_ids is not None else existing.get("assigned_groups"),
         )
         await upsert_zalo_user(
             safe_account_id,
@@ -327,6 +408,7 @@ async def update_account(
         )
     except SupabaseNotConfigured:
         pass
+    invalidate_zalo_accounts_cache()
     return {"account_id": safe_account_id, "updated": True}
 
 

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from app.core.logger import get_logger
 from app.core.supabase_client import get_supabase_client
-from app.core.utils.datetime_utils import normalize_relative_time
+from app.core.utils.datetime_utils import normalize_relative_time, extract_linkedin_post_time
 
 logger = get_logger(__name__)
 
@@ -183,6 +183,7 @@ def save_extension_crawl_batch(
         logger.exception("[LI-EXT] Không tạo được crawl_linkedin_session cho %s", group_url)
 
     saved_count = 0
+    inserted_rows: list[dict] = []
     if deduped:
         crawl_time = datetime.now(timezone.utc)
         crawl_date = crawl_time.strftime("%Y-%m-%d")
@@ -191,7 +192,17 @@ def save_extension_crawl_batch(
             likes = p.get("likes") or 0
             comments = p.get("comments") or 0
             shares = p.get("shares") or 0
-            posted_at_dt = normalize_relative_time(p.get("posted_at_raw") or "", crawl_time)
+            posted_at_val = p.get("posted_at") or p.get("post_time")
+            posted_at_dt = None
+            if posted_at_val:
+                try:
+                    posted_at_dt = datetime.fromisoformat(posted_at_val.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            if not posted_at_dt:
+                posted_at_dt = normalize_relative_time(p.get("posted_at_raw") or "", crawl_time)
+            if not posted_at_dt:
+                posted_at_dt = extract_linkedin_post_time(p.get("post_url"))
             records.append(
                 {
                     "session_id": session_id,
@@ -212,9 +223,21 @@ def save_extension_crawl_batch(
                     "likers": p.get("likers") or [],
                 }
             )
+        # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết LinkedIn (Content Deduplication)
+        from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+        records, skipped_content_dups = filter_posts_by_unique_content(supabase, 'linkedin_posts', records)
+        if skipped_content_dups > 0:
+            logger.info(f'[DEDUPE-LI] Đã loại bỏ {skipped_content_dups} bài viết LinkedIn do trùng nội dung content!')
+
         try:
-            res = supabase.table("linkedin_posts").insert(records).execute()
+            # upsert + ignore_duplicates: existing_urls o tren la snapshot luc DAU request
+            # (TOCTOU race neu 2 lan cao gan nhu dong thoi cung tim ra 1 bai) - UNIQUE(post_url)
+            # (migration 158) + ON CONFLICT DO NOTHING lam backstop o tang DB.
+            res = supabase.table("linkedin_posts").upsert(records, on_conflict="post_url", ignore_duplicates=True).execute()
             saved_count = len(res.data or [])
+            # post_url can cho bot auto-seeding (lead_score_service.py -> auto_seeding_comment_service.py,
+            # migration 174) biet URL that de mo/comment, giong het inserted_rows cua Facebook.
+            inserted_rows = [{"id": r.get("id"), "content": r.get("content"), "post_url": r.get("post_url")} for r in (res.data or []) if r.get("id")]
         except Exception as exc:
             # Migration 151 (comments_detail/likers) có thể chưa áp trên DB -> PostgREST báo
             # thiếu cột và làm hỏng CẢ lô bài. Lưu lại không kèm 2 cột đó thay vì mất hết bài.
@@ -222,8 +245,9 @@ def save_extension_crawl_batch(
                 logger.warning("[LI-EXT] linkedin_posts chưa có cột comments_detail/likers, lưu không kèm 2 cột này")
                 stripped = [{k: v for k, v in r.items() if k not in ("comments_detail", "likers")} for r in records]
                 try:
-                    res = supabase.table("linkedin_posts").insert(stripped).execute()
+                    res = supabase.table("linkedin_posts").upsert(stripped, on_conflict="post_url", ignore_duplicates=True).execute()
                     saved_count = len(res.data or [])
+                    inserted_rows = [{"id": r.get("id"), "content": r.get("content"), "post_url": r.get("post_url")} for r in (res.data or []) if r.get("id")]
                 except Exception:
                     logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
             else:
@@ -234,5 +258,8 @@ def save_extension_crawl_batch(
         "saved_count": saved_count,
         "skipped_duplicates": skipped_duplicates,
         "group_id": id_group,
+        # Noi bo - khong tra ve qua HTTP (router pop() ra truoc khi tra response cho
+        # extension), dung de cham diem "tiem nang seeding" (LLM) chay nen sau khi luu.
+        "_inserted_rows": inserted_rows,
         "session_id": session_id,
     }

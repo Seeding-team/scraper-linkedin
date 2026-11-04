@@ -8,11 +8,20 @@
  * các block thông tin tách bạch).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { allPlatformPostsService } from "@/services/all-platform.service";
 import type { MemberCrawlHistoryData, MemberSeedingAccount } from "@/types/unified.types";
+
+function formatDateTimeVN(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const time = d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const date = d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return `${time} ${date}`;
+}
 
 function formatRelative(iso: string | null): string {
   if (!iso) return "Chưa từng cào";
@@ -32,34 +41,43 @@ export function SeedingAccountsOverview() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<MemberSeedingAccount | null>(null);
+  const [timeRange, setTimeRange] = useState<"today" | "this_week" | "last_week" | "last_month" | "all">("all");
+
+  // In-memory SWR Cache: Render tức thì 0ms khi bấm qua lại giữa các mốc thời gian
+  const cacheRef = useRef<Record<string, MemberSeedingAccount[]>>({});
 
   const load = useCallback(() => {
     if (!user?.email) return;
+    const cachedData = cacheRef.current[timeRange];
+    if (cachedData && cachedData.length > 0) {
+      setAccounts(cachedData);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+
     allPlatformPostsService
-      .getMemberSeedingOverview(user.email)
+      .getMemberSeedingOverview(user.email, timeRange)
       .then((res) => {
         if (res.success === false) {
           setError(res.message || "Không tải được danh sách tài khoản seeding.");
           return;
         }
-        setAccounts(res.data?.accounts || []);
+        const accs = res.data?.accounts || [];
+        cacheRef.current[timeRange] = accs;
+        setAccounts(accs);
         setError(null);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Không tải được danh sách tài khoản seeding."))
       .finally(() => setLoading(false));
-  }, [user?.email]);
+  }, [user?.email, timeRange]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  if (user?.role === "member") {
-    return (
-      <div className="rounded-2xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-        Chỉ admin/leader mới xem được danh sách tài khoản seeding.
-      </div>
-    );
-  }
+  // Mở khóa cho cả Member và Leader: Thành viên xem tài khoản của chính mình, Leader xem toàn team
+  const isMember = user?.role === "member";
 
   return (
     <div className="w-full min-w-0 space-y-4 font-sans">
@@ -70,7 +88,7 @@ export function SeedingAccountsOverview() {
         <div>
           <h2 className="text-lg font-bold text-on-surface">Tài khoản seeding</h2>
           <p className="text-xs text-on-surface-variant">
-            {user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý"} — bấm vào 1 hàng để xem chi tiết.
+            {isMember ? "Thống kê tài khoản seeding cá nhân của bạn" : (user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý")} — bấm vào 1 hàng để xem chi tiết.
           </p>
         </div>
       </div>
@@ -79,27 +97,55 @@ export function SeedingAccountsOverview() {
         <div className="rounded-xl bg-amber-50 border border-amber-300 px-4 py-3 text-sm text-amber-700">⚠️ {error}</div>
       ) : null}
 
+      {/* Bộ lọc thời gian cào */}
+      <div className="flex flex-wrap items-center gap-2 p-1">
+        <span className="text-xs font-bold text-muted-foreground mr-1">Bộ lọc thời gian:</span>
+        {[
+          { key: "today", label: "Hôm nay (Ngày)" },
+          { key: "this_week", label: "Tuần này" },
+          { key: "last_week", label: "Tuần trước" },
+          { key: "last_month", label: "Tháng trước" },
+          { key: "all", label: "Tất cả" },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setTimeRange(t.key as any)}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer border",
+              timeRange === t.key
+                ? "bg-primary text-white border-primary shadow-xs"
+                : "bg-surface text-on-surface-variant border-outline-variant hover:bg-surface-container-low"
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
+          <table className="w-full min-w-[850px] border-collapse text-left text-sm">
             <thead className="bg-surface-container-low border-b border-outline-variant text-[11px] font-bold text-on-surface-variant uppercase">
               <tr>
-                <th className="py-3 px-4">Người dùng</th>
-                <th className="py-3 px-4">Nền tảng đang dùng</th>
-                <th className="py-3 px-4 text-center">Số group cào</th>
-                <th className="py-3 px-4">Lịch sử cào</th>
+                <th className="py-3 px-4 min-w-[200px]">Người dùng</th>
+                <th className="py-3 px-4 min-w-[170px]">Nền tảng đang dùng</th>
+                <th className="py-3 px-4 text-center min-w-[130px]">Số group cào</th>
+                <th className="py-3 px-4 text-center min-w-[130px]">Số bài cào</th>
+                <th className="py-3 px-4 text-center min-w-[170px]">Số bài viết vượt AI check</th>
+                <th className="py-3 px-4 min-w-[140px]">Lần cào gần nhất</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="py-10 text-center text-xs text-muted-foreground">
-                    Đang tải...
+                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
+                    Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
                     Chưa có tài khoản seeding nào.
                   </td>
                 </tr>
@@ -148,9 +194,49 @@ export function SeedingAccountsOverview() {
                         (FB {a.fb_groups} · LI {a.li_groups})
                       </span>
                     </td>
+                    <td className="py-3 px-4 text-center">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border",
+                          (a.scheduled_crawls_count ?? 0) > 0
+                            ? "bg-purple-50 text-purple-700 border-purple-200"
+                            : "bg-muted text-muted-foreground border-border opacity-70"
+                        )}
+                        title="Số group đã được bật lịch cào tự động 24h hoặc khoảng cách cào"
+                      >
+                        <span className="material-symbols-outlined text-[13px]">calendar_clock</span>
+                        {a.scheduled_crawls_count ?? 0} lịch
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        {a.total_crawled_posts ?? a.total_fb_posts_crawled ?? 0} bài
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <div className="inline-flex flex-col items-center">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Bài viết có điểm AI check >= 40 từ database">
+                          ⚡ {a.ai_passed_posts ?? 0} bài
+                        </span>
+                        {(a.total_crawled_posts || a.total_fb_posts_crawled) ? (
+                          <span className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                            ({a.ai_passed_percent ?? 0}%)
+                          </span>
+                        ) : null}
+                      </div>
+                    </td>
                     <td className="py-3 px-4">
-                      <div className="text-on-surface font-semibold">{a.total_fb_posts_crawled} bài</div>
-                      <div className="text-[11px] text-muted-foreground">{formatRelative(a.last_crawled_at)}</div>
+                      <div className="text-[11px] font-bold text-on-surface flex items-center gap-1">
+                        {a.last_crawled_at ? (
+                          <>
+                            <span className="material-symbols-outlined text-[13px] text-muted-foreground">schedule</span>
+                            <span>{formatDateTimeVN(a.last_crawled_at)}</span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5 font-medium">{formatRelative(a.last_crawled_at)}</div>
                     </td>
                   </tr>
                 ))
@@ -201,10 +287,11 @@ function MemberDetailDrawer({ account, onClose }: { account: MemberSeedingAccoun
         </div>
 
         <div className="p-5 flex flex-col gap-5">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <Stat label="Nhóm Facebook" value={String(account.fb_groups)} />
             <Stat label="Nhóm LinkedIn" value={String(account.li_groups)} />
-            <Stat label="Bài đã cào" value={String(account.total_fb_posts_crawled)} highlight />
+            <Stat label="Số lịch cào" value={`${account.scheduled_crawls_count ?? 0} lịch`} />
+            <Stat label="Bài đã cào" value={String(account.total_crawled_posts ?? account.total_fb_posts_crawled ?? 0)} highlight />
           </div>
 
           <div className="rounded-xl border border-border p-3">

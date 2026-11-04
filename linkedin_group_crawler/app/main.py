@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint."""
+"""FastAPI application entrypoint (hot-reloaded 2026-10-03 TargetInstance Fallback)."""
 
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ async def lifespan(_: FastAPI):
     zalo_forward_task: asyncio.Task[None] | None = None
     zalo_automation_task: asyncio.Task[None] | None = None
     zalo_push_task: asyncio.Task[None] | None = None
+    email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
     import os as _os
@@ -82,6 +83,47 @@ async def lifespan(_: FastAPI):
             logger.info("All-platform maintenance scheduler started (24h Facebook crawl stays gated by DISABLE_ALL_PLATFORM_CRAWL_24H)")
         except Exception:
             logger.exception("Failed to start all-platform maintenance scheduler")
+        try:
+            # MSC → CRM product sync (migration 175): cron 1 lan/ngay, goi dung
+            # msc_sync_service.run_sync nhu button manual. Gate: DISABLE_MSC_SYNC;
+            # khong them job neu MSC_API_BASE_URL chua cau hinh (xem jobs/msc_sync_job.py).
+            from app.modules.all_platform.jobs.msc_sync_job import setup_msc_sync_job
+            setup_msc_sync_job()
+            logger.info("MSC product sync scheduler setup finished")
+        except Exception:
+            logger.exception("Failed to start MSC product sync scheduler")
+
+        try:
+            from app.modules.all_platform.jobs.contract_drive_sync_job import (
+                setup_contract_drive_sync_worker,
+            )
+
+            setup_contract_drive_sync_worker()
+            logger.info("Contract Drive sync worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Contract Drive sync worker")
+
+        try:
+            from app.modules.all_platform.jobs.contract_edit_forcesave_job import (
+                setup_contract_edit_forcesave_worker,
+            )
+
+            setup_contract_edit_forcesave_worker()
+            logger.info("Word Editor forcesave worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Word Editor forcesave worker")
+
+    # Email ingestion has its own explicit gate. It is intentionally independent
+    # from DISABLE_SCHEDULER (which protects crawler jobs in local/dev), so a Dev
+    # stack can receive mail only when EMAIL_IMAP_SYNC_ENABLED=1 is provided.
+    try:
+        from app.modules.all_platform.jobs.email_imap_sync_job import (
+            setup_email_imap_sync_worker,
+        )
+
+        email_imap_scheduler = setup_email_imap_sync_worker()
+    except Exception:
+        logger.exception("Failed to start Email IMAP sync worker")
     async def _warmup_background() -> None:
         try:
             await asyncio.to_thread(warmup_playwright_pool)
@@ -167,6 +209,11 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        if email_imap_scheduler is not None:
+            try:
+                email_imap_scheduler.shutdown(wait=False)
+            except Exception:
+                logger.exception("Email IMAP sync worker shutdown failed")
         for task in (zalo_forward_task, zalo_automation_task, zalo_push_task):
             if task is not None and not task.done():
                 task.cancel()
@@ -213,9 +260,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="LinkedIn Group Crawler API",
+    title="Seeding App API",
     version="1.0.0",
-    description="FastAPI service to login, crawl LinkedIn groups, and expose top daily posts for n8n.",
+    description="All-Platform Seeding & Social Media Automation API",
     lifespan=lifespan,
 )
 
@@ -302,7 +349,7 @@ async def handle_cors_middleware(request: Request, call_next):
         else:
             response.headers["Access-Control-Allow-Origin"] = origin or "*"
         response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS, PUT, DELETE, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email, Idempotency-Key"
         return response
 
     response = await call_next(request)
@@ -405,6 +452,41 @@ app.include_router(router)
 app.include_router(linkedin_app_router)
 app.include_router(api_router, prefix="/facebook/api/v1")
 app.include_router(all_platform_router, prefix="/api/all-platform")
+
+# OnlyOffice loads plugin assets from the public CRM origin in the browser.
+from fastapi.staticfiles import StaticFiles
+
+_onlyoffice_plugin_dir = os.path.join(
+    os.path.dirname(__file__), "..", "static", "onlyoffice_plugin",
+)
+
+
+@app.get("/api/onlyoffice-plugin/config.json")
+def onlyoffice_plugin_config() -> dict:
+    base = f"{settings.crm_public_url}/api/onlyoffice-plugin/"
+    return {
+        "name": "Markee Contract Editor Bridge",
+        "guid": "asc.{B7E4C9F1-6A2D-4E3B-8C5A-1F9D2E8B4C7A}",
+        "baseUrl": base,
+        "variations": [{
+            "description": "Markee Contract Editor Bridge",
+            "url": "index.html",
+            "icons": [],
+            "isViewer": False,
+            "EditorsSupport": ["word"],
+            "isVisual": False,
+            "initDataType": "none",
+            "initData": "",
+            "buttons": [],
+        }],
+    }
+
+
+app.mount(
+    "/api/onlyoffice-plugin",
+    StaticFiles(directory=_onlyoffice_plugin_dir),
+    name="onlyoffice-plugin-assets",
+)
 
 # WebSocket đã được chuyển vào all_platform_router
 

@@ -3,7 +3,8 @@ import { X, Pencil, MoreVertical, PauseCircle, Trash2 } from '@/modules/crm/comp
 import { ActionMenu } from '@/modules/crm/components/ActionMenu';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
-import { formatVnd, formatUsd } from './price-book-preview';
+import { formatVnd } from './price-book-preview';
+import { formatQuoteMoney, normalizeQuoteCurrency, vndToQuoteCurrency, type QuoteCurrency } from '@/lib/currency';
 
 export interface CatalogPickerListItem {
   id: string;
@@ -102,6 +103,11 @@ export function CatalogPickerModal({
   hydratingItem,
   hydrationError,
   onRetryHydration,
+  quoteCurrency,
+  exchangeRate: quoteExchangeRate,
+  onQuoteCurrencyChange,
+  onIncreaseExisting,
+  onAddAnother,
 }: {
   open: boolean;
   onClose: () => void;
@@ -126,6 +132,17 @@ export function CatalogPickerModal({
   hydratingItem?: { id: string; name: string } | null;
   hydrationError?: string | null;
   onRetryHydration?: () => void;
+  /** Tien te CUA QUOTE dang soan ('VND' mac dinh). Gia danh muc luon la VND goc; khi 'USD'
+   * picker chi QUY DOI HIEN THI theo `exchangeRate` (ty gia da dong bang cua quote) -
+   * khong sua gia danh muc. */
+  quoteCurrency?: QuoteCurrency;
+  exchangeRate?: number | null;
+  /** Co handler thi hien toggle VND | USD; host chiu trach nhiem confirm + quy doi lai
+   * cac dong da co khi doi tien te. */
+  onQuoteCurrencyChange?: (currency: QuoteCurrency) => void;
+  /** San pham DA CO trong bao gia: "Tang SL" (+1 dong hien co) / "Them dong moi". */
+  onIncreaseExisting?: (id: string) => void;
+  onAddAnother?: (id: string) => void;
 }) {
   const [search, setSearch] = useState('');
   const [internalGroupFilter, setInternalGroupFilter] = useState('');
@@ -138,7 +155,6 @@ export function CatalogPickerModal({
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const [activeProductTab, setActiveProductTab] = useState<'standalone' | 'bundle'>('standalone');
   const [expandedBundles, setExpandedBundles] = useState<Set<string>>(new Set());
-  const [currencyView, setCurrencyView] = useState<'vnd' | 'usd'>('vnd');
   const [groupSearch, setGroupSearch] = useState('');
 
   useEffect(() => {
@@ -147,7 +163,6 @@ export function CatalogPickerModal({
       setGroupFilter('');
       setShowAddedOnly(false);
       setSelected(new Set());
-      setCurrencyView('vnd');
       setGroupSearch('');
     }
   }, [open, activeSource]);
@@ -269,15 +284,46 @@ export function CatalogPickerModal({
     );
   }
 
+  const currency = normalizeQuoteCurrency(quoteCurrency);
+
+  /** Gia VND goc -> chuoi hien thi theo tien te cua quote (USD = VND / ty gia da dong bang). */
+  function fmt(valueVnd: number | null | undefined): string {
+    if (valueVnd == null || Number.isNaN(valueVnd)) return '—';
+    if (currency === 'USD') {
+      const usd = vndToQuoteCurrency(valueVnd, 'USD', quoteExchangeRate);
+      return usd == null ? '—' : formatQuoteMoney(usd, 'USD');
+    }
+    return formatVnd(valueVnd);
+  }
+
   function formatCostOrMissing(val: number | null | undefined) {
     if (val === undefined) return 'Không có quyền xem';
     if (val === null) return '—';
-    return formatVnd(val);
+    return fmt(val);
   }
 
   function formatPriceOrMissing(val: number | null | undefined) {
     if (val == null) return '—';
-    return formatVnd(val);
+    return fmt(val);
+  }
+
+  function renderAddedState(item: CatalogPickerListItem) {
+    if (!item.alreadyAdded) return null;
+    return (
+      <div className="cp-added-state" onClick={event => event.stopPropagation()}>
+        <span className="sc-badge cp-added-badge">Đã có trong báo giá</span>
+        {onIncreaseExisting ? (
+          <button type="button" className="qc-mini-btn" onClick={() => onIncreaseExisting(item.id)} title="Tăng số lượng dòng đang có thêm 1">
+            Tăng SL
+          </button>
+        ) : null}
+        {onAddAnother ? (
+          <button type="button" className="qc-mini-btn" onClick={() => onAddAnother(item.id)} title="Thêm thành một dòng mới (không gộp)">
+            Thêm dòng mới
+          </button>
+        ) : null}
+      </div>
+    );
   }
 
   if (!open) return null;
@@ -292,7 +338,7 @@ export function CatalogPickerModal({
         <div className="cp-head-redesign">
           <div className="cp-head-title">
             <h3>{title}</h3>
-            <p>{subtitle}</p>
+            <p>{subtitle}{currency === 'USD' && quoteExchangeRate ? ` · Giá quy đổi USD (1 USD = ${quoteExchangeRate.toLocaleString('vi-VN')} VND)` : ''}</p>
           </div>
           
           <div className="cp-head-controls">
@@ -314,6 +360,22 @@ export function CatalogPickerModal({
               </select>
             ) : null}
             
+            {onQuoteCurrencyChange ? (
+              <div className="cp-currency-toggle" role="group" aria-label="Tiền tệ báo giá" style={{ display: 'inline-flex', border: '1px solid #cbd5e1', borderRadius: 6, overflow: 'hidden' }}>
+                {(['VND', 'USD'] as const).map(code => (
+                  <button
+                    key={code}
+                    type="button"
+                    className={currency === code ? 'qc-btn qc-btn-primary' : 'qc-btn'}
+                    style={{ borderRadius: 0, padding: '0 12px' }}
+                    aria-pressed={currency === code}
+                    onClick={() => { if (currency !== code) onQuoteCurrencyChange(code); }}
+                  >
+                    {code}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <ActionMenu
                label="Bộ lọc"
                iconClassName="crm-inline-icon"
@@ -437,7 +499,7 @@ export function CatalogPickerModal({
                   </thead>
                   <tbody>
                     {standaloneItems.map(item => {
-                      const isSelected = selected.has(item.id) || item.alreadyAdded;
+                      const isSelected = selected.has(item.id);
                       return (
                         <tr key={item.id} 
                             className={`cp-selectable-row ${isSelected ? 'cp-row-selected' : ''} ${item.alreadyAdded ? 'cp-row-added' : ''}`}
@@ -454,6 +516,7 @@ export function CatalogPickerModal({
                           <td>
                             <div className="cp-row-name" title={item.name}>{item.sku ? `${item.sku} — ` : ''}{item.name}</div>
                             {item.description && <div className="cp-row-desc cp-truncate-2" title={item.description}>{item.description}</div>}
+                            {renderAddedState(item)}
                           </td>
                           <td>{item.unit || '—'}</td>
                           {canViewCost && <td className={item.costPriceVnd === undefined ? 'sc-cell-price-missing' : ''}>{formatCostOrMissing(item.costPriceVnd)}</td>}
@@ -476,7 +539,7 @@ export function CatalogPickerModal({
                 <div className="cp-bundle-cards-redesign">
                   {bundleItems.map(item => {
                       const expanded = expandedBundles.has(item.id);
-                      const isSelected = selected.has(item.id) || item.alreadyAdded;
+                      const isSelected = selected.has(item.id);
                       const components = item.components || [];
                       
                       // Group components by pool
@@ -520,6 +583,7 @@ export function CatalogPickerModal({
                                 </div>
                                 <div className="text-xs text-slate-500 font-mono mb-2">{item.sku}</div>
                                 {item.description && <div className="cp-bundle-desc text-sm text-slate-600 line-clamp-2">{item.description}</div>}
+                                {renderAddedState(item)}
                               </div>
                             </div>
                             
@@ -533,11 +597,11 @@ export function CatalogPickerModal({
                                 <div className="text-right">
                                   {item.monthlyPriceVnd != null ? (
                                     <>
-                                      <div className="text-base font-bold text-slate-900">{formatVnd(item.monthlyPriceVnd)}<span className="text-sm font-normal text-slate-500">/tháng</span></div>
-                                      {item.annualCommitMonthlyPriceVnd != null && <div className="text-xs font-medium text-slate-500 mt-0.5">{formatVnd(item.annualCommitMonthlyPriceVnd)}/tháng (năm)</div>}
+                                      <div className="text-base font-bold text-slate-900">{fmt(item.monthlyPriceVnd)}<span className="text-sm font-normal text-slate-500">/tháng</span></div>
+                                      {item.annualCommitMonthlyPriceVnd != null && <div className="text-xs font-medium text-slate-500 mt-0.5">{fmt(item.annualCommitMonthlyPriceVnd)}/tháng (năm)</div>}
                                     </>
                                   ) : (
-                                    <div className="text-base font-bold text-slate-900">{formatVnd(item.customerPriceVnd)}</div>
+                                    <div className="text-base font-bold text-slate-900">{fmt(item.customerPriceVnd)}</div>
                                   )}
                                 </div>
                               </div>
@@ -607,7 +671,7 @@ export function CatalogPickerModal({
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-500 text-xs italic">Dùng chung</td>
                                             {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
+                                            <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{fmt(componentCustomerPrice(component))}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
                                             <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>
@@ -624,7 +688,7 @@ export function CatalogPickerModal({
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-600">{component.unit || '—'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-900">{component.quota || '—'}</td>
                                         {canViewCost && <td className={`py-2 px-3 bg-white group-hover:bg-slate-50 ${component.defaultCostPriceVnd === undefined ? 'text-red-400' : 'text-slate-700'}`}>{formatCostOrMissing(component.defaultCostPriceVnd)}</td>}
-                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{formatVnd(componentCustomerPrice(component))}</td>
+                                        <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-slate-700">{fmt(componentCustomerPrice(component))}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.required !== false ? 'Có' : 'Không'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.overagePolicy === 'charge' ? 'Tính thêm' : 'Không'}</td>
                                         <td className="py-2 px-3 bg-white group-hover:bg-slate-50 text-center text-slate-500">{component.showOnQuote !== false ? 'Có' : 'Không'}</td>

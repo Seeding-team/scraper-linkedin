@@ -319,11 +319,14 @@
     const comments_list = extractComments(block);
     const likers = await extractLikersBestEffort(block);
 
+    const calculated_posted_at = extractPostTimeFromUrl(post_url);
     return {
       post_url,
       author,
       content,
       posted_at_raw,
+      posted_at: calculated_posted_at,
+      post_time: calculated_posted_at,
       likes,
       comments: commentsCount,
       reposts,
@@ -461,6 +464,10 @@
       this.maxPosts = config.maxPosts || 40;
       this.scrollDelayMinMs = config.scrollDelayMinMs || 2500;
       this.scrollDelayMaxMs = config.scrollDelayMaxMs || 5000;
+      this.scrollDistance = config.scrollDistance || 1600;
+      this.maxScrolls = config.maxScrolls || 25;
+      this.oldPostsLimit = config.oldPostsLimit || 15;
+      this.maxScrollTimeSec = config.maxScrollTimeSec || 90;
     }
 
     stop() {
@@ -493,7 +500,32 @@
       let idleScrolls = 0;
       const posts = [];
 
-      while (this.running) {
+      // Hook lắng nghe bài viết bóc tách trực tiếp từ Network Sniffer (Voyager GraphQL)
+      const onSniffedUpdates = (evt) => {
+        try {
+          const incoming = (evt && evt.detail && evt.detail.posts) || [];
+          if (!this.running || !incoming.length) return;
+          for (const post of incoming) {
+            if (this.postsCount >= this.maxPosts) break;
+            if (!post || !post.post_url || this.seenUrls.has(post.post_url)) continue;
+            this.seenUrls.add(post.post_url);
+            posts.push(post);
+            this.postsCount++;
+            idleScrolls = 0;
+            send({ type: "LI_CRAWL_POST", post });
+            send({
+              type: "LI_CRAWL_PROGRESS",
+              postsCount: this.postsCount,
+              scrollCount: this.scrollCount,
+              progressText: `[Sniffer] Đã bóc tách ${this.postsCount} bài, cuộn ${this.scrollCount} lần`,
+            });
+          }
+        } catch (e) {}
+      };
+      document.addEventListener("li-feed-updates-captured", onSniffedUpdates);
+
+      try {
+        while (this.running) {
         const blocks = findPostBlocks();
         let newFound = 0;
         for (const block of blocks) {
@@ -526,6 +558,10 @@
           send({ type: "LI_CRAWL_LOG", level: "success", message: `Đã đạt số bài tối đa (${this.maxPosts}).` });
           break;
         }
+        if (this.maxScrolls && this.scrollCount >= this.maxScrolls) {
+          send({ type: "LI_CRAWL_LOG", level: "warn", message: `Đã đạt giới hạn số lần cuộn tối đa (${this.maxScrolls} lần) — chuyển nhóm.` });
+          break;
+        }
         if (idleScrolls >= 4) {
           send({ type: "LI_CRAWL_LOG", level: "warn", message: "Cuộn 4 lần liên tiếp không thấy bài mới — dừng." });
           break;
@@ -535,7 +571,9 @@
           break;
         }
 
-        const scrollAmount = randomBetween(500, 900);
+        const minScroll = Math.max(400, Math.round((this.scrollDistance || 1600) * 0.85));
+        const maxScroll = Math.max(minScroll + 200, Math.round((this.scrollDistance || 1600) * 1.15));
+        const scrollAmount = randomBetween(minScroll, maxScroll);
         window.scrollBy(0, scrollAmount);
         this.scrollCount++;
 
@@ -546,6 +584,10 @@
         if (this.scrollCount % 5 === 0) {
           await sleep(randomBetween(1000, 3000));
         }
+      }
+
+      } finally {
+        document.removeEventListener("li-feed-updates-captured", onSniffedUpdates);
       }
 
       const wasStopped = !this.running;

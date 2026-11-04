@@ -12,6 +12,8 @@ export { QuoteFormFiller } from './components/QuoteFormFiller';
 export { TelegramSendButton } from './components/TelegramSendButton';
 export { QuotePrintLayoutSaveButton } from './components/QuotePrintLayoutSaveButton';
 export { IssuerCompanyAdminPage } from './components/IssuerCompanyAdminPage';
+export { CopyQuoteCrossWorkspaceModal } from './components/CopyQuoteCrossWorkspaceModal';
+export { MoveQuoteModal } from './components/MoveQuoteModal';
 export type { QuoteFillValue } from './components/QuoteFormFiller';
 export { seedingQuoteRepository, QuoteApprovalRequiresExceptionError } from './repositories/SeedingQuoteRepository';
 export type { QuoteRepository } from './repositories/QuoteRepository';

@@ -1,18 +1,22 @@
 'use client';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import { useAppAuth } from '@/contexts/AppAuthContext';
 import { useMembers } from '@/hooks/useMembers';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { LeadFormDrawer } from './LeadFormDrawer';
 import { LeadDetailDrawer } from './LeadDetailDrawer';
 import { LeadEditDrawer } from './LeadEditDrawer';
+import { Lead360Drawer } from './lead360/Lead360Drawer';
 import { LeadImportDialog } from './LeadImportDialog';
 import { SearchableSelect } from './SearchableSelect';
 import { useCrmCategoryCodeOptions, CrmCategorySelect, CrmCategoryCodeSelect } from './CrmCategorySelect';
 import { getSourceLabel } from './DealFormFields';
-import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
+import { LEAD_SOURCE_EXCLUDED_VALUES, formatDate } from '../constants/crmConfig';
 import { Loader2, Trash2 } from './icons';
 import {
   Users,
@@ -49,6 +53,7 @@ const STATUS_OPTIONS: Array<{ value: CrmLeadStatus | ''; label: string }> = [
   { value: 'sql', label: 'SQL' },
   { value: 'nurturing', label: 'Nuôi dưỡng' },
   { value: 'unqualified', label: 'Không đạt chuẩn' },
+  { value: 'out', label: 'OUT (Không chốt)' },
 ];
 
 export const LEAD_STATUS_LABEL: Record<string, string> = {
@@ -62,6 +67,7 @@ export const LEAD_STATUS_LABEL: Record<string, string> = {
   nurture: 'Nuôi dưỡng',
   converted: 'SQL',
   disqualified: 'Không đạt chuẩn',
+  out: 'OUT',
 };
 
 const STATUS_BADGE_CLASS: Record<string, string> = {
@@ -75,14 +81,18 @@ const STATUS_BADGE_CLASS: Record<string, string> = {
   nurture: 'crm-lead-status--nurture',
   converted: 'crm-lead-status--converted',
   disqualified: 'crm-lead-status--disqualified',
+  out: 'crm-lead-status--disqualified',
 };
 
 const PAGE_SIZE = 20;
 
 type ApiLeadRow = {
   id: string;
+  handover_links?: Array<{ url: string; title?: string }> | null;
+  deal_out?: boolean | null;
   lead_name?: string | null;
   company_name?: string | null;
+  tax_code?: string | null;
   position?: string | null;
   position_category_id?: string | null;
   position_label_snapshot?: string | null;
@@ -104,6 +114,9 @@ type ApiLeadRow = {
   qualification_expected_timeline?: string | null;
   qualification_ae_id?: string | null;
   team_id?: string | null;
+  project_name?: string | null;
+  project_id?: string | null;
+  deal_stage?: string | null;
   next_step?: string | null;
   follow_up_date?: string | null;
   converted_customer_id?: string | null;
@@ -133,8 +146,11 @@ function headers() {
 export function mapLead(row: ApiLeadRow): CrmLeadRow {
   return {
     id: row.id,
+    handoverLinks: Array.isArray(row.handover_links) ? row.handover_links : [],
+    dealOut: Boolean(row.deal_out),
     leadName: row.lead_name || 'Lead chưa tên',
     companyName: row.company_name || '',
+    taxCode: row.tax_code || '',
     position: row.position || '',
     positionCategoryId: row.position_category_id || '',
     positionLabelSnapshot: row.position_label_snapshot || '',
@@ -156,6 +172,9 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
     qualificationExpectedTimeline: row.qualification_expected_timeline || '',
     qualificationAeId: row.qualification_ae_id || '',
     teamId: row.team_id || '',
+    projectName: row.project_name || '',
+    projectId: row.project_id || '',
+    dealStage: row.deal_stage || '',
     nextStep: row.next_step || '',
     followUpDate: row.follow_up_date || '',
     convertedCustomerId: row.converted_customer_id || '',
@@ -169,12 +188,53 @@ export function mapLead(row: ApiLeadRow): CrmLeadRow {
   };
 }
 
+export function mergeLeadWithCache(incoming: CrmLeadRow, existing?: CrmLeadRow): CrmLeadRow {
+  if (!existing) return incoming;
+
+  const incomingTime = incoming.updatedAt ? new Date(incoming.updatedAt).getTime() : 0;
+  const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+
+  const isIncomingTimeValid = !Number.isNaN(incomingTime) && incomingTime > 0;
+  const isExistingTimeValid = !Number.isNaN(existingTime) && existingTime > 0;
+
+  // Nếu Cache có timestamp mới hơn hẳn dữ liệu incoming (do vừa lưu/sửa ở FE trước đó trong khi response API cũ về sau),
+  // ưu tiên giữ dữ liệu Cache mới hơn để không bị đè bởi response API cũ (stale in-flight).
+  if (isIncomingTimeValid && isExistingTimeValid && existingTime > incomingTime) {
+    return {
+      ...incoming,
+      ...existing,
+    };
+  }
+
+  // Khi API data strictly NEWER hơn cache: API Data 100% chiến thắng cho tất cả các field backend trả về.
+  // Cache CHỈ giữ lại projectId (vì project_id thuộc customer_leads, crm_leads không chứa cột này).
+  if (isIncomingTimeValid && isExistingTimeValid && incomingTime > existingTime) {
+    return {
+      ...existing,
+      ...incoming,
+      projectId: incoming.projectId || existing.projectId || '',
+    };
+  }
+
+  // Mặc định hoặc khi timestamp bằng nhau / chưa có timestamp: API data mới thắng các trường chuẩn,
+  // giữ lại cache cho các trường mở rộng nếu API không trả về (hoặc rỗng do chưa join).
+  return {
+    ...existing,
+    ...incoming,
+    projectName: incoming.projectName || existing.projectName || '',
+    projectId: incoming.projectId || existing.projectId || '',
+    teamId: incoming.teamId || existing.teamId || '',
+    dealStage: incoming.dealStage || existing.dealStage || '',
+    qualificationAeId: incoming.qualificationAeId || existing.qualificationAeId || '',
+  };
+}
+
 export function LeadsDirectory() {
   const { user, isLoading: authLoading } = useAppAuth();
   const { members, loading: membersLoading } = useMembers();
   const [items, setItems] = useState<CrmLeadRow[]>([]);
   const [total, setTotal] = useState(0);
-  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0 });
+  const [kpi, setKpi] = useState<CrmLeadKpi>({ total: 0, mql: 0, sql: 0, nurturing: 0, unqualified: 0, out: 0 });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [searchInput, setSearchInput] = useState('');
@@ -182,27 +242,91 @@ export function LeadsDirectory() {
   const [status, setStatus] = useState('');
   const [source, setSource] = useState('');
   const [sdrId, setSdrId] = useState('');
+  // "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) - fix
+  // 2026-10-03: truoc day dung phong ban HR text (members.team) khien dropdown
+  // hien sai danh sach (vd "Intern L1 Tech", "Freelancer"...) khong khop voi
+  // cau hinh Team thuc su o "Quản lý thành viên" - dong bo dung nguon voi
+  // CrmCustomersDirectory.tsx.
   const [team, setTeam] = useState('');
-  // "Team" = phong ban that trong members (HR roster) - dung LAI DUNG nguon
-  // da chot cho Quan ly tien do, loc theo team cua SDR phu trach (sdr_id)
-  // tren backend.
-  const teamOptions = useMemo(
-    () => Array.from(new Set(members.map(m => m.team).filter(Boolean))) as string[],
-    [members]
-  );
+  const [crmTeamOptions, setCrmTeamOptions] = useState<CrmTeam[]>([]);
+  const [salePresaleUsers, setSalePresaleUsers] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setCrmTeamOptions(rows.filter(t => t.status === 'active'));
+      })
+      .catch(() => {
+        if (alive) setCrmTeamOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, string>();
+        [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ].forEach(item => {
+          if (item.id && !byId.has(item.id)) byId.set(item.id, item.name || 'Chưa đặt tên');
+        });
+        setSalePresaleUsers([...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => {
+        if (alive) setSalePresaleUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
   const [formOpen, setFormOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [detailLead, setDetailLead] = useState<CrmLeadRow | null>(null);
+  const [detailLeadId, setDetailLeadId] = useState<string | null>(null);
+  // Lead 360 (tong quan xu ly Lead) - CUNG right drawer shell, chi 1 noi dung hien tai (Lead 360 hoac Xac minh/Sua).
+  const [overviewLeadId, setOverviewLeadId] = useState<string | null>(null);
   const [detailMode, setDetailMode] = useState<'view' | 'qualify' | 'convert'>('view');
-  const [editLead, setEditLead] = useState<CrmLeadRow | null>(null);
+  const [editLeadId, setEditLeadId] = useState<string | null>(null);
+  // Stack dieu huong: Xac minh/Sua mo TU Lead 360 -> Back ve dung Lead 360 (Lead 360 van mounted, chi an) thay vi dong drawer.
+  const [fromOverview, setFromOverview] = useState(false);
+  const keepOverviewRef = useRef(false);
+  const [overviewReloadKey, setOverviewReloadKey] = useState(0);
+  const leadCacheRef = useRef<Record<string, CrmLeadRow>>({});
+  const [leadCacheVersion, setLeadCacheVersion] = useState(0);
   const shellRef = useRef<HTMLDivElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<CrmLeadRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const { options: sourceOptions } = useCrmCategoryCodeOptions('crm_source');
+
+  function rememberLead(lead: CrmLeadRow) {
+    const existing = leadCacheRef.current[lead.id];
+    leadCacheRef.current[lead.id] = mergeLeadWithCache(lead, existing);
+    setLeadCacheVersion(version => version + 1);
+  }
+
+  const detailLead = useMemo(() => {
+    if (!detailLeadId) return null;
+    return leadCacheRef.current[detailLeadId] || items.find(row => row.id === detailLeadId) || null;
+  }, [detailLeadId, items, leadCacheVersion]);
+
+  const editLead = useMemo(() => {
+    if (!editLeadId) return null;
+    return leadCacheRef.current[editLeadId] || items.find(row => row.id === editLeadId) || null;
+  }, [editLeadId, items, leadCacheVersion]);
 
   // Sao chep Lead (chua convert) sang 1 trong 2 clone CRM doc lap con lai -
   // Lead goc van giu nguyen o Main (khong phai "chuyen han"). Chi Admin
@@ -402,15 +526,18 @@ export function LeadsDirectory() {
 
   // Mac dinh loc "cua toi + team cua toi" khi vao trang (thay vi "Tat ca") -
   // xem giai thich chi tiet o CrmCustomersDirectory.tsx (cung 1 rule, chi
-  // doi ownerId/owner_id -> sdrId/sdr_id). Rule tim team CHINH XAC khop
-  // _user_department_map() o backend: chi xet members.linked_user_id.
+  // doi ownerId/owner_id -> sdrId/sdr_id). Team CRM cua nguoi dang dang nhap
+  // tra ve tu crmTeamsService.getTeamIdForUser() (crm_team_members) - dong
+  // bo voi fix 2026-10-03 (Team CRM that, khong con dung HR text).
   const defaultFilterAppliedRef = useRef(false);
   const applyDefaultOwnerFilter = useCallback(() => {
     if (!user?.id) return;
     setSdrId(user.id);
-    const myMember = members.find(m => m.linked_user_id === user.id);
-    setTeam(myMember?.team || '');
-  }, [user, members]);
+    crmTeamsService
+      .getTeamIdForUser(user.id)
+      .then(res => setTeam((res.success ? res.data?.crm_team_id : null) || ''))
+      .catch(() => setTeam(''));
+  }, [user]);
 
   // Feedback nguoi dung (2026-09-25): quay lai trang Leads (Back, hoac dieu
   // huong sang trang khac roi vao lai) phai hien DUNG lich su tim kiem/loc
@@ -492,7 +619,12 @@ export function LeadsDirectory() {
       })
       .then(data => {
         if (!alive) return;
-        setItems((data.items || []).map(mapLead));
+        setItems((data.items || []).map(row => {
+          const lead = mapLead(row);
+          const merged = mergeLeadWithCache(lead, leadCacheRef.current[lead.id]);
+          leadCacheRef.current[lead.id] = merged;
+          return merged;
+        }));
         setTotal(data.total || 0);
         const rawKpi = (data.kpi || {}) as Record<string, number | undefined>;
         setKpi({
@@ -501,6 +633,7 @@ export function LeadsDirectory() {
           sql: rawKpi.sql ?? rawKpi.qualified ?? 0,
           nurturing: rawKpi.nurturing ?? rawKpi.nurture ?? 0,
           unqualified: rawKpi.unqualified ?? rawKpi.disqualified ?? 0,
+          out: rawKpi.out ?? 0,
         });
         setError('');
       })
@@ -527,14 +660,14 @@ export function LeadsDirectory() {
   // thái đó" - tức danh sách phải phản ánh ĐÚNG luật hiện hành, không phải
   // status cũ đã lưu lúc trước khi luật đổi. Lead đã CHỐT (sql/converted/
   // nurturing/unqualified) là quyết định thật của SDR, KHÔNG bị ghi đè.
-  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean> | null>(null);
+  const [ruleConditions, setRuleConditions] = useState<Record<string, boolean | string[]> | null>(null);
   useEffect(() => {
     let alive = true;
     fetch(`${API_BASE_URL}/api/all-platform/crm/leads/classification-rules`, { credentials: 'include', headers: headers() })
       .then(res => res.json())
       .then(body => {
         if (!alive || body.success === false) return;
-        setRuleConditions((body.data?.conditions as Record<string, boolean>) || null);
+        setRuleConditions((body.data?.conditions as Record<string, boolean | string[]>) || null);
       })
       .catch(() => {
         // Im lang - khong co rule thi hien nguyen status da luu.
@@ -545,6 +678,7 @@ export function LeadsDirectory() {
   const UNRESOLVED_STATUSES = useMemo(() => new Set(['mql', 'new_lead', 'qualifying']), []);
 
   function displayStatusOf(lead: CrmLeadRow): string {
+    if (lead.dealOut) return 'out'; // OUT that tu backend (Co hoi lost) - khong phai Khong dat chuan
     if (!ruleConditions || !UNRESOLVED_STATUSES.has(lead.status)) return lead.status;
     const fields: LeadRuleFields = {
       has_product: Boolean(lead.qualificationNeed?.trim()),
@@ -552,6 +686,7 @@ export function LeadsDirectory() {
       has_value: lead.qualificationEstimatedValue != null,
       has_team: Boolean(lead.qualificationAeId),
       has_next: Boolean(lead.nextStep?.trim()),
+      next_step_value: lead.nextStep || '',
       has_follow: Boolean(lead.followUpDate),
       has_contact: Boolean(lead.phone?.trim() || lead.email?.trim()),
       fit_unfit: icpFromApi(lead.qualificationIcpFit) === 'unfit',
@@ -609,16 +744,30 @@ export function LeadsDirectory() {
 
   const sdrFilterOptions = useMemo(() => {
     const seen = new Map<string, string>();
-    members.forEach(m => {
-      const key = m.linked_user_id || m.linked_user_id_2;
-      if (key) seen.set(key, m.display_name);
-    });
+    salePresaleUsers.forEach(item => seen.set(item.id, item.name));
     // Dam bao option "chinh minh" luon co trong dropdown ke ca khi user hien
     // tai khong co dong trong `members` - xem giai thich o
     // CrmCustomersDirectory.tsx (ownerFilterOptions).
     if (user?.id && !seen.has(user.id)) seen.set(user.id, user.name || user.email);
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [members, user]);
+  }, [salePresaleUsers, user]);
+
+  // Nguoi phu trach hien thi = Sale phu trach (qualification_ae_id) neu da co, neu khong thi SDR (sdr_id).
+  // Ten tra theo danh ba HR (members) roi theo danh sach Presale/Sale - tranh hien "Chua gan" cho nguoi co that nhung
+  // khong co dong trong danh ba HR.
+  const resolvePersonName = (id?: string | null) => {
+    if (!id) return '';
+    // Uu tien ten tai khoan (Presale/Sale) - ten danh ba HR co the viet tat (vd "D Thi Mai").
+    return sdrFilterOptions.find(([optionId]) => optionId === id)?.[1] || sdrName.get(id) || '';
+  };
+  const personInCharge = (lead: CrmLeadRow) => {
+    const aeName = resolvePersonName(lead.qualificationAeId);
+    const sdrLabel = resolvePersonName(lead.sdrId);
+    return {
+      label: aeName || sdrLabel || 'Chưa gán',
+      title: [aeName ? `Sale phụ trách: ${aeName}` : '', sdrLabel ? `SDR: ${sdrLabel}` : ''].filter(Boolean).join(' · '),
+    };
+  };
 
   const kpiCards = [
     {
@@ -665,6 +814,15 @@ export function LeadsDirectory() {
       tone: 'tone-rose',
       pct: kpi.total > 0 ? `${Math.round((kpi.unqualified / kpi.total) * 100)}%` : null,
       isActive: status === 'unqualified',
+    },
+    {
+      id: 'out',
+      label: 'OUT (Không chốt)',
+      value: kpi.out ?? 0,
+      icon: XCircle,
+      tone: 'tone-slate',
+      pct: kpi.total > 0 ? `${Math.round(((kpi.out ?? 0) / kpi.total) * 100)}%` : null,
+      isActive: status === 'out',
     },
   ];
 
@@ -721,9 +879,20 @@ export function LeadsDirectory() {
     setReloadTick(tick => tick + 1);
   }
 
+  /** Bam TEN Lead -> Lead 360 trong cung right drawer; Lead khac -> chi doi noi dung (drawer KHONG dong). */
+  function openOverview(lead: CrmLeadRow) {
+    rememberLead(lead);
+    setFromOverview(false);
+    setDetailLeadId(null);
+    setEditLeadId(null);
+    setOverviewLeadId(lead.id);
+  }
+
   function openView(lead: CrmLeadRow) {
-    setEditLead(null);
-    setDetailLead(lead);
+    rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
+    setEditLeadId(null);
+    setDetailLeadId(lead.id);
     setDetailMode('view');
   }
 
@@ -731,18 +900,23 @@ export function LeadsDirectory() {
    * menu "⋯" lẫn nút "Chỉnh sửa" trong drawer "Xác minh Lead" đều gọi hàm
    * này — không có bản form sửa thứ hai ở đâu khác. */
   function openEdit(lead: CrmLeadRow) {
-    setDetailLead(null);
-    setEditLead(lead);
+    rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
+    setDetailLeadId(null);
+    setEditLeadId(lead.id);
   }
 
   /** Cập nhật NGAY dòng tương ứng trong bảng sau khi lưu (không chờ reload
    * toàn trang), rồi vẫn nạp lại nền để KPI/thứ tự sắp xếp theo updated_at
    * khớp với server. */
   function applyUpdatedLead(updated: CrmLeadRow) {
-    setItems(current => current.map(row => (row.id === updated.id ? updated : row)));
-    setEditLead(current => (current && current.id === updated.id ? updated : current));
-    setDetailLead(current => (current && current.id === updated.id ? updated : current));
+    rememberLead(updated);
+    setItems(current => {
+      const found = current.some(row => row.id === updated.id);
+      return found ? current.map(row => (row.id === updated.id ? updated : row)) : current;
+    });
     setReloadTick(tick => tick + 1);
+    setOverviewReloadKey(key => key + 1);
   }
 
   async function confirmDelete(confirmCascade = false) {
@@ -775,8 +949,8 @@ export function LeadsDirectory() {
       });
       setDeleteTarget(null);
       setDeleteCascadeSummary(null);
-      if (detailLead?.id === target.id) setDetailLead(null);
-      if (editLead?.id === target.id) setEditLead(null);
+      if (detailLeadId === target.id) setDetailLeadId(null);
+      if (editLeadId === target.id) setEditLeadId(null);
       setReloadTick(tick => tick + 1);
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : 'Không xóa được Lead.');
@@ -786,33 +960,63 @@ export function LeadsDirectory() {
   }
 
   function openQualifyForNewLead(lead: CrmLeadRow) {
-    setEditLead(null);
-    setDetailLead(lead);
+    rememberLead(lead);
+    if (!keepOverviewRef.current) { setOverviewLeadId(null); setFromOverview(false); }
+    setEditLeadId(null);
+    setDetailLeadId(lead.id);
     setDetailMode('qualify');
   }
 
   function closeLeadSidePanels() {
-    setDetailLead(null);
-    setEditLead(null);
+    setDetailLeadId(null);
+    setEditLeadId(null);
+    setOverviewLeadId(null);
+    setFromOverview(false);
   }
 
-  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!detailLead && !editLead) return;
-    const target = event.target as HTMLElement | null;
-    if (!target) return;
-
-    if (target.closest('.crm-lead-detail-drawer, .crm-lead-edit-drawer')) return;
-    if (target.closest('[data-crm-lead-row="true"]')) return;
-    if (
-      target.closest(
-        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-select-trigger, .crm-action-menu, .crm-modal, .crm-drawer',
-      )
-    ) {
-      return;
-    }
-
-    closeLeadSidePanels();
+  /** Mo Xac minh / Sua TU Lead 360: giu Lead 360 (an di) de Back quay ve dung noi do. */
+  function runFromOverview(fn: () => void) {
+    keepOverviewRef.current = true;
+    try { fn(); } finally { keepOverviewRef.current = false; }
+    setFromOverview(true);
   }
+
+  function backToOverview() {
+    setDetailLeadId(null);
+    setEditLeadId(null);
+    setFromOverview(false);
+  }
+
+  // Click vao vung trong/overlay ben ngoai right drawer -> dong; ESC -> dong.
+  // Click trong drawer, dong lead, control, popup con thi KHONG dong.
+  const anyPanelOpen = Boolean(detailLeadId || editLeadId || overviewLeadId);
+  useEffect(() => {
+    if (!anyPanelOpen) return;
+    const childOpen = () => document.body.hasAttribute('data-crm-drawer-child')
+      || Boolean(document.querySelector('[role="dialog"], .crm-modal-backdrop'));
+    const onPointerDown = (event: MouseEvent) => {
+      const el = event.target as HTMLElement | null;
+      if (!el || !el.closest) return;
+      if (childOpen()) return;
+      if (el.closest('.crm-drawer, .progress-drawer, [data-crm-lead-row], [data-crm-keep-drawer], button, a, input, select, textarea, label, summary, [role="menu"], [role="listbox"], [role="dialog"], .crm-modal, .crm-modal-backdrop, table')) return;
+      closeLeadSidePanels();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || childOpen()) return;
+      const active = document.activeElement as HTMLElement | null;
+      if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+      closeLeadSidePanels();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyPanelOpen]);
+
+  // Drawer ben phai la PERSISTENT: bam Lead khac chi doi noi dung, bam ra ngoai KHONG dong - chi dong bang nut X.
 
   /** Bấm vào tên Lead / dòng Lead mở ĐÚNG cùng 1 drawer "Xác minh Lead" như
    * nút hành động chính — trước đây tên Lead luôn mở chế độ 'view' trong khi
@@ -826,6 +1030,29 @@ export function LeadsDirectory() {
     }
     openQualifyForNewLead(lead);
   }
+
+  // GD3 - Deep link tu email ban giao: /all-platform/crm/leads?lead=<id>&mode=verify -> mo thang Xac minh Lead (chi 1 lan, roi go tham so).
+  const leadDeepLinkParams = useSearchParams();
+  const deepLinkLeadId = leadDeepLinkParams?.get('lead') || '';
+  const deepLinkHandledRef = useRef('');
+  useEffect(() => {
+    if (!deepLinkLeadId || deepLinkHandledRef.current === deepLinkLeadId) return;
+    deepLinkHandledRef.current = deepLinkLeadId; // khong huy theo cleanup (React StrictMode chay effect 2 lan) - chi xu ly 1 lan/lead
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(deepLinkLeadId)}`, { credentials: 'include', headers: headers() })
+      .then(res => res.json())
+      .then(body => {
+        if (body.success === false || !body.data) {
+          setError(body?.message || 'Không mở được Lead từ liên kết (không có quyền hoặc Lead không tồn tại).');
+          return;
+        }
+        const lead = mapLead(body.data);
+        rememberLead(lead);
+        openRow(lead);
+        window.history.replaceState(null, '', window.location.pathname);
+      })
+      .catch(() => setError('Không mở được Lead từ liên kết.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkLeadId]);
 
   /** Hành động chính của 1 dòng phụ thuộc TRẠNG THÁI lead — mọi trạng thái đều
    * mở đúng 1 drawer "Xác minh Lead", chỉ khác chỗ được cuộn tới; riêng lead đã
@@ -938,7 +1165,7 @@ export function LeadsDirectory() {
   }
 
   return (
-    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
+    <div className="crm-shell" ref={shellRef}>
       <section className="crm-page-card crm-leads-page-shell">
         {error ? <p className="crm-error">{error}</p> : null}
 
@@ -984,7 +1211,7 @@ export function LeadsDirectory() {
                 value={searchInput}
                 onChange={event => setSearchInput(event.target.value)}
                 className="crm-input"
-                placeholder="Tìm tên, công ty, SĐT, email..."
+                placeholder="Tìm tên, công ty, SĐT, email, mã KH, mã LH..."
                 autoComplete="off"
               />
             </div>
@@ -1017,7 +1244,7 @@ export function LeadsDirectory() {
                 value={team}
                 onChange={setTeam}
                 placeholder="Tất cả Team"
-                options={teamOptions.map(t => ({ value: t, label: t }))}
+                options={crmTeamOptions.map(t => ({ value: t.id, label: t.name }))}
               />
             </div>
             {hasFilters ? (
@@ -1113,6 +1340,7 @@ export function LeadsDirectory() {
                   <col className="crm-col-lead-marketing" />
                   <col className="crm-col-lead-status" />
                   <col className="crm-col-lead-sdr" />
+                  <col className="crm-col-lead-created" />
                   <col className="crm-col-lead-nextstep" />
                   <col className="crm-col-lead-actions" />
                 </colgroup>
@@ -1133,17 +1361,18 @@ export function LeadsDirectory() {
                     <th className="crm-th crm-th--right">AI Score</th>
                     <th className="crm-th">Marketing</th>
                     <th className="crm-th">Trạng thái</th>
-                    <th className="crm-th">SDR</th>
+                    <th className="crm-th" title="Sale phụ trách (nếu có), nếu không thì SDR">SDR / Sale</th>
+                    <th className="crm-th">Ngày tạo</th>
                     <th className="crm-th">Việc tiếp theo</th>
                     <th className="crm-th crm-th--right crm-th--actions-col">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={10} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
+                    <tr><td colSpan={11} className="crm-empty-cell"><Loader2 className="crm-spin-icon" /> Đang tải...</td></tr>
                   ) : items.length ? (
                     items.map(lead => {
-                      const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id;
+                      const isActiveLead = detailLead?.id === lead.id || editLead?.id === lead.id || overviewLeadId === lead.id;
                       return (
                         <tr
                           key={lead.id}
@@ -1166,7 +1395,7 @@ export function LeadsDirectory() {
                                   type="button"
                                   className="crm-lead-name-btn"
                                   title={lead.leadName}
-                                  onClick={event => { event.stopPropagation(); openRow(lead); }}
+                                  onClick={event => { event.stopPropagation(); openOverview(lead); }}
                                 >
                                   {lead.leadName}
                                 </button>
@@ -1178,9 +1407,21 @@ export function LeadsDirectory() {
                                   <div className="crm-sub-text">
                                     {lead.phone ? <Phone size={12} className="shrink-0 text-gray-400" /> : <Mail size={12} className="shrink-0 text-gray-400" />}
                                     {lead.phone ? (
-                                      <a className="crm-contact-link truncate" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title={lead.phone} onClick={event => event.stopPropagation()}>
-                                        {lead.phone}
-                                      </a>
+                                      <span className="inline-flex items-center gap-1.5 truncate">
+                                        <a className="crm-contact-link truncate" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title={lead.phone} onClick={event => event.stopPropagation()}>
+                                          {lead.phone}
+                                        </a>
+                                        <a
+                                          href={getZaloChatUrl(lead.phone || lead.zalo)}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#0068ff] hover:underline"
+                                          title="Nhắn Zalo trên hệ thống"
+                                          onClick={event => event.stopPropagation()}
+                                        >
+                                          Zalo
+                                        </a>
+                                      </span>
                                     ) : (
                                       <a className="crm-contact-link truncate" href={`mailto:${lead.email}`} title={lead.email || ''} onClick={event => event.stopPropagation()}>
                                         {lead.email}
@@ -1272,9 +1513,10 @@ export function LeadsDirectory() {
                                 </select>
                               </div>
                             ) : (
-                              sdrName.get(lead.sdrId || '') || 'Chưa gán'
+                              <span title={personInCharge(lead).title}>{personInCharge(lead).label}</span>
                             )}
                           </td>
+                          <td className="crm-td crm-small crm-muted">{formatDate(lead.createdAt) || '-'}</td>
                           <td className={editMode ? 'crm-td' : 'crm-td crm-muted crm-truncate'} title={editMode ? undefined : (lead.nextStep || '')} onClick={event => editMode && event.stopPropagation()}>
                             {editMode ? (
                               <div className="crm-inline-edit-cell">
@@ -1313,7 +1555,7 @@ export function LeadsDirectory() {
                     })
                   ) : (
                     <tr>
-                      <td colSpan={10}>
+                      <td colSpan={11}>
                         <div className="crm-empty-state">
                           <span className="crm-empty-state-icon">
                             <Plus className="crm-button-icon" />
@@ -1369,7 +1611,7 @@ export function LeadsDirectory() {
                       style={{ marginTop: 4 }}
                     />
                     <div className="crm-customer-card-identity">
-                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={event => { event.stopPropagation(); openRow(lead); }}>
+                      <button type="button" className="crm-customer-name-link crm-lead-name-btn" title={lead.leadName} onClick={event => { event.stopPropagation(); openOverview(lead); }}>
                         {lead.leadName}
                       </button>
                       <div className="crm-customer-company" title={lead.companyName || 'Chưa có công ty'}>
@@ -1380,9 +1622,20 @@ export function LeadsDirectory() {
                       {LEAD_STATUS_LABEL[displayStatusOf(lead)] || displayStatusOf(lead)}
                     </span>
                   </div>
-                  <div className="crm-customer-card-contact" onClick={event => event.stopPropagation()}>
+                  <div className="crm-customer-card-contact flex items-center gap-2" onClick={event => event.stopPropagation()}>
                     {lead.phone ? (
-                      <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
+                      <span className="inline-flex items-center gap-1.5">
+                        <a className="crm-contact-link" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}>{lead.phone}</a>
+                        <a
+                          href={getZaloChatUrl(lead.phone || lead.zalo)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-0.5 text-[11px] font-semibold text-[#0068ff] hover:underline"
+                          title="Nhắn Zalo trên hệ thống"
+                        >
+                          Zalo
+                        </a>
+                      </span>
                     ) : null}
                     {lead.email ? (
                       <a className="crm-contact-link crm-muted crm-truncate" title={lead.email} href={`mailto:${lead.email}`}>{lead.email}</a>
@@ -1390,7 +1643,7 @@ export function LeadsDirectory() {
                   </div>
                   <div className="crm-customer-card-meta">
                     <span className="crm-source-badge">{getSourceLabel(lead.source || 'Manual')}</span>
-                    <span className="crm-small">{sdrName.get(lead.sdrId || '') || 'Chưa gán'}</span>
+                    <span className="crm-small" title={personInCharge(lead).title}>{personInCharge(lead).label}</span>
                   </div>
                   <div className="crm-customer-card-metrics">
                     <span>Score: {lead.score == null ? '-' : lead.score}</span>
@@ -1527,19 +1780,37 @@ export function LeadsDirectory() {
         open={Boolean(detailLead)}
         initialMode={detailMode}
         currentUser={user}
-        onClose={() => setDetailLead(null)}
-        onSaved={updated => {
-          setDetailLead(updated);
-          handleSaved();
-        }}
-        onEdit={openEdit}
+        onClose={fromOverview ? closeLeadSidePanels : () => setDetailLeadId(null)}
+        onBack={fromOverview ? backToOverview : undefined}
+        parentLabel="Lead 360"
+        onSaved={applyUpdatedLead}
+        onEdit={lead => (fromOverview ? runFromOverview(() => openEdit(lead)) : openEdit(lead))}
       />
+
+      {overviewLeadId ? (
+        <Lead360Drawer
+          leadId={overviewLeadId}
+          onClose={closeLeadSidePanels}
+          hidden={fromOverview && Boolean(detailLead || editLead)}
+          reloadKey={overviewReloadKey}
+          onOpenVerify={id => {
+            const target = leadCacheRef.current[id] || items.find(row => row.id === id);
+            if (target) runFromOverview(() => openRow(target));
+          }}
+          onOpenEdit={id => {
+            const target = leadCacheRef.current[id] || items.find(row => row.id === id);
+            if (target) runFromOverview(() => openEdit(target));
+          }}
+        />
+      ) : null}
 
       <LeadEditDrawer
         lead={editLead}
         open={Boolean(editLead)}
         currentUser={user}
-        onClose={() => setEditLead(null)}
+        onClose={fromOverview ? closeLeadSidePanels : () => setEditLeadId(null)}
+        onBack={fromOverview ? backToOverview : undefined}
+        parentLabel="Lead 360"
         onSaved={applyUpdatedLead}
       />
 

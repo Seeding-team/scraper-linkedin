@@ -394,7 +394,7 @@ export function CrmContactsPanel({
 
   const filteredContacts = contacts.filter(c => {
     const s = search.toLowerCase();
-    const matchSearch = !search || (c.name || '').toLowerCase().includes(s) || (c.phone || '').includes(s) || (c.email || '').toLowerCase().includes(s);
+    const matchSearch = !search || (c.name || '').toLowerCase().includes(s) || (c.phone || '').includes(s) || (c.email || '').toLowerCase().includes(s) || String((c as { contact_code?: string }).contact_code || '').toLowerCase().includes(s);
     const matchRole = roleFilter === 'all' || (roleFilter === 'primary' && c.is_primary) || (roleFilter === 'secondary' && !c.is_primary);
     return matchSearch && matchRole;
   });
@@ -421,7 +421,7 @@ export function CrmContactsPanel({
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400" />
             <input 
               type="text" 
-              placeholder="Tìm tên, SĐT, email..." 
+              placeholder="Tìm tên, SĐT, email, mã LH..." 
               className="w-full h-8 pl-8 pr-3 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#c2185b]"
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -606,7 +606,9 @@ export function CrmContactsPanel({
 
       {/* Slide-over Form Drawer */}
       {formOpen ? (
-        <div className="crm-drawer-backdrop" onClick={closeForm}>
+        // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+        // portal ra document.body ben trong drawer - xem CustomerFormModal.tsx).
+        <div className="crm-drawer-backdrop" onClick={event => { if (event.target === event.currentTarget) closeForm(); }}>
           <aside
             className="crm-drawer crm-lead-drawer crm-lead-drawer--quick"
             data-testid="contact-form-drawer"

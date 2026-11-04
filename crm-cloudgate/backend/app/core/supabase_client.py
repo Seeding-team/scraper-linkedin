@@ -162,9 +162,12 @@ def friendly_supabase_error_message(exc: BaseException) -> str:
     dung cuoi. Loi KHONG transient (schema/permission/logic that) van giu
     nguyen str(exc) - do la loi nghiep vu that can thay de debug/xu ly.
     """
+    msg = str(exc)
+    if "invalid input syntax for type uuid" in msg and '""' in msg:
+        return "Co truong lien ket dang bi trong khong hop le. Vui long chon lai thong tin lien quan roi luu lai."
     if is_transient_supabase_error(exc):
         return "Không tải được dữ liệu do lỗi kết nối tạm thời. Vui lòng thử lại sau ít phút."
-    return str(exc)
+    return msg
 
 
 def execute_supabase_query(

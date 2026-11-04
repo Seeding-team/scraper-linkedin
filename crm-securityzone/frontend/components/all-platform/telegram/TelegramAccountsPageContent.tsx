@@ -56,7 +56,8 @@ export function TelegramAccountsPageContent() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto w-full flex flex-col gap-5">
+    <div className="flex-1 overflow-y-auto p-6 bg-white min-h-screen">
+      <div className="max-w-5xl mx-auto w-full flex flex-col gap-5">
       <div className="flex items-center gap-3">
         <div className="w-11 h-11 rounded-2xl bg-primary/10 flex items-center justify-center border border-primary/20">
           <span className="material-symbols-outlined text-primary text-[24px]">send</span>
@@ -85,7 +86,7 @@ export function TelegramAccountsPageContent() {
                   acc.status === "connected" ? "hover:border-primary hover:shadow-md cursor-pointer" : "opacity-70 cursor-not-allowed",
                 )}
               >
-                <Avatar name={acc.display_name || acc.username || acc.phone} size={48} />
+                <Avatar name={(acc.display_name || acc.username || acc.phone) ?? undefined} size={48} />
                 <div className="flex-1 min-w-0">
                   <div className="font-bold text-sm text-foreground truncate">
                     {acc.display_name || acc.username || acc.phone || acc.label || "Tài khoản Telegram"}
@@ -106,7 +107,7 @@ export function TelegramAccountsPageContent() {
                     className="p-1 rounded-lg hover:bg-red-50"
                     title="Gỡ tài khoản"
                   >
-                    <span className="material-symbols-outlined text-[16px] text-red-400 hover:text-red-600">link_off</span>
+                    <span className="material-symbols-outlined text-[16px] text-red-400 hover:text-red-600">close</span>
                   </button>
                 </div>
               </button>
@@ -136,6 +137,7 @@ export function TelegramAccountsPageContent() {
           ) : null}
         </>
       )}
+    </div>
     </div>
   );
 }

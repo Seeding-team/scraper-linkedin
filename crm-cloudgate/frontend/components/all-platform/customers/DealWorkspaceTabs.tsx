@@ -31,6 +31,7 @@ import { CreateQuoteModal } from "@/modules/crm/integrations/quotes";
 import { customerToCrmDeal } from "./dealToCrmDeal";
 import { QuoteQuickViewDrawer } from "./QuoteQuickViewDrawer";
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 function formatDate(value?: string | null) {
   if (!value) return null;
@@ -232,7 +233,7 @@ export function QuoteTab({ customer }: { customer: Customer }) {
                   </div>
                   <div className="mt-0.5 text-xs text-slate-500">Cập nhật: {formatDate(q.updatedAt) || "—"}</div>
                 </div>
-                <div className="shrink-0 text-sm font-semibold text-slate-700">{formatVND(q.totalAmount) || "—"}</div>
+                <div className="shrink-0 text-sm font-semibold text-slate-700">{formatQuoteAmountOr(q.totalAmount, q.currency, formatVND) || "—"}</div>
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <button

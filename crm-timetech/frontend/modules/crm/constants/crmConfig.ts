@@ -1,0 +1,619 @@
+import type { BillingType, ContractStatus, Deal, DealStage, PaymentStatus } from '../types';
+import type { AppUser } from '@/types/unified.types';
+import { formatCurrencyDisplay, parseCurrencyInput } from '@/lib/currency';
+
+/** Mirror của can_write_deal() bên backend (customer_lead_service.py) — chỉ
+ * dùng để ẨN/DISABLE nút sửa/xóa/chuyển giai đoạn cho đúng UX, KHÔNG phải lớp
+ * bảo mật (backend luôn tự kiểm tra lại, không tin client). admin/leader/sale
+ * sửa được mọi deal; member thường chỉ sửa deal do mình tạo (leadedById) hoặc
+ * được giao (sdrId) — không phải "cùng team" là sửa được hết.
+ */
+export function canWriteDeal(user: AppUser | null | undefined, deal: Deal | null | undefined): boolean {
+  if (!user) return false;
+  if (hasFullCrmAccess(user)) return true;
+  if (!deal) return false;
+  return deal.assignment.leadedById === user.id || deal.assignment.sdrId === user.id;
+}
+
+/** Mirror của crm_permission_service.can_approve_quote (backend) - chỉ dùng để
+ * ẩn/hiện nút "Duyệt báo giá" cho gọn UI, backend vẫn là nơi chặn thật.
+ * Phase 1 "Nâng cấp Trung tâm báo giá" (đã xác nhận rõ ràng): Admin/Leader/
+ * Member đều full quyền thao tác báo giá (tạo, sửa nháp, duyệt, tạo phiên
+ * bản) — không còn giới hạn theo cờ `can_approve_quotes`/role riêng nữa. CHỈ
+ * áp dụng cho quyền BÁO GIÁ — không dùng cho quyền Deal/Pipeline
+ * (`canWriteDeal` giữ nguyên, không liên quan). */
+export function canApproveQuote(user: AppUser | null | undefined): boolean {
+  return Boolean(user);
+}
+
+type QuoteOwnerShape = { technicalOwnerId?: string | null; quoteOwnerId?: string | null } | null | undefined;
+
+function hasQuoteBusinessRole(user: AppUser | null | undefined, role: 'presale' | 'sale'): boolean {
+  const businessRole = user?.quote_business_role;
+  return businessRole === role || businessRole === 'both';
+}
+
+export function hasFullCrmAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return (
+    user.role === 'admin'
+    || user.role === 'leader'
+    || Boolean(user.is_sale)
+    || hasQuoteBusinessRole(user, 'sale')
+    || hasQuoteBusinessRole(user, 'presale')
+  );
+}
+
+/** Mirror của progress_scope() (backend progress_service.py) cho submenu
+ * "Quản lý tiến độ" — CỐ Ý hẹp hơn hasFullCrmAccess(): chỉ role admin/leader,
+ * KHÔNG mở rộng cho Sale/quote_business_role như CRM/Phân tích CRM (đã chốt
+ * riêng với user: "Member chưa có quyền vào submenu này", không phải "member
+ * có full CRM access"). Chỉ ẩn/hiện UI — backend luôn tự chặn lại thật qua
+ * `require_admin_or_leader` + `progress_scope()`, ham nay khong phai lop bao mat. */
+export function hasProgressAccess(user: AppUser | null | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'admin' || user.role === 'leader';
+}
+
+/** Mirror cua crm_permission_service.can_edit_technical_quote (backend) - CHI
+ * dung de khoa/mo cell Giá vốn tren FE cho dung UX (bang hang muc thong nhat,
+ * Section 4). Backend van la lop chan THAT (_check_item_field_level_permission),
+ * ham nay khong bao gio la lop bao mat. */
+export function canEditQuoteCost(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
+  if (!user) return false;
+  if (hasFullCrmAccess(user)) return true;
+  if (!quote) return hasQuoteBusinessRole(user, 'presale') || hasQuoteBusinessRole(user, 'sale');
+  return (
+    (quote.technicalOwnerId === user.id && hasQuoteBusinessRole(user, 'presale'))
+    || (quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale'))
+  );
+}
+
+/** Mirror cua crm_permission_service.can_edit_quote_pricing (backend) - CHI
+ * dung de khoa/mo cell Markup/Giá khách tren FE. */
+export function canEditQuotePricingFields(user: AppUser | null | undefined, quote: QuoteOwnerShape): boolean {
+  if (!user) return false;
+  if (hasFullCrmAccess(user)) return true;
+  if (!quote) return false;
+  return quote.quoteOwnerId === user.id && hasQuoteBusinessRole(user, 'sale');
+}
+
+export const PIPELINE_COLUMNS: DealStage[] = [
+  'dealing',
+  'requirement',
+  'proposal_sent',
+  'negotiation',
+  'contract_signed',
+  'payment_1',
+  'implementation',
+  'acceptance',
+  'payment_final',
+  'post_sale_care',
+];
+
+export const TERMINAL_STAGES: DealStage[] = ['on_hold', 'lost'];
+export const DEAL_STAGES: DealStage[] = [...PIPELINE_COLUMNS, ...TERMINAL_STAGES];
+
+export const DEAL_STAGE_META: Record<
+  DealStage,
+  {
+    order: number;
+    label: string;
+    color: string;
+    badgeClass: string;
+    description: string;
+  }
+> = {
+  dealing: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Cơ hội đang được Sales xử lý',
+  },
+  proposal_sent: {
+    order: 3,
+    label: 'Lên Proposal',
+    color: '#f59e0b',
+    badgeClass: 'stage-badge-amber',
+    description: 'Đã lên hoặc gửi proposal/báo giá',
+  },
+  negotiation: {
+    order: 4,
+    label: 'Chăm sóc/Đàm phán',
+    color: '#fb923c',
+    badgeClass: 'stage-badge-orange',
+    description: 'Đang chăm sóc, xử lý phản hồi và đàm phán',
+  },
+  contract_signed: {
+    order: 5,
+    label: 'Lên hợp đồng',
+    color: '#f43f5e',
+    badgeClass: 'stage-badge-rose',
+    description: 'Đã có hợp đồng hoặc thông tin hợp đồng',
+  },
+  payment_1: {
+    order: 6,
+    label: 'Thanh toán đợt 1',
+    color: '#0d9488',
+    badgeClass: 'stage-badge-cyan',
+    description: 'Theo dõi thanh toán đợt đầu',
+  },
+  implementation: {
+    order: 7,
+    label: 'Triển khai',
+    color: '#7c3aed',
+    badgeClass: 'stage-badge-violet',
+    description: 'Đang triển khai sau bán',
+  },
+  acceptance: {
+    order: 8,
+    label: 'Nghiệm thu',
+    color: '#4f46e5',
+    badgeClass: 'stage-badge-blue',
+    description: 'Đang nghiệm thu/bàn giao',
+  },
+  payment_final: {
+    order: 9,
+    label: 'Thanh toán còn lại',
+    color: '#0891b2',
+    badgeClass: 'stage-badge-cyan',
+    description: 'Theo dõi khoản thanh toán còn lại',
+  },
+  post_sale_care: {
+    order: 10,
+    label: 'Chăm sóc sau bán',
+    color: '#059669',
+    badgeClass: 'stage-badge-emerald',
+    description: 'Deal đã hoàn tất, chuyển sang chăm sóc sau bán',
+  },
+  on_hold: {
+    order: 11,
+    label: 'Tiếp tục chăm sóc',
+    color: '#64748b',
+    badgeClass: 'stage-badge-slate',
+    description: 'Chưa chốt, tiếp tục chăm sóc sau',
+  },
+  lost: {
+    order: 12,
+    label: 'Out',
+    color: '#dc2626',
+    badgeClass: 'stage-badge-red',
+    description: 'Cơ hội đã mất',
+  },
+  new_lead: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Khách mới',
+  },
+  contacted: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Đã liên hệ',
+  },
+  qualified: {
+    order: 1,
+    label: 'Đang deal',
+    color: '#2563eb',
+    badgeClass: 'stage-badge-blue',
+    description: 'Legacy: Đủ điều kiện',
+  },
+  requirement: {
+    order: 2,
+    label: 'Lấy yêu cầu',
+    color: '#8b5cf6',
+    badgeClass: 'stage-badge-violet',
+    description: 'Lấy yêu cầu/BOM/báo giá từ Presale',
+  },
+  contract_sent: {
+    order: 3,
+    label: 'Lên Proposal',
+    color: '#f59e0b',
+    badgeClass: 'stage-badge-amber',
+    description: 'Legacy: Đã gửi hợp đồng',
+  },
+  won: {
+    order: 10,
+    label: 'Chăm sóc sau bán',
+    color: '#059669',
+    badgeClass: 'stage-badge-emerald',
+    description: 'Legacy: Hoàn thành',
+  },
+};
+
+/** "Lead_Convert"/"Existing_Customer"/"Upsell" - 3 gia tri he thong trong
+ * chung danh muc crm_source (migration 081), chi mang y nghia "Deal nay tao
+ * ra tu dau" (Deal tu convert 1 Lead / da la khach hang / upsell) - KHONG
+ * phai nguon Lead that su, khong dung cho nguoi dung TU CHON o form Lead
+ * (bug that: chon nham "Lead Convert" o dropdown Nguon lam sai du lieu Lead
+ * that, 2026-09-27). Dung o moi CrmCategoryCodeSelect categoryType=
+ * "crm_source" cua man Lead (Them/Sua/danh sach) qua prop excludeValues. */
+export const LEAD_SOURCE_EXCLUDED_VALUES = ['Existing_Customer', 'Lead_Convert', 'Upsell'];
+
+export const SOURCE_OPTIONS = [
+  { value: 'Manual', label: 'Nhập tay' },
+  { value: 'FB_Inbox', label: 'FB Inbox' },
+  { value: 'FB_Group', label: 'FB Group' },
+  { value: 'Zalo', label: 'Zalo' },
+  { value: 'Website', label: 'Website' },
+  { value: 'Referral', label: 'Giới thiệu' },
+  { value: 'MarkeeChat', label: 'Markee Chat' },
+];
+
+// Đủ 63 tỉnh/thành Việt Nam — 5 thành phố trực thuộc trung ương trước, còn lại xếp theo bảng chữ cái.
+export const CITY_OPTIONS = [
+  "An Giang",
+  "B\u00e0 R\u1ecba - V\u0169ng T\u00e0u",
+  "B\u1ea1c Li\u00eau",
+  "B\u1eafc Giang",
+  "B\u1eafc K\u1ea1n",
+  "B\u1eafc Ninh",
+  "B\u1ebfn Tre",
+  "B\u00ecnh \u0110\u1ecbnh",
+  "B\u00ecnh D\u01b0\u01a1ng",
+  "B\u00ecnh Ph\u01b0\u1edbc",
+  "B\u00ecnh Thu\u1eadn",
+  "C\u00e0 Mau",
+  "Cao B\u1eb1ng",
+  "C\u1ea7n Th\u01a1",
+  "\u0110\u00e0 N\u1eb5ng",
+  "\u0110\u1eafk L\u1eafk",
+  "\u0110\u1eafk N\u00f4ng",
+  "\u0110i\u1ec7n Bi\u00ean",
+  "\u0110\u1ed3ng Nai",
+  "\u0110\u1ed3ng Th\u00e1p",
+  "Gia Lai",
+  "H\u00e0 Giang",
+  "H\u00e0 Nam",
+  "H\u00e0 N\u1ed9i",
+  "H\u00e0 T\u0129nh",
+  "H\u1ea3i D\u01b0\u01a1ng",
+  "H\u1ea3i Ph\u00f2ng",
+  "H\u1eadu Giang",
+  "H\u00f2a B\u00ecnh",
+  "H\u01b0ng Y\u00ean",
+  "Kh\u00e1nh H\u00f2a",
+  "Ki\u00ean Giang",
+  "Kon Tum",
+  "Lai Ch\u00e2u",
+  "L\u00e2m \u0110\u1ed3ng",
+  "L\u1ea1ng S\u01a1n",
+  "L\u00e0o Cai",
+  "Long An",
+  "Nam \u0110\u1ecbnh",
+  "Ngh\u1ec7 An",
+  "Ninh B\u00ecnh",
+  "Ninh Thu\u1eadn",
+  "Ph\u00fa Th\u1ecd",
+  "Ph\u00fa Y\u00ean",
+  "Qu\u1ea3ng B\u00ecnh",
+  "Qu\u1ea3ng Nam",
+  "Qu\u1ea3ng Ng\u00e3i",
+  "Qu\u1ea3ng Ninh",
+  "Qu\u1ea3ng Tr\u1ecb",
+  "S\u00f3c Tr\u0103ng",
+  "S\u01a1n La",
+  "T\u00e2y Ninh",
+  "Th\u00e1i B\u00ecnh",
+  "Th\u00e1i Nguy\u00ean",
+  "Thanh H\u00f3a",
+  "Th\u1eeba Thi\u00ean Hu\u1ebf",
+  "Ti\u1ec1n Giang",
+  "TP. H\u1ed3 Ch\u00ed Minh",
+  "Tr\u00e0 Vinh",
+  "Tuy\u00ean Quang",
+  "V\u0129nh Long",
+  "V\u0129nh Ph\u00fac",
+  "Y\u00ean B\u00e1i",
+];
+
+export const INDUSTRY_OPTIONS = [
+  'Kinh doanh bất động sản',
+  'Kinh doanh ô tô',
+  'Kinh doanh thời trang',
+  'Kinh doanh mỹ phẩm',
+  'Kinh doanh thực phẩm',
+  'Kinh doanh giáo dục / đào tạo',
+  'Kinh doanh phần mềm / CNTT',
+  'Kinh doanh xây dựng / nội thất',
+  'Kinh doanh khác',
+];
+
+export const SERVICE_PACKAGE_OPTIONS = [
+  { value: 'Lam_Web', label: 'Làm Web' },
+  { value: 'Markee_Chat', label: 'Markee Chat' },
+  { value: 'Markee_App', label: 'Markee App' },
+  { value: 'Markee_CRM', label: 'Markee CRM' },
+  { value: 'Marketing_Automation', label: 'Marketing Automation' },
+  { value: 'Khac', label: 'Khác' },
+];
+
+export const CRM_PACKAGE_OPTIONS = [
+  { value: 'Goi_co_ban', label: 'Gói cơ bản' },
+  { value: 'Goi_nang_cao', label: 'Gói nâng cao' },
+  { value: 'Goi_doanh_nghiep', label: 'Gói doanh nghiệp' },
+];
+
+export const CONTRACT_STATUS_OPTIONS: Array<{
+  value: ContractStatus;
+  label: string;
+  color: string;
+}> = [
+  { value: 'moi_tiep_nhan', label: 'Mới tiếp nhận', color: '#2563eb' },
+  { value: 'dang_xu_ly', label: 'Đang xử lý', color: '#7c3aed' },
+  { value: 'da_bao_gia', label: 'Đã báo giá', color: '#0891b2' },
+  { value: 'dang_dam_phan', label: 'Đang đàm phán', color: '#d97706' },
+  { value: 'da_chot', label: 'Đã chốt', color: '#059669' },
+  { value: 'tam_dung', label: 'Tạm dừng', color: '#64748b' },
+  { value: 'khong_hoat_dong', label: 'Không hoạt động', color: '#dc2626' },
+];
+
+export const PAYMENT_STATUS_OPTIONS: Array<{ value: PaymentStatus; label: string }> = [
+  { value: 'chua_thanh_toan', label: 'Chưa thanh toán' },
+  { value: 'thanh_toan_mot_phan', label: 'Thanh toán một phần' },
+  { value: 'da_thanh_toan', label: 'Đã thanh toán' },
+  { value: 'qua_han', label: 'Quá hạn' },
+];
+
+export const BILLING_TYPE_OPTIONS: Array<{ value: BillingType; label: string }> = [
+  { value: 'one_time', label: 'Một lần' },
+  { value: 'monthly', label: 'Theo tháng' },
+  { value: 'yearly', label: 'Theo năm' },
+];
+
+export function getBillingTypeLabel(value?: BillingType | string) {
+  return BILLING_TYPE_OPTIONS.find(o => o.value === value)?.label || 'Một lần';
+}
+
+export const STAGE_CONTRACT_STATUS: Record<DealStage, ContractStatus> = {
+  dealing: 'moi_tiep_nhan',
+  proposal_sent: 'da_bao_gia',
+  negotiation: 'dang_dam_phan',
+  contract_signed: 'da_chot',
+  payment_1: 'da_chot',
+  implementation: 'dang_xu_ly',
+  acceptance: 'dang_xu_ly',
+  payment_final: 'da_chot',
+  post_sale_care: 'da_chot',
+  lost: 'khong_hoat_dong',
+  on_hold: 'tam_dung',
+  new_lead: 'moi_tiep_nhan',
+  contacted: 'dang_xu_ly',
+  qualified: 'dang_xu_ly',
+  requirement: 'dang_xu_ly',
+  contract_sent: 'da_bao_gia',
+  won: 'da_chot',
+};
+
+export const LOST_REASON_OPTIONS = [
+  { value: 'no_budget', label: 'Khách chưa có ngân sách' },
+  { value: 'competitor', label: 'Chọn đối thủ' },
+  { value: 'timing', label: 'Chưa phù hợp thời điểm' },
+  { value: 'no_response', label: 'Không phản hồi' },
+  { value: 'other', label: 'Khác' },
+];
+
+export const WON_REASON_OPTIONS = [
+  { value: 'solution_fit', label: 'Giải pháp phù hợp' },
+  { value: 'trust_case_study', label: 'Uy tín / case study thuyết phục' },
+  { value: 'competitive_price', label: 'Giá hợp lý' },
+  { value: 'fast_response', label: 'Phản hồi nhanh' },
+  { value: 'other', label: 'Khác' },
+];
+
+export const STAGE_REQUIREMENTS: Partial<
+  Record<
+    DealStage,
+    {
+      requireDecisionMaker?: boolean;
+      requireBudget?: boolean;
+      requireNote?: boolean;
+      requireWonReason?: boolean;
+      requireRejectReason?: boolean;
+    }
+  >
+> = {
+  proposal_sent: { requireBudget: true },
+  negotiation: { requireNote: true },
+  contract_signed: { requireNote: true },
+  payment_1: { requireBudget: true, requireNote: true },
+  implementation: { requireNote: true },
+  acceptance: { requireNote: true },
+  payment_final: { requireBudget: true, requireNote: true },
+  post_sale_care: { requireWonReason: true },
+  lost: { requireRejectReason: true, requireNote: true },
+  on_hold: { requireNote: true },
+  contacted: { requireNote: true },
+  qualified: { requireDecisionMaker: true, requireBudget: true, requireNote: true },
+  requirement: { requireNote: true },
+  won: { requireWonReason: true },
+};
+
+// Nhãn tiếng Việt cho field key mà backend dùng trong message lỗi thô (vd
+// "Thiếu thông tin bắt buộc cho stage 'contacted': note") — để humanizeCrmError
+// dịch lại thành chữ người đọc được thay vì lộ tên cột DB.
+const FIELD_LABELS: Record<string, string> = {
+  note: 'Ghi chú',
+  attachment_url: 'Link báo giá / hợp đồng',
+  decision_maker: 'Người ra quyết định',
+  estimated_budget: 'Ngân sách dự kiến',
+  follow_up_date: 'Ngày follow-up',
+  reject_reason_type: 'Lý do từ chối',
+};
+
+/**
+ * Backend đôi khi trả message thô kèm stage key / field key (vd
+ * `Thiếu thông tin bắt buộc cho stage 'contacted': note`) khi validate
+ * client-side có khoảng trống chưa bắt kịp — dịch lại thành câu người đọc
+ * được thay vì hiện thẳng key nội bộ cho user. Không match được thì trả
+ * nguyên message gốc.
+ */
+export function humanizeCrmError(message: string): string {
+  const missingMatch = message.match(/^Thiếu thông tin bắt buộc cho stage '([^']+)':\s*(.+)$/);
+  if (missingMatch) {
+    const [, stage, fieldsRaw] = missingMatch;
+    const stageLabel = DEAL_STAGE_META[stage as DealStage]?.label || stage;
+    const fields = fieldsRaw
+      .split(',')
+      .map(f => FIELD_LABELS[f.trim()] || f.trim())
+      .join(', ');
+    return `Thiếu thông tin bắt buộc để chuyển sang "${stageLabel}": ${fields}.`;
+  }
+  // Fallback chung: thay mọi 'stage_key' còn sót trong message bằng nhãn tiếng Việt.
+  return message.replace(/'([a-z_]+)'/g, (match, key) => {
+    const label = DEAL_STAGE_META[key as DealStage]?.label;
+    return label ? `"${label}"` : match;
+  });
+}
+
+export function getCurrentStage(deal?: Pick<Deal, 'stage'> | null): DealStage {
+  return deal?.stage && DEAL_STAGES.includes(deal.stage) ? deal.stage : 'dealing';
+}
+
+export function getStageMeta(stage: DealStage) {
+  return DEAL_STAGE_META[stage] || DEAL_STAGE_META.dealing;
+}
+
+export function formatVND(value?: number | string | null) {
+  if (value == null || value === '' || Number.isNaN(Number(value))) return null;
+  // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+  // giu nguyen dinh dang output cu ("5.000.000 ₫", co ky hieu tien te), khong
+  // tu lam Intl.NumberFormat rieng nua.
+  return `${formatCurrencyDisplay(Number(value))} ₫`;
+}
+
+export function formatCompactVND(value?: number | string | null) {
+  const numeric = Number(value || 0);
+  if (!numeric) return '0 đ';
+  if (numeric >= 1000000000) {
+    return `${(numeric / 1000000000).toFixed(numeric >= 10000000000 ? 0 : 1)} tỷ`;
+  }
+  if (numeric >= 1000000) {
+    return `${(numeric / 1000000).toFixed(numeric >= 10000000 ? 0 : 1)} triệu`;
+  }
+  return formatVND(numeric) || '0 đ';
+}
+
+export function formatDate(dateStr?: string | null) {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('vi-VN');
+}
+
+export function formatDateTime(dateStr?: string | null) {
+  if (!dateStr) return null;
+  const date = new Date(dateStr);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
+export function getContractLabel(deal?: Pick<Deal, 'contract' | 'quote'> | null) {
+  return deal?.contract?.code || deal?.quote?.number || deal?.contract?.title || deal?.quote?.id || '';
+}
+
+export function isCrmDocumentUrl(value?: string | null) {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  // Link báo giá thật sinh từ module Quotes là route nội bộ (cùng origin), không phải
+  // file đính kèm ngoài — bỏ qua yêu cầu "http(s) + đuôi file" bên dưới cho 2 prefix này.
+  if (/^\/public\/(quotes|quote-forms)\//i.test(raw)) return true;
+  if (!/^https?:\/\//i.test(raw)) return false;
+  try {
+    const url = new URL(raw);
+    const hostname = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+    const googleDocumentHosts = new Set([
+      'drive.google.com',
+      'docs.google.com',
+      'sheets.google.com',
+    ]);
+    if (googleDocumentHosts.has(hostname) || hostname.endsWith('.googleusercontent.com')) {
+      return true;
+    }
+    if (hostname === 'example.com' || hostname.endsWith('.example.com')) return false;
+    return /\.(pdf|doc|docx|xls|xlsx|csv)(\?|#|$)/i.test(`${pathname}${url.search}${url.hash}`);
+  } catch {
+    return false;
+  }
+}
+
+export function getContractUrl(deal?: Pick<Deal, 'contract' | 'quote'> | null) {
+  const url = deal?.contract?.url || deal?.quote?.url || '';
+  return isCrmDocumentUrl(url) ? url : '';
+}
+
+export function getServicePackageText(value?: string) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return SERVICE_PACKAGE_OPTIONS.find(option => option.value === raw)?.label || raw;
+}
+
+export function getPackageText(value?: string) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return CRM_PACKAGE_OPTIONS.find(option => option.value === raw)?.label || raw;
+}
+
+export function getContractStatusForStage(stage: DealStage): ContractStatus {
+  return STAGE_CONTRACT_STATUS[stage] || '';
+}
+
+export function getContractStatusText(value?: ContractStatus | string) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return CONTRACT_STATUS_OPTIONS.find(option => option.value === raw)?.label || raw;
+}
+
+export function getPaymentStatusText(value?: PaymentStatus | string) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return PAYMENT_STATUS_OPTIONS.find(option => option.value === raw)?.label || raw;
+}
+
+/** Không ép thứ tự pipeline — cho chuyển tới bất kỳ giai đoạn nào khác giai đoạn
+ * hiện tại (khớp với DEAL_STAGE_TRANSITIONS bên backend, cũng đã bỏ ràng buộc
+ * thứ tự tương tự). Deal ở won/lost thì DetailDrawer tự ẩn cả khối này rồi
+ * (xem `isTerminal`), nên không cần lọc riêng ở đây. */
+export function allowedNextStages(currentStage: DealStage): DealStage[] {
+  return DEAL_STAGES.filter(stage => stage !== currentStage);
+}
+
+/** Wrapper mong quanh parseCurrencyInput() dung chung (lib/currency.ts) - giu
+ * nguyen hanh vi cu tra `0` (khong phai `null`) khi rong/khong parse duoc, vi
+ * cac noi goi hien tai (DealFormFields/StageModal...) dang mac dinh nhu vay. */
+export function parseMoney(value: string | number | undefined): number {
+  return parseCurrencyInput(value ?? '') ?? 0;
+}
+
+/** Định dạng LIVE cho ô nhập tiền VND: thêm dấu chấm ngăn nghìn ngay khi gõ.
+ *
+ * Dùng chung `parseMoney` ở trên (đúng bộ quy tắc mà mọi ô tiền trong CRM —
+ * `estimatedBudget` của DealFormFields, `budget` của StageModal — đang dùng để
+ * đọc số ra khỏi chuỗi người dùng gõ), nên chuỗi hiển thị và số thật lưu
+ * xuống luôn khớp nhau; không tự bịa 1 bộ regex tiền tệ thứ hai.
+ *
+ * Chuỗi rỗng vẫn trả về rỗng (ô trống ≠ 0) và phần "0" ở cuối khi người dùng
+ * đang gõ dở (vd "50.000.0") được giữ nguyên vì parseMoney đọc nó ra số rồi
+ * format lại — không nuốt ký tự nào của người dùng.
+ */
+export function formatMoneyInput(value: string): string {
+  const raw = String(value ?? '');
+  if (!raw.trim()) return '';
+  // Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+  // KHONG con tu lam Intl.NumberFormat rieng. formatCurrencyDisplay() da tu
+  // parse qua parseCurrencyInput() (phan biet dung "." la thap phan hay ngan
+  // nghin dua theo so chu so theo sau) roi lam tron ve dong nguyen truoc khi
+  // group, dung y het bug-fix da ghi chu truoc day.
+  return formatCurrencyDisplay(raw);
+}

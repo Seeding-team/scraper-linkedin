@@ -30,12 +30,14 @@ import type {
   MemberSeedingOverviewData,
   MemberCrawlHistoryData,
   OnlineSummaryData,
+  CrawlScheduleHistoryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
 const BASE = `${API_BASE_URL}/api/all-platform`;
 const authHeaders = () => ({});
 const AUTH_SUBMIT_TIMEOUT_MS = 12000;
+const GOOGLE_AUTH_SUBMIT_TIMEOUT_MS = 45000;
 
 /**
  * Lightweight in-memory TTL cache for read-mostly taxonomies & teams.
@@ -1124,6 +1126,21 @@ export const zaloInboxShareService = {
 // ── UNIFIED POSTS (Tong-hop — no cache, all server-side) ─────────────────────
 
 export const allPlatformPostsService = {
+  /** Ghi nhận việc người dùng đã nhắn tin Zalo tới số điện thoại này */
+  recordZaloSent: (data: {
+    post_id?: string;
+    platform?: string;
+    phone_number: string;
+    zalo_display_name?: string;
+    zalo_conversation_id?: string;
+    message_content?: string;
+    sent_by?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/auto-seeding-comments/record-zalo-sent`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
   /** Fetch + filter in one call — server-side, no cache */
   getAll: (payload: {
     email: string;
@@ -1332,10 +1349,10 @@ export const allPlatformPostsService = {
 
   /** Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
    * leader chỉ thấy team mình quản lý. */
-  getMemberSeedingOverview: (email: string): Promise<ApiResponse<MemberSeedingOverviewData>> => {
+  getMemberSeedingOverview: (email: string, timeRange: string = "all"): Promise<ApiResponse<MemberSeedingOverviewData>> => {
     return requestJson(`${BASE}/unified/members/seeding-overview`, {
       method: "POST",
-      body: JSON.stringify({ email, platform: "all" }),
+      body: JSON.stringify({ email, platform: "all", time_range: timeRange }),
     });
   },
 
@@ -1672,7 +1689,7 @@ export const authService = {
         method: "POST",
         body: JSON.stringify({ credential }),
       },
-      AUTH_SUBMIT_TIMEOUT_MS,
+      GOOGLE_AUTH_SUBMIT_TIMEOUT_MS,
       "Đăng nhập quá lâu, vui lòng thử lại.",
     );
   },
@@ -1797,6 +1814,35 @@ export const socialAccountsService = {
       method: "POST",
       headers: authHeaders(),
     });
+  },
+};
+
+// ── YouTube Seeding (liên kết kênh + phiên comment tính KPI) ──────────────────
+
+export interface YouTubeCommentSession {
+  token: string;
+  post_url: string;
+  video_id: string;
+  expected_channel: { profile_id: string; handle?: string | null; name?: string | null };
+}
+
+export const youtubeSeedingService = {
+  /** Lưu kênh YouTube (extension nhận diện trên trình duyệt) thành tài khoản seeding của mình. */
+  linkChannel: (payload: { channel_id?: string | null; handle?: string | null; name?: string | null }): Promise<ApiResponse<SocialAccount & { already_linked?: boolean }>> => {
+    return requestJson(`${BASE}/youtube/link-channel`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
+  },
+
+  /** Token phiên comment cho 1 video + 1 kênh đã liên kết — extension dùng để báo KPI. */
+  createCommentSession: (payload: { post_id: string; id_social_account: string }): Promise<ApiResponse<YouTubeCommentSession>> => {
+    return requestJson(`${BASE}/youtube/comment-session`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
   },
 };
 
@@ -2977,6 +3023,171 @@ export const crawlKeywordsService = {
     return requestJson(`${BASE}/crawl-keywords/proposals/bulk-approve`, {
       method: "POST",
       body: JSON.stringify({ proposal_ids: proposalIds }),
+    });
+  },
+};
+
+
+// ── CRAWL SCHEDULE HISTORY (VÒNG CÀO TỪ LỊCH ĐA NỀN TẢNG) ────────────────────
+
+export const crawlScheduleHistoryService = {
+  getHistory: (payload?: {
+    email?: string;
+    id_member?: string;
+    time_range?: string;
+    specific_date?: string;
+    date_from?: string;
+    date_to?: string;
+    limit?: number;
+  }): Promise<ApiResponse<CrawlScheduleHistoryData>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/history`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  recordRound: (payload: Record<string, unknown>): Promise<ApiResponse<{ success: boolean; round: unknown }>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/record-round`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+
+// ── KEYWORDS LIBRARY ──────────────────────────────────────────────────────────
+
+export interface KeywordTopic {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  app_user_id?: string;
+  creator_name: string;
+  creator_email: string;
+  creator_avatar?: string;
+  keywords_count: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface KeywordItem {
+  id: string;
+  topic_id: string;
+  keyword: string;
+  description?: string;
+  app_user_id?: string;
+  contributor_name: string;
+  contributor_email: string;
+  created_at: string;
+}
+
+export const allPlatformKeywordsService = {
+  getTopics: (): Promise<ApiResponse<KeywordTopic[]>> => {
+    return requestJson<KeywordTopic[]>(`${BASE}/keywords-library/topics`);
+  },
+
+  createTopic: (payload: {
+    name: string;
+    description?: string;
+    initial_keywords?: string[];
+  }): Promise<ApiResponse<KeywordTopic>> => {
+    return requestJson(`${BASE}/keywords-library/topics`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTopic: (topicId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  getKeywordsInTopic: (topicId: string): Promise<ApiResponse<KeywordItem[]>> => {
+    return requestJson<KeywordItem[]>(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`);
+  },
+
+  addKeywords: (
+    topicId: string,
+    keywords: string[]
+  ): Promise<ApiResponse<{ added_count: number; total_attempted: number }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`, {
+      method: "POST",
+      body: JSON.stringify({ keywords }),
+    });
+  },
+
+  deleteKeyword: (keywordId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/keywords/${encodeURIComponent(keywordId)}`, {
+      method: "DELETE",
+    });
+  },
+};
+
+
+// ── ROTATION CRAWL SCHEDULES (RBAC + CREATOR IDENTITY) ────────────────────────
+
+export interface RotationScheduleCreator {
+  user_id?: string;
+  name: string;
+  email: string;
+  role?: string;
+  avatar?: string;
+  is_system?: boolean;
+}
+
+export interface BackendRotationSchedule {
+  id: string;
+  label: string;
+  cfg: any;
+  enabled: boolean;
+  status: string;
+  currentStage?: string | null;
+  roundNumber?: number;
+  nextRunAt?: number | null;
+  lastRoundSummary?: { roundNumber: number; totalSaved: number; at: number } | null;
+  lastError?: string | null;
+  createdAt?: number;
+  creator?: RotationScheduleCreator;
+}
+
+export const allPlatformRotationSchedulesService = {
+  getSchedules: (): Promise<ApiResponse<BackendRotationSchedule[]>> => {
+    return requestJson<BackendRotationSchedule[]>(`${BASE}/rotation-schedules`);
+  },
+
+  syncSchedules: (schedules: any[]): Promise<ApiResponse<{ synced_count: number; total: number }>> => {
+    return requestJson(`${BASE}/rotation-schedules/sync`, {
+      method: "POST",
+      body: JSON.stringify({ schedules }),
+    });
+  },
+
+  saveSchedule: (schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules`, {
+      method: "POST",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
+  updateSchedule: (scheduleId: string, schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
+  toggleSchedule: (scheduleId: string, enabled: boolean): Promise<ApiResponse<{ id: string; enabled: boolean }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}/toggle`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  deleteSchedule: (scheduleId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "DELETE",
     });
   },
 };

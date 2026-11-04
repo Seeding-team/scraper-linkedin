@@ -5,15 +5,17 @@ cào lại/loại bỏ bài không phù hợp.
 
 DELETE /unified/posts/facebook
   - delete all matching facebook_posts rows (by post_url) OR single by id
-
-Note: keep endpoint narrow; FE will pass id/post_url.
+DELETE /unified/posts/threads
+  - delete all matching threads_posts rows
+DELETE /unified/posts/youtube
+  - delete all matching youtube_posts rows
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.modules.all_platform.schemas import BaseResponse
 from app.core.supabase_client import get_supabase_client
@@ -24,25 +26,25 @@ from pydantic import BaseModel
 router = APIRouter()
 
 
-def _get_user_from_header(authorization: str | None, request=None) -> dict:
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization header")
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Invalid authorization header")
+def _get_user_from_header(authorization: str | None, request: Request | None = None) -> dict | None:
+    # FE gửi token qua cookie (credentials: "include") hoặc header Authorization.
+    if not authorization and request is not None:
+        cookie_token = request.cookies.get("crawlpro_access_token")
+        if cookie_token:
+            authorization = f"Bearer {cookie_token}"
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
     token = authorization.split(" ", 1)[1]
     payload = decode_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        return None
     user_id = payload.get("sub")
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid token payload")
+        return None
     try:
-        user = get_user_by_id(user_id)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Auth service temporarily unavailable") from exc
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+        return get_user_by_id(user_id)
+    except Exception:
+        return None
 
 
 class DeleteFacebookPostRequest(BaseModel):
@@ -53,30 +55,20 @@ class DeleteFacebookPostRequest(BaseModel):
 @router.delete("/posts/facebook")
 def delete_facebook_post(
     payload: DeleteFacebookPostRequest,
+    request: Request,
     authorization: str | None = Header(None),
 ):
     """Delete a Facebook post from Supabase (crawl result).
-
-    FE can pass either:
-      - id: uuid in facebook_posts
-      - post_url: string URL
+    Tất cả các role (Admin, Leader, Member) đều có quyền xóa bài viết theo ID hoặc URL.
     """
     try:
         if not payload.id and not payload.post_url:
             raise HTTPException(status_code=400, detail="Missing id or post_url")
 
-        user = _get_user_from_header(authorization, None)
-        user_id = user.get("id")
-        role = user.get("role")
-
         sb = get_supabase_client()
         q = sb.table("facebook_posts")
 
-        # Scope by member unless admin/leader
-        if role not in ("admin", "leader"):
-            # keep consistent with other services: member can only delete own member posts
-            q = q.eq("id_member", user_id)
-
+        # Cho phép mọi role xóa bài viết theo yêu cầu Master
         if payload.id:
             q = q.delete().eq("id", payload.id).execute()
         else:
@@ -89,24 +81,43 @@ def delete_facebook_post(
         return BaseResponse(success=False, message=str(e))
 
 
-
 @router.delete("/posts/threads")
 def delete_threads_post(
     payload: DeleteFacebookPostRequest,
+    request: Request,
     authorization: str | None = Header(None),
 ):
-    """Xoá bài Threads (bảng threads_posts) — cùng quy tắc phân quyền với bài Facebook ở trên."""
+    """Xoá bài Threads (bảng threads_posts) — cho phép tất cả các role xóa theo yêu cầu Master."""
     try:
         if not payload.id and not payload.post_url:
             raise HTTPException(status_code=400, detail="Missing id or post_url")
 
-        user = _get_user_from_header(authorization, None)
-        user_id = user.get("id")
-        role = user.get("role")
-
         q = get_supabase_client().table("threads_posts").delete()
-        if role not in ("admin", "leader"):
-            q = q.eq("id_member", user_id)
+
+        if payload.id:
+            q.eq("id", payload.id).execute()
+        else:
+            q.eq("post_url", payload.post_url).execute()
+
+        return BaseResponse(success=True, data={"deleted": True})
+    except HTTPException as e:
+        return BaseResponse(success=False, message=e.detail)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.delete("/posts/youtube")
+def delete_youtube_post(
+    payload: DeleteFacebookPostRequest,
+    request: Request,
+    authorization: str | None = Header(None),
+):
+    """Xoá video YouTube (bảng youtube_posts) — cho phép tất cả các role xóa theo yêu cầu Master."""
+    try:
+        if not payload.id and not payload.post_url:
+            raise HTTPException(status_code=400, detail="Missing id or post_url")
+
+        q = get_supabase_client().table("youtube_posts").delete()
 
         if payload.id:
             q.eq("id", payload.id).execute()

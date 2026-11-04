@@ -52,24 +52,53 @@ def _is_transient_supabase_error(exc: Exception) -> bool:
     return any(part in msg for part in ("server disconnected", "remoteprotocolerror", "timed out", "timeout"))
 
 
-_SAFE_USER_COLUMNS = (
+_SAFE_USER_BASE_COLUMNS = (
     "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
-    "allowed_instances, permission_group_id, data_scope, permission_override, permission_overrides, "
+    "allowed_instances"
+)
+_SAFE_USER_EXTENDED_COLUMNS = (
+    "permission_group_id, data_scope, permission_override, permission_overrides, "
     "crm_status, crm_note"
 )
+_SAFE_USER_COLUMNS = f"{_SAFE_USER_BASE_COLUMNS}, {_SAFE_USER_EXTENDED_COLUMNS}"
+_USER_SVC_SUPPORTS_PERMISSION_FIELDS: bool | None = None
+
+
+def _clean_user_dict(raw: dict | None) -> dict:
+    if not raw:
+        return {}
+    clean = dict(raw)
+    clean.setdefault("permission_group_id", None)
+    clean.setdefault("data_scope", None)
+    clean.setdefault("permission_override", False)
+    clean.setdefault("permission_overrides", [])
+    clean.setdefault("crm_status", "active")
+    clean.setdefault("crm_note", None)
+    return clean
+
+
+def _query_safe_users(query_builder_fn):
+    """Query app_users with adaptive fallback if migration 154 columns do not exist."""
+    global _USER_SVC_SUPPORTS_PERMISSION_FIELDS
+    cols = _SAFE_USER_BASE_COLUMNS if _USER_SVC_SUPPORTS_PERMISSION_FIELDS is False else _SAFE_USER_COLUMNS
+    try:
+        res = query_builder_fn(cols).execute()
+        if _USER_SVC_SUPPORTS_PERMISSION_FIELDS is None:
+            _USER_SVC_SUPPORTS_PERMISSION_FIELDS = True
+        return res
+    except Exception as exc:
+        err_msg = str(exc)
+        if "permission_group_id" in err_msg or "42703" in err_msg:
+            _USER_SVC_SUPPORTS_PERMISSION_FIELDS = False
+            return query_builder_fn(_SAFE_USER_BASE_COLUMNS).execute()
+        raise
 
 
 def get_user(email: str) -> dict:
     """Get user by email. Never returns the password hash."""
     supabase: Client = get_supabase_client()
-
-    result = (
-        supabase.table("app_users")
-        .select(_SAFE_USER_COLUMNS)
-        .eq("email", email)
-        .execute()
-    )
-    return result.data[0] if result.data else {}
+    result = _query_safe_users(lambda cols: supabase.table("app_users").select(cols).eq("email", email))
+    return _clean_user_dict(result.data[0]) if result.data else {}
 
 
 def upsert_user(payload: dict) -> dict:
@@ -319,14 +348,8 @@ def admin_update_account(email: str, updates: dict) -> dict:
     if profile_update.get("email"):
         _clear_auth_cache(email=profile_update["email"])
 
-    result = (
-        supabase.table("app_users")
-        .select(_SAFE_USER_COLUMNS)
-        .eq("id", account_id)
-        .limit(1)
-        .execute()
-    )
-    return result.data[0] if result.data else {}
+    result = _query_safe_users(lambda cols: supabase.table("app_users").select(cols).eq("id", account_id).limit(1))
+    return _clean_user_dict(result.data[0]) if result.data else {}
 
 
 def update_user_crm_permission(email: str, updates: dict) -> dict:
@@ -393,8 +416,8 @@ def update_user_crm_permission(email: str, updates: dict) -> dict:
     except Exception:
         pass
 
-    result = supabase.table("app_users").select(_SAFE_USER_COLUMNS).eq("id", account_id).limit(1).execute()
-    return result.data[0] if result.data else {}
+    result = _query_safe_users(lambda cols: supabase.table("app_users").select(cols).eq("id", account_id).limit(1))
+    return _clean_user_dict(result.data[0]) if result.data else {}
 
 
 def admin_delete_account(email: str, caller_id: str | None = None) -> None:
@@ -469,15 +492,8 @@ def get_team_members(leader_id: str) -> list[dict]:
         _TEAM_MEMBERS_CACHE[cache_key] = (time.monotonic() + _USER_LIST_CACHE_TTL_SECONDS, [])
         return []
 
-    users_result = execute_supabase_query(
-        lambda: (
-            get_supabase_client().table("app_users")
-            .select(_SAFE_USER_COLUMNS)
-            .in_("id", member_ids)
-            .execute()
-        )
-    )
-    rows = users_result.data or []
+    users_result = _query_safe_users(lambda cols: get_supabase_client().table("app_users").select(cols).in_("id", member_ids))
+    rows = [_clean_user_dict(r) for r in (users_result.data or [])]
     _TEAM_MEMBERS_CACHE[cache_key] = (time.monotonic() + _USER_LIST_CACHE_TTL_SECONDS, _clone_rows(rows))
     if len(_TEAM_MEMBERS_CACHE) > 500:
         for key in list(_TEAM_MEMBERS_CACHE.keys())[:-500]:
@@ -517,8 +533,8 @@ def get_all_users() -> list[dict]:
     if isinstance(cached, list) and cached and float(_ALL_USERS_CACHE.get("expires_at") or 0) > now:
         return _clone_rows(cached)
 
-    result = execute_supabase_query(lambda: get_supabase_client().table("app_users").select(_SAFE_USER_COLUMNS).execute())
-    rows = result.data or []
+    result = _query_safe_users(lambda cols: get_supabase_client().table("app_users").select(cols))
+    rows = [_clean_user_dict(r) for r in (result.data or [])]
     _ALL_USERS_CACHE["data"] = _clone_rows(rows)
     _ALL_USERS_CACHE["expires_at"] = time.monotonic() + _USER_LIST_CACHE_TTL_SECONDS
     return _clone_rows(rows)
@@ -657,9 +673,11 @@ def get_member_option_by_id(user_id: str) -> dict | None:
 
 def _resolve_user_id(supabase: Client, identifier: str) -> str:
     """Resolve a user identifier (email or UUID) to a UUID string."""
-    if not identifier or not identifier.strip():
+    if not identifier or not str(identifier).strip():
         raise ValueError("User identifier cannot be empty")
-    identifier = identifier.strip()
+    identifier = str(identifier).strip()
+    if identifier.lower() in ("none", "null", "undefined"):
+        raise ValueError(f"Invalid user identifier: {identifier}")
     if len(identifier) >= 32 or "-" in identifier:
         return identifier
     row = (
@@ -1015,11 +1033,21 @@ def update_team(
     # vao DB (vd fix du lieu tay) ma khong nam trong danh sach FE dang gui (FE
     # load form tu truoc, chua biet ve thay doi do) thi lan luu tiep theo se
     # xoa mat member do, du nguoi sua team khong co y dinh xoa ai ca.
-    existing_res = supabase.table("member_of_teams").select("id_member").eq("id_teams", team_id).execute()
-    existing_member_ids = {r["id_member"] for r in (existing_res.data or [])}
+    # Clean up any corrupt null rows for this team first
+    try:
+        supabase.table("member_of_teams").delete().eq("id_teams", team_id).is_("id_member", "null").execute()
+    except Exception:
+        pass
 
-    to_remove = existing_member_ids - desired_member_ids
-    to_add = desired_member_ids - existing_member_ids
+    existing_res = supabase.table("member_of_teams").select("id_member").eq("id_teams", team_id).execute()
+    existing_member_ids = {
+        str(r["id_member"]).strip()
+        for r in (existing_res.data or [])
+        if r.get("id_member") and str(r.get("id_member")).strip().lower() not in ("none", "null", "")
+    }
+
+    to_remove = {m for m in (existing_member_ids - desired_member_ids) if m and m.lower() not in ("none", "null", "")}
+    to_add = {m for m in (desired_member_ids - existing_member_ids) if m and m.lower() not in ("none", "null", "")}
 
     if to_remove:
         supabase.table("member_of_teams").delete().eq("id_teams", team_id).in_("id_member", list(to_remove)).execute()

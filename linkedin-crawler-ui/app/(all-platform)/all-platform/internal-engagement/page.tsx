@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { FaFacebook, FaLinkedin, FaThreads, FaYoutube, FaTiktok, FaLink } from "react-icons/fa6";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { API_BASE_URL } from "@/lib/env";
@@ -14,7 +15,6 @@ import type {
   InternalEngagementInteraction,
   InternalEngagementMarkStatus,
   InternalEngagementPost,
-  InternalEngagementPostTeamCount,
   InternalEngagementTeamRef,
   SocialAccount,
 } from "@/types/unified.types";
@@ -23,6 +23,7 @@ import { TeamPerformancePanel } from "@/components/all-platform/internal-engagem
 import { UnifiedDashboardHomeContent } from "@/components/features/dashboard/UnifiedDashboardHomeContent";
 import { pingLiExtension, fetchLinkedInPostInfo } from "@/lib/li-ext-bridge";
 import { extractLinkedInMetadata, sanitizeLinkedInUrl } from "@/lib/linkedin-metadata";
+import { cn } from "@/lib/utils";
 
 type TaskStatusTab = "all" | "need" | "received" | "completed";
 type SourceTab = "markee" | "custom";
@@ -148,11 +149,68 @@ function formatMemberTime(rawCreatedAt?: string | null, fallbackTime: string = "
   }
 }
 
+/**
+ * Tách nội dung bình luận sạch và link minh chứng (loại bỏ chuỗi thô [Link minh chứng: ...])
+ */
+function parseCommentAndProof(rawComment?: string | null, rawLink?: string | null): { cleanComment: string; proofUrl: string | null } {
+  let proofUrl = rawLink?.trim() || null;
+  let cleanComment = (rawComment || "").trim();
+
+  // Bóc tách URL từ [Link minh chứng: https://...] hoặc Link minh chứng: https://...
+  const linkRegex = /\[?(?:Link minh chứng|Minh chứng):\s*(https?:\/\/[^\s\]]+)\]?/i;
+  const match = cleanComment.match(linkRegex);
+  if (match) {
+    if (!proofUrl) {
+      proofUrl = match[1];
+    }
+    cleanComment = cleanComment.replace(match[0], "").trim();
+  }
+
+  // Nếu comment chỉ chứa duy nhất một URL thì lấy làm proofUrl
+  if (!proofUrl && /^https?:\/\/[^\s]+$/.test(cleanComment)) {
+    proofUrl = cleanComment;
+    cleanComment = "";
+  }
+
+  return { cleanComment, proofUrl };
+}
+
 
 type ToastType = "success" | "error" | "warning" | "info";
 interface ToastMessage {
   text: string;
   type: ToastType;
+}
+
+function InternalEngagementPostContent({ content }: { content?: string | null }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const text = content || "(Bài viết không có nội dung văn bản)";
+  const isLong = useMemo(() => {
+    const c = content || "";
+    return c.length > 130 || c.includes("\n");
+  }, [content]);
+
+  return (
+    <div className="mb-3.5">
+      <div
+        className={cn(
+          "text-xs md:text-sm text-gray-800 font-medium leading-relaxed transition-all duration-300 ease-in-out",
+          isExpanded ? "whitespace-pre-wrap" : "line-clamp-2"
+        )}
+      >
+        📌 {text}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setIsExpanded((prev) => !prev)}
+          className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-bold text-blue-600 hover:text-blue-700 hover:underline transition-colors cursor-pointer select-none"
+        >
+          <span>{isExpanded ? "Thu gọn ↑" : "Đọc thêm · Xem toàn bộ nội dung ↓"}</span>
+        </button>
+      )}
+    </div>
+  );
 }
 
 export default function InternalEngagementPage() {
@@ -162,7 +220,69 @@ export default function InternalEngagementPage() {
   // Tabs — thứ tự hiển thị: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo.
   // Mặc định "feed" (Seeding nội bộ) - đây là trang landing chính khi vào app
   // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
-  const [mainTab, setMainTab] = useState<"overview" | "feed" | "external">("feed");
+  const searchParams = useSearchParams();
+  const urlTab = searchParams?.get("tab");
+  const router = useRouter();
+
+  useEffect(() => {
+    if (urlTab === "external") {
+      const sub = searchParams?.get("sub");
+      if (sub === "queue") {
+        router.replace("/all-platform/lich-cao-hang-doi");
+      } else if (sub === "library") {
+        router.replace("/all-platform/quan-ly-nhom");
+      } else if (sub === "leader") {
+        router.replace("/all-platform/leader-dashboard");
+      } else if (sub === "accounts") {
+        router.replace("/all-platform/thong-ke-tai-khoan");
+      } else {
+        router.replace("/all-platform/post-feed");
+      }
+    } else if (urlTab === "overview") {
+      router.replace("/all-platform/overview");
+    }
+  }, [urlTab, searchParams, router]);
+
+  const urlStatus = searchParams?.get("status");
+
+  useEffect(() => {
+    if (urlStatus === "need" || urlStatus === "unseeded" || urlStatus === "chua_seeding") {
+      setTab("need");
+    } else if (urlStatus === "completed" || urlStatus === "seeded" || urlStatus === "da_seeding") {
+      setTab("completed");
+    } else if (urlStatus === "overdue") {
+      setTab("overdue" as any);
+    } else if (urlStatus === "all" || (!urlStatus && searchParams?.has("status"))) {
+      setTab("all");
+    }
+  }, [urlStatus, searchParams]);
+
+  // Tab & Lifecycle Heartbeat: Báo cho Extension biết tab Web Seeding đang mở
+  useEffect(() => {
+    const sendHeartbeat = () => {
+      window.postMessage({ type: "APP_TAB_HEARTBEAT", timestamp: Date.now() }, "*");
+    };
+    sendHeartbeat();
+    const intervalId = setInterval(sendHeartbeat, 3000);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        window.postMessage({ type: "APP_TAB_ACTIVE", timestamp: Date.now() }, "*");
+      }
+    };
+    const handleBeforeUnload = () => {
+      window.postMessage({ type: "APP_TAB_CLOSING", timestamp: Date.now() }, "*");
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
   const [tab, setTab] = useState<TaskStatusTab>("all");
   const [sourceTab, setSourceTab] = useState<SourceTab>("markee");
   const [search, setSearch] = useState("");
@@ -227,6 +347,7 @@ export default function InternalEngagementPage() {
   const [commentText, setCommentText] = useState("");
   const [isTemplatePickerOpen, setIsTemplatePickerOpen] = useState(false);
   const [isExtensionReady, setIsExtensionReady] = useState(false);
+  const [showExtensionGuideModal, setShowExtensionGuideModal] = useState(false);
   const [isLiExtensionReady, setIsLiExtensionReady] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runProgress, setRunProgress] = useState<string | null>(null);
@@ -372,7 +493,10 @@ export default function InternalEngagementPage() {
 
   // Team visibility
   const canSeeTeamInteractions = user?.role === "admin" || user?.role === "leader";
-  const [teamCounts, setTeamCounts] = useState<Record<string, InternalEngagementPostTeamCount[]>>({});
+  // Tổng số thành viên đã tương tác mỗi bài (backend tính, không phụ thuộc role người xem) —
+  // nguồn cho thanh tiến độ/KPI trên card. Trước đây cộng từ `teams` (chỉ admin/leader mới có,
+  // leader chỉ thấy team mình) nên member comment thành công vẫn thấy 0/N.
+  const [interactedTotals, setInteractedTotals] = useState<Record<string, number>>({});
   const [interactionsPost, setInteractionsPost] = useState<InternalEngagementPost | null>(null);
   const [interactionsRole, setInteractionsRole] = useState<string>("member");
   const [interactionsTeams, setInteractionsTeams] = useState<InternalEngagementTeamRef[]>([]);
@@ -571,6 +695,10 @@ export default function InternalEngagementPage() {
           console.warn("Clipboard write failed:", err);
         }
       }
+    }
+
+    if (!isExtensionReady) {
+      showToast("Lưu ý: Chưa phát hiện Extension KPI. Hãy cài tiện ích để hệ thống tự động lưu link minh chứng & cộng điểm nhé!", "warning");
     }
 
     // Gửi message cho Extension và mở Tab bài viết
@@ -878,7 +1006,8 @@ export default function InternalEngagementPage() {
     taskLinkedInMetricsRef.current = {};
     setTaskCampaignId("");
     setTaskDeadline("");
-    setTaskAssignedTeams([]);
+    // Mặc định chọn tất cả Teams theo yêu cầu Master
+    setTaskAssignedTeams(dbTeams.map((t) => t.id));
     setTaskTargetLikes(0);
     setTaskTargetComments(0);
     setIsCreateTaskModalOpen(true);
@@ -888,6 +1017,13 @@ export default function InternalEngagementPage() {
     if (dbTeams.length === 0) return false;
     return dbTeams.every((t) => taskAssignedTeams.includes(t.id) || taskAssignedTeams.includes(t.name_team));
   }, [dbTeams, taskAssignedTeams]);
+
+  // Luôn đảm bảo mặc định chọn tất cả Teams khi mở Modal
+  useEffect(() => {
+    if (isCreateTaskModalOpen && taskAssignedTeams.length === 0 && dbTeams.length > 0) {
+      setTaskAssignedTeams(dbTeams.map((t) => t.id));
+    }
+  }, [isCreateTaskModalOpen, dbTeams, taskAssignedTeams.length]);
 
   const toggleSelectAllTeams = () => {
     if (isAllTeamsSelected) {
@@ -1087,7 +1223,7 @@ export default function InternalEngagementPage() {
         assigned_team_ids: resolvedTeamUUIDs,
         // Bài tạo từ tab "Seeding bên ngoài" đánh dấu external để hiện đúng
         // tab, không lẫn vào "Seeding nội bộ" (xem scopedPosts).
-        scope: (mainTab === "external" ? "external" : "internal") as "internal" | "external",
+        scope: "internal" as "internal" | "external",
       };
 
       const res = await internalEngagementService.addCustomPost(payload);
@@ -1174,11 +1310,8 @@ export default function InternalEngagementPage() {
   // định "internal" trừ khi tạo từ tab "Seeding bên ngoài" (xem
   // handleCreateTaskSubmit). Tab "Tổng quan báo cáo" KHÔNG lọc — gộp cả 2.
   const scopedPosts = useMemo(() => {
-    if (mainTab === "external") {
-      return allCombinedPosts.filter((post) => (post as any).scope === "external");
-    }
     return allCombinedPosts.filter((post) => (post as any).scope !== "external");
-  }, [allCombinedPosts, mainTab]);
+  }, [allCombinedPosts]);
 
   const realStats = useMemo(() => {
     // 1. Total Seeders: Total active members across all teams in company (always 20)
@@ -1205,12 +1338,7 @@ export default function InternalEngagementPage() {
     }, 0);
 
     const totalCompletedComments = allCombinedPosts.reduce((sum, post) => {
-      const postTeamStats = teamCounts[post.id] || [];
-      const assignedTeams = (post as any).assigned_team_ids || [];
-      const postInteracted = postTeamStats
-        .filter((t) => assignedTeams.length === 0 || assignedTeams.includes(t.team_id) || assignedTeams.includes(t.team_name))
-        .reduce((s, t) => s + (t.count || 0), 0);
-      return sum + postInteracted;
+      return sum + (interactedTotals[post.id] || 0);
     }, 0);
 
     const activeUniqueMembers = leaderboard.filter((item) => item.total_completed > 0).length;
@@ -1225,7 +1353,7 @@ export default function InternalEngagementPage() {
       activeUniqueMembers,
       perfectMembers,
     };
-  }, [membersCount, leaderboard, allCombinedPosts, dbTeams, teamCounts]);
+  }, [membersCount, leaderboard, allCombinedPosts, dbTeams, interactedTotals]);
 
   // Unified multi-filter algorithm: Search, Campaign, Team, Status
   const filteredPosts = useMemo(() => {
@@ -1261,8 +1389,7 @@ export default function InternalEngagementPage() {
       // 4. Status Filter
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
-      const postTeamStats = teamCounts[post.id] || [];
-      const interactedCount = postTeamStats.reduce((sum, t) => sum + (t.count || 0), 0);
+      const interactedCount = interactedTotals[post.id] || 0;
 
       const isCompleted = targetTotal > 0 && interactedCount >= targetTotal;
       const isOverdue = (post as any).deadline && new Date((post as any).deadline) < new Date() && !isCompleted;
@@ -1277,7 +1404,7 @@ export default function InternalEngagementPage() {
 
       return true;
     });
-  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, teamCounts]);
+  }, [scopedPosts, search, selectedCampaignId, selectedTeamFilter, tab, dbTeams, interactedTotals]);
 
   const tabCounts = useMemo(() => {
     let all = scopedPosts.length;
@@ -1288,8 +1415,7 @@ export default function InternalEngagementPage() {
     scopedPosts.forEach((post) => {
       const rawTarget = (post as any).target_comments || (post as any).targetComments;
       const targetTotal = Number(rawTarget) > 0 ? Number(rawTarget) : 32;
-      const postTeamStats = teamCounts[post.id] || [];
-      const interactedCount = postTeamStats.reduce((sum, t) => sum + (t.count || 0), 0);
+      const interactedCount = interactedTotals[post.id] || 0;
       const isComp = targetTotal > 0 && interactedCount >= targetTotal;
       const isOver = (post as any).deadline && new Date((post as any).deadline) < new Date() && !isComp;
 
@@ -1299,11 +1425,11 @@ export default function InternalEngagementPage() {
     });
 
     return { all, need, completed, overdue, received: need };
-  }, [scopedPosts, teamCounts]);
+  }, [scopedPosts, interactedTotals]);
 
-  // Admin/leader: badge "Team X: N tương tác" hiển thị dưới mỗi bài.
+  // Số thành viên đã tương tác mỗi bài (mọi role).
   useEffect(() => {
-    if (!user?.email || !canSeeTeamInteractions || allCombinedPosts.length === 0) return;
+    if (!user?.email || allCombinedPosts.length === 0) return;
     let cancelled = false;
 
     Promise.all(
@@ -1312,22 +1438,27 @@ export default function InternalEngagementPage() {
         .map((p: InternalEngagementPost) =>
           internalEngagementService
             .getPostTeamCounts(p.permalink_url as string, user.email)
-            .then((res) => [p.id, res.success && res.data ? res.data.teams : []] as const),
+            .then((res) => [p.id, res.success && res.data ? res.data : null] as const)
+            .catch(() => [p.id, null] as const),
         ),
     ).then((results) => {
       if (cancelled) return;
-      const map: Record<string, InternalEngagementPostTeamCount[]> = {};
-      results.forEach(([postId, teams]: readonly [string, InternalEngagementPostTeamCount[]]) => {
-        map[postId] = teams;
+      const totals: Record<string, number> = {};
+      results.forEach(([postId, data]) => {
+        const teams = data?.teams || [];
+        totals[postId] =
+          typeof data?.total_interacted === "number"
+            ? data.total_interacted
+            : teams.reduce((sum, t) => sum + (t.count || 0), 0);
       });
-      setTeamCounts(map);
+      setInteractedTotals(totals);
     });
 
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allCombinedPosts, user?.email, canSeeTeamInteractions]);
+  }, [allCombinedPosts, user?.email]);
 
   const openInteractionsModal = async (post: InternalEngagementPost, teamId?: string) => {
     if (!user?.email || !post.permalink_url) return;
@@ -1512,7 +1643,7 @@ export default function InternalEngagementPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [tab, search, sourceTab, mainTab]);
+  }, [tab, search, sourceTab]);
 
   const pagedPosts = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -1716,14 +1847,22 @@ export default function InternalEngagementPage() {
                 Theo dõi thành viên đã nhận bài, đã tương tác, làm thiếu và quá hạn.
               </p>
             </div>
-            {mainTab !== "external" ? (
+
               <div className="flex items-center gap-3">
                 <a
-                  href="/all-platform/quick-comments"
-                  className="px-4 py-2.5 border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2"
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className={`px-4 py-2.5 rounded-xl text-[13px] font-bold shadow-sm transition flex items-center gap-2 cursor-pointer ${
+                    isExtensionReady
+                      ? "border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                      : "border border-amber-300 bg-amber-500 hover:bg-amber-600 text-white shadow-md animate-pulse"
+                  }`}
+                  title="Tải tiện ích ghi nhận minh chứng Like & Comment tính KPI"
                 >
-                  <span>📚</span> Thư viện mẫu câu
+                  <span>{isExtensionReady ? "✓" : "📥"}</span>
+                  <span>{isExtensionReady ? "Extension KPI đã kết nối" : "Tải Extension ghi nhận KPI"}</span>
                 </a>
+
                 <button
                   type="button"
                   onClick={() => setIsCampaignModalOpen(true)}
@@ -1739,7 +1878,7 @@ export default function InternalEngagementPage() {
                   <span className="text-base font-bold">+</span> Thêm bài viết Seeding
                 </button>
               </div>
-            ) : null}
+
           </div>
 
           {loadError ? (
@@ -1748,231 +1887,46 @@ export default function InternalEngagementPage() {
             </div>
           ) : null}
 
-          {/* MAIN TABS SWITCHER - thứ tự: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo */}
-          <div className="flex items-center gap-2 border-b border-gray-200 mb-6 bg-white p-2.5 rounded-2xl shadow-xs">
-            <button
-              type="button"
-              onClick={() => setMainTab("feed")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "feed"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>⚡</span> Seeding nội bộ
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("external")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "external"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>🌐</span> Seeding bên ngoài
-            </button>
-            <button
-              type="button"
-              onClick={() => setMainTab("overview")}
-              className={`px-5 py-2.5 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-2 ${
-                mainTab === "overview"
-                  ? "bg-[#be123c] text-white shadow-sm"
-                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-              }`}
-            >
-              <span>📊</span> Tổng quan báo cáo
-            </button>
-          </div>
 
-          {/* TAB 1: TỔNG QUAN BÁO CÁO */}
-          {mainTab === "overview" ? (
-            <div className="space-y-6">
-              {/* 5 Stats Cards tính toán dữ liệu thật từ DB */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3.5">
-                <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-gray-500 block">Tổng Seeder</span>
-                  <div className="text-2xl font-black text-gray-900 mt-1">{realStats.totalSeeder}</div>
-                  <span className="text-[11px] text-gray-400 font-medium">Thành viên đang hoạt động</span>
+          {/* BANNER CẢNH BÁO CHƯA CÓ EXTENSION KPI */}
+          {!isExtensionReady && (
+            <div className="mb-6 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-200 rounded-2xl p-4.5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-[0_2px_12px_rgba(245,158,11,0.08)]">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="w-11 h-11 rounded-2xl bg-amber-100 border border-amber-300 flex items-center justify-center text-2xl shrink-0 shadow-2xs">
+                  🧩
                 </div>
-                <div className="border border-rose-100 rounded-2xl p-4 bg-rose-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-rose-600 block">Bài viết đang chạy</span>
-                  <div className="text-2xl font-black text-rose-950 mt-1">{realStats.activePosts}</div>
-                  <span className="text-[11px] text-rose-500 font-medium">Bài viết Seeding hiện tại</span>
-                </div>
-                <div className="border border-emerald-100 rounded-2xl p-4 bg-emerald-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-emerald-600 block">Tiến độ KPI Comment</span>
-                  <div className="text-2xl font-black text-emerald-950 mt-1">
-                    {realStats.totalCompletedComments} / {realStats.totalTargetComments}
-                  </div>
-                  <span className="text-[11px] text-emerald-500 font-medium">
-                    {Math.round((realStats.totalCompletedComments / Math.max(1, realStats.totalTargetComments)) * 100)}% mục tiêu
-                  </span>
-                </div>
-                <div className="border border-amber-100 rounded-2xl p-4 bg-amber-50/20 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-amber-600 block">Seeder đã tham gia</span>
-                  <div className="text-2xl font-black text-amber-950 mt-1">{realStats.activeUniqueMembers}</div>
-                  <span className="text-[11px] text-amber-500 font-medium">
-                    {Math.round((realStats.activeUniqueMembers / Math.max(1, realStats.totalSeeder)) * 100)}% tổng Seeder
-                  </span>
-                </div>
-                <div className="border border-blue-200 rounded-2xl p-4 bg-blue-50/30 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <span className="text-xs font-semibold text-blue-600 block">Hoàn thành 100%</span>
-                  <div className="text-2xl font-black text-blue-950 mt-1">{realStats.perfectMembers}</div>
-                  <span className="text-[11px] text-blue-500 font-medium">Đã xong tất cả bài được giao</span>
-                </div>
-              </div>
-
-              {/* DANH SÁCH CHIẾN DỊCH SEEDING ĐANG DIỄN RA */}
-              {campaigns.length > 0 ? (
-                <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
-                      <span>🚩</span> Chiến dịch Seeding đang diễn ra ({campaigns.length})
+                <div>
+                  <div className="text-[14px] font-black text-amber-950 flex items-center gap-2 flex-wrap">
+                    <span>Chưa phát hiện Extension ghi nhận KPI Seeding</span>
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber-200 text-amber-900 text-[10px] font-extrabold uppercase tracking-wide">
+                      Cần thiết để tính điểm
                     </span>
-                    {selectedCampaignId !== "all" ? (
-                      <button
-                        type="button"
-                        onClick={() => setSelectedCampaignId("all")}
-                        className="text-xs text-rose-600 hover:underline font-semibold cursor-pointer"
-                      >
-                        Xem tất cả bài viết
-                      </button>
-                    ) : null}
                   </div>
-                  <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCampaignId("all")}
-                      className={`px-3.5 py-2 rounded-xl text-xs font-bold transition shrink-0 border cursor-pointer ${selectedCampaignId === "all"
-                        ? "bg-gray-900 text-white border-gray-900 shadow-sm"
-                        : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
-                        }`}
-                    >
-                      Tất cả chiến dịch
-                    </button>
-                    {campaigns.map((camp) => {
-                      const isSelected = selectedCampaignId === camp.id;
-                      const color = camp.color_code || "#fff1f2";
-                      return (
-                        <div
-                          key={camp.id}
-                          style={{ backgroundColor: isSelected ? undefined : color }}
-                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition shrink-0 border flex items-center gap-2 ${isSelected
-                            ? "bg-[#be123c] text-white border-[#be123c] shadow-sm"
-                            : "text-gray-800 border-gray-200 hover:shadow-sm"
-                            }`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setSelectedCampaignId(isSelected ? "all" : camp.id)}
-                            className="flex items-center gap-2 text-left outline-none cursor-pointer"
-                          >
-                            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
-                            <span>{camp.name}</span>
-                            {camp.start_date ? (
-                              <span className="text-[10px] opacity-75 font-normal">
-                                ({new Date(camp.start_date).toLocaleDateString("vi-VN")}
-                                {camp.end_date ? ` - ${new Date(camp.end_date).toLocaleDateString("vi-VN")}` : ""})
-                              </span>
-                            ) : null}
-                          </button>
-
-                          {/* Nút Xóa Chiến Dịch dành cho Admin / Leader */}
-                          {canManagePost ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteCampaignClick(camp.id, camp.name);
-                              }}
-                              className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] transition cursor-pointer ${isSelected
-                                ? "bg-white/20 hover:bg-white/40 text-white"
-                                : "bg-red-100/80 hover:bg-red-200 text-red-700"
-                                }`}
-                              title="Xóa chiến dịch này"
-                            >
-                              🗑️
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ) : null}
-
-              {/* Gamification Leaderboard Component */}
-              <div className="bg-white rounded-2xl border border-gray-200 p-5 shadow-[0_2px_8px_rgba(0,0,0,0.04)]">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                    <span>🏆</span> Xếp hạng Seeder nổi bật
-                  </h2>
-                  <button onClick={() => { setIsLeaderboardModalOpen(true); setLeaderboardCurrentPage(1); }} className="text-xs text-[#be123c] hover:underline font-semibold cursor-pointer">
-                    Xem tất cả →
-                  </button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-gray-100 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                        <th className="pb-3 pl-2">Hạng</th>
-                        <th className="pb-3">Thành viên</th>
-                        <th className="pb-3 text-center">Được giao</th>
-                        <th className="pb-3 text-center">Hoàn thành</th>
-                        <th className="pb-3 text-center">Đúng hạn</th>
-                        <th className="pb-3 text-center">Tỷ lệ</th>
-                        <th className="pb-3 text-right pr-2">Điểm</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
-                      {activeLeaderboard.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-6 text-center text-gray-400 text-xs">
-                            Đang cập nhật dữ liệu bảng xếp hạng...
-                          </td>
-                        </tr>
-                      ) : (
-                        activeLeaderboard.slice(0, 5).map((item, idx) => {
-                          const rank = idx + 1;
-                          const badgeBg = rank === 1 ? "bg-amber-100 text-amber-800 border-amber-300" : rank === 2 ? "bg-slate-100 text-slate-700 border-slate-300" : rank === 3 ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-gray-50 text-gray-600 border-gray-200";
-                          const rankIcon = rank === 1 ? "🥇 1" : rank === 2 ? "🥈 2" : rank === 3 ? "🥉 3" : rank;
-                          return (
-                            <tr key={item.user_id || idx} className="hover:bg-gray-50/60 transition-colors">
-                              <td className="py-3.5 pl-2">
-                                <span className={`inline-flex items-center justify-center px-2.5 py-1 rounded-full text-xs font-bold border ${badgeBg}`}>
-                                  {rankIcon}
-                                </span>
-                              </td>
-                              <td className="py-3.5">
-                                <div className="font-bold text-gray-900">{item.member_name}</div>
-                                <div className="text-xs text-gray-400 font-normal">{item.team_name}</div>
-                              </td>
-                              <td className="py-3.5 text-center text-gray-700 font-medium">{item.total_assigned}</td>
-                              <td className="py-3.5 text-center text-emerald-600 font-bold">{item.total_completed}</td>
-                              <td className="py-3.5 text-center text-blue-600 font-medium">{item.total_ontime}</td>
-                              <td className="py-3.5 text-center text-gray-700 font-medium">{item.completion_rate}%</td>
-                              <td className="py-3.5 text-right pr-2 font-black text-emerald-600 text-base">{item.score}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                  <p className="text-[12px] text-amber-800/90 mt-1 max-w-2xl leading-relaxed">
+                    Khi bạn bấm <strong>&quot;Làm Nhiệm Vụ&quot;</strong>, tự tay Like hoặc Bình luận trên Facebook, tiện ích này sẽ tự động bắt gói tin, trích xuất link bình luận làm minh chứng và cộng điểm KPI cho bạn.
+                  </p>
                 </div>
               </div>
-
-              {canSeeTeamInteractions ? <TeamPerformancePanel email={user?.email} /> : null}
+              <div className="flex items-center gap-2.5 shrink-0">
+                <a
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className="inline-flex items-center gap-2 px-4.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-extrabold shadow-sm transition-all cursor-pointer whitespace-nowrap active:scale-95"
+                >
+                  <span>📥</span> Tải Extension (.zip)
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(true)}
+                  className="px-3.5 py-2.5 rounded-xl border border-amber-300 bg-white hover:bg-amber-100/70 text-amber-900 text-[12px] font-bold transition-all cursor-pointer whitespace-nowrap"
+                >
+                  Hướng dẫn cài đặt
+                </button>
+              </div>
             </div>
-          ) : mainTab === "external" ? (
-            /* TAB 2: SEEDING BÊN NGOÀI — gom nguyên trang /all-platform/post-feed cũ
-            (UnifiedDashboardHomeContent: crawl + seeding bài viết từ nhóm LinkedIn/
-            Facebook bên ngoài) vào đây theo yêu cầu user, không còn trang/menu
-            "Post feed" riêng nữa (đã bỏ khỏi sidebar — xem AllPlatformSidebar.tsx). */
-            <UnifiedDashboardHomeContent hideHeader />
-          ) : (
-            /* TAB 2: HOẠT ĐỘNG SEEDING (POST FEED) */
-            <div>
+          )}
+
+          <div>
 
           {/* Bulk action bar */}
           {selectMode ? (
@@ -2017,10 +1971,10 @@ export default function InternalEngagementPage() {
               {/* BÊN TRÁI: NHÓM NÚT LỌC TRẠNG THÁI */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {[
-                  { key: "all", label: "Tất cả bài" },
-                  { key: "need", label: "Đang thực hiện" },
-                  { key: "completed", label: "Đã hoàn thành" },
-                  { key: "overdue", label: "Quá hạn" },
+                  { key: "all", label: "Tất cả bài", query: "" },
+                  { key: "need", label: "Chưa seeding", query: "status=need" },
+                  { key: "completed", label: "Đã seeding", query: "status=completed" },
+                  { key: "overdue", label: "Quá hạn", query: "status=overdue" },
                 ].map((t) => (
                   <button
                     key={t.key}
@@ -2029,7 +1983,14 @@ export default function InternalEngagementPage() {
                       ? "bg-[#be123c] text-white border-[#be123c] shadow-xs"
                       : "bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100"
                       }`}
-                    onClick={() => setTab(t.key as any)}
+                    onClick={() => {
+                      setTab(t.key as any);
+                      if (!t.query) {
+                        router.push("/all-platform/internal-engagement");
+                      } else {
+                        router.push(`/all-platform/internal-engagement?${t.query}`);
+                      }
+                    }}
                   >
                     {t.label} ({tabCounts[t.key as keyof typeof tabCounts] || 0})
                   </button>
@@ -2108,8 +2069,6 @@ export default function InternalEngagementPage() {
                   const rawDeadline = (post as any).deadline || (post as any).due_date || (post as any).dueDate;
 
                   // TÍNH TOÁN DATA THẬT
-                  const postTeamStats = teamCounts[post.id] || [];
-
                   // Strict Summary Card Scoping: Filter by assigned teams only
                   const assignedTeams: string[] = (post as any).assigned_team_ids || [];
                   let targetTotal = 0;
@@ -2124,9 +2083,7 @@ export default function InternalEngagementPage() {
                     }
                   }
 
-                  const interactedCount = postTeamStats
-                    .filter((t) => assignedTeams.length === 0 || assignedTeams.includes(t.team_id) || assignedTeams.includes(t.team_name))
-                    .reduce((sum, t) => sum + (t.count || 0), 0);
+                  const interactedCount = interactedTotals[post.id] || 0;
 
                   const progressPercent = Math.min(100, Math.round((interactedCount / Math.max(1, targetTotal)) * 100));
                   const pendingCount = Math.max(0, targetTotal - interactedCount);
@@ -2234,9 +2191,7 @@ export default function InternalEngagementPage() {
                         </div>
 
                         {/* Post Excerpt */}
-                        <div className="text-xs md:text-sm text-gray-800 font-medium mb-3.5 leading-relaxed">
-                          📌 {post.content || "(Bài viết không có nội dung văn bản)"}
-                        </div>
+                        <InternalEngagementPostContent content={post.content} />
 
                         {/* KHỐI TƯƠNG TÁC BÀI GỐC (PUBLIC METRICS BOX) - Facebook hoặc LinkedIn */}
                         {isFacebookPost || isLinkedInPost ? (
@@ -2331,12 +2286,36 @@ export default function InternalEngagementPage() {
                         </div>
 
                         {/* Noi dung comment CUA CHINH MINH da dang tren bai nay (neu da hoan thanh) */}
-                        {status === "completed" && myComment ? (
-                          <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
-                            <div className="font-bold mb-0.5">✓ Bạn đã comment thành công:</div>
-                            <div className="line-clamp-2">{myComment}</div>
-                          </div>
-                        ) : null}
+                        {status === "completed" && myComment ? (() => {
+                          const { cleanComment, proofUrl } = parseCommentAndProof(myComment);
+                          return (
+                            <div className="mb-3.5 p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800 flex items-center justify-between gap-3 flex-wrap shadow-2xs">
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold text-emerald-800 flex items-center gap-1 mb-0.5">
+                                  <span>✓</span> Bạn đã comment thành công:
+                                </div>
+                                {cleanComment ? (
+                                  <div className="line-clamp-2 font-medium italic text-emerald-950">
+                                    "{cleanComment}"
+                                  </div>
+                                ) : (
+                                  <div className="text-[11px] text-emerald-700 italic">Đã ghi nhận minh chứng tương tác thành công</div>
+                                )}
+                              </div>
+
+                              {proofUrl ? (
+                                <a
+                                  href={proofUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-2xs transition shrink-0 cursor-pointer"
+                                >
+                                  <span>👁️</span> Xem minh chứng ↗
+                                </a>
+                              ) : null}
+                            </div>
+                          );
+                        })() : null}
 
                         {/* BỐ CỤC FOOTER ACTION BUTTONS */}
                         <div className="flex items-center justify-between gap-3 pt-2.5 border-t border-gray-100 flex-wrap">
@@ -2349,39 +2328,23 @@ export default function InternalEngagementPage() {
                           </button>
 
                           <div className="flex items-center justify-end gap-2">
-                            {/* Nút theo nền tảng: Facebook (Làm Nhiệm Vụ ↗ + Copy Mẫu câu) vs Nền tảng khác (Xem bài viết gốc ↗) */}
-                            {((post.platform || "").toLowerCase() === "facebook" || (post.platform || "").toLowerCase() === "fb") ? (
-                              <div className="relative group inline-block">
-                                <button
-                                  type="button"
-                                  onClick={() => handleDoTask(post)}
-                                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-[#be123c] border border-rose-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
-                                >
-                                  ⚡ Làm Nhiệm Vụ ↗
-                                </button>
-                                <div className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block w-max z-10 pointer-events-none">
-                                  <div className="bg-gray-900 text-white text-[11px] font-medium rounded-lg py-1 px-2.5 shadow-xl">
-                                    Tự động copy mẫu câu &amp; mở bài viết để Like/Comment/Share để tương tác trên FB
-                                  </div>
-                                </div>
-                              </div>
-                            ) : (
+                            {/* Nút Làm Nhiệm Vụ đồng nhất cho cả Facebook và LinkedIn (Copy mẫu câu + Sync Extension + Mở tab bài viết gốc) */}
+                            <div className="relative group inline-block">
                               <button
                                 type="button"
-                                onClick={() => handleOpenOriginalPost(post)}
-                                className="px-3.5 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
+                                onClick={() => handleDoTask(post)}
+                                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-[#be123c] border border-rose-200 rounded-full text-xs font-bold transition flex items-center gap-1 cursor-pointer shadow-2xs"
                               >
-                                Xem bài viết gốc ↗
+                                ⚡ Làm Nhiệm Vụ ↗
                               </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => openModal(post)}
-                              className="px-5 py-2 bg-[#BE123C] hover:bg-[#9F1239] text-white rounded-full text-xs font-bold shadow-sm transition cursor-pointer"
-                            >
-                              Comment ngay
-                            </button>
+                              <div className="absolute bottom-full right-0 mb-1.5 hidden group-hover:block w-max z-10 pointer-events-none">
+                                <div className="bg-gray-900 text-white text-[11px] font-medium rounded-lg py-1 px-2.5 shadow-xl">
+                                  {isLinkedInPost
+                                    ? "Tự động copy mẫu câu & mở bài viết LinkedIn để Like/Comment và lưu minh chứng"
+                                    : "Tự động copy mẫu câu & mở bài viết để Like/Comment/Share để tương tác trên FB"}
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2418,7 +2381,7 @@ export default function InternalEngagementPage() {
             ) : null}
           </div>
         </div>
-      )}
+
         </div>
 
         {/* Comment modal */}
@@ -2467,7 +2430,7 @@ export default function InternalEngagementPage() {
                           ? `Extension${modalIsLinkedIn ? " LinkedIn" : ""} đã sẵn sàng.`
                           : `Đang chờ kết nối ${modalIsLinkedIn ? "LinkedIn " : ""}Extension. Vui lòng cài đặt và F5 lại trang.`}
                       </span>
-                      {!ready && modalIsLinkedIn ? (
+                      {!ready ? (
                         <a
                           href="/comment-extension.zip"
                           download
@@ -2711,11 +2674,30 @@ export default function InternalEngagementPage() {
                             <tr key={m.id_member || idx} className="hover:bg-gray-50/80">
                               <td className="py-3 font-bold text-gray-900">
                                 {m.name}
-                                {m.comment_content ? (
-                                  <div className="mt-0.5 text-[11px] font-medium text-gray-500 italic line-clamp-2 max-w-[220px]" title={m.comment_content}>
-                                    💬 "{m.comment_content}"
-                                  </div>
-                                ) : null}
+                                {(() => {
+                                  const { cleanComment, proofUrl } = parseCommentAndProof(m.comment_content, m.link_comment);
+                                  return (
+                                    <>
+                                      {cleanComment ? (
+                                        <div className="mt-0.5 text-[11px] font-medium text-gray-500 italic line-clamp-2 max-w-[240px]" title={cleanComment}>
+                                          💬 "{cleanComment}"
+                                        </div>
+                                      ) : null}
+                                      {proofUrl ? (
+                                        <div className="mt-1">
+                                          <a
+                                            href={proofUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-[11px] font-bold shadow-2xs transition cursor-pointer"
+                                          >
+                                            <span>👁️</span> Xem minh chứng ↗
+                                          </a>
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  );
+                                })()}
                               </td>
                               <td className="py-3 text-gray-500">
                                 {dbTeams.find((t) => t.id === m.team_id || t.name_team.toLowerCase() === (m.team || "").toLowerCase())?.name_team || m.team || "Team"}
@@ -3188,7 +3170,7 @@ export default function InternalEngagementPage() {
 
                   <div>
                     <label className="text-xs font-bold text-gray-700 block mb-1">
-                      Hạn chót (Deadline) <span className="text-red-500">*</span>:
+                      Hạn chót (Deadline) <span className="text-[11px] text-gray-400 font-normal">(Không bắt buộc)</span>:
                     </label>
                     <input
                       type="datetime-local"
@@ -3425,6 +3407,87 @@ export default function InternalEngagementPage() {
             </div>
           </div>
         ) : null}
+
+        {/* MODAL HƯỚNG DẪN CÀI ĐẶT EXTENSION KPI */}
+        {showExtensionGuideModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-gray-100">
+              <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 flex items-center justify-center text-xl">
+                    🧩
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-gray-900">Hướng dẫn cài đặt Extension KPI</h3>
+                    <p className="text-xs text-gray-500">Chỉ mất 30 giây để cài đặt 1 lần duy nhất</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(false)}
+                  className="w-8 h-8 rounded-full hover:bg-gray-100 grid place-items-center text-gray-400 hover:text-gray-600 transition cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="py-5 space-y-4">
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    1
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Tải file và giải nén</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Bấm nút màu cam bên dưới để tải file <code>comment-extension.zip</code> về máy tính, sau đó giải nén ra một thư mục.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    2
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Mở trang tiện ích Chrome</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Mở tab mới trên Chrome, dán địa chỉ <code>chrome://extensions/</code> và bật công tắc <strong>&quot;Chế độ dành cho nhà phát triển&quot;</strong> (Developer mode) ở góc trên bên phải.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3.5">
+                  <span className="w-7 h-7 rounded-full bg-amber-500 text-white font-extrabold text-xs grid place-items-center shrink-0">
+                    3
+                  </span>
+                  <div>
+                    <div className="text-[13px] font-bold text-gray-900">Nạp tiện ích &amp; hoàn tất</div>
+                    <p className="text-[12px] text-gray-500 mt-0.5">
+                      Bấm nút <strong>&quot;Tải tiện ích đã giải nén&quot;</strong> (Load unpacked) ở góc trái và chọn thư mục vừa giải nén. Sau đó quay lại trang này bấm <strong>F5</strong> là xong!
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setShowExtensionGuideModal(false)}
+                  className="px-4 py-2.5 rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 text-[13px] font-bold transition cursor-pointer"
+                >
+                  Đã hiểu &amp; Đóng
+                </button>
+                <a
+                  href="/comment-extension.zip"
+                  download="comment-extension.zip"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-[13px] font-black shadow-sm transition cursor-pointer"
+                >
+                  <span>📥</span> Tải Extension (.zip) Ngay
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Toast Light Theme */}
         {toast ? (

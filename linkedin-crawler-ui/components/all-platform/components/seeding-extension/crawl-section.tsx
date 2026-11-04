@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
-import { allPlatformGroupsService } from "@/services/all-platform.service";
+import { allPlatformGroupsService, allPlatformKeywordsService, type KeywordTopic } from "@/services/all-platform.service";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import type { CrawlGroupInput, CrawlRuntime, GroupPlatform } from "./use-seeding-extension";
 
@@ -47,6 +47,53 @@ export function CrawlSection({ platform, isReady, runtime, onStart, onStop, onRe
   const [groupsError, setGroupsError] = useState<string | null>(null);
   const [keywordsInput, setKeywordsInput] = useState("");
   const [limitInput, setLimitInput] = useState("");
+  const [topics, setTopics] = useState<KeywordTopic[]>([]);
+  const [selectedTopicIds, setSelectedTopicIds] = useState<Set<string>>(new Set());
+  const [topicKeywordsCache, setTopicKeywordsCache] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (platform !== "facebook") return;
+    let active = true;
+    allPlatformKeywordsService.getTopics().then((res) => {
+      if (active && res.success && Array.isArray(res.data)) {
+        setTopics(res.data);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [platform]);
+
+  const handleToggleFbTopic = async (topicId: string) => {
+    const isSelected = selectedTopicIds.has(topicId);
+    let kws = topicKeywordsCache[topicId];
+    if (!kws) {
+      try {
+        const res = await allPlatformKeywordsService.getKeywordsInTopic(topicId);
+        kws = res.success && Array.isArray(res.data) ? res.data.map((i) => i.keyword.trim()).filter(Boolean) : [];
+        setTopicKeywordsCache((prev) => ({ ...prev, [topicId]: kws }));
+      } catch {
+        kws = [];
+      }
+    }
+    const nextIds = new Set(selectedTopicIds);
+    const current = parseKeywords(keywordsInput);
+    if (isSelected) {
+      nextIds.delete(topicId);
+      const rm = new Set(kws.map((k) => k.toLowerCase()));
+      setKeywordsInput(current.filter((k) => !rm.has(k.toLowerCase())).join(", "));
+    } else {
+      nextIds.add(topicId);
+      const seen = new Set(current.map((k) => k.toLowerCase()));
+      const merged = [...current];
+      for (const kw of kws) {
+        if (!seen.has(kw.toLowerCase())) {
+          seen.add(kw.toLowerCase());
+          merged.push(kw);
+        }
+      }
+      setKeywordsInput(merged.join(", "));
+    }
+    setSelectedTopicIds(nextIds);
+  };
 
   const isFacebook = platform === "facebook";
   const platformLabel = isFacebook ? "Facebook" : "LinkedIn";
@@ -143,8 +190,40 @@ export function CrawlSection({ platform, isReady, runtime, onStart, onStop, onRe
 
         <div className="lg:col-span-2 flex flex-col gap-3">
           {isFacebook ? (
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-foreground">Từ khoá lọc bài (không bắt buộc)</label>
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-foreground">Từ khoá lọc bài ({keywords.length} từ khoá)</label>
+                {keywordsInput.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedTopicIds(new Set()); setKeywordsInput(""); }}
+                    className="text-[11px] text-muted-foreground hover:text-red-600 cursor-pointer"
+                  >
+                    Xoá
+                  </button>
+                )}
+              </div>
+              {topics.length > 0 && (
+                <div className="flex flex-wrap gap-1 max-h-[68px] overflow-y-auto p-1.5 rounded-lg border border-border/70 bg-muted/20">
+                  {topics.map((t) => {
+                    const active = selectedTopicIds.has(t.id);
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={runtime.running}
+                        onClick={() => handleToggleFbTopic(t.id)}
+                        className={cn(
+                          "px-2 py-0.5 rounded-md text-[10px] font-semibold border transition cursor-pointer",
+                          active ? "bg-primary text-white border-primary" : "bg-card text-foreground border-border hover:bg-muted"
+                        )}
+                      >
+                        {t.name} ({t.keywords_count || 0})
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <input
                 type="text"
                 value={keywordsInput}

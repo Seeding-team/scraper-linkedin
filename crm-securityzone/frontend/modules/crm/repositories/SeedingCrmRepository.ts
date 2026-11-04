@@ -1,5 +1,6 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
 import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
+import { notifyDealsChanged } from '../utils/dealSync';
 import {
   CRM_PACKAGE_OPTIONS,
   getContractStatusForStage,
@@ -37,7 +38,7 @@ type ValidationErrorPayload = {
   errors?: string[];
 };
 
-type CustomerLeadRow = {
+export type CustomerLeadRow = {
   id: string;
   customer_id?: string | null;
   customer_name?: string | null;
@@ -111,6 +112,7 @@ type CustomerLeadRow = {
   quote_id?: string | null;
   quote_number?: string | null;
   quote_total_amount?: number | string | null;
+  quote_currency?: string | null;
   quote_public_url?: string | null;
   quote_status?: string | null;
   quote_version_number?: number | null;
@@ -128,6 +130,8 @@ type CrmCustomerRow = {
   id: string;
   customer_name?: string | null;
   company_name?: string | null;
+  short_name?: string | null;
+  customer_code?: string | null;
   position?: string | null;
   position_category_id?: string | null;
   position_label_snapshot?: string | null;
@@ -259,13 +263,14 @@ function normalizeStage(value?: string | null): DealStage {
     new_lead: 'dealing',
     contacted: 'dealing',
     qualified: 'dealing',
-    requirement: 'dealing',
+    requirement: 'requirement',
     contract_sent: 'proposal_sent',
     won: 'post_sale_care',
   };
   if (value && legacyMap[value]) return legacyMap[value];
   const stages: DealStage[] = [
     'dealing',
+    'requirement',
     'proposal_sent',
     'negotiation',
     'contract_signed',
@@ -392,7 +397,7 @@ function activityToHistory(row: ActivityLogRow): StageHistory {
   };
 }
 
-function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
+export function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
   const stage = normalizeStage(row.deal_stage);
   const estimatedBudget = asNumber(row.estimated_budget);
   const lifetimeValue = asNumber(row.lifetime_value);
@@ -456,6 +461,7 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
           url: asText(row.quote_public_url) || attachmentUrl || undefined,
           number: asText(row.quote_number) || attachmentName || undefined,
           totalAmount: quoteTotal,
+          currency: asText(row.quote_currency) || undefined,
           status: (asText(row.quote_status) || undefined) as QuoteReference['status'],
           versionNumber: row.quote_version_number || undefined,
           versionChainId: asText(row.quote_version_chain_id) || undefined,
@@ -491,6 +497,8 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
     id: row.id,
     customerName: asText(row.customer_name),
     companyName: asText(row.company_name),
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),
@@ -708,6 +716,7 @@ export class SeedingCrmRepository implements CrmRepository {
     });
     const row = body.data?.deal;
     if (!row) throw new Error('Backend khong tra ve deal vua tao.');
+    notifyDealsChanged();
     return {
       ...rowToDeal(row),
       customerId: asText(body.data?.customer?.id) || asText(row.customer_id),
@@ -721,6 +730,7 @@ export class SeedingCrmRepository implements CrmRepository {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
+    notifyDealsChanged();
     return rowToDeal(row);
   }
 

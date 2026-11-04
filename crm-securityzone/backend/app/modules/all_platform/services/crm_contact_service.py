@@ -27,7 +27,7 @@ CONTACT_COLUMNS = (
     "id, customer_id, name, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, is_primary, note, "
-    "created_by, created_at, updated_at"
+    "created_by, created_at, updated_at, contact_code"
 )
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,45 @@ def list_contacts(customer_id: str, user: dict[str, Any]) -> list[dict[str, Any]
         .order("created_at")
         .execute()
     )
-    return res.data or []
+    contacts = res.data or []
+    _attach_contact_counts(contacts, customer_id, user)
+    return contacts
+
+
+def _attach_contact_counts(contacts: list[dict[str, Any]], customer_id: str, user: dict[str, Any]) -> None:
+    """Gan deal_count/project_count cho tung lien he (danh sach Nguoi lien he cua khach hang). Cung quy tac voi
+    get_contact_related: Co hoi = deal co primary_contact_id = nguoi nay (loc theo _deal_visible_to); Du an =
+    moi du an cua khach hang (khop tab "Nguoi lien he" cua trang Du an, liet ke moi lien he cua khach). Loi chi log, so dem = 0."""
+    for c in contacts:
+        c["deal_count"] = 0
+        c["project_count"] = 0
+    if not contacts:
+        return
+    try:
+        supabase = get_supabase_client()
+        lead_res = execute_supabase_query(
+            lambda: supabase.table("customer_leads")
+            .select(BASE_COLUMNS)
+            .eq("customer_id", customer_id)
+            .eq("instance", settings.crm_instance)
+            .execute()
+        )
+        deals = [d for d in (_normalize_row(row) for row in lead_res.data or []) if _deal_visible_to(user, d)]
+        project_res = execute_supabase_query(
+            lambda: supabase.table("projects").select("id")
+            .eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
+        )
+        customer_project_count = len(project_res.data or [])  # moi lien he cua khach tham gia moi du an cua khach
+        for c in contacts:
+            cid = str(c["id"])
+            owns_unassigned = len(contacts) == 1 or bool(c.get("is_primary"))
+            c["deal_count"] = len([
+                d for d in deals
+                if str(d.get("primary_contact_id") or "") == cid or (owns_unassigned and not d.get("primary_contact_id"))
+            ])
+            c["project_count"] = customer_project_count
+    except Exception:
+        logger.exception("list_contacts: failed to attach deal/project counts for customer %s", customer_id)
 
 
 def _unset_other_primary_contacts(customer_id: str, exclude_contact_id: str | None) -> None:
@@ -208,6 +246,9 @@ def update_contact(customer_id: str, contact_id: str, payload: dict[str, Any], u
         .eq("instance", settings.crm_instance)
         .execute()
     )
+    # Sua nguoi lien he -> dong bo Kinh gui/SDT/Email tren cac bao gia da chon nguoi nay.
+    from app.modules.all_platform.services.supabase_quote_service import sync_contact_snapshot_to_quotes
+    sync_contact_snapshot_to_quotes(res.data[0], old_row=contact)
     return res.data[0]
 
 
@@ -248,16 +289,38 @@ def get_contact(contact_id: str, user: dict[str, Any]) -> dict[str, Any]:
     return {"contact": contact, "customer": customer}
 
 
+def _contact_owns_unassigned_deals(contact_id: str, customer_id: str) -> bool:
+    """True neu `contact_id` la lien he chinh (is_primary) cua khach hang, hoac la lien he DUY NHAT cua khach."""
+    try:
+        supabase = get_supabase_client()
+        rows = execute_supabase_query(
+            lambda: supabase.table("crm_contacts").select("id, is_primary")
+            .eq("customer_id", customer_id).eq("instance", settings.crm_instance).execute()
+        ).data or []
+        if len(rows) == 1:
+            return str(rows[0]["id"]) == str(contact_id)
+        return any(str(r["id"]) == str(contact_id) and r.get("is_primary") for r in rows)
+    except Exception:
+        logger.exception("_contact_owns_unassigned_deals failed for contact %s", contact_id)
+        return False
+
+
 def _contact_deal_ids(contact_id: str, customer_id: str, user: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     """Deal ma primary_contact_id = contact nay VA cung thuoc dung Customer
     cha (defense-in-depth - primary_contact_id/customer_id la 2 cot doc lap,
     khong co FK composite rang buoc chung phai khop nhau), da loc theo dung
     _deal_visible_to() nhu related_records()."""
     supabase = get_supabase_client()
+    # Co hoi CHUA gan lien he chinh (primary_contact_id trong) thuoc ve lien he chinh cua khach hang, hoac lien he
+    # duy nhat neu khach chi co 1 nguoi - tranh "0 Co hoi" o khach chi co 1 lien he va 1 co hoi.
+    unassigned_too = _contact_owns_unassigned_deals(contact_id, customer_id)
     lead_res = execute_supabase_query(
-        lambda: supabase.table("customer_leads")
-        .select(BASE_COLUMNS)
-        .eq("primary_contact_id", contact_id)
+        lambda: (
+            supabase.table("customer_leads")
+            .select(BASE_COLUMNS)
+            .or_(f"primary_contact_id.eq.{contact_id},primary_contact_id.is.null") if unassigned_too
+            else supabase.table("customer_leads").select(BASE_COLUMNS).eq("primary_contact_id", contact_id)
+        )
         .eq("customer_id", customer_id)
         .eq("instance", settings.crm_instance)
         .execute()
@@ -308,8 +371,10 @@ def get_contact_related(contact_id: str, user: dict[str, Any]) -> dict[str, Any]
     projects: list[dict[str, Any]] = []
     try:
         supabase = get_supabase_client()
+        # Tab "Nguoi lien he" cua trang Du an liet ke MOI lien he cua khach hang la "tham gia du an" -> phia lien he cung
+        # phai khop: du an cua lien he = moi du an cua khach hang cha (khong chi du an gan dich danh/qua co hoi).
         project_res = execute_supabase_query(
-            lambda: supabase.table("projects").select("*").eq("instance", settings.crm_instance).eq("primary_contact_id", contact_id).execute()
+            lambda: supabase.table("projects").select("*").eq("instance", settings.crm_instance).eq("customer_id", customer["id"]).execute()
         )
         projects = project_res.data or []
     except Exception:

@@ -46,6 +46,7 @@ import {
   relativeTime,
 } from '../utils/quoteDisplay';
 import '../styles/quote-center.css';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 /** Khong co role CEO/Lead Sale rieng trong he thong that (chi co admin/leader/
  * member) - scope chi con 2 lua chon that su phan biet duoc: xem HET pham vi
@@ -66,6 +67,13 @@ function matchesPeriod(dateStr: string | undefined, period: Period): boolean {
     return date.getFullYear() === now.getFullYear() && Math.floor(date.getMonth() / 3) === Math.floor(now.getMonth() / 3);
   }
   return date.getFullYear() === now.getFullYear();
+}
+
+/** Tong tien quote quy ve VND (KPI/tong hop cong nhieu quote -> khong cong lan USD voi VND). */
+function quoteTotalVnd(quote: { totalAmount?: number | null; currency?: string | null; exchangeRate?: number | null }): number {
+  const amount = quote.totalAmount || 0;
+  if (String(quote.currency || 'VND').toUpperCase() !== 'USD') return amount;
+  return quoteCurrencyToVnd(amount, 'USD', quote.exchangeRate) ?? amount;
 }
 
 interface SaleRow {
@@ -363,8 +371,8 @@ export function QuoteCenterPage() {
     const quotedDealIds = new Set(scopedChains.filter(row => row.current.dealId).map(row => row.current.dealId as string));
     const sent = scopedChains.filter(row => isApprovedQuote(row.current)).length;
     const won = scopedChains.filter(row => isWonDeal(row.deal)).length;
-    const totalValue = scopedChains.reduce((sum, row) => sum + (row.current.totalAmount || 0), 0);
-    const wonValue = scopedChains.filter(row => isWonDeal(row.deal)).reduce((sum, row) => sum + (row.current.totalAmount || 0), 0);
+    const totalValue = scopedChains.reduce((sum, row) => sum + quoteTotalVnd(row.current), 0);
+    const wonValue = scopedChains.filter(row => isWonDeal(row.deal)).reduce((sum, row) => sum + quoteTotalVnd(row.current), 0);
     return {
       totalDeals: scopedDeals.length,
       quotedCustomers: quotedDealIds.size,
@@ -400,10 +408,10 @@ export function QuoteCenterPage() {
       if (deal) saleRow.dealIds.add(deal.id);
       saleRow.quotes += 1;
       if (isApprovedQuote(row.current)) saleRow.sent += 1;
-      saleRow.value += row.current.totalAmount || 0;
+      saleRow.value += quoteTotalVnd(row.current);
       if (isWonDeal(deal)) {
         saleRow.won += 1;
-        saleRow.wonValue += row.current.totalAmount || 0;
+        saleRow.wonValue += quoteTotalVnd(row.current);
       }
     }
     return Array.from(map.values()).sort((a, b) => b.value - a.value);
@@ -425,10 +433,10 @@ export function QuoteCenterPage() {
       if (deal) teamRow.dealIds.add(deal.id);
       teamRow.quotes += 1;
       if (isApprovedQuote(row.current)) teamRow.sent += 1;
-      teamRow.value += row.current.totalAmount || 0;
+      teamRow.value += quoteTotalVnd(row.current);
       if (isWonDeal(deal)) {
         teamRow.won += 1;
-        teamRow.wonValue += row.current.totalAmount || 0;
+        teamRow.wonValue += quoteTotalVnd(row.current);
       }
     }
     return Array.from(map.values()).sort((a, b) => b.value - a.value);
@@ -1005,7 +1013,12 @@ export function QuoteCenterPage() {
     if (status.key === 'won') {
       const contract = contractByQuoteId.get(current.id);
       const contractItem: ActionMenuItem[] = contract
-        ? [{ key: 'view-contract', label: 'Xem hợp đồng', icon: FileText, group: 2, onSelect: () => router.push(`/all-platform/contracts/${contract.id}`) }]
+        ? [{ key: 'view-contract', label: 'Xem hợp đồng', icon: FileText, group: 2, onSelect: () => {
+          // Mo LINK/FILE hop dong that (contracts.file_url) o tab moi; khong co link thi bao ro, khong chuyen sang trang chi tiet.
+          const url = (contract as { fileUrl?: string | null }).fileUrl;
+          if (url) window.open(url, '_blank', 'noopener,noreferrer');
+          else window.alert('Chưa có link hợp đồng.');
+        } }]
         : [];
       return [openItem, ...viewPublicItems, ...contractItem, historyItem, ...deleteItem];
     }
@@ -1188,12 +1201,12 @@ export function QuoteCenterPage() {
           {current.costViewAllowed === false ? (
             <span className="qc-row-sub" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">Không có quyền xem</span>
           ) : current.hasCostData ? (
-            formatMoney(current.costTotal || 0)
+            formatQuoteAmountOr(current.costTotal || 0, current.currency, formatMoney)
           ) : (
             <span className="qc-row-sub">Chưa có</span>
           )}
         </td>
-        <td data-label="Giá khách" className="qc-cell-money">{formatMoney(current.customerPriceBeforeVat ?? 0)}</td>
+        <td data-label="Giá khách" className="qc-cell-money">{formatQuoteAmountOr(current.customerPriceBeforeVat ?? 0, current.currency, formatMoney)}</td>
         <td data-label="Margin">
           {current.profitabilityViewAllowed === false ? (
             <span className="qc-row-sub" title="Chỉ Sale phụ trách hoặc Admin mới xem được margin">Không có quyền xem</span>
@@ -1305,12 +1318,12 @@ export function QuoteCenterPage() {
             {version.costViewAllowed === false ? (
               <span className="qc-row-sub" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">Không có quyền xem</span>
             ) : version.hasCostData ? (
-              formatMoney(version.costTotal || 0)
+              formatQuoteAmountOr(version.costTotal || 0, version.currency, formatMoney)
             ) : (
               <span className="qc-row-sub">Chưa có</span>
             )}
           </td>
-          <td className="qc-cell-money">{formatMoney(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)}</td>
+          <td className="qc-cell-money">{formatQuoteAmountOr(version.customerPriceBeforeVat ?? version.totalAmount ?? 0, version.currency, formatMoney)}</td>
           <td>
             {version.profitabilityViewAllowed === false ? (
               <span className="qc-row-sub" title="Chỉ Sale phụ trách hoặc Admin mới xem được margin">Không có quyền xem</span>
@@ -1426,7 +1439,7 @@ export function QuoteCenterPage() {
         </div>
         <div className="qc-quote-card-row">
           <span className="qc-quote-card-label">Giá khách</span>
-          <span className="qc-quote-card-value qc-cell-money">{formatMoney(current.customerPriceBeforeVat ?? 0)}</span>
+          <span className="qc-quote-card-value qc-cell-money">{formatQuoteAmountOr(current.customerPriceBeforeVat ?? 0, current.currency, formatMoney)}</span>
         </div>
         <div className="qc-quote-card-row">
           <span className="qc-quote-card-label">SLA</span>
@@ -1480,7 +1493,7 @@ export function QuoteCenterPage() {
               <div className="qc-quote-card-row">
                 <span className="qc-quote-card-label">Giá nội bộ</span>
                 <span className="qc-quote-card-value qc-cell-money">
-                  {current.hasCostData ? formatMoney(current.costTotal || 0) : <span className="qc-row-sub">Chưa có</span>}
+                  {current.hasCostData ? formatQuoteAmountOr(current.costTotal || 0, current.currency, formatMoney) : <span className="qc-row-sub">Chưa có</span>}
                 </span>
               </div>
             ) : null}
@@ -1512,11 +1525,6 @@ export function QuoteCenterPage() {
             <Plus className="qc-icon" />
             <span className="qc-btn-label-full">Yêu cầu hỗ trợ báo giá</span>
             <span className="qc-btn-label-short">Yêu cầu hỗ trợ</span>
-          </button>
-          <button type="button" className="qc-btn" onClick={openFreshModal}>
-            <Plus className="qc-icon" />
-            <span className="qc-btn-label-full">Tạo báo giá</span>
-            <span className="qc-btn-label-short">Tạo nhanh</span>
           </button>
         </div>
       </header>
@@ -1672,12 +1680,6 @@ export function QuoteCenterPage() {
             <button type="button" className="qc-btn qc-btn-primary" onClick={openRequestWorkspace} title="Mở workspace xử lý báo giá — chọn khách hàng/cơ hội và người phụ trách ngay trong workspace">
               <Plus className="qc-icon" /> Yêu cầu hỗ trợ báo giá
             </button>
-            <button type="button" className="qc-btn qc-btn-soft" onClick={openFreshModal}>
-              Tạo báo giá nhanh
-            </button>
-            <button type="button" className="qc-btn qc-btn-soft" onClick={openDealPicker}>
-              Tạo từ cơ hội CRM →
-            </button>
           </div>
         </div>
         <div className="qc-quick-steps">
@@ -1733,16 +1735,6 @@ export function QuoteCenterPage() {
                   </div>
                 </div>
                 <span className="qc-template-fieldcount">{form.fieldCount} trường dữ liệu</span>
-                <button
-                  type="button"
-                  className="qc-template-cta"
-                  onClick={event => {
-                    event.stopPropagation();
-                    openTemplateModal(form);
-                  }}
-                >
-                  Tạo báo giá
-                </button>
               </article>
             ))}
           </div>
@@ -2061,7 +2053,7 @@ export function QuoteCenterPage() {
       </section>
 
       {dealPickerOpen ? (
-        <div className="qc-modal-backdrop" onClick={closeDealPicker}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeDealPicker(); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Chọn cơ hội CRM</h3>
             <input
@@ -2095,7 +2087,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {versionHistory.open ? (
-        <div className="qc-modal-backdrop" onClick={() => setVersionHistory({ open: false, loading: false, quoteNumber: '', versions: [] })}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) setVersionHistory({ open: false, loading: false, quoteNumber: '', versions: [] }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Lịch sử phiên bản — {versionHistory.quoteNumber}</h3>
             <div className="qc-deal-picker-list">
@@ -2112,7 +2104,7 @@ export function QuoteCenterPage() {
                         {/* list_quote_versions tra ve moi nhat truoc -> phan tu dau = hien tai. */}
                         {index === 0 ? <span className="qc-badge qc-badge-success" style={{ marginLeft: 8 }}>Hiện tại</span> : null}
                       </strong>
-                      <span>{quoteDisplayStatus(version).label} · {formatMoney(version.totalAmount)}</span>
+                      <span>{quoteDisplayStatus(version).label} · {formatQuoteAmountOr(version.totalAmount, version.currency, formatMoney)}</span>
                     </Link>
                     <button
                       type="button"
@@ -2140,7 +2132,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {cancelModal.open ? (
-        <div className="qc-modal-backdrop" onClick={() => (!cancelModal.busy ? setCancelModal({ open: false, quoteId: '', quoteNumber: '', reason: '', busy: false }) : undefined)}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !cancelModal.busy) setCancelModal({ open: false, quoteId: '', quoteNumber: '', reason: '', busy: false }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Huỷ báo giá {cancelModal.quoteNumber}</h3>
             <p className="qc-workspace-note">Báo giá sẽ chuyển sang trạng thái Đã huỷ, không hard-delete, public link (nếu có) sẽ tự tắt.</p>
@@ -2165,7 +2157,7 @@ export function QuoteCenterPage() {
       ) : null}
 
       {revokeModal.open ? (
-        <div className="qc-modal-backdrop" onClick={() => (!revokeModal.busy ? setRevokeModal({ open: false, quoteId: '', quoteNumber: '', busy: false }) : undefined)}>
+        <div className="qc-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !revokeModal.busy) setRevokeModal({ open: false, quoteId: '', quoteNumber: '', busy: false }); }}>
           <div className="qc-deal-picker" onClick={event => event.stopPropagation()}>
             <h3>Huỷ công khai {revokeModal.quoteNumber}</h3>
             <p className="qc-workspace-note">Public link của báo giá này sẽ ngừng hoạt động ngay sau khi xác nhận. Báo giá KHÔNG bị xoá, có thể phát hành lại sau.</p>

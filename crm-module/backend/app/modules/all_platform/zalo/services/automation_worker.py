@@ -1,4 +1,4 @@
-"""Automation worker — tick loop xử lý `zalo_module_bulk_jobs` + `zalo_module_campaigns`
+"""Automation worker — tick loop xử lý `zalo_bulk_jobs` + `zalo_campaigns`
 (Mục 4.7 guide `automationWorker.js`, port sang 1 asyncio background task thay vì
 worker Node.js riêng — xem Kiến trúc quy đổi trong plan).
 

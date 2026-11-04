@@ -24,6 +24,7 @@
             apiBase: DEFAULT_API_BASE,
             idMember: null,
             tabId: null,
+            windowId: null,
             dashboardTabId: null,
             totalPosts: 0,
             totalSaved: 0,
@@ -59,6 +60,14 @@
     function log(message, level = "info") {
         console.log("[LI Crawl]", message);
         notifyApp({ action: "MK_LI_CRAWL_LOG", level, message });
+    }
+
+    // Bao tien do chi tiet cho rotation-crawl.js (neu dang chay qua lich xoay vong) theo
+    // doi va hien thi ro rang len UI - xem self.__mkLiProgressHook.
+    function reportProgress(state) {
+        if (typeof self.__mkLiProgressHook === "function") {
+            self.__mkLiProgressHook({ groupIndex: state.currentIndex, totalGroups: state.groupQueue.length, savedSoFar: state.totalSaved });
+        }
     }
 
     function waitForTabLoad(tabId, timeoutMs) {
@@ -125,12 +134,17 @@
             item.status = "running";
             await saveState();
             notifyApp({ action: "MK_LI_CRAWL_PROGRESS", groupIndex: state.currentIndex, totalGroups: state.groupQueue.length, groupUrl: item.url, posts: 0 });
+            reportProgress(state);
             log(`[${state.currentIndex + 1}/${state.groupQueue.length}] Đang mở nhóm: ${item.name || item.url}`);
 
             try {
                 if (state.tabId == null) {
-                    const tab = await chrome.tabs.create({ url: item.url, active: true });
-                    state.tabId = tab.id;
+                    // Mo 1 CUA SO RIENG, thu nho/khong focus - khong "boc" tab vao cua so
+                    // hien tai cua nguoi dung (tranh cuop focus, dung tinh than "khong dung
+                    // cham" giua acc he thong cao xoay vong va cac acc/tab khac dang dung).
+                    const win = await chrome.windows.create({ url: item.url, focused: false, state: "minimized", type: "normal" });
+                    state.windowId = win.id;
+                    state.tabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
                 } else {
                     await chrome.tabs.update(state.tabId, { url: item.url });
                 }
@@ -158,7 +172,12 @@
     async function advanceQueue(state) {
         const nextIndex = state.groupQueue.findIndex((g, i) => i > state.currentIndex && g.status === "pending");
         if (nextIndex === -1) return false;
-        await sleep(INTER_GROUP_COOLDOWN_MS);
+        // Nghỉ an toàn giữa các nhóm LinkedIn né bot
+        const cooldown = (state.config && state.config.groupRestSec != null && Number(state.config.groupRestSec) > 0)
+            ? Number(state.config.groupRestSec) * 1000
+            : (15000 + Math.floor(Math.random() * 15000)); // Tùy chỉnh hoặc 15s - 30s
+        log(`🛡️ Chống bot: Chờ an toàn ${(cooldown / 1000).toFixed(1)}s trước khi mở nhóm LinkedIn tiếp theo...`);
+        await sleep(cooldown);
         state.currentIndex = nextIndex;
         await saveState();
         return true;
@@ -166,11 +185,12 @@
 
     async function finishCrawl(stopped = false) {
         const state = await getState();
-        const wasTabId = state.tabId;
+        const wasWindowId = state.windowId;
         state.running = false;
         state.tabId = null;
+        state.windowId = null;
         await saveState();
-        if (wasTabId != null) chrome.tabs.remove(wasTabId).catch(() => {});
+        if (wasWindowId != null) chrome.windows.remove(wasWindowId).catch(() => {});
         const summary = {
             totalGroups: state.groupQueue.length,
             totalPosts: state.totalPosts,
@@ -212,6 +232,7 @@
         } else {
             log(`Lỗi lưu bài: ${saveResult.message}`, "error");
         }
+        reportProgress(state);
 
         if (!state.running) return finishCrawl(true);
         if (await advanceQueue(state)) runQueue();
@@ -241,6 +262,13 @@
             .map((g) => ({ url: String(g.url).trim(), name: g.name || null, status: "pending", savedCount: 0, error: null }));
         const cfg = request.config || {};
         if (cfg.maxPosts) state.config.maxPosts = Math.max(1, Math.min(200, parseInt(cfg.maxPosts, 10) || 40));
+        if (cfg.scrollDelayMinMs) state.config.scrollDelayMinMs = cfg.scrollDelayMinMs;
+        if (cfg.scrollDelayMaxMs) state.config.scrollDelayMaxMs = cfg.scrollDelayMaxMs;
+        if (cfg.scrollDistance) state.config.scrollDistance = cfg.scrollDistance;
+        if (cfg.maxScrolls) state.config.maxScrolls = cfg.maxScrolls;
+        if (cfg.oldPostsLimit) state.config.oldPostsLimit = cfg.oldPostsLimit;
+        if (cfg.maxScrollTimeSec) state.config.maxScrollTimeSec = cfg.maxScrollTimeSec;
+        if (cfg.groupRestSec) state.config.groupRestSec = cfg.groupRestSec;
         state.apiBase = cfg.apiBase || DEFAULT_API_BASE;
         state.idMember = cfg.idMember || null;
         state.dashboardTabId = dashboardTabId;
@@ -360,7 +388,10 @@
     // hook __mkLiDoneHook thay vi await thang startCrawl() nhu FB/Threads.
     self.__mkStartLiCrawl = (groups, config) => new Promise((resolve) => {
         self.__mkLiDoneHook = resolve;
-        startCrawl({ groups, config }, null);
+        // dashboardTabId tu config (rotation-crawl.js truyen xuong) - xem giai thich o
+        // fb-crawl.js. Truoc day luon truyen null nen notifyApp() broadcast cho TAT CA
+        // tab dang mo thay vi dung tab so huu lich cao (bug 2026-10-01).
+        startCrawl({ groups, config }, config.dashboardTabId ?? null);
     });
     self.__mkStopLiCrawl = stopCrawl;
     self.__mkLiCrawlStatus = async () => (await getState()).running;

@@ -31,6 +31,7 @@ function contractRows(contract: Contract, quoteNumber: string | null) {
     { label: 'Ngày bắt đầu', value: formatDate(contract.startDate), icon: CalendarDays },
     { label: 'Ngày kết thúc', value: formatDate(contract.endDate), icon: CalendarDays },
     { label: 'Ngày ký', value: formatDate(contract.signedAt), icon: CalendarDays },
+    { label: 'Thời gian bảo hành', value: contract.warrantyPeriod || '', icon: FileText },
   ];
 }
 
@@ -76,7 +77,9 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
   if (!open || !deal) return null;
 
   return (
-    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="crm-contract-detail-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-contract-detail-header">
           <div>

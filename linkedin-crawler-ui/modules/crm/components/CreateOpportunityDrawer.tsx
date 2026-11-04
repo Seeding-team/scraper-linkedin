@@ -10,6 +10,7 @@ import { allPlatformCategoriesService, usersService, crmTeamsService, type Quote
 import { DEAL_STAGE_META } from '../constants/crmConfig';
 import {
   CustomerProfileCombobox,
+  ProjectPicker,
   emptyDealForm,
   buildDealPayload,
   getSourceLabel,
@@ -21,9 +22,11 @@ import { CrmTeamFormModal } from './CrmTeamFormModal';
 import type { SelectAction } from './SearchableSelect';
 import { useCrmCategoryLabels } from './CrmCategorySelect';
 import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
+import { useLayeredDrawerClose } from '../hooks/useLayeredDrawerClose';
+import { UnsavedChangesDialog } from './UnsavedChangesDialog';
 import { ICP_OPTIONS, INTEREST_LEVEL_OPTIONS, type InterestLevel } from '../utils/leadQualificationRules';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
-import type { CreateDealInput, CrmCustomerRow } from '../types';
+import type { CreateDealInput, CrmCustomerRow, Deal } from '../types';
 import type { AppUser } from '@/types/unified.types';
 
 function headers() {
@@ -65,13 +68,22 @@ export function CreateOpportunityDrawer({
   currentUser,
   onClose,
   onCreated,
+  // Nhung noi nhung drawer nay vao 1 modal/workspace khac dang mo (vd
+  // "+ Tạo cơ hội mới" trong QuoteWorkspaceModal) KHONG duoc dieu huong di
+  // dau ca khi bam "Xác nhận tạo cơ hội" - Sale dang dang do mot bao gia,
+  // dieu huong se mat du lieu dang nhap. true = luon cu xu nhu nhanh "Lưu
+  // nháp" (dong + goi onCreated, khong router.push), bat ke mode nao.
+  suppressNavigation = false,
 }: {
   open: boolean;
   customer: CrmCustomerRow | null;
   currentUser: AppUser | null;
   onClose: () => void;
-  /** Tạo xong (Lưu nháp), ở lại danh sách (đóng drawer + báo cho trang cha reload số liệu). */
-  onCreated: () => void;
+  /** Tạo xong (Lưu nháp hoặc Tạo cơ hội), đóng drawer + báo cho trang cha reload số liệu.
+   * Nhận kèm Deal vừa tạo (khi cha cần dùng ngay, vd tự chọn vào 1 dropdown "Cơ hội CRM" -
+   * tham số optional để các nơi gọi cũ không cần đổi gì). */
+  onCreated: (deal?: Deal) => void;
+  suppressNavigation?: boolean;
 }) {
   useBodyScrollLock(open);
   const router = useRouter();
@@ -86,6 +98,22 @@ export function CreateOpportunityDrawer({
   // toan, dung chung" (2026-09-27): buoc 1 dien form -> buoc 2 xac nhan KPI
   // summary -> tao that + dieu huong sang trang chi tiet Khach hang.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // "Co thay doi chua luu" (2026-10-27, chuan hoa dong drawer) - chi can 1 co
+  // touched chung, bat len o MOI onChange nguoi dung thuc su go/chon (xem cac
+  // wrapper `touch()` duoi day), KHONG suy tu so sanh state (tranh false-positive
+  // vi nhieu field duoc auto-fill tu customer/owner ngay sau khi mo drawer).
+  const [touched, setTouched] = useState(false);
+  const touch = () => setTouched(true);
+  // Dau '?' canh nut chinh o footer (dong bo voi Xac minh Lead): bam de xem giai thich.
+  const [footerHelp, setFooterHelp] = useState(false);
+  useEffect(() => {
+    if (!footerHelp) return;
+    const close = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement | null)?.closest?.('.crm-footer-btn-wrap')) setFooterHelp(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [footerHelp]);
 
   // "Người liên hệ" - GIONG HET field cua form Xac minh Lead (chi go ten,
   // khong chon tu danh sach Contact co san/khong gan vai tro) - leader yeu
@@ -103,7 +131,6 @@ export function CreateOpportunityDrawer({
   // submit thay vi fabricate migration moi cho field UI-only.
   const [interestLevel, setInterestLevel] = useState<InterestLevel | ''>('');
   const [timeline, setTimeline] = useState('');
-  const [project, setProject] = useState('');
   const [note, setNote] = useState('');
   const [nurtureReason, setNurtureReason] = useState('');
   const [unqualifiedReason, setUnqualifiedReason] = useState('');
@@ -141,13 +168,13 @@ export function CreateOpportunityDrawer({
     setEstimatedBudget('');
     setInterestLevel('');
     setTimeline('');
-    setProject('');
     setNote('');
     setNurtureReason('');
     setUnqualifiedReason('');
     setError('');
     setSaving('');
     setConfirmOpen(false);
+    setTouched(false);
     // Component KHONG unmount that su khi open=false (chi return null) nen
     // addTeamOpen (modal "+ Thêm Team mới") khong tu mat - phai reset tay o
     // day, tranh loi mo lai drawer van con thay modal tao Team cua lan truoc.
@@ -312,12 +339,23 @@ export function CreateOpportunityDrawer({
 
   // Chua chon Team -> giu danh sach Sale toan he thong nhu cu; da chon Team ->
   // THAY THANG bang dung thanh vien Team do.
-  const aeOptionsForSelect = useMemo(
-    () => teamId
+  // Presale cung duoc lam Sale phu trach (vd chi Thao Vu): luon co trong danh sach, tim theo ten khong phu thuoc Team dang chon.
+  const [presaleUsers, setPresaleUsers] = useState<QuoteBusinessRoleUser[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getUsersByQuoteBusinessRole('presale')
+      .then(res => { if (alive) setPresaleUsers(res.success ? res.data || [] : []); })
+      .catch(() => { if (alive) setPresaleUsers([]); });
+    return () => { alive = false; };
+  }, [open]);
+  const aeOptionsForSelect = useMemo(() => {
+    const base = teamId
       ? (teamMembers || []).map(user => ({ value: user.id, label: user.name || user.email }))
-      : aeOptions.map(user => ({ value: user.id, label: user.name })),
-    [teamId, teamMembers, aeOptions],
-  );
+      : aeOptions.map(user => ({ value: user.id, label: user.name }));
+    const seen = new Set(base.map(o => o.value));
+    return [...base, ...presaleUsers.filter(u => u?.id && !seen.has(u.id)).map(u => ({ value: u.id, label: u.name || u.id }))];
+  }, [teamId, teamMembers, aeOptions, presaleUsers]);
   const teamOptionsForSelect = useMemo(
     () => teamOptions.map(team => ({ value: team.id, label: team.name })),
     [teamOptions],
@@ -346,6 +384,7 @@ export function CreateOpportunityDrawer({
     hasValue: Boolean(estimatedBudget),
     hasTeam: Boolean(customerForm.sdrId),
     hasNext: Boolean(customerForm.nextStep.trim()),
+    nextStepValue: customerForm.nextStep,
     hasFollow: Boolean(customerForm.followUpDate),
     hasContact: Boolean(customerForm.phone?.trim() || customerForm.email?.trim()),
   });
@@ -403,9 +442,10 @@ export function CreateOpportunityDrawer({
     const noteLines: string[] = [];
     if (timeline) noteLines.push(`Dự kiến triển khai: ${timeline}`);
     if (icpFit !== 'unknown') noteLines.push(`ICP: ${ICP_OPTIONS.find(o => o.value === icpFit)?.label}`);
-    if (project.trim()) noteLines.push(`Dự án: ${project.trim()}`);
     if (note.trim()) noteLines.push(note.trim());
     const form: DealFormState = {
+      // projectId/dealName da duoc ProjectPicker ghi thang vao customerForm
+      // (giong het +Deal that) - khong con can ghi de rieng o day nua.
       ...customerForm,
       servicePackage: productValue,
       estimatedBudget,
@@ -428,9 +468,20 @@ export function CreateOpportunityDrawer({
     setSaving(mode);
     try {
       const payload = buildPayload();
-      await seedingCrmRepository.createDeal(payload);
-      if (mode === 'stay') {
-        onCreated();
+      const created = await seedingCrmRepository.createDeal(payload);
+      // Luon bao cho trang cha reload (bump reloadTick) bat ke mode nao - rieng
+      // nhanh 'deal' ben duoi chi router.push SANG CUNG 1 trang (doi query
+      // ?tab=deals), Next.js KHONG tu fetch lai du lieu vi customerId khong
+      // doi -> thieu onCreated() o day la ly do "tạo xong k update liền mà
+      // f5 mới thấy" (bug thuc te nguoi dung bao cao).
+      onCreated(created);
+      if (mode === 'stay' || suppressNavigation) {
+        // da goi onCreated() o tren - suppressNavigation (nhung trong modal
+        // khac) khong duoc dieu huong di dau du dang o nhanh 'deal'.
+        if (mode === 'deal') {
+          setConfirmOpen(false);
+          onClose();
+        }
       } else {
         // Feedback leader 2026-09-27: "xác nhận tạo cơ hội xong thì tự trỏ về
         // đúng trang chi tiết khách hàng" - giong het hanh vi handleConvert()
@@ -461,6 +512,12 @@ export function CreateOpportunityDrawer({
     setConfirmOpen(true);
   }
 
+  const { backdropMouseDownProps, requestClose, confirmOpen: unsavedConfirmOpen, confirmStay, confirmDiscard } = useLayeredDrawerClose({
+    isOpen: open && !!customer,
+    onRequestClose: onClose,
+    isDirty: () => touched,
+  });
+
   if (!open || !customer) return null;
 
   return (
@@ -470,7 +527,19 @@ export function CreateOpportunityDrawer({
        * Lead de de dung, chi giu dung field da co san cua Tao co hoi, khong
        * them field lead-only (ICP fit, AI score...) vi Co hoi da co san Khach
        * hang, khong can lai. */}
-      <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />
+      {/* Truoc day backdrop nay "--passive" (pointer-events:none) nen click ra ngoai KHONG
+       * he dong drawer (yeu cau sep "chuan hoa dong drawer" phat hien dung bug nay). Giu
+       * NGUYEN giao dien (van trong suot, khong dim man hinh) bang inline style, chi BAT
+       * pointer-events de nhan click that su + gan handler dung chung. */}
+      {/* z-index 99988 (< 99990 cua sidebar trai, AllPlatformSidebar.tsx) - .crm-drawer-backdrop
+       * mac dinh z-index:99990 TRUNG voi sidebar, truoc day vo hai vi pointer-events:none, nhung
+       * BAT pointer-events len (de click-ra-ngoai hoat dong) thi tie-break theo thu tu DOM se de
+       * backdrop nay chan het click len sidebar (phat hien that qua Playwright khi sua bug nay). */}
+      <div
+        className="crm-drawer-backdrop crm-lead-verify-backdrop"
+        style={{ background: 'transparent', backdropFilter: 'none', pointerEvents: 'auto', zIndex: 99988 }}
+        {...backdropMouseDownProps}
+      />
       <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer" data-crm-create-opportunity-drawer="true">
         <header className="crm-lead-drawer-header crm-verify-header">
           <div className="crm-verify-header-text">
@@ -486,7 +555,7 @@ export function CreateOpportunityDrawer({
             </h2>
           </div>
           <div className="crm-lead-drawer-header-actions">
-            <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+            <button type="button" className="crm-drawer-close" onClick={requestClose} aria-label="Đóng">
               <X className="crm-icon" />
             </button>
           </div>
@@ -572,23 +641,25 @@ export function CreateOpportunityDrawer({
               <LeadDealQualificationPanel
                 canWrite
                 interest={productValue}
-                onInterestChange={setProductValue}
+                onInterestChange={value => { touch(); setProductValue(value); }}
                 estimatedValue={parseCurrencyInput(estimatedBudget)}
-                onEstimatedValueChange={value => setEstimatedBudget(value != null ? String(value) : '')}
+                onEstimatedValueChange={value => { touch(); setEstimatedBudget(value != null ? String(value) : ''); }}
                 interestLevel={interestLevel}
-                onInterestLevelChange={setInterestLevel}
+                onInterestLevelChange={value => { touch(); setInterestLevel(value); }}
                 timeline={timeline}
-                onTimelineChange={setTimeline}
-                project={project}
-                onProjectChange={setProject}
+                onTimelineChange={value => { touch(); setTimeline(value); }}
+                project={customerForm.dealName}
+                onProjectChange={() => {}}
+                projectField={<ProjectPicker form={customerForm} setValue={setCustomerFormValue} />}
                 note={note}
-                onNoteChange={setNote}
+                onNoteChange={value => { touch(); setNote(value); }}
                 teamId={teamId}
                 onTeamIdChange={handleTeamIdChange}
                 teamOptions={teamOptionsForSelect}
                 teamActions={teamActions}
                 aeId={customerForm.sdrId}
                 onAeIdChange={value => {
+                  touch();
                   const nameHint = teamId
                     ? (teamMembers || []).find(user => user.id === value)?.name
                       || (teamMembers || []).find(user => user.id === value)?.email
@@ -598,13 +669,13 @@ export function CreateOpportunityDrawer({
                 }}
                 aeOptions={aeOptionsForSelect}
                 contactName={contactName}
-                onContactNameChange={setContactName}
+                onContactNameChange={value => { touch(); setContactName(value); }}
                 nextStep={customerForm.nextStep}
-                onNextStepChange={value => setCustomerFormValue('nextStep', value)}
+                onNextStepChange={value => { touch(); setCustomerFormValue('nextStep', value); }}
                 nextStepAt={customerForm.followUpDate}
-                onNextStepAtChange={value => setCustomerFormValue('followUpDate', value)}
+                onNextStepAtChange={value => { touch(); setCustomerFormValue('followUpDate', value); }}
                 dealStage={customerForm.stage}
-                onDealStageChange={value => setCustomerFormValue('stage', value as DealFormState['stage'])}
+                onDealStageChange={value => { touch(); setCustomerFormValue('stage', value as DealFormState['stage']); }}
                 verificationOutcome={verificationOutcome}
                 ruleConditions={ruleConditions}
                 outcomeReasons={outcomeReasons}
@@ -638,6 +709,11 @@ export function CreateOpportunityDrawer({
           </footer>
         ) : (
           <footer className="crm-drawer-footer crm-verify-footer">
+            {!reviewReady ? (
+              <p className="crm-footer-reason" data-testid="deal-footer-reason">
+                Chưa thể tạo cơ hội — còn thiếu: {reviewChecks.filter(c => !c.ok).map(c => c.label).join(', ')}.
+              </p>
+            ) : null}
             {/* 2 nut giong het footer buoc 1 cua LeadDetailDrawer (Lưu nháp |
              * nut chinh mo buoc xac nhan) - leader yeu cau 2 form giong nhau
              * hoan toan (2026-09-27). "Lưu nháp" o day tao Deal that luon (deal
@@ -651,9 +727,17 @@ export function CreateOpportunityDrawer({
                 {saving === 'stay' ? <Loader2 className="crm-save-spinner" /> : null}
                 Lưu nháp
               </button>
-              <button type="button" className="crm-primary-button" disabled={!reviewReady || saving !== ''} onClick={openConfirm}>
-                Tạo cơ hội
-              </button>
+              <span className="crm-footer-btn-wrap">
+                <button type="button" className="crm-primary-button" disabled={!reviewReady || saving !== ''} onClick={openConfirm}>
+                  Tạo cơ hội
+                </button>
+                <button type="button" className="crm-footer-help" aria-label="Giải thích nút này" aria-expanded={footerHelp} data-testid="deal-footer-help" onClick={() => setFooterHelp(v => !v)}>?</button>
+                {footerHelp ? (
+                  <div className="crm-footer-help-pop" role="dialog" data-testid="deal-footer-help-pop">
+                    Tạo cơ hội: mở bước xác nhận rồi tạo Cơ hội mới cho khách hàng đã chọn, giao cho Sale nhận bàn giao và chuyển sang trang Chi tiết khách hàng. Cần đủ khách hàng, Team Sale, Sale nhận bàn giao, việc tiếp theo và hạn follow-up.
+                  </div>
+                ) : null}
+              </span>
             </div>
           </footer>
         )}
@@ -673,6 +757,7 @@ export function CreateOpportunityDrawer({
           handleTeamIdChange(newTeam.id);
         }}
       />
+      {unsavedConfirmOpen ? <UnsavedChangesDialog onStay={confirmStay} onDiscard={confirmDiscard} /> : null}
     </>
   );
 }

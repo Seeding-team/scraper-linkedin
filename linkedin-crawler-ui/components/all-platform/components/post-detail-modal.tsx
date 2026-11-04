@@ -2,7 +2,7 @@
 
 import React from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
@@ -14,6 +14,8 @@ interface PostDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   onVerify?: (post: UnifiedPost) => void;
+  /** YouTube: mở modal comment (mở video trong tab mới, điền sẵn, tính KPI). */
+  onComment?: (post: UnifiedPost) => void;
   verifyStatus?: "pending" | "yes" | "no";
 }
 
@@ -22,6 +24,7 @@ export function PostDetailModal({
   isOpen,
   onClose,
   onVerify,
+  onComment,
   verifyStatus,
 }: PostDetailModalProps) {
   const [isInboxOpen, setIsInboxOpen] = React.useState(false);
@@ -41,9 +44,13 @@ export function PostDetailModal({
     return Array.from(groups.values());
   }, [fallbackItems, libraryItems]);
 
-  const isRejected = (link?: string) => {
+  const isRejected = (link?: string | null) => {
     return link && link.startsWith("Bị từ chối");
   };
+
+  // Né hiển thị trùng với bong bóng "Hệ thống (tự động)" bên dưới (cùng 1 hành động ghi lại
+  // ở 2 nơi khác nhau — xem giải thích ở post-card.tsx).
+  const seedingContentIsAuto = !!post?.auto_seeding_comment?.content && post?.seeding_content === post.auto_seeding_comment.content;
 
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -61,10 +68,11 @@ export function PostDetailModal({
     window.open(post.post_url, "_blank");
   };
 
-  const score = post.score || 0;
-  let scoreBg = "bg-muted text-foreground border-border";
-  if (score >= 85) scoreBg = "bg-red-50 text-primary border-red-100";
-  else if (score >= 60) scoreBg = "bg-amber-50 text-amber-600 border-amber-100";
+  // Điểm "tiềm năng seeding" do LLM chấm (migration 159) — thay cho khối "AI Score" cũ
+  // tính từ tương tác (đã bỏ, giống post-card.tsx).
+  const leadScore = typeof post.lead_score === "number" ? post.lead_score : null;
+  const isHighLead = leadScore !== null && leadScore >= 70;
+  const isMidLead = leadScore !== null && leadScore >= 31 && leadScore < 70;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
@@ -76,6 +84,8 @@ export function PostDetailModal({
               <FaFacebook className="text-blue-600" />
             ) : post.platform === "threads" ? (
               <FaThreads className="text-foreground" />
+            ) : post.platform === "youtube" ? (
+              <FaYoutube className="text-[#ff0000]" />
             ) : (
               <FaLinkedin className="text-blue-700" />
             )}
@@ -95,10 +105,6 @@ export function PostDetailModal({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="flex gap-4 items-start mb-6">
-            <div className={cn("w-16 h-16 rounded-xl flex flex-col items-center justify-center shrink-0 border", scoreBg)}>
-              <span className="text-2xl font-black leading-tight">{score}</span>
-              <span className="text-[10px] font-bold uppercaseer mt-0.5 opacity-80">AI Score</span>
-            </div>
             <div>
               <a
                 href={post.post_url}
@@ -109,6 +115,21 @@ export function PostDetailModal({
                 {post.group_name || "Unknown Group"}
               </a>
               <div className="flex flex-wrap gap-2 mb-2">
+                {leadScore !== null && (
+                  <span
+                    title={post.lead_score_reason || "Điểm tiềm năng seeding do AI chấm"}
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold border",
+                      isHighLead
+                        ? "bg-emerald-100 text-emerald-700 border-emerald-300"
+                        : isMidLead
+                          ? "bg-amber-50 text-amber-600 border-amber-200"
+                          : "bg-muted text-muted-foreground border-border opacity-70",
+                    )}
+                  >
+                    🎯 {leadScore}
+                  </span>
+                )}
                 {post.intent && <span className="rounded bg-purple-50 px-2 py-0.5 text-xs font-bold text-purple-600">{post.intent}</span>}
                 {post.industry && <span className="rounded bg-indigo-50 px-2 py-0.5 text-xs font-bold text-indigo-600">{post.industry}</span>}
                 {post.icp && <span className="rounded bg-pink-50 px-2 py-0.5 text-xs font-bold text-pink-600">{post.icp}</span>}
@@ -140,7 +161,7 @@ export function PostDetailModal({
             </div>
           ) : null}
 
-          {post.seeding_content && (
+          {post.seeding_content && !seedingContentIsAuto && (
             <div className="bg-emerald-50/50 rounded-xl border border-emerald-100 p-4 mb-6">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-bold text-emerald-700 uppercase bg-emerald-100/50 px-2 py-0.5 rounded">Tài khoản Seeding:</span>
@@ -152,7 +173,7 @@ export function PostDetailModal({
               {post.link_comment && !isRejected(post.link_comment) && (
                 <div className="mt-3">
                   <a href={post.link_comment} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline inline-flex items-center gap-1.5 bg-card px-3 py-1.5 rounded-lg border border-blue-100 shadow-sm transition hover:shadow">
-                    <FiExternalLink className="w-4 h-4" /> Đi tới bình luận trên Facebook
+                    <FiExternalLink className="w-4 h-4" /> Đi tới bình luận
                   </a>
                 </div>
               )}
@@ -162,6 +183,45 @@ export function PostDetailModal({
                     <span className="material-symbols-outlined text-[16px]">error</span>
                     Bị từ chối / Lỗi
                   </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {post.auto_seeding_comment?.phone_number && (
+            <div className="bg-sky-50/50 rounded-xl border border-sky-100 p-3 mb-6">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-800">
+                  📞 {post.auto_seeding_comment.phone_number}
+                </span>
+                {post.auto_seeding_comment.zalo_display_name && (
+                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700">
+                    · Zalo: {post.auto_seeding_comment.zalo_display_name}
+                  </span>
+                )}
+                {post.auto_seeding_comment.zalo_status === "sent" ? (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    <span>✓ Đã nhắn tin Zalo với số {post.auto_seeding_comment.phone_number}</span>
+                    {post.auto_seeding_comment.zalo_sent_by && (
+                      <span className="font-semibold opacity-90">({post.auto_seeding_comment.zalo_sent_by})</span>
+                    )}
+                  </span>
+                ) : post.auto_seeding_comment.zalo_status === "failed" ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700" title={post.auto_seeding_comment.zalo_error || undefined}>
+                    ⚠️ Chưa nhắn được qua Zalo
+                  </span>
+                ) : null}
+              </div>
+              {post.auto_seeding_comment.zalo_conversation_id && (
+                <div className="mt-2">
+                  <a
+                    href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-blue-600 hover:underline inline-flex items-center gap-1"
+                  >
+                    Xem hộp thoại <FiExternalLink className="w-3.5 h-3.5" />
+                  </a>
                 </div>
               )}
             </div>
@@ -215,6 +275,15 @@ export function PostDetailModal({
               <FiExternalLink />
               Xem chi tiết
             </button>
+            {onComment && (
+              <button
+                onClick={() => onComment(post)}
+                className="px-4 py-2 bg-[#ff0000] hover:bg-[#d90000] text-white rounded-xl text-sm font-bold transition shadow-sm flex items-center gap-1.5"
+              >
+                <FaYoutube />
+                Bình luận
+              </button>
+            )}
             {onVerify && !(post.seeding_content && post.link_comment) && (
               <button
                 onClick={() => onVerify(post)}

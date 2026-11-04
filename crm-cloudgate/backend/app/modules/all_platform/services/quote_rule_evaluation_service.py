@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.supabase_quote_service import flatten_quote_items
 
 # Nhan hien thi + don vi cho tung rule_type - dung khi build evaluation_details.
 _RULE_LABELS = {
@@ -175,8 +176,16 @@ def compute_quote_metrics(quote: dict[str, Any]) -> dict[str, Any]:
     nang bang 1 dong CK 5% tien lon)."""
     gross_margin_percent = quote.get("grossMarginPercent")
     gross_profit = quote.get("grossProfit")
+    # Nguong loi nhuan (gross_profit_amount) tinh bang VND - quote USD phai quy doi theo ty gia
+    # DA CHOT cua chinh quote (margin % khong doi vi la ty le cung tien te).
+    if gross_profit is not None and str(quote.get("currency") or "VND").upper() != "VND":
+        from app.modules.all_platform.services.quote_currency import quote_amount_to_vnd
+        gross_profit = quote_amount_to_vnd(gross_profit, quote.get("currency"), quote.get("exchangeRate"))
 
-    items = quote.get("items") or []
+    # quote["items"] co the la cay long nhau (hang muc that nam trong children cua Section) - phai
+    # flatten truoc khi tinh subtotal/discount, neu khong bao gia gom nhom se tinh sai thanh
+    # discount_percent=0 (bug thuc te 2026-10-10, co the lam sai ket qua rule engine duyet bao gia).
+    items = flatten_quote_items(quote.get("items"))
     subtotal = sum(float(i.get("subtotalAmount") or 0) for i in items)
     discount_amount = sum(float(i.get("discountAmount") or 0) for i in items)
     discount_percent = (discount_amount / subtotal * 100) if subtotal > 0 else (0.0 if items else None)

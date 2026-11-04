@@ -20,30 +20,30 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_view_lead,
     can_write_lead,
     has_full_crm_access,
+    get_crm_team_ids_for_user,
+    get_effective_permissions,
     get_scope_visible_user_ids,
+    get_crm_team_member_ids,
 )
 from app.modules.all_platform.services.crm_position_service import apply_position_category
-# "Team" = phong ban THAT trong `members` (HR roster) - dung LAI DUNG nguon
-# da chot cho module Quan ly tien do, khong tu tao nguon rieng.
-from app.modules.all_platform.services.progress_service import _user_department_map
 
 logger = logging.getLogger(__name__)
 
 LEAD_COLUMNS = (
-    "id, lead_name, company_name, position, position_category_id, "
+    "id, lead_name, company_name, tax_code, position, position_category_id, "
     "position_label_snapshot, phone, phone_normalized, email, "
     "email_normalized, zalo, facebook, telegram, website, source, status, "
-    "score, sdr_id, note, qualification_need, qualification_icp_fit, "
+    "score, sdr_id, team_id, project_name, deal_stage, note, qualification_need, qualification_icp_fit, "
     "qualification_estimated_value, qualification_decision_maker, "
     "qualification_expected_timeline, qualification_ae_id, next_step, "
     "follow_up_date, converted_customer_id, converted_contact_id, "
     "converted_deal_id, converted_by, converted_at, created_by, created_at, "
-    "updated_at, origin_instance"
+    "updated_at, instance, origin_instance, handover_links, handover_by, handover_at"
 )
 
 # sdr_id/qualification_ae_id la UUID nullable - frontend co the gui "" thay vi
 # null (cung ly do voi _NULLABLE_UUID_COLUMNS trong customer_lead_service.py).
-_NULLABLE_UUID_COLUMNS = ("sdr_id", "qualification_ae_id", "created_by")
+_NULLABLE_UUID_COLUMNS = ("sdr_id", "team_id", "qualification_ae_id", "created_by")
 
 LEAD_STATUS_MAP = {
     "new_lead": "mql",
@@ -76,6 +76,11 @@ _STATUS_DISPLAY_TO_INTERNAL_MAP = {
     "nurturing": "nurture",
     "unqualified": "disqualified",
 }
+
+# Main la CRM markee CO DINH (settings.crm_instance = "markee", khong co
+# workspace_domains/switcher nhu 3 clone). Vi vay danh sach dich hop le khi
+# sao chep Lead tu Main chi co the la 2 clone doc lap con lai.
+_MAIN_COPY_TARGET_INSTANCES = ("cloudgate", "SECURITYZONE")
 
 
 def _normalize_lead_status(row: dict[str, Any]) -> dict[str, Any]:
@@ -165,9 +170,11 @@ def _visible_lead_ids(user: dict[str, Any]) -> set[str] | None:
 
     supabase = get_supabase_client()
     visible: set[str] = set()
-    own_filter = ",".join(
-        [f"sdr_id.eq.{o}" for o in owner_ids] + [f"qualification_ae_id.eq.{o}" for o in owner_ids]
-    )
+    own_filter_parts = [f"sdr_id.eq.{o}" for o in owner_ids] + [f"qualification_ae_id.eq.{o}" for o in owner_ids]
+    if scope_user_ids is not None and get_effective_permissions(user).get("scope") == "team":
+        # Phan quyen theo CRM Team: Lead gan truc tiep CRM Team (crm_leads.team_id - KHONG phai teams cu) hoac do thanh vien team tao.
+        own_filter_parts += [f"team_id.eq.{t}" for t in get_crm_team_ids_for_user(uid)] + [f"created_by.eq.{o}" for o in owner_ids]
+    own_filter = ",".join(own_filter_parts)
     own = execute_supabase_query(
         lambda: supabase.table("crm_leads")
         .select("id")
@@ -190,11 +197,29 @@ def _visible_lead_ids(user: dict[str, Any]) -> set[str] | None:
     return visible
 
 
+def _mark_deal_out(rows: list[dict[str, Any]]) -> None:
+    """Gan `deal_out` THAT tu backend: Lead da convert ma Co hoi (customer_leads.deal_stage) = 'lost' -> OUT.
+    OUT tach rieng voi 'Khong dat chuan' (unqualified/disqualified - Lead bi loai TRUOC khi convert)."""
+    deal_ids = list({row["converted_deal_id"] for row in rows if row.get("converted_deal_id")})
+    lost: set[str] = set()
+    if deal_ids:
+        supabase = get_supabase_client()
+        for i in range(0, len(deal_ids), 200):
+            chunk = deal_ids[i:i + 200]
+            res = execute_supabase_query(
+                lambda c=chunk: supabase.table("customer_leads").select("id").in_("id", c).eq("deal_stage", "lost").eq("instance", settings.crm_instance).execute()
+            )
+            lost.update(r["id"] for r in res.data or [])
+    for row in rows:
+        row["deal_out"] = bool(row.get("converted_deal_id") and row["converted_deal_id"] in lost)
+
+
 def _kpi(leads: list[dict[str, Any]]) -> dict[str, int]:
     return {
         "total": len(leads),
         "mql": sum(1 for row in leads if row.get("status") == "mql"),
-        "sql": sum(1 for row in leads if row.get("status") == "sql"),
+        "sql": sum(1 for row in leads if row.get("status") == "sql" and not row.get("deal_out")),
+        "out": sum(1 for row in leads if row.get("deal_out")),
         "nurturing": sum(1 for row in leads if row.get("status") == "nurturing"),
         "unqualified": sum(1 for row in leads if row.get("status") == "unqualified"),
     }
@@ -214,27 +239,64 @@ def list_leads(
     supabase = get_supabase_client()
     query = supabase.table("crm_leads").select(LEAD_COLUMNS).eq("instance", settings.crm_instance)
     if search:
-        query = query.or_(
-            f"lead_name.ilike.%{search}%,company_name.ilike.%{search}%,"
-            f"phone.ilike.%{search}%,email.ilike.%{search}%"
-        )
+        # Ngoai ten/cong ty/SDT/email: tim ca theo MA KH (crm_customers.customer_code) va MA LIEN HE
+        # (crm_contacts.contact_code) - partial, o backend (lead -> khach/lien he da convert).
+        or_parts = [
+            f"lead_name.ilike.%{search}%", f"company_name.ilike.%{search}%",
+            f"phone.ilike.%{search}%", f"email.ilike.%{search}%",
+        ]
+        if _lead_code_column_exists():
+            or_parts.append(f"contact_code.ilike.%{search}%")
+        for table, code_col, lead_col in (
+            ("crm_customers", "customer_code", "converted_customer_id"),
+            ("crm_contacts", "contact_code", "converted_contact_id"),
+        ):
+            try:
+                code_rows = execute_supabase_query(
+                    lambda t=table, c=code_col: supabase.table(t).select("id").eq("instance", settings.crm_instance).ilike(c, f"%{search}%").limit(200).execute()
+                ).data or []
+            except Exception:  # cot ma chua ton tai o DB nay -> bo qua nhanh tim theo ma, van tim theo ten/SDT/email
+                code_rows = []
+            if code_rows:
+                or_parts.append(f"{lead_col}.in.({','.join(str(r['id']) for r in code_rows)})")
+        query = query.or_(",".join(or_parts))
     if status:
-        status_values = LEAD_STATUS_FILTERS.get(status, [status])
+        # 'out' = Lead da convert co Co hoi OUT (loc theo deal_out o duoi, nen o day lay nhom da convert/sql)
+        status_values = LEAD_STATUS_FILTERS.get("sql" if status == "out" else status, [status])
         query = query.in_("status", status_values)
     if source:
         query = query.eq("source", source)
     if sdr_id:
-        query = query.eq("sdr_id", sdr_id)
+        # Loc theo nguoi phu trach: SDR cua lead HOAC Sale phu trach (qualification_ae_id, o drawer "Sale phu trach").
+        # Truoc day chi so sdr_id nen lead co Sale phu trach la nguoi nay ma sdr_id khac thi loc khong ra.
+        if re.fullmatch(r"[0-9a-fA-F-]{36}", sdr_id):
+            query = query.or_(f"sdr_id.eq.{sdr_id},qualification_ae_id.eq.{sdr_id}")
+        else:
+            query = query.eq("sdr_id", sdr_id)
 
     res = execute_supabase_query(lambda: query.order("updated_at", desc=True).execute())
     rows = [_normalize_lead_status(row) for row in (res.data or [])]
     visible = _visible_lead_ids(user)
     if visible is not None:
         rows = [row for row in rows if row.get("id") in visible]
+    _mark_deal_out(rows)
+    if status == "out":
+        rows = [row for row in rows if row.get("deal_out")]
+    elif status == "sql":
+        rows = [row for row in rows if not row.get("deal_out")]  # Lead OUT khong con tinh la SQL dang xu ly
 
     if team:
-        dept_map = _user_department_map()
-        rows = [row for row in rows if dept_map.get(str(row.get("sdr_id") or "")) == team]
+        # "Team" = Team CRM THAT (crm_teams/crm_team_members, migration 155) -
+        # fix 2026-10-03 (dong bo voi crm_customer_service.py): truoc day dung
+        # phong ban HR text (members.team) thay vi Team CRM that nen dropdown
+        # "Tất cả Team" hien sai danh sach + loc sai nguoi.
+        crm_team_member_ids = get_crm_team_member_ids(team)
+        rows = [
+            row for row in rows
+            if str(row.get("sdr_id") or "") in crm_team_member_ids
+            or str(row.get("qualification_ae_id") or "") in crm_team_member_ids
+            or str(row.get("team_id") or "") == str(team)
+        ]
 
     total = len(rows)
     start = (page - 1) * page_size
@@ -322,6 +384,15 @@ def duplicate_check(user: dict[str, Any], phone: str | None, email: str | None) 
     visible = _visible_lead_ids(user)
     if visible is not None:
         matches = [row for row in matches if row.get("id") in visible]
+    # BUG THAT DA GAP (phat hien 2026-10-31 khi test wizard "+ Tao co hoi" tu
+    # Omnichannel Inbox bang Playwright that): _duplicate_query() doc thang
+    # LEAD_COLUMNS tu crm_leads, KHONG qua get_lead()/list_leads() nen thieu
+    # han field can_write - FE (mapLead()) doc thieu field nay se mac dinh ve
+    # false, lam MOI input trong LeadDetailDrawer bi khoa disabled het khi mo
+    # 1 Lead tim thay qua duplicate-check (vd luong resume cua
+    # QuickCreateOpportunityFromInbox) dung MA KHONG co cach nao sua duoc.
+    for row in matches:
+        row["can_write"] = can_write_lead(user, row)
     return matches
 
 
@@ -393,10 +464,11 @@ def company_match(user: dict[str, Any], tax_code: str | None, website: str | Non
 def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     actor_id = str(user.get("id") or "")
     allow_duplicate = bool(payload.pop("allow_duplicate", False))
+    allow_no_contact = bool(payload.pop("allow_no_contact", False))
     data = _normalize_payload(payload, actor_id=actor_id)
     if not data.get("lead_name"):
         raise ValueError("Vui long nhap ten Lead.")
-    if not data.get("phone") and not data.get("email"):
+    if not allow_no_contact and not data.get("phone") and not data.get("email"):
         raise ValueError("Can nhap so dien thoai hoac email.")
     if data.get("phone") and not data.get("phone_normalized"):
         raise ValueError("So dien thoai khong hop le.")
@@ -417,6 +489,15 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     if not (has_full_crm_access(user) and data.get("sdr_id")):
         data["sdr_id"] = actor_id or None
     _validate_owner(data.get("sdr_id"))
+    # GD3: Team member tu tao Lead -> mac dinh nguoi phu trach = chinh minh + CRM Team cua minh (khong can tu ban giao).
+    # User khong thuoc CRM Team nao (vd Marketing tao Lead de ban giao) khong bi gan tu dong.
+    if actor_id and not data.get("qualification_ae_id"):
+        from app.modules.all_platform.services.crm_permission_service import get_crm_team_id_for_user
+
+        own_team = get_crm_team_id_for_user(actor_id)
+        if own_team:
+            data["qualification_ae_id"] = actor_id
+            data.setdefault("team_id", own_team)
     if data.get("status") in ("sql", "qualified", "converted"):
         raise ValueError("Khong duoc tao lead voi status SQL/converted truc tiep - phai qua Convert Lead.")
     raw_status = str(data.get("status") or "mql")
@@ -440,6 +521,22 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
     if not can_write_lead(user, current):
         raise PermissionError("Khong co quyen sua lead nay.")
     data = {key: _clean_text(value) if isinstance(value, str) else value for key, value in payload.items()}
+    # The qualification drawer also owns project_id (picking an EXISTING
+    # Project via a picker), which only makes sense once a Deal/Customer
+    # exists - keep that one Deal-only by stripping it before writing
+    # crm_leads, then sync below if a converted deal exists. team_id is a Team
+    # CRM id (crm_teams) on crm_leads, while customer_leads.team_id still points
+    # at the legacy KPI teams table, so it must remain Lead-only here. Mapping
+    # it into the Deal update makes the whole sync fail on the FK and causes the
+    # UI to look correct until a hard refresh reloads the unsynced Deal.
+    # project_name/deal_stage are real crm_leads fields (persist even before
+    # conversion), so they must remain in `data`.
+    _DEAL_ONLY_UPDATE_FIELDS = ("project_id",)
+    deal_only_updates = {
+        key: data.pop(key)
+        for key in _DEAL_ONLY_UPDATE_FIELDS
+        if key in data
+    }
     if "email" in data:
         data["email_normalized"] = normalize_email(data.get("email"))
     if "phone" in data:
@@ -462,6 +559,12 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
         data["status"] = _STATUS_DISPLAY_TO_INTERNAL_MAP.get(raw_status, raw_status)
     if not (has_full_crm_access(user) and "sdr_id" in data):
         data.pop("sdr_id", None)
+    # SDR luon theo Sale phu trach: chon/doi Sale phu trach (qualification_ae_id) thi sdr_id = nguoi do, khong can chon
+    # SDR rieng (tranh lech SDR/Sale, vd SDR=Minh nhung Sale=Mai). Dat SAU buoc loai sdr_id o tren vi day la he qua cua
+    # viec gan Sale phu trach (nguoi duoc phep sua lead), khong phai tu y doi SDR.
+    if data.get("qualification_ae_id"):
+        _validate_owner(data["qualification_ae_id"])
+        data["sdr_id"] = data["qualification_ae_id"]
     # "Marketing" (cot created_by, hien o LeadsDirectory) - cho phep doi TAY
     # sau khi tao (feedback leader 2026-09-27: "cho thêm marketing cũng đổi
     # được"), cung 1 rule quyen voi sdr_id o tren - CHI full CRM access moi
@@ -496,12 +599,22 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
             "next_step": "next_step",
             "follow_up_date": "follow_up_date",
             "qualification_ae_id": "sdr_id",
+            "project_name": "project_name",
+            "deal_stage": "deal_stage",
         }
         deal_updates = {
             deal_field: data[lead_field]
             for lead_field, deal_field in _LEAD_TO_DEAL_FIELD_MAP.items()
             if lead_field in data
         }
+        deal_updates.update(deal_only_updates)
+        # Sale/Presale da duoc validate o Lead (can_write + _validate_owner). Validate Deal chi cho Sale/Both nen se
+        # chan Presale (vd Re-assign sau convert cho Presale) -> ghi thang sdr_id, khong qua validate Deal.
+        if "sdr_id" in deal_updates:
+            try:
+                execute_supabase_query(lambda: supabase.table("customer_leads").update({"sdr_id": deal_updates.pop("sdr_id") or None}).eq("id", converted_deal_id).eq("instance", settings.crm_instance).execute())
+            except Exception:
+                logger.warning("Khong dong bo sdr Lead %s sang Deal %s.", lead_id, converted_deal_id, exc_info=True)
         if deal_updates:
             try:
                 from app.modules.all_platform.services.customer_lead_service import update_customer_lead
@@ -513,6 +626,13 @@ def update_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> 
                     converted_deal_id,
                     exc_info=True,
                 )
+
+    # Lead da chuyen doi: ten/SDT/email/cong ty sua o day -> Lien he, Khach hang, Co hoi, Bao gia sinh ra tu lead doi theo.
+    try:
+        from app.modules.all_platform.services.crm_cascade_sync_service import propagate_lead_change
+        propagate_lead_change(current, res.data[0])
+    except Exception:
+        logger.warning("Khong the dong bo Lead %s xuong khach hang/lien he/bao gia (bo qua).", lead_id, exc_info=True)
 
     return get_lead(lead_id, user)
 
@@ -590,17 +710,16 @@ def delete_leads_bulk(lead_ids: list[str], user: dict[str, Any], confirm_cascade
 
 def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, Any]) -> dict[str, Any]:
     """Admin-only: TAO 1 BAN SAO cua 1 Lead (dau moi tho, CHUA convert) sang 1
-    workspace khac - Lead GOC van giu nguyen o workspace hien tai (khong xoa/
-    doi instance ban goc, khac voi "chuyen han"). Dung khi 1 dau moi vua la
-    tiem nang cua site nay vua la tiem nang cua site khac, thay vi phai nhap
-    tay lai tu dau. KHONG cascade gi ca - Lead chua convert thi chua sinh ra
-    Khach hang/Lien he/Co hoi nao ca (xem migration 078). Chan neu da convert:
-    luc do ban sao se khong co y nghia vi da co du lieu downstream rieng cua
-    workspace hien tai."""
-    if target_instance not in settings.workspace_domains:
+    clone CRM doc lap khac (cloudgate/SECURITYZONE) - Lead GOC van giu nguyen
+    o Main (khong xoa/doi instance ban goc, khac voi "chuyen han"). Main la
+    CRM markee CO DINH (khong co workspace_domains/switcher nhu 3 clone), nen
+    danh sach dich hop le CHI CO 2 gia tri co dinh (_MAIN_COPY_TARGET_INSTANCES),
+    khong tra cuu tu config nao ca. KHONG cascade gi ca - Lead chua convert
+    thi chua sinh ra Khach hang/Lien he/Co hoi nao ca (xem migration 078).
+    Chan neu da convert: luc do ban sao se khong co y nghia vi da co du lieu
+    downstream rieng cua Main."""
+    if target_instance not in _MAIN_COPY_TARGET_INSTANCES:
         raise ValueError(f"Workspace \"{target_instance}\" khong hop le.")
-    if target_instance == settings.crm_instance:
-        raise ValueError("Không thể sao chép sang chính workspace hiện tại.")
     current = get_lead(lead_id, user)
     if current.get("status") == "sql" or current.get("converted_customer_id"):
         raise ValueError(
@@ -626,7 +745,7 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
     # GAP: Markee -> CloudGate -> copy nguoc lai Markee tao ban trung o dung
     # noi da tao ra no). origin_instance khong bao gio doi (xem create_lead()),
     # fallback ve instance hien tai cho du lieu cu chua backfill (khong xay
-    # ra tren du lieu that vi migration 006 da backfill toan bo).
+    # ra tren du lieu that vi migration 128 da backfill toan bo).
     origin_instance = raw.get("origin_instance") or raw.get("instance")
     if target_instance == origin_instance:
         raise ValueError(
@@ -645,6 +764,7 @@ def copy_lead_to_instance(lead_id: str, target_instance: str, user: dict[str, An
             "converted_deal_id",
             "converted_by",
             "converted_at",
+            "contact_code",  # ban sao o workspace khac nhan ma RIENG (DB tu sinh), khong dung lai ma goc
         )
     }
     copy_data["instance"] = target_instance
@@ -679,6 +799,63 @@ def _request_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
 
 
+_LEAD_CODE_COLUMN: dict[str, bool] = {}
+
+
+def _lead_code_column_exists() -> bool:
+    """crm_leads.contact_code (migration 178) da ton tai chua - chi cache khi co (tranh loi neu deploy truoc migration)."""
+    if _LEAD_CODE_COLUMN.get("ok"):
+        return True
+    try:
+        get_supabase_client().table("crm_leads").select("contact_code").limit(1).execute()
+        _LEAD_CODE_COLUMN["ok"] = True
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _lead_contact_code(lead_id: str) -> str | None:
+    """Ma lien he (LHxxxxxx) DB tu sinh luc tao Lead."""
+    if not _lead_code_column_exists():
+        return None
+    try:
+        rows = execute_supabase_query(
+            lambda: get_supabase_client().table("crm_leads").select("contact_code").eq("id", lead_id).limit(1).execute()
+        ).data or []
+        return (rows[0].get("contact_code") or None) if rows else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _apply_convert_codes(data: dict[str, Any], payload: dict[str, Any], lead_code: str | None) -> None:
+    """Sau convert: (1) Contact TAO MOI tu Lead giu NGUYEN contact_code cua Lead (khong sinh ma moi);
+    (2) Customer sinh customer_code NGAY luc convert (neu chua co)."""
+    supabase = get_supabase_client()
+    contact = data.get("contact") if isinstance(data.get("contact"), dict) else None
+    if contact and contact.get("id") and lead_code and not _clean_text(payload.get("contact_id")) and contact.get("contact_code") != lead_code:
+        try:
+            execute_supabase_query(
+                lambda: supabase.table("crm_contacts").update({"contact_code": lead_code}).eq("id", contact["id"]).eq("instance", settings.crm_instance).execute()
+            )
+            contact["contact_code"] = lead_code
+        except Exception as exc:  # noqa: BLE001 - khong chan convert, nhung log ro de doi soat
+            logger.error("convert: khong giu duoc contact_code %s cho contact %s: %s", lead_code, contact.get("id"), exc)
+    customer = data.get("customer") if isinstance(data.get("customer"), dict) else None
+    if customer and customer.get("id"):
+        try:  # ten viet tat cho khach doanh nghiep vua tao luc convert (khong ghi de gia tri da co)
+            from app.modules.all_platform.services.crm_short_name_service import ensure_short_name
+
+            ensure_short_name(customer["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("convert: khong dien duoc ten viet tat cho %s: %s", customer.get("id"), exc)
+        try:
+            from app.modules.all_platform.services.supabase_project_service import _resolve_customer_code
+
+            customer["customer_code"] = _resolve_customer_code(customer["id"])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("convert: khong sinh duoc customer_code cho %s: %s", customer.get("id"), exc)
+
+
 def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
     current = get_lead(lead_id, user)
     if not can_write_lead(user, current):
@@ -689,6 +866,17 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     if customer:
         customer = _normalize_payload(dict(customer), actor_id=actor_id)
         apply_position_category(customer)
+        # Khach hang MOI tao tu lead: owner = Sale phu trach cua lead (de Team/Owner o danh sach Khach hang dung team Sale),
+        # khong phai nguoi bam chuyen doi/nguoi tao lead. Chi dien khi FE chua gui owner_id va Sale hop le (dang hoat dong).
+        # Sale phu trach nam trong payload deal.sdr_id (FE chon trong CUNG form xac minh, chua chac da luu vao lead);
+        # fallback qualification_ae_id da luu tren lead.
+        ae_owner = _clean_text((payload.get("deal") or {}).get("sdr_id")) or _clean_text(current.get("qualification_ae_id"))
+        if ae_owner and not _clean_text(customer.get("owner_id")):
+            try:
+                _validate_owner(ae_owner)
+                customer["owner_id"] = ae_owner
+            except Exception:
+                logger.warning("convert_lead: bo qua owner=Sale phu trach %s (khong hop le)", ae_owner)
     deal = dict(payload.get("deal") or {})
     # Truoc day hard-code "dealing", bo qua FE gui gi (feedback WIP full-flow:
     # them field "Giai đoạn" cho SDR chon truoc khi tao Deal) - gio ton trong
@@ -731,8 +919,16 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
         settings.crm_instance,
         settings.crm_instance,
     )
+    lead_code = _lead_contact_code(lead_id)
     res = execute_supabase_query(lambda: supabase.rpc("crm_convert_lead", args).execute())
     data = res.data or {}
+    _apply_convert_codes(data, payload, lead_code)
+    try:  # GD3: lich su ban giao + email cho nguoi nhan (tu xu ly thi bo qua). Loi o day KHONG lam hong convert da thanh cong.
+        from app.modules.all_platform.services.crm_lead_handover_service import record_convert_handover
+
+        record_convert_handover(current, data, payload, user, lead_code)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("convert: ghi nhan ban giao that bai cho lead %s: %s", lead_id, exc)
     if isinstance(data.get("lead"), dict):
         _normalize_lead_status(data["lead"])
     if isinstance(data.get("deal"), dict):
@@ -749,6 +945,18 @@ def convert_lead(lead_id: str, payload: dict[str, Any], user: dict[str, Any]) ->
     # own "leave existing profile alone unless p_update_customer" rule).
     new_deal_id = (data.get("deal") or {}).get("id")
     new_customer_id_for_project = (data.get("customer") or {}).get("id")
+    # PVCC tu MSC (crm_scope_items) dang gan Lead -> gan them vao Co hoi vua tao (bao gia / MSC dung lai). Loi o day khong chan convert.
+    if new_deal_id:
+        try:
+            execute_supabase_query(
+                lambda: supabase.table("crm_scope_items")
+                .update({"deal_id": new_deal_id})
+                .eq("lead_id", lead_id)
+                .eq("instance", settings.crm_instance)
+                .execute()
+            )
+        except Exception as exc:  # bang chua co (chua chay migration) hoac loi tam thoi
+            logger.warning("Khong gan duoc PVCC vao Co hoi %s: %s", new_deal_id, exc)
     # "Dự án" go ten moi (project_name, xem chu thich o tren) - tao THAT sau
     # khi biet customer_id (co the la khach hang vua tao trong chinh RPC nay),
     # roi patch project_id nguoc vao Deal. project_id CO SAN (chon tu du an

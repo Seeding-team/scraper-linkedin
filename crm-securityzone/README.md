@@ -161,3 +161,7 @@ Deploy `<thư-mục-mới>/` lên host riêng của brand đó (xem mục "Deplo
 riêng" ở trên), publish qua domain riêng của brand đó. 2 deploy hoàn toàn độc
 lập (khác host, khác container, khác domain) nhưng cùng đọc/ghi 1 DB, mỗi bên
 chỉ thấy dữ liệu `instance` của mình.
+
+## Cấu hình MSC (chỉ crm-securityzone)
+
+Bản này có cấu hình riêng cho Mua Sắm Công trong `nginx/nginx.conf`. **Khi port đừng copy đè file này.** Xem `nginx/MSC_INTEGRATION.md`.

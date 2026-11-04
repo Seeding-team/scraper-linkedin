@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from app.modules.all_platform.auth_deps import get_current_user
+from app.modules.all_platform.auth_deps import get_current_user, is_web_intake_user
 from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.services import (
     list_projects,
@@ -27,7 +27,10 @@ def projects_list(customer_id: str | None = Query(None), user: dict = Depends(ge
     if not can_view_project(user):
         return BaseResponse(success=False, message="Không có quyền xem dự án")
     try:
-        return BaseResponse(success=True, data=list_projects(customer_id))
+        rows = list_projects(customer_id)
+        if is_web_intake_user(user):  # khoá Web Intake chỉ thấy dự án do chính nó tạo
+            rows = [p for p in rows if str(p.get("createdById") or "") == str(user.get("id") or "")]
+        return BaseResponse(success=True, data=rows)
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -66,7 +69,8 @@ def projects_create(payload: dict, user: dict = Depends(get_current_user)) -> Ba
     # Tao MOI: chua co project de tu nhan la "nguoi tao/manager" - CHI
     # Admin/Leader (can_manage_project(user, project=None) tu dong ap dung
     # dung nhanh nay).
-    if not can_manage_project(user, None):
+    # Ngoại lệ tối thiểu: user kỹ thuật Web Intake (Project 2) tạo dự án mới cho khách web — không được sửa dự án có sẵn.
+    if not can_manage_project(user, None) and not is_web_intake_user(user):
         return BaseResponse(success=False, message="Chỉ Admin hoặc Leader mới được tạo dự án")
     try:
         data = create_project(payload, user.get("id"))

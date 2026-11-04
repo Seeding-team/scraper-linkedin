@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.core.supabase_client import friendly_supabase_error_message
-from app.modules.all_platform.auth_deps import get_current_user
+from app.modules.all_platform.auth_deps import get_current_user, is_web_intake_user
 from app.modules.all_platform.schemas import (
     BaseResponse,
     QuoteCreateRequest,
@@ -56,6 +57,7 @@ from app.modules.all_platform.services import (
     get_public_quote,
     get_public_quote_form,
     get_quote,
+    get_access_suggestions,
     get_quote_form,
     list_quote_forms,
     list_quote_versions,
@@ -80,7 +82,7 @@ from app.modules.all_platform.services import (
     list_quote_activity_log,
     log_quote_version_reason,
 )
-from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions
+from app.modules.all_platform.services.supabase_quote_service import apply_quote_field_permissions, flatten_quote_items
 from app.modules.all_platform.services.crm_permission_service import (
     can_approve_quote,
     can_edit_quote,
@@ -93,13 +95,41 @@ from app.modules.all_platform.services.crm_permission_service import (
     can_manage_quote_approval_rules,
     can_manage_shared_master_data,
     has_module_access,
+    filter_rows_by_scope,
     get_scope_visible_user_ids,
 )
 from app.modules.all_platform.services import quote_rule_evaluation_service
 from app.modules.all_platform.services.customer_lead_service import get_customer_lead_by_id
 
 quote_forms_router = APIRouter()
-quotes_router = APIRouter()
+def _optional_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict | None:
+    """Router-level chi de GIOI HAN khoa Web Intake - KHONG duoc ep dang nhap cho moi endpoint (link bao gia cong khai /quotes/public/{token}
+    cua khach + render PDF khong co phien dang nhap). Thieu/sai credential -> None; endpoint can xac thuc van tu Depends(get_current_user)."""
+    try:
+        return get_current_user(request, authorization)
+    except HTTPException as exc:
+        if exc.status_code == 401:
+            return None
+        raise
+
+
+def _web_intake_quote_scope(request: Request, user: dict | None = Depends(_optional_current_user)) -> None:
+    """Khoá Web Intake chỉ được đụng vào báo giá do CHÍNH user kỹ thuật đó tạo (kể cả đọc báo giá đã duyệt — vốn mọi user
+    đăng nhập đều xem được). JWT người dùng thường không bị ảnh hưởng."""
+    if user is None or not is_web_intake_user(user):
+        return
+    quote_id = request.path_params.get("quote_id")
+    if not quote_id:
+        return
+    try:
+        quote = get_quote(quote_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Không tìm thấy báo giá.")
+    if str(quote.get("createdById") or "") != str(user.get("id") or ""):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+quotes_router = APIRouter(dependencies=[Depends(_web_intake_quote_scope)])
 
 
 def _require_master_data_manager(user: dict) -> None:
@@ -149,7 +179,10 @@ def quote_forms_create(payload: QuoteFormCreateRequest, user: dict = Depends(get
 def quote_forms_update(form_id: str, payload: QuoteFormUpdateRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
     _require_master_data_manager(user)
     try:
-        data = update_quote_form(form_id, payload.model_dump(exclude_none=True))
+        dump = payload.model_dump(exclude_none=True)
+        if "issuer_company_id" in payload.model_fields_set:
+            dump["issuer_company_id"] = payload.issuer_company_id
+        data = update_quote_form(form_id, dump)
         return BaseResponse(success=True, message="Đã lưu mẫu báo giá", data=data)
     except HTTPException:
         raise
@@ -212,7 +245,11 @@ def quote_forms_set_catalog_links(
 @quotes_router.get("")
 def quotes_list(deal_id: str | None = Query(None), user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
-        data = [apply_quote_field_permissions(quote, user) for quote in list_quotes(deal_id)]
+        rows = list_quotes(deal_id)
+        if is_web_intake_user(user):  # khoá Web Intake chỉ thấy báo giá do chính nó tạo
+            rows = [q for q in rows if str(q.get("createdById") or "") == str(user.get("id") or "")]
+        rows = filter_rows_by_scope(user, rows, ("createdById", "quoteOwnerId", "technicalOwnerId"))
+        data = [apply_quote_field_permissions(quote, user) for quote in rows]
         return BaseResponse(success=True, data=data)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
@@ -381,6 +418,52 @@ def quotes_service_catalog_options(form_id: str = Query(..., alias="formId"), _u
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
+class ExchangeRateSaveRequest(BaseModel):
+    rate: float
+    note: Optional[str] = None
+
+
+@quotes_router.get("/exchange-rate")
+def quotes_exchange_rate_get(_user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Ty gia USD->VND he thong cho luong bao gia (rate=None neu chua cau hinh).
+    Dang ky TRUOC /{quote_id} de khong bi khop nham."""
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        return BaseResponse(success=True, data=quote_exchange_rate_service.get_usd_vnd_rate())
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.post("/exchange-rate/refresh")
+def quotes_exchange_rate_refresh(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (tygiausd.org - USD thi truong tu do ban ra, du phong ExchangeRate-API), ghi de
+    ca override thu cong (quay lai che do tu dong). Nguon loi → GIU rate gan nhat va tra kem `error`
+    (FE cho nhap tay). Khong dong toi bao gia da tao (snapshot da chot)."""
+    _require_master_data_manager(user)
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        data = quote_exchange_rate_service.refresh_usd_vnd_rate(user.get("id"), force=True)
+        message = "Đã cập nhật tỷ giá" if data.get("refreshed") else (data.get("error") or "Chưa cập nhật được tỷ giá")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.put("/exchange-rate")
+def quotes_exchange_rate_put(payload: ExchangeRateSaveRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Dat ty gia he thong - chi anh huong bao gia TAO/CHUYEN SANG USD ve sau, khong
+    doi snapshot cua bao gia da co."""
+    _require_master_data_manager(user)
+    try:
+        from app.modules.all_platform.services import quote_exchange_rate_service
+        data = quote_exchange_rate_service.set_usd_vnd_rate(payload.rate, user.get("id"), payload.note)
+        return BaseResponse(success=True, message="Đã cập nhật tỷ giá", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
 @quotes_router.get("/issuer-companies")
 def quotes_issuer_companies(
     include_inactive: bool = Query(False), _user: dict = Depends(get_current_user)
@@ -406,13 +489,196 @@ def quotes_issuer_companies_create(
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
+# ── Copy báo giá cross-workspace (2026-10-03, Phase 1 — xem
+# cross_workspace_quote_service.py cho toàn bộ ngữ cảnh/quy tắc). 4 route này
+# đều có path tĩnh ("cross-workspace/...") - phải đăng ký TRƯỚC /{quote_id}
+# để không bị FastAPI khớp nhầm, theo đúng convention đã có ở trên. ──
+
+from pydantic import BaseModel as _CrossWorkspaceBaseModel  # noqa: E402
+from app.modules.all_platform.services import cross_workspace_quote_service  # noqa: E402
+
+
+class CrossWorkspaceCreateCustomerRequest(_CrossWorkspaceBaseModel):
+    targetInstance: str
+    customer_name: str
+    company_name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    tax_code: str | None = None
+
+
+class CrossWorkspaceCopyRequest(_CrossWorkspaceBaseModel):
+    targetInstance: str
+    targetCustomerId: str
+    # Bat buoc (bo "Khong lien ket" - yeu cau mo rong 2026-10-03: bao gia phai
+    # di kem DAY DU business context, khong chi Customer).
+    targetDealId: str
+    targetContactId: str | None = None
+
+
+@quotes_router.get("/cross-workspace/customers")
+def quotes_cross_workspace_search_customers(
+    target_instance: str = Query(...),
+    search: str = Query(""),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.search_target_customers(user, target_instance, search)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.post("/cross-workspace/customers")
+def quotes_cross_workspace_create_customer(
+    payload: CrossWorkspaceCreateCustomerRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.create_target_customer(
+            user, payload.targetInstance, payload.model_dump(exclude={"targetInstance"})
+        )
+        return BaseResponse(success=True, message="Đã tạo khách hàng ở workspace đích", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/projects")
+def quotes_cross_workspace_list_projects(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_projects_for_customer(user, target_instance, target_customer_id)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/deals")
+def quotes_cross_workspace_list_deals(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    target_project_id: str | None = Query(None),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_deals_for_customer(
+            user, target_instance, target_customer_id, target_project_id
+        )
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+class CreateCrossWorkspaceDealRequest(BaseModel):
+    targetInstance: str | None = None
+    targetCustomerId: str
+    targetProjectId: str | None = None
+    dealName: str | None = None
+    dealStage: str | None = None
+
+
+@quotes_router.post("/cross-workspace/deals")
+def quotes_cross_workspace_create_deal(
+    payload: CreateCrossWorkspaceDealRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.create_target_deal(
+            user, payload.targetInstance or settings.crm_instance, payload.model_dump()
+        )
+        return BaseResponse(success=True, message="Đã tạo cơ hội mới", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.get("/cross-workspace/contacts")
+def quotes_cross_workspace_list_contacts(
+    target_instance: str = Query(...),
+    target_customer_id: str = Query(...),
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.list_target_contacts_for_customer(user, target_instance, target_customer_id)
+        return BaseResponse(success=True, data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+class MoveQuoteInWorkspaceRequest(BaseModel):
+    targetCustomerId: str
+    targetDealId: str
+    targetContactId: str | None = None
+    targetInstance: str | None = None
+
+
+@quotes_router.post("/{quote_id}/copy-cross-workspace")
+def quotes_copy_cross_workspace(
+    quote_id: str,
+    payload: CrossWorkspaceCopyRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.copy_quote_to_workspace(
+            quote_id, payload.targetInstance, payload.targetCustomerId, payload.targetDealId, user,
+            target_contact_id=payload.targetContactId,
+        )
+        return BaseResponse(success=True, message="Đã copy báo giá sang workspace đích", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+@quotes_router.post("/{quote_id}/move-in-workspace")
+def quotes_move_in_workspace(
+    quote_id: str,
+    payload: MoveQuoteInWorkspaceRequest,
+    user: dict = Depends(get_current_user),
+) -> BaseResponse:
+    try:
+        data = cross_workspace_quote_service.move_quote_in_workspace(
+            quote_id,
+            payload.targetCustomerId,
+            payload.targetDealId,
+            user,
+            target_contact_id=payload.targetContactId,
+            target_instance=payload.targetInstance,
+        )
+        return BaseResponse(success=True, message="Đã di chuyển báo giá sang khách hàng mới", data=data)
+    except (cross_workspace_quote_service.CrossWorkspaceCopyError, PermissionError) as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
+
+
+
 @quotes_router.put("/issuer-companies/{company_id}")
 def quotes_issuer_companies_update(
     company_id: str, payload: IssuerCompanyUpdateRequest, user: dict = Depends(get_current_user)
 ) -> BaseResponse:
     _require_master_data_manager(user)
     try:
-        data = update_issuer_company(company_id, payload.model_dump(exclude_none=True))
+        dump = payload.model_dump(exclude_none=True)
+        if "default_quote_form_id" in payload.model_fields_set:
+            dump["default_quote_form_id"] = payload.default_quote_form_id
+        if "position_category_id" in payload.model_fields_set:
+            dump["position_category_id"] = payload.position_category_id
+        data = update_issuer_company(company_id, dump)
         return BaseResponse(success=True, message="Đã lưu công ty phát hành", data=data)
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
@@ -437,6 +703,7 @@ _TECHNICAL_ITEM_FIELD_PAIRS = [
 _PRICING_ITEM_FIELD_PAIRS = [
     ("unitPrice", "unit_price"),
     ("discountPercent", "discount_percent"),
+    ("discountAmount", "discount_amount"),
     ("markupPercent", "markup_percent"),
     ("vatRate", "vat_rate"),
 ]
@@ -452,7 +719,15 @@ _COST_ONLY_ITEM_FIELD_PAIRS = [
 def _values_differ(old_val, new_val) -> bool:
     if isinstance(old_val, (int, float)) or isinstance(new_val, (int, float)):
         try:
-            return float(old_val or 0) != float(new_val or 0)
+            # Lam tron 2 chu so truoc khi so sanh (khong so bang float tuyet
+            # doi) - BUG THAT DA GAP: markupPercent FE tinh lai bang cong
+            # thuc (price-cost)/cost*100 ra full precision (vd 56.578947...),
+            # trong khi DB luu/tra ve da lam tron 2 so le (56.58, dung dung
+            # do chinh xac hien thi formatPercentFixed2 o FE). So bang float
+            # tuyet doi coi day la "da sua" du nguoi dung khong dong gi vao
+            # hang muc, khien "Bàn giao" bi chan sai voi loi "Markup/Gia khach
+            # chi duoc nhap o Buoc 3" ngay ca khi gia tri hien thi giong het.
+            return round(float(old_val or 0), 2) != round(float(new_val or 0), 2)
         except (TypeError, ValueError):
             return old_val != new_val
     return (old_val or None) != (new_val or None)
@@ -466,6 +741,53 @@ def _items_touch_fields(existing_items: list[dict], new_items: list[dict], field
         for camel, snake in field_pairs:
             if _values_differ(existing.get(camel), new_item.get(snake)):
                 return True
+    return False
+
+
+def _is_billing_cycle_price_toggle(existing_item: dict, new_item: dict) -> bool:
+    """Tinh nang "Chu ky" (migration 189): doi Trả tháng/Trả năm lam unit_price
+    doi theo (lay dung 1 trong 2 gia da snapshot san tu danh muc luc them hang
+    - catalogMonthlyPriceVnd/catalogAnnualCommitMonthlyPriceVnd). Day KHONG
+    phai "sua gia ban tuy y" (van bi chan o moi truong hop khac qua check goi
+    ham nay) - chi la chon lai 1 trong 2 muc gia DA CO SAN tu dau, nen Presale
+    (Buoc 1) duoc phep doi Chu ky ngay ca cho dong DA LUU, khong can quyen sua
+    gia ban. Chi mien tru dung khi gia moi khop CHINH XAC 1 trong 2 snapshot -
+    go tay 1 con so khac (du trung ngau nhien) van di qua nhanh so sanh binh
+    thuong vi _values_differ se bao khac bat ky field GIA BAN nao khac cung
+    thay doi trong cung lan luu."""
+    monthly = existing_item.get("catalogMonthlyPriceVnd")
+    annual = existing_item.get("catalogAnnualCommitMonthlyPriceVnd")
+    if monthly is None or annual is None:
+        return False
+    try:
+        new_price = round(float(new_item.get("unit_price") or 0), 2)
+    except (TypeError, ValueError):
+        return False
+    return new_price in (round(float(monthly), 2), round(float(annual), 2))
+
+
+def _items_touch_pricing_fields(existing_items: list[dict], new_items: list[dict]) -> bool:
+    """Như _items_touch_fields nhưng cho nhóm GIÁ BÁN: thêm/bớt hạng mục KHÔNG
+    tính là "sửa giá". Hạng mục chọn từ danh mục luôn mang sẵn markup/giá mặc
+    định (hiển thị read-only ở Bước 1) - nếu coi việc thêm dòng là sửa giá thì
+    Presale thêm sản phẩm ở Bước 1 sẽ bị chặn "Markup/Giá khách chỉ được nhập ở
+    Bước 3" và không chuyển được sang Bước 2. Chỉ so sánh khi số dòng không đổi."""
+    if len(new_items) != len(existing_items):
+        return False
+    # markup_percent là giá trị SUY RA (từ giá vốn + giá khách): Presale sửa
+    # giá vốn ở Bước 1 làm markup tự tính lại dù không đụng tới giá bán. Sửa
+    # markup thật luôn đổi unit_price theo, nên chỉ cần soi các field còn lại.
+    pairs = [p for p in _PRICING_ITEM_FIELD_PAIRS if p[0] != "markupPercent"]
+    for i, new_item in enumerate(new_items):
+        existing = existing_items[i] if i < len(existing_items) else {}
+        for camel, snake in pairs:
+            if camel == "discountAmount" and new_item.get(snake) is None:
+                continue
+            if not _values_differ(existing.get(camel), new_item.get(snake)):
+                continue
+            if camel == "unitPrice" and _is_billing_cycle_price_toggle(existing, new_item):
+                continue
+            return True
     return False
 
 
@@ -491,18 +813,21 @@ def _check_item_field_level_permission(user: dict, quote: dict, new_items: Optio
     the stage lock."""
     if new_items is None:
         return None
-    existing_items = quote.get("items") or []
+    # quote["items"] la CAY long nhau (xem _quote_item_tree) nhung new_items (payload FE, tu
+    # itemsDraft) la MANG PHANG - phai flatten existing_items truoc khi so sanh theo index, neu
+    # khong 2 ben lech do dai/thu tu ngay ca khi khong co gi thay doi that (bug thuc te 2026-10-10,
+    # cung goc voi bug AI/bang hop dong bo sot hang muc trong children cua Section).
+    existing_items = flatten_quote_items(quote.get("items"))
     if _items_touch_fields(existing_items, new_items, _TECHNICAL_ITEM_FIELD_PAIRS) and not can_edit_technical_quote(user, quote):
         return "Khong co quyen sua phan ky thuat cua bao gia nay"
     if _items_touch_fields(existing_items, new_items, _COST_ONLY_ITEM_FIELD_PAIRS) and not can_edit_quote_cost(user, quote):
         return "Khong co quyen sua gia von cua bao gia nay"
-    if _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and not can_edit_quote_pricing(user, quote):
+    if _items_touch_pricing_fields(existing_items, new_items) and not can_edit_quote_pricing(user, quote):
         return "Khong co quyen sua phan gia ban cua bao gia nay"
 
-    is_versioned_quote = (quote.get("versionNumber") or 1) > 1
-    stage = quote.get("processingStage") or "request"
-    if not is_versioned_quote and _items_touch_fields(existing_items, new_items, _PRICING_ITEM_FIELD_PAIRS) and stage != "pricing":
-        return "Markup/Gia khach chi duoc nhap o Buoc 3"
+    # Da BO khoa theo buoc "Markup/Gia khach chi duoc nhap o Buoc 3": san pham chon tu danh muc o Buoc 1 da co san gia khach
+    # (gia mac dinh) nen khong duoc chan luu/ban giao o Buoc 1. Van giu kiem tra quyen theo vai tro o tren
+    # (can_edit_technical_quote / can_edit_quote_cost / can_edit_quote_pricing).
     return None
 
 
@@ -521,6 +846,35 @@ def _load_quote_and_lead(quote_id: str) -> tuple[dict, dict | None]:
     return quote, lead
 
 
+def _quote_update_dump(payload: QuoteUpdateRequest) -> dict:
+    dump = payload.model_dump(exclude_none=True)
+    # Bug that da gap: exclude_none=True xoa het field client gui RO
+    # RANG la null (vd "bo gan Du an" = gui project_id=null CO Y) khoi
+    # dump, khien no lam y het "khong gui gi ca" (giu nguyen gia tri
+    # cu). Dung model_fields_set (Pydantic v2 - field co mat trong body
+    # request, bat ke gia tri) de phan biet that "khong gui" voi "gui null
+    # co y". Helper nay duoc dung chung cho PUT va update-and-approve de
+    # tranh nut Luu/Duyet xu ly khac nhau.
+    fields_set = payload.model_fields_set
+    if "project_id" in fields_set:
+        dump["project_id"] = payload.project_id
+    if "sla_due_at" in fields_set:
+        dump["sla_due_at"] = payload.sla_due_at
+    if "overall_discount_percent" in fields_set:
+        dump["overall_discount_percent"] = payload.overall_discount_percent
+    if "quote_type_codes" in fields_set:
+        dump["quote_type_codes"] = payload.quote_type_codes
+    return dump
+
+
+@quotes_router.get("/lost-reasons")
+def quotes_lost_reasons(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Danh sach ly do "Khong chot / OUT" (nguon duy nhat o backend, FE khong hard-code)."""
+    from app.modules.all_platform.services.quote_outcome_service import list_lost_reasons
+
+    return BaseResponse(success=True, data=list_lost_reasons())
+
+
 @quotes_router.get("/{quote_id}")
 def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -528,9 +882,25 @@ def quotes_get(quote_id: str, user: dict = Depends(get_current_user)) -> BaseRes
         # Bao gia da duyet/confirmed (da co link public) thi ai dang nhap cung
         # xem noi bo duoc nhu truoc gio - chi bao gia CHUA duyet moi gioi han
         # theo nhom quyen (nguoi tao/quan ly deal/phu trach deal/co quyen duyet/admin).
-        if quote["status"] not in ("approved", "confirmed") and not can_edit_quote(user, quote, lead):
+        _scoped = get_scope_visible_user_ids(user) is not None  # user bi gioi han theo team/ca nhan: KHONG ngoai le "da duyet"
+        if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền xem báo giá này")
         return BaseResponse(success=True, data=apply_quote_field_permissions(quote, user))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+@quotes_router.get("/{quote_id}/access-suggestions")
+def quotes_access_suggestions(quote_id: str, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (xem get_access_suggestions())
+    - cung gate quyen voi GET /{quote_id} (chi nguoi xem duoc bao gia nay moi
+    goi y duoc danh sach lien quan den no, tranh do tron du lieu khach hang)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        _scoped = get_scope_visible_user_ids(user) is not None
+        if (_scoped or quote["status"] not in ("approved", "confirmed")) and not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền xem báo giá này")
+        return BaseResponse(success=True, data=get_access_suggestions(quote_id))
     except Exception as e:
         return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
@@ -554,24 +924,7 @@ def quotes_update(quote_id: str, payload: QuoteUpdateRequest, user: dict = Depen
         quote, lead = _load_quote_and_lead(quote_id)
         if not can_edit_quote(user, quote, lead):
             return BaseResponse(success=False, message="Không có quyền chỉnh sửa báo giá này")
-        dump = payload.model_dump(exclude_none=True)
-        # Bug that da gap: exclude_none=True xoa het field client gui RO
-        # RANG la null (vd "bo gan Du an" = gui project_id=null CO Y) khoi
-        # dump, khien no lam y het "khong gui gi ca" (giu nguyen gia tri
-        # cu) - nguoi dung KHONG THE go Project ra duoc nua. Dung
-        # model_fields_set (Pydantic v2 - field co mat trong body request,
-        # bat ke gia tri) de phan biet that "khong gui" voi "gui null co y",
-        # CHI ap dung rieng cho project_id/sla_due_at (khong doi hanh vi cac
-        # field khac, tranh vo tinh lam field khac bi clear ngoai y muon).
-        fields_set = payload.model_fields_set
-        if "project_id" in fields_set:
-            dump["project_id"] = payload.project_id
-        if "sla_due_at" in fields_set:
-            dump["sla_due_at"] = payload.sla_due_at
-        if "overall_discount_percent" in fields_set:
-            dump["overall_discount_percent"] = payload.overall_discount_percent
-        if "quote_type_codes" in fields_set:
-            dump["quote_type_codes"] = payload.quote_type_codes
+        dump = _quote_update_dump(payload)
         denied = _check_item_field_level_permission(user, quote, dump.get("items"))
         if denied:
             return BaseResponse(success=False, message=denied)
@@ -720,7 +1073,11 @@ def quotes_update_and_approve(
         if guard is not None:
             return guard
         evaluation = quote_rule_evaluation_service.get_latest_evaluation(quote_id)
-        data = update_and_approve_quote(quote_id, payload.model_dump(exclude_none=True), user.get("id"))
+        dump = _quote_update_dump(payload)
+        denied = _check_item_field_level_permission(user, quote, dump.get("items"))
+        if denied:
+            return BaseResponse(success=False, message=denied)
+        data = update_and_approve_quote(quote_id, dump, user.get("id"))
         if quote_rule_evaluation_service.requires_exception_reason(evaluation) and exception_reason:
             quote_rule_evaluation_service.record_exception_approval(
                 quote_id, data.get("versionNumber") or 1, evaluation.get("id"), exception_reason.strip(), user.get("id"),
@@ -830,6 +1187,32 @@ def quotes_publish(quote_id: str, user: dict = Depends(get_current_user)) -> Bas
             return BaseResponse(success=False, message="Bạn không có quyền phát hành báo giá")
         data = publish_quote(quote_id, user.get("id"))
         return BaseResponse(success=True, message="Đã phát hành báo giá", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+class QuoteMarkLostRequest(BaseModel):
+    reason: str
+    reason_other: str | None = None
+    note: str | None = None
+
+
+@quotes_router.post("/{quote_id}/mark-lost")
+def quotes_mark_lost(quote_id: str, payload: QuoteMarkLostRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Khong chot / OUT sau khi bao gia da phat hanh/gui khach (ket qua cua khach, khong phai buoc workflow noi bo)."""
+    try:
+        quote, lead = _load_quote_and_lead(quote_id)
+        if not can_edit_quote(user, quote, lead):
+            return BaseResponse(success=False, message="Không có quyền cập nhật kết quả báo giá này")
+        from app.modules.all_platform.services.quote_outcome_service import mark_quote_lost
+
+        result = mark_quote_lost(quote_id, user, payload.reason, payload.reason_other, payload.note)
+        result["quote"] = apply_quote_field_permissions(result["quote"], user)
+        return BaseResponse(success=True, message="Đã đánh dấu Không chốt", data=result)
+    except QuoteNotFoundError as e:
+        return _not_found_response(e)
     except ValueError as e:
         return BaseResponse(success=False, message=str(e))
     except Exception as e:
@@ -1115,6 +1498,22 @@ class EmailProviderTestRequest(BaseModel):
 
 class EmailProviderSendTestRequest(BaseModel):
     test_recipient: str
+
+
+@quote_email_provider_router.get("/ready")
+def email_provider_ready(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi tra 1 boolean "san sang gui that" (KHONG kem thong tin cau hinh/
+    sender) - khac GET "" (require_quote_email_manager, chi Admin/Leader) vi
+    endpoint nay can moi user CRM da dang nhap goi duoc (Sale/Presale) de
+    canh bao TRUOC khi Ban giao/Xac minh dat chuan neu email chua san sang
+    gui, xem LeadDetailDrawer.tsx runWithEmailConfigCheck(). An toan de mo
+    rong quyen vi khong lo du lieu nhay cam, chi 1 co dung/sai."""
+    try:
+        data = email_provider_service.get_email_provider_settings()
+        ready = bool(data.get("credentialConfigured") and data.get("isEnabled") and data.get("smtpConnectionStatus") == "ok")
+        return BaseResponse(success=True, data={"ready": ready})
+    except Exception as e:
+        return BaseResponse(success=False, message=_safe_error_message(e))
 
 
 @quote_email_provider_router.get("")

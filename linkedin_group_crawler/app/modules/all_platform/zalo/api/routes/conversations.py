@@ -3,9 +3,10 @@ import os
 import posixpath
 import tempfile
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import re
 from loguru import logger
 
@@ -78,67 +79,101 @@ def _normalize_user_id(value: Optional[str]) -> str:
     return raw or "default"
 
 
+
+# ==============================================================================
+# ⚡ ACCELERATOR CACHE (Tối ưu hoá truy vấn & loại bỏ Supabase round-trip)
+# ==============================================================================
+_AUTH_USER_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_ACCOUNT_META_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_PERM_CACHE: Dict[Tuple[str, str, str], Tuple[float, Optional[set[str]]]] = {}
+_MESSAGE_CACHE: Dict[Tuple[str, str, int, int], Tuple[float, Dict[str, Any]]] = {}
+
+AUTH_CACHE_TTL = 60.0  # 60s cache cho app_user và zalo_account metadata
+MESSAGE_CACHE_TTL = 3.0  # 3s cache cho danh sách tin nhắn đang xem/click liên tục
+
+def invalidate_conversation_message_cache(user_id: str, conversation_id: Optional[str] = None) -> None:
+    """Xoá cache tin nhắn khi có tin nhắn mới hoặc thao tác gửi/thu hồi."""
+    u_id = user_id.strip().lower()
+    c_id = conversation_id.strip() if conversation_id else None
+    keys_to_del = [
+        k for k in list(_MESSAGE_CACHE.keys())
+        if k[0].strip().lower() == u_id and (c_id is None or k[1] == c_id)
+    ]
+    for k in keys_to_del:
+        _MESSAGE_CACHE.pop(k, None)
+
+
 async def check_caller_conversation_access(
     account_id: str,
     caller_email: Optional[str],
 ) -> Optional[set[str]]:
-    """Kiểm tra quyền truy cập của người gọi đối với tài khoản zalo account_id.
-    
-    Trả về:
-        - None: Nếu người gọi là chủ sở hữu tài khoản (full quyền).
-        - set[str]: Danh sách conversation_id được phép truy cập (được share).
-        - Ném HTTPException(403) nếu không có quyền.
-    """
+    """Kiểm tra quyền truy cập của người gọi đối với tài khoản zalo account_id (kèm TTL Cache 60s)."""
     if not caller_email:
-        # Nếu không có caller_email, cho phép truy cập full để tương thích ngược
         return None
 
-    # 1. Tìm thông tin app_user của người gọi
+    now = time.time()
     caller_email_clean = caller_email.strip().lower()
-    user_rows = await _rest(
-        "GET",
-        "app_users",
-        params={
-            "select": "id,role",
-            "email": f"eq.{caller_email_clean}",
-            "limit": "1",
-        },
-    )
-    if not user_rows:
+
+    # 1. Tìm thông tin app_user từ cache (TTL 60s)
+    user_cached = _AUTH_USER_CACHE.get(caller_email_clean)
+    if user_cached and (now - user_cached[0] < AUTH_CACHE_TTL):
+        caller_user = user_cached[1]
+    else:
+        user_rows = await _rest(
+            "GET",
+            "app_users",
+            params={
+                "select": "id,role",
+                "email": f"eq.{caller_email_clean}",
+                "limit": "1",
+            },
+        )
+        caller_user = user_rows[0] if user_rows else None
+        _AUTH_USER_CACHE[caller_email_clean] = (now, caller_user)
+
+    if not caller_user:
         raise HTTPException(status_code=403, detail="Không tìm thấy thông tin tài khoản người gọi.")
         
-    caller_user = user_rows[0]
     caller_user_id = str(caller_user.get("id"))
     caller_role = str(caller_user.get("role") or "").strip().lower()
 
-    # 2. Tìm chủ sở hữu của tài khoản Zalo (owner_id trong zalo_accounts)
-    account_rows = await _rest(
-        "GET",
-        "zalo_accounts",
-        params={
-            "select": "owner_id,is_shared_with_all",
-            "account_id": f"eq.{account_id}",
-            "limit": "1",
-        },
-    )
-    owner_user_id = None
-    if account_rows:
-        owner_user_id = str(account_rows[0].get("owner_id") or "")
+    # 2. Tìm chủ sở hữu của tài khoản Zalo từ cache (TTL 60s)
+    acc_cached = _ACCOUNT_META_CACHE.get(account_id)
+    if acc_cached and (now - acc_cached[0] < AUTH_CACHE_TTL):
+        acc_data = acc_cached[1]
+    else:
+        account_rows = await _rest(
+            "GET",
+            "zalo_accounts",
+            params={
+                "select": "owner_id,is_shared_with_all",
+                "account_id": f"eq.{account_id}",
+                "limit": "1",
+            },
+        )
+        acc_data = account_rows[0] if account_rows else None
+        _ACCOUNT_META_CACHE[account_id] = (now, acc_data)
+
+    owner_user_id = str(acc_data.get("owner_id") or "") if acc_data else None
 
     # 3. Nếu là chủ sở hữu, cho phép xem toàn bộ
     if owner_user_id and caller_user_id == owner_user_id:
         return None
 
-    # 3b. Tài khoản đánh dấu "dùng chung toàn công ty" -> mọi nhân viên đều full quyền,
-    # không cần là owner/admin/leader hay được share riêng từng hội thoại.
-    if account_rows and bool(account_rows[0].get("is_shared_with_all")):
+    # 3b. Tài khoản đánh dấu "dùng chung toàn công ty" -> mọi nhân viên đều full quyền
+    if acc_data and bool(acc_data.get("is_shared_with_all")):
         return None
 
-    # 4. Nếu không phải chủ sở hữu, chỉ admin và leader được xem (nhưng bị giới hạn bởi các chat được share)
+    # 4. Nếu không phải chủ sở hữu, chỉ admin và leader được xem
     if caller_role not in ["admin", "superadmin", "leader"]:
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập dữ liệu của tài khoản này.")
 
-    # 5. Truy vấn danh sách cuộc hội thoại được share
+    # 5. Truy vấn danh sách cuộc hội thoại được share từ cache (TTL 60s)
+    perm_cache_key = (account_id, caller_user_id, caller_role)
+    perm_cached = _PERM_CACHE.get(perm_cache_key)
+    if perm_cached and (now - perm_cached[0] < AUTH_CACHE_TTL):
+        return perm_cached[1]
+
     perm_params = {
         "select": "conversation_id,id_leader",
         "account_id": f"eq.{account_id}",
@@ -146,7 +181,6 @@ async def check_caller_conversation_access(
         "limit": "5000",
     }
     if caller_role == "leader":
-        # Leader chỉ được xem nếu id_leader khớp hoặc là NULL (share chung)
         perm_params["or"] = f"(id_leader.eq.{caller_user_id},id_leader.is.null)"
 
     perm_rows = await _rest(
@@ -156,6 +190,7 @@ async def check_caller_conversation_access(
     ) or []
 
     allowed_ids = {str(row.get("conversation_id") or "").strip() for row in perm_rows if row.get("conversation_id")}
+    _PERM_CACHE[perm_cache_key] = (now, allowed_ids)
     return allowed_ids
 
 
@@ -236,9 +271,16 @@ async def list_conversations_for_caller(
         for r in rows:
             last_msg_at = r.get("last_message_at")
             latest_message_at = str(last_msg_at) if last_msg_at else None
+            c_name = (r.get("conversation_name") or r.get("group_name") or "").strip()
+            l_sender = (r.get("last_sender_name") or "").strip()
+            if (not c_name or c_name.lower() in ("markee", "zalo", "user", "dm", "me", "__me__") or c_name == str(r.get("conversation_id"))) and l_sender and l_sender.lower() not in ("markee", "__me__", "me", "bạn", "ban"):
+                c_name = l_sender
+            elif not c_name:
+                c_name = r.get("conversation_id") or "Người dùng Zalo"
+
             results.append({
                 "conversation_id": r.get("conversation_id"),
-                "conversation_name": r.get("conversation_name") or r.get("conversation_id"),
+                "conversation_name": c_name,
                 "account_id": user_id,
                 "message_count": 0,
                 "image_count": 0,
@@ -290,6 +332,19 @@ async def get_conversations(
         raise HTTPException(status_code=500, detail=f"Không thể tải danh sách hội thoại Zalo: {exc}")
 
 
+# SU CO THAT (2026-10-04): frontend (ZaloInboxAdminShell.tsx, luong "Xu ly"
+# tu CRM voi ?conv=) co bug - reload trang lien tuc lam component remount
+# lien tuc, moi lan mount goi lai endpoint nay cho CUNG 1 conv_id, flood
+# hang nghin request/phut, nghet CPU backend toi 86%+ lam MOI API (ke ca
+# auth/me) bi xep hang/timeout. Da fix frontend (sessionStorage cooldown),
+# nhung them 1 lop chan o day cho CHAC - cache ket qua ngan han theo
+# (conv_id, caller) de du frontend/client nao sau nay co bug tuong tu cung
+# khong lam qua tai Supabase/CPU. TTL ngan (20s) vi day chi la tra cuu
+# "acc nao dang giu conv nay" - khong nhay cam ve thoi gian thuc.
+_RESOLVE_ACCOUNT_CACHE: Dict[str, tuple[float, dict]] = {}
+_RESOLVE_ACCOUNT_CACHE_TTL_S = 20.0
+
+
 @router.get("/resolve-account")
 async def resolve_conversation_account(
     conv_id: str = Query(...),
@@ -301,6 +356,12 @@ async def resolve_conversation_account(
     """Tim tai khoan Zalo dang giu 1 conv_id, dung cho luong 'Xu ly' tu trang
     Khach hang (CRM) - bam vao la tu dong chon dung acc + nhay thang toi hoi
     thoai, khong can biet truoc acc nao dang giu no."""
+    cache_key = f"{conv_id}:{x_caller_email or ''}"
+    now = time.monotonic()
+    cached = _RESOLVE_ACCOUNT_CACHE.get(cache_key)
+    if cached and now - cached[0] < _RESOLVE_ACCOUNT_CACHE_TTL_S:
+        return cached[1]
+
     rows = await _rest(
         "GET",
         "zalo_groups",
@@ -316,7 +377,15 @@ async def resolve_conversation_account(
     if allowed_ids is not None and conv_id not in allowed_ids:
         raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
 
-    return {"account_id": account_id, "conv_id": conv_id}
+    result = {"account_id": account_id, "conv_id": conv_id}
+    # Don cache qua date tien loi (chi khi dict phinh to), khong can scheduler
+    # rieng - endpoint nay goi it, du lieu nho, khong dang lo leak thuc te.
+    if len(_RESOLVE_ACCOUNT_CACHE) > 500:
+        expired = [k for k, (ts, _) in _RESOLVE_ACCOUNT_CACHE.items() if now - ts > _RESOLVE_ACCOUNT_CACHE_TTL_S]
+        for k in expired:
+            _RESOLVE_ACCOUNT_CACHE.pop(k, None)
+    _RESOLVE_ACCOUNT_CACHE[cache_key] = (now, result)
+    return result
 
 
 @router.post("/sync-recent", response_model=SyncRecentResponse)
@@ -703,6 +772,13 @@ async def get_conversation_messages(
     # if offset == 0:
     #     background_tasks.add_task(_background_sync_conversation_messages, user_id, conversation_id)
         
+    # ⚡ ACCELERATOR: In-memory short TTL cache (3s) cho việc xem/click tin nhắn
+    now = time.time()
+    cache_key = (user_id, conversation_id.strip(), limit, offset)
+    cached_entry = _MESSAGE_CACHE.get(cache_key)
+    if cached_entry and (now - cached_entry[0] < MESSAGE_CACHE_TTL):
+        return cached_entry[1]
+
     try:
         rows, total = await list_conversation_messages(
             user_id,
@@ -710,7 +786,7 @@ async def get_conversation_messages(
             limit=limit,
             offset=offset,
         )
-        return {
+        response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
             "total": total,
@@ -718,6 +794,11 @@ async def get_conversation_messages(
             "offset": offset,
             "has_more": offset + len(rows) < total,
         }
+        _MESSAGE_CACHE[cache_key] = (now, response_payload)
+        if len(_MESSAGE_CACHE) > 500:
+            for ok in sorted(_MESSAGE_CACHE.keys(), key=lambda k: _MESSAGE_CACHE[k][0])[:100]:
+                _MESSAGE_CACHE.pop(ok, None)
+        return response_payload
     except SupabaseNotConfigured as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
@@ -971,10 +1052,15 @@ async def send_media_to_conversation(
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"Không thể gửi file: {exc}")
 
-        # Upload ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
+        # Upload file/ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
         # (zca-js không trả URL persistent, chỉ trả msgId).
         uploaded_urls: List[str] = []
+        uploaded_assets: List[Dict[str, str]] = []
+        all_images = True
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
         try:
+            import mimetypes
+
             from app.modules.all_platform.zalo.services.supabase_service import (
                 _download_image,
                 upload_asset_bytes,
@@ -986,13 +1072,14 @@ async def send_media_to_conversation(
                     # Lấy extension từ file gốc
                     orig_name = files[idx].filename if idx < len(files) else None
                     ext = os.path.splitext(orig_name or path)[1] or ".jpg"
-                    content_type = "image/jpeg"
-                    if ext.lower() in {".png"}:
-                        content_type = "image/png"
-                    elif ext.lower() in {".webp"}:
-                        content_type = "image/webp"
-                    elif ext.lower() in {".gif"}:
-                        content_type = "image/gif"
+                    if ext.lower() not in _IMAGE_EXTS:
+                        all_images = False
+                    # Trước đây hard-code content_type về "image/jpeg" cho MỌI phần mở
+                    # rộng lạ (pdf, docx, zip...) — file lưu trong storage với
+                    # Content-Type sai, và msg_kind bị ép thành "image" khiến FE vẽ
+                    # <img> cho 1 file không phải ảnh -> hiện icon ảnh vỡ. Dùng
+                    # mimetypes để suy ra đúng content-type theo tên file thật.
+                    content_type = mimetypes.guess_type(orig_name or path)[0] or "application/octet-stream"
                     storage_path = posixpath.join(
                         user_id,
                         "outgoing",
@@ -1000,6 +1087,16 @@ async def send_media_to_conversation(
                     )
                     url = await upload_asset_bytes(storage_path, file_bytes, content_type)
                     uploaded_urls.append(url)
+                    # Đã có sẵn URL + path trong storage của mình (vừa upload xong) —
+                    # ghi thẳng vào zalo_message_assets bên dưới, KHÔNG để
+                    # save_message_assets() tải lại CHÍNH url này về rồi upload lại
+                    # lần 2 (lãng phí, và từng lỗi im lặng khi bucket zalo-assets
+                    # chưa tồn tại — ảnh mình tự gửi không hiện ra được).
+                    uploaded_assets.append({
+                        "source_url": url,
+                        "storage_path": storage_path,
+                        "storage_url": url,
+                    })
                 except Exception as exc:
                     logger.warning(f"Could not persist outgoing Zalo image {path}: {exc}")
         except Exception as exc:
@@ -1010,13 +1107,26 @@ async def send_media_to_conversation(
         # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
         # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
         api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+        caption = text.strip() if text else ""
+        if not caption and not all_images:
+            # File thường không có chữ kèm — dùng tên file thật làm content, giống
+            # đúng cách listener làm cho file NHẬN được (xem comment fileNameHint ở
+            # zca_persistent_listener.js), để FE hiện đúng tên thay vì tên ngẫu
+            # nhiên UUID của storage_path.
+            orig_names = [f.filename for f in files if f.filename]
+            caption = ", ".join(orig_names)[:150]
         await _persist_outgoing_message(
             user_id,
             conversation_id.strip(),
             api_payload,
-            content=text.strip() if text else "",
-            message_type="image",
+            content=caption,
+            # Chỉ ép "image" khi THẬT SỰ toàn ảnh — file thường (pdf/docx/zip...) phải
+            # để "file" để FE hiện thẻ tên-file+tải-về thay vì <img> vỡ (xem comment
+            # classifyAssetKind trong ZaloInboxAdminShell.tsx — URL không đúng đuôi
+            # ảnh + msg_kind=image mới là tổ hợp gây vỡ ảnh).
+            message_type="image" if all_images and uploaded_urls else "file",
             image_urls=uploaded_urls,
+            uploaded_assets=uploaded_assets,
         )
 
         return SendMessageResponse(
@@ -1194,6 +1304,7 @@ async def forward_conversation_message(
         temp_paths: List[str] = []
         try:
             target_thread_type = await resolve_thread_type(user_id, target_id)
+            persisted_assets: Optional[List[Dict[str, str]]] = None
             if uploaded_assets:
                 temp_paths = [await _asset_to_temp_file(asset) for asset in uploaded_assets]
                 api_result = await send_zca_images(
@@ -1201,6 +1312,13 @@ async def forward_conversation_message(
                 )
                 image_urls = [a.get("storage_url") for a in uploaded_assets if a.get("storage_url")]
                 message_type = "image"
+                # Tái dùng storage_url gốc (đã có sẵn trong bucket của mình) cho tin
+                # nhắn mới — tránh save_listener_messages() tải lại chính url này
+                # qua save_message_assets() (cùng lỗi tự-tải-lại đã sửa ở gửi ảnh mới).
+                persisted_assets = [
+                    {"source_url": a["storage_url"], "storage_path": a.get("storage_path") or "", "storage_url": a["storage_url"]}
+                    for a in uploaded_assets if a.get("storage_url")
+                ]
             else:
                 api_result = await send_zca_message(auth, target_id, content, thread_type=target_thread_type)
                 image_urls = None
@@ -1213,6 +1331,7 @@ async def forward_conversation_message(
             await _persist_outgoing_message(
                 user_id, target_id, api_payload,
                 content=content, message_type=message_type, image_urls=image_urls,
+                uploaded_assets=persisted_assets,
             )
             results.append(ForwardMessageResult(conversation_id=target_id, ok=True))
         except ZcaAuthExpiredError:
@@ -1320,6 +1439,7 @@ async def recall_conversation_message(
     except Exception as exc:
         logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
 
+    invalidate_conversation_message_cache(user_id, conversation_id.strip())
     return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
 
 
@@ -1512,6 +1632,8 @@ async def _persist_outgoing_message(
     image_urls: Optional[List[str]] = None,
     mentions: Optional[List[Mention]] = None,
     reply_to_id: Optional[str] = None,
+    uploaded_assets: Optional[List[Dict[str, str]]] = None,
+    raw_content_override: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
 
@@ -1529,11 +1651,12 @@ async def _persist_outgoing_message(
     now_iso = now_utc.isoformat().replace("+00:00", "Z")
     safe_content = (content or "").strip() or None
     safe_image_urls = [url for url in (image_urls or []) if url]
-    resolved_type = "image" if safe_image_urls and not safe_content else message_type
-    if safe_image_urls and safe_content:
-        resolved_type = "image"  # type đính kèm chữ vẫn là image
-    elif safe_image_urls:
-        resolved_type = "image"
+    # Trước đây luôn ép resolved_type="image" bất cứ khi nào có URL đính kèm, bất kể
+    # caller truyền message_type gì — đúng lúc _persist_outgoing_message() CHỈ được
+    # gọi cho ảnh, nhưng giờ cũng dùng cho file thường/sticker (caller đã tự tính
+    # đúng message_type rồi), ép cứng về "image" ở đây sẽ làm 1 file .pdf/.docx bị
+    # gắn msg_kind="image" và FE vẽ ra <img> vỡ thay vì thẻ file tải về. Tin caller.
+    resolved_type = message_type
 
     message = Message(
         message_id=source_id,
@@ -1543,7 +1666,10 @@ async def _persist_outgoing_message(
         time_text=now_iso,
         type=resolved_type,
         content=safe_content,
-        image_urls=safe_image_urls,
+        # uploaded_assets đã có sẵn → ghi thẳng zalo_message_assets bên dưới sau khi
+        # lưu xong, KHÔNG để save_listener_messages() lại tự tải/upload lại qua
+        # save_message_assets() (xem call site ở send_media_to_conversation).
+        image_urls=[] if uploaded_assets else safe_image_urls,
         is_sent=True,
         is_deleted=False,
         group_id=conversation_id,
@@ -1551,6 +1677,7 @@ async def _persist_outgoing_message(
         msg_kind=resolved_type,
         mentions=mentions or [],
         reply_to_id=reply_to_id,
+        raw_content=raw_content_override,
     )
 
     group_name = await _resolve_group_name(user_id, conversation_id)
@@ -1583,6 +1710,44 @@ async def _persist_outgoing_message(
         logger.warning(
             f"Could not persist outgoing message to Supabase for user={user_id} conv={conversation_id}: {exc}"
         )
+        return
+
+    if uploaded_assets:
+        try:
+            rows = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "select": "id",
+                    "user_id": f"eq.{user_id}",
+                    "group_id": f"eq.{conversation_id}",
+                    "source_message_id": f"eq.{source_id}",
+                    "limit": "1",
+                },
+            ) or []
+            message_uuid = rows[0]["id"] if rows else None
+            if message_uuid:
+                now_iso2 = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                await _rest(
+                    "POST",
+                    "zalo_message_assets",
+                    json=[
+                        {
+                            "message_id": message_uuid,
+                            "source_url": asset["source_url"],
+                            "storage_path": asset["storage_path"],
+                            "storage_url": asset["storage_url"],
+                            "status": "uploaded",
+                            "updated_at": now_iso2,
+                        }
+                        for asset in uploaded_assets
+                    ],
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Could not persist outgoing message assets for user={user_id} conv={conversation_id}: {exc}"
+            )
+    invalidate_conversation_message_cache(user_id, conversation_id)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1655,18 +1820,24 @@ async def find_zalo_user(
                 )
             raise HTTPException(status_code=500, detail=f"findUserByUsername thất bại: {exc}")
 
-    if not user or not user.get("userId"):
+    # QUAN TRỌNG (bug phát hiện 2026-10-02): raw response zca-js dùng field "uid" (vd
+    # {"uid": "...", "zalo_name": "...", "display_name": "...", "avatar": "..."}), KHÔNG
+    # PHẢI "userId"/"displayName"/"zaloName"/"avatarUrl" như code cũ ở đây check - khiến
+    # MỌI lần tìm đều báo "không tìm thấy" dù ZCA trả về user thật hợp lệ. Giữ cả 2 tên để
+    # phòng hờ response shape đổi (giống automation_worker.py đã làm đúng từ trước).
+    user_id_zalo_raw = user.get("uid") or user.get("userId") or user.get("id")
+    if not user or not user_id_zalo_raw:
         raise HTTPException(
             status_code=404,
             detail="Không tìm thấy user Zalo. Có thể user đã tắt nhận tin nhắn từ người lạ.",
         )
 
-    user_id_zalo = str(user.get("userId"))
+    user_id_zalo = str(user_id_zalo_raw)
     return {
         "user_id": user_id_zalo,
-        "display_name": user.get("displayName") or user.get("zaloName") or user_id_zalo,
-        "zalo_name": user.get("zaloName") or None,
-        "avatar_url": user.get("avatar") or user.get("avatarUrl") or None,
+        "display_name": user.get("display_name") or user.get("displayName") or user.get("zalo_name") or user.get("zaloName") or user_id_zalo,
+        "zalo_name": user.get("zalo_name") or user.get("zaloName") or None,
+        "avatar_url": user.get("avatar") or user.get("avatarUrl") or user.get("avt") or user.get("fullAvt") or user.get("fullAvatar") or None,
         "phone_e164": e164 if by == "phone" else None,
         "raw": user,
     }
@@ -1695,14 +1866,15 @@ async def create_conversation_with_user(
     if not target_uid:
         raise HTTPException(status_code=400, detail="Thiếu user_id.")
     try:
-        # Khong set is_friend o day - /users/find khong tra ve trang thai ban be,
-        # gan sai (vd False cho nguoi that ra da la ban) se lam sai UI cho ca cac
-        # cho khac dang doc cot nay. De None -> upsert_group tu bo qua field nay.
+        # Gán thread_type="direct" để resolve_thread_type xác định đúng là cá nhân (0)
+        # khi gửi tin nhắn cho người lạ, không bị nhầm thành nhóm chat (1).
         await upsert_group(
             user_id=user_id,
             group_id=target_uid,
             group_name=body.display_name.strip(),
             avatar_url=body.avatar_url,
+            is_friend=False,
+            thread_type="direct",
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể tạo hội thoại: {exc}")
@@ -1874,6 +2046,33 @@ async def send_sticker_to_conversation(
         raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể gửi sticker: {exc}")
+
+    # Trước đây KHÔNG lưu gì vào Supabase sau khi gửi — sticker chỉ hiện lại khi
+    # listener echo về, và dữ liệu echo của Zalo cho sticker chỉ có id/cateId (không
+    # có URL ảnh thật, phải tra riêng qua getStickersDetail), nên dù echo về cũng
+    # không có ảnh để vẽ. Ở đây đã có sẵn id/cateId CHẮC CHẮN đúng (từ chính request)
+    # nên tra ngay URL thật rồi lưu local, hiện ra tức thì — không cần chờ/đoán field
+    # từ raw_content của listener.
+    sticker_url: Optional[str] = None
+    try:
+        details = await get_zca_stickers_detail(auth, [body.id])
+        detail = details[0] if details else {}
+        sticker_url = detail.get("stickerWebpUrl") or detail.get("stickerUrl") or None
+    except Exception as exc:
+        logger.info(f"Could not resolve sticker detail for id={body.id}: {exc}")
+
+    api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    await _persist_outgoing_message(
+        user_id,
+        conversation_id.strip(),
+        api_payload,
+        content="",
+        message_type="image" if sticker_url else "sticker",
+        image_urls=[sticker_url] if sticker_url else None,
+        raw_content_override=(
+            {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
+        ),
+    )
     return {"ok": True, "result": result}
 
 
@@ -1898,3 +2097,193 @@ async def get_stickers_detail(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể tra sticker: {exc}")
     return {"stickers": stickers}
+
+
+@router.get("/{conversation_id}/phone")
+async def get_conversation_phone(
+    conversation_id: str,
+    name: Optional[str] = Query(None),
+):
+    """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign."""
+    conv_id = (conversation_id or "").strip()
+    if not conv_id:
+        return {"success": False, "phone": None}
+
+    clean_name = (name or "").strip()
+    phone: Optional[str] = None
+
+    # 1. Tra trong customer_leads theo conv_id
+    try:
+        lead_rows = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "phone,phone_normalized",
+                "limit": 1,
+            },
+        )
+        if lead_rows and isinstance(lead_rows, list) and len(lead_rows) > 0:
+            phone = lead_rows[0].get("phone") or lead_rows[0].get("phone_normalized")
+    except Exception as e:
+        logger.debug(f"lookup phone in customer_leads by conv_id failed: {e}")
+
+    # 2. Tra trong customer_leads theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            name_lead_rows = await _rest(
+                "GET",
+                "customer_leads",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if name_lead_rows and isinstance(name_lead_rows, list) and len(name_lead_rows) > 0:
+                phone = name_lead_rows[0].get("phone") or name_lead_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in customer_leads by name failed: {e}")
+
+    # 3. Tra trong crm_customers theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            cust_rows = await _rest(
+                "GET",
+                "crm_customers",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if cust_rows and isinstance(cust_rows, list) and len(cust_rows) > 0:
+                phone = cust_rows[0].get("phone") or cust_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in crm_customers by name failed: {e}")
+
+    # 4. Tra trong auto_seeding_comments theo zalo_conversation_id
+    if not phone:
+        try:
+            seeding_rows = await _rest(
+                "GET",
+                "auto_seeding_comments",
+                params={
+                    "zalo_conversation_id": f"eq.{conv_id}",
+                    "select": "phone_number",
+                    "limit": 1,
+                },
+            )
+            if seeding_rows and isinstance(seeding_rows, list) and len(seeding_rows) > 0:
+                phone = seeding_rows[0].get("phone_number")
+        except Exception as e:
+            logger.debug(f"lookup phone in auto_seeding_comments failed: {e}")
+
+    # 5. Tra trong zalo_messages của conversation xem có tin nhắn chứa SĐT
+    if not phone:
+        try:
+            msgs = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "group_id": f"eq.{conv_id}",
+                    "content": "not.is.null",
+                    "select": "content",
+                    "order": "created_at.desc",
+                    "limit": 20,
+                },
+            )
+            if msgs and isinstance(msgs, list):
+                phone_pattern = re.compile(r"(?:(?:+?84|0)[235789](?:[.s-]?d){8,9})")
+                for m in msgs:
+                    text = m.get("content") or ""
+                    match = phone_pattern.search(text)
+                    if match:
+                        phone = match.group(0)
+                        break
+        except Exception as e:
+            logger.debug(f"lookup phone in zalo_messages failed: {e}")
+
+    # 6. Nếu conv_id chính là số điện thoại
+    if not phone:
+        digits = re.sub(r"\D", "", conv_id)
+        if (len(digits) == 10 and digits.startswith("0")) or (len(digits) == 11 and digits.startswith("84")):
+            phone = digits
+
+    # Chuẩn hóa về dạng 0...
+    if phone:
+        clean = re.sub(r"\D", "", str(phone))
+        if clean.startswith("84") and len(clean) >= 10:
+            clean = "0" + clean[2:]
+        return {"success": True, "phone": clean}
+
+    return {"success": True, "phone": None}
+
+
+class SaveConversationPhoneRequest(BaseModel):
+    phone: str
+    name: Optional[str] = None
+
+
+@router.post("/{conversation_id}/phone")
+async def save_conversation_phone(
+    conversation_id: str,
+    payload: SaveConversationPhoneRequest,
+):
+    """Lưu hoặc cập nhật số điện thoại cho hội thoại Zalo vào customer_leads."""
+    conv_id = (conversation_id or "").strip()
+    raw_phone = (payload.phone or "").strip()
+    clean_digits = re.sub(r"\D", "", raw_phone)
+    if clean_digits.startswith("84") and len(clean_digits) >= 10:
+        clean_digits = "0" + clean_digits[2:]
+
+    if not conv_id or not clean_digits:
+        raise HTTPException(status_code=400, detail="Thiếu conversation_id hoặc phone")
+
+    clean_name = (payload.name or "").strip() or f"Zalo User {clean_digits[-4:]}"
+
+    # 1. Kiểm tra xem đã có lead với conv_id này chưa
+    try:
+        existing = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "id,customer_name,phone",
+                "limit": 1,
+            },
+        )
+        if existing and isinstance(existing, list) and len(existing) > 0:
+            lead_id = existing[0]["id"]
+            await _rest(
+                "PATCH",
+                "customer_leads",
+                params={"id": f"eq.{lead_id}"},
+                payload={
+                    "phone": clean_digits,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return {"success": True, "phone": clean_digits, "lead_id": lead_id, "action": "updated"}
+    except Exception as e:
+        logger.error(f"update existing lead by conv_id failed: {e}")
+
+    # 2. Tạo mới lead trong customer_leads
+    try:
+        new_lead = {
+            "customer_name": clean_name,
+            "phone": clean_digits,
+            "conv_id": conv_id,
+            "source_platform": "zalo",
+            "status": "new",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        res = await _rest("POST", "customer_leads", payload=new_lead)
+        return {"success": True, "phone": clean_digits, "action": "created", "lead": res}
+    except Exception as e:
+        logger.error(f"create customer_leads for conv_id failed: {e}")
+        # Vẫn trả về phone để UI hiển thị được ngay lập tức
+        return {"success": True, "phone": clean_digits, "action": "fallback_local"}

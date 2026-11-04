@@ -23,12 +23,18 @@ import { toast } from "sonner";
 import { customerLeadService, type Customer } from "@/services/customer-lead.service";
 import { seedingContractRepository } from "@/modules/contracts/repositories/SeedingContractRepository";
 import { CONTRACT_STATUS_LABELS } from "@/modules/contracts/constants/contractConfig";
+import {
+  WARRANTY_PERIOD_PRESETS,
+  computeWarrantyEndDate,
+  formatWarrantyEndDate,
+} from "@/modules/contracts/utils/warrantyCalc";
 import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Contract, ContractOcrReconcileResult, ContractStatus } from "@/modules/contracts";
-import { seedingQuoteRepository } from "@/modules/quotes";
+import { seedingQuoteRepository, calculateOverallDiscountSummary, calculateQuoteTotals } from "@/modules/quotes";
 import type { Quote } from "@/modules/quotes";
 import { internalQuoteStatusLabel } from "@/modules/quotes/constants/quoteConfig";
 import { QuoteQuickViewDrawer } from "./QuoteQuickViewDrawer";
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 interface DealOption {
   id: string;
@@ -37,7 +43,27 @@ interface DealOption {
   primary_contact_id?: string | null;
 }
 
+/** Hợp đồng đang sửa (dòng thô từ bảng contracts) - truyền vào để dùng chính form này ở chế độ Sửa. */
+export interface EditableContract {
+  id: string;
+  title?: string | null;
+  contract_number?: string | null;
+  contract_value?: number | string | null;
+  status?: string | null;
+  signed_at?: string | null;
+  end_date?: string | null;
+  warranty_period?: string | null;
+  file_url?: string | null;
+  note?: string | null;
+  quote_id?: string | null;
+  deal_id?: string | null;
+  contact_id?: string | null;
+  deal_phase?: "purchase" | "sale" | null;
+}
+
 interface Props {
+  /** Có contract = chế độ Sửa hợp đồng (cùng form với Thêm hợp đồng). */
+  contract?: EditableContract | null;
   open: boolean;
   deal: Customer; // "Customer" type ở đây thực chất là 1 dòng Deal (xem customer-lead.service.ts)
   onClose: () => void;
@@ -81,6 +107,44 @@ interface Props {
 const STATUS_OPTIONS: ContractStatus[] = ["signed", "active", "completed", "draft", "pending_signature", "terminated"];
 const ALL = "__all__";
 const NONE_QUOTE = "__none__";
+
+/** So tien cua bao gia -> VND (hop dong luon bang VND). Quote USD x ty gia da chot; VND giu nguyen. */
+function quoteAmountVnd(
+  amount: number | null,
+  quote: { currency?: string | null; exchangeRate?: number | null }
+): number | null {
+  if (amount == null) return null;
+  if (String(quote.currency || 'VND').toUpperCase() !== 'USD') return amount;
+  const vnd = quoteCurrencyToVnd(amount, 'USD', quote.exchangeRate);
+  return vnd == null ? amount : Math.round(vnd);
+}
+
+// quote.totalAmount la tong TRUOC "Giam gia toan bao gia" (overall discount,
+// migration 106) - dung calculateOverallDiscountSummary (CUNG cong thuc voi
+// QuoteDocumentRenderer/ban in) de ra dung so THANH TOAN CUOI CUNG, khop
+// voi comment "Gia tri hop dong = so THANH TOAN CUOI CUNG" o duoi
+// (task 2026-11-02, trc do dang lay nham totalAmount truoc giam). Totals
+// tinh lai TU items (calculateQuoteTotals) giong het QuoteDocumentRenderer,
+// KHONG dung thang version.totalAmount/vatAmount (co the lech voi tong tinh
+// tu items that - da gap bug thuc te khi dung thang 2 field DB nay).
+function resolveQuoteDiscountSummary(version: Quote | null) {
+  if (!version) return null;
+  const totals = version.items?.length
+    ? calculateQuoteTotals(version.items, 0, version.currency)
+    : { totalAmount: version.totalAmount ?? version.customerPriceBeforeVat ?? 0, totalVatAmount: version.vatAmount ?? 0 };
+  if (!version.items?.length && version.totalAmount == null && version.customerPriceBeforeVat == null) return null;
+  return calculateOverallDiscountSummary(
+    { totalAmount: totals.totalAmount, totalVatAmount: totals.totalVatAmount },
+    version.overallDiscountPercent ?? null,
+    version.currency,
+    version.data?.overallDiscountAmount ?? null,
+    version.overallDiscountType ?? null
+  );
+}
+
+function resolveQuoteGrandTotal(version: Quote | null): number | null {
+  return resolveQuoteDiscountSummary(version)?.grandTotal ?? null;
+}
 
 function formatVND(value?: number | null) {
   if (value == null) return "—";
@@ -164,13 +228,24 @@ function SectionHeader({ n, title }: { n: number; title: string }) {
   );
 }
 
-export function RegisterExternalContractModal({ open, deal, onClose, onCreated, customerLabel, dealOptions, contactOptions, projectOptions, quoteOptions }: Props) {
+export function RegisterExternalContractModal({ contract, open, deal, onClose, onCreated, customerLabel, dealOptions, contactOptions, projectOptions, quoteOptions }: Props) {
+  // "Loại hợp đồng" — recorded = hợp đồng ghi nhận (form đầy đủ); purchase/sale =
+  // Hợp đồng Mua vào (Phase 1) / Bán ra (Phase 2): chỉ dán link / tải file.
+  const [contractKind, setContractKind] = useState<"recorded" | "purchase" | "sale">("recorded");
   const [title, setTitle] = useState("");
   const [contractNumber, setContractNumber] = useState("");
   const [contractValue, setContractValue] = useState<number | null>(null);
   const [status, setStatus] = useState<ContractStatus>("signed");
   const [signedAt, setSignedAt] = useState("");
   const [endDate, setEndDate] = useState("");
+  // "Thoi gian bao hanh" (2026-10-23, yeu cau sep) - chu TU DO (vd "12 tháng",
+  // "24 tháng theo hãng"), giong het pattern warranty_scope tren quote_items
+  // (migration 141) - khong ep so/ngay.
+  const [warrantyPeriod, setWarrantyPeriod] = useState("");
+  // Dropdown preset vs nhap tay (2026-10-23) - mac dinh 'preset', tu chuyen
+  // sang 'custom' khi nap 1 hop dong co san voi gia tri KHONG khop preset nao
+  // (xem effect nap du lieu ben duoi) de khong mat du lieu tu do cu.
+  const [warrantyPeriodMode, setWarrantyPeriodMode] = useState<"preset" | "custom">("preset");
   const [fileUrl, setFileUrl] = useState("");
   const [linkInput, setLinkInput] = useState("");
   const [note, setNote] = useState("");
@@ -214,6 +289,9 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   // nguoi dung da tu sua tay (giong quy uoc "!title" cua ManualContractModal,
   // nhung dung ref thay vi chi check rong de con cap nhat duoc SAU KHI da tu
   // dien 1 lan, luc doi sang bao gia/phien ban khac).
+  const editing = Boolean(contract);
+  // Phien ban bao gia cua hop dong dang sua - dung 1 lan khi nap danh sach phien ban.
+  const editVersionRef = useRef<string | null>(null);
   const lastAutoTitleRef = useRef("");
   const lastAutoValueRef = useRef<number | null>(null);
 
@@ -225,6 +303,8 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     setStatus("signed");
     setSignedAt("");
     setEndDate("");
+    setWarrantyPeriod("");
+    setWarrantyPeriodMode("preset");
     setFileUrl("");
     setLinkInput("");
     setNote("");
@@ -237,6 +317,42 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     setActiveContactId(deal.primary_contact_id || ALL);
     setActiveProjectId(deal.project_id || ALL);
     setSelectedQuoteId(NONE_QUOTE);
+    editVersionRef.current = null;
+    setContractKind("recorded");
+    if (contract) {
+      setTitle(contract.title || "");
+      setContractNumber(contract.contract_number || "");
+      setContractValue(Number(contract.contract_value || 0) || null);
+      setStatus((contract.status || "signed") as ContractStatus);
+      setSignedAt(contract.signed_at ? String(contract.signed_at).slice(0, 10) : "");
+      setEndDate(contract.end_date ? String(contract.end_date).slice(0, 10) : "");
+      setWarrantyPeriod(contract.warranty_period || "");
+      setWarrantyPeriodMode(
+        contract.warranty_period && !WARRANTY_PERIOD_PRESETS.includes(contract.warranty_period)
+          ? "custom"
+          : "preset"
+      );
+      setLinkInput(contract.file_url || "");
+      setNote(contract.note || "");
+      setContractKind(contract.deal_phase || "recorded");
+      setSelectedDealId(contract.deal_id || deal.id);
+      setActiveContactId(contract.contact_id || deal.primary_contact_id || ALL);
+      if (contract.quote_id) {
+        editVersionRef.current = contract.quote_id;
+        // Bug thuc te (2026-11-02, "gán lộn báo giá"): quoteOptions CHI liet
+        // ke ban "current" (version moi nhat) cua moi chuoi bao gia - neu
+        // contract.quote_id tro toi 1 version CU (khong phai current nua),
+        // match o day se KHONG tim thay, truoc day thi khong set gi ca ->
+        // 1 effect khac (dong 1 bao gia hop le sau loc) se tu y gan dai 1
+        // bao gia KHAC sai hoan toan. Fix: luon set thang contract.quote_id
+        // (khong doi hoi phai co trong quoteOptions) - getQuoteVersions()
+        // backend tu resolve dung chuoi version tu BAT KY id nao trong chuoi
+        // do (quotes_list_versions -> get_quote(id) -> versionChainId), nen
+        // van ra dung du lieu ke ca id nay la version cu.
+        const match = (quoteOptions || []).find(q => q.id === contract.quote_id);
+        setSelectedQuoteId(match ? match.id : contract.quote_id);
+      }
+    }
     setChainVersions(null);
     setChainVersionsError("");
     setSelectedVersionId("");
@@ -245,7 +361,8 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     setQuickViewOpen(false);
     lastAutoTitleRef.current = "";
     lastAutoValueRef.current = null;
-  }, [open, deal.id, deal.primary_contact_id, deal.project_id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, deal.id, deal.primary_contact_id, deal.project_id, contract?.id]);
 
   // Chi goi y bao gia THUOC dung Co hoi/Du an dang chon (giong cach loc Cơ hội
   // theo Lien he/Du an o tren) - neu doi Cơ hội/Du an sang cai khac, bao gia
@@ -284,7 +401,9 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
       .then(versions => {
         if (!alive) return;
         setChainVersions(versions);
-        setSelectedVersionId(versions[0]?.id || selectedQuoteId);
+        const wanted = editVersionRef.current;
+        editVersionRef.current = null;
+        setSelectedVersionId(wanted && versions.some(v => v.id === wanted) ? wanted : versions[0]?.id || selectedQuoteId);
       })
       .catch(err => {
         if (!alive) return;
@@ -329,7 +448,9 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   // sanh gia tri dang nhap voi gia bao gia da chon (CUNG 1 cong thuc voi effect
   // tu dien "Giá trị hợp đồng" ben duoi: customerPriceBeforeVat, fallback
   // totalAmount) de biet co can bat buoc ly do dieu chinh hay khong.
-  const quotePrice = selectedVersion ? (selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null) : null;
+  // Hop dong luon tinh bang VND: bao gia USD quy doi theo ty gia DA CHOT cua chinh bao gia do.
+  // Gia tri hop dong = so THANH TOAN CUOI CUNG (gom VAT) = totalAmount cua bao gia (khop ContractAIWizard); fallback gia chua VAT.
+  const quotePrice = selectedVersion ? quoteAmountVnd(resolveQuoteGrandTotal(selectedVersion), selectedVersion) : null;
   const valueDiffersFromQuote = quotePrice != null && contractValue != null && contractValue !== quotePrice;
   const isLatestVersion = chainVersions && chainVersions.length > 0 ? chainVersions[0]?.id === selectedVersionId : true;
 
@@ -386,7 +507,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
   // Center) - chi ghi de khi nguoi dung CHUA tu sua gia tri nay.
   useEffect(() => {
     if (!open || !selectedVersion) return;
-    const price = selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null;
+    const price = quoteAmountVnd(resolveQuoteGrandTotal(selectedVersion), selectedVersion);
     if (price == null) return;
     setContractValue(current => {
       if (current !== null && current !== lastAutoValueRef.current) return current;
@@ -408,14 +529,47 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
     }
   }, [open, projectOptions, activeProjectId]);
 
+  // Chi co DUNG 1 Nguoi lien he -> tu dong chon luon, khong de "Tất cả liên hệ" mac dinh bat
+  // nguoi dung phai tu bam (cung logic/ly do voi auto-chon Du an o tren).
+  useEffect(() => {
+    if (!open) return;
+    if (contactOptions && contactOptions.length === 1 && activeContactId !== contactOptions[0].id) {
+      setActiveContactId(contactOptions[0].id);
+    }
+  }, [open, contactOptions, activeContactId]);
+
+  // Chi co DUNG 1 bao gia hop le (sau loc theo Lien he/Du an) va chua chon gi -> tu dong chon
+  // luon, khong bat nguoi dung phai tu mo dropdown chon 1 muc duy nhat.
+  // Bug thuc te (2026-11-02, "gán lộn báo giá"): khi SUA 1 hop dong co san ma
+  // contract.quote_id tro toi 1 version KHONG PHAI ban "current" cua chuoi
+  // (vd V1 khi chuoi da co V2+), quoteOptions (chi liet ke ban current moi
+  // chuoi) khong match duoc -> selectedQuoteId o lai NONE_QUOTE -> effect nay
+  // tuong "chua chon gi" roi TU Y gan dai 1 bao gia KHAC (bao gia duy nhat
+  // con lai sau loc) - sai hoan toan voi bao gia THAT su da dung de tao hop
+  // dong. Khi dang sua hop dong co san va contract co quote_id rieng, KHONG
+  // duoc chay heuristic nay - de nguyen NONE_QUOTE (hien "chua xac dinh
+  // duoc bao gia goc") thay vi gan nham.
+  useEffect(() => {
+    if (!open) return;
+    if (editing && contract?.quote_id) return;
+    if (selectedQuoteId === NONE_QUOTE && filteredQuotes.length === 1) {
+      setSelectedQuoteId(filteredQuotes[0].id);
+    }
+  }, [open, filteredQuotes, selectedQuoteId, editing, contract?.quote_id]);
+
   // Cơ hội nao) thi fallback ve toan bo dealOptions - KHONG duoc de dropdown
   // Cơ hội trong rong khong co gi de chon.
   const filteredDeals = useMemo(() => {
     const all = dealOptions || [];
     const byContact = activeContactId === ALL ? all : all.filter(d => d.primary_contact_id === activeContactId);
     const byBoth = activeProjectId === ALL ? byContact : byContact.filter(d => d.project_id === activeProjectId);
+    // Sua hop dong: lien he luu rieng tren hop dong, KHONG duoc day Cơ hội dang gan sang cai khac.
+    if (editing && !byBoth.some(d => d.id === selectedDealId)) {
+      const current = all.find(d => d.id === selectedDealId);
+      if (current) return [current, ...byBoth];
+    }
     return byBoth.length > 0 ? byBoth : all;
-  }, [dealOptions, activeContactId, activeProjectId]);
+  }, [dealOptions, activeContactId, activeProjectId, editing, selectedDealId]);
 
   // Neu Cơ hội dang chon khong con thuoc danh sach da loc (doi Lien he/Du an
   // lam thu hep lua chon), tu dong nhay sang phan tu dau tien hop le - tranh
@@ -469,10 +623,25 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
       setError("Vui lòng nhập tên hợp đồng.");
       return;
     }
+    // "Ngay ky" bat buoc (2026-10-23, yeu cau sep) - check dau ham nay ap
+    // dung cho CA 2 che do Them moi va Sua (editing chi re nhanh SAU validate,
+    // xem duoi) - khong can sua rieng 2 cho.
+    if (!signedAt) {
+      setError("Vui lòng chọn Ngày ký.");
+      return;
+    }
+    // Feedback mentor (2026-10-03): "Báo giá / phiên bản" phải bắt buộc chọn,
+    // khong con cho phep "Không gắn báo giá" nua.
+    // (Sua hop dong cu gan voi 1 phien ban khong con trong danh sach chon: giu nguyen quote_id cu.)
+    if (selectedQuoteId === NONE_QUOTE && !(editing && contract?.quote_id)) {
+      setError("Vui lòng chọn báo giá.");
+      return;
+    }
     // "Điều chỉnh giá trị hợp đồng" (redesign 2026-10-01) - bat buoc ly do khi
     // gia tri nguoi dung nhap khac gia bao gia da chon, giong y het khuon
     // validation "!title.trim()" o tren.
-    if (valueDiffersFromQuote && !adjustmentReason.trim()) {
+    const valueTouched = !editing || Number(contract?.contract_value || 0) !== (contractValue ?? 0);
+    if (valueDiffersFromQuote && valueTouched && !adjustmentReason.trim()) {
       setError("Giá trị hợp đồng khác báo giá đã chọn — vui lòng nhập lý do điều chỉnh.");
       return;
     }
@@ -482,10 +651,31 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
       // Khong co cot DB rieng cho "ly do dieu chinh gia tri" - noi vao dau
       // `note` hien co (field da duoc gui len backend san) thay vi bia them
       // cot moi khong ton tai.
-      const finalNote = valueDiffersFromQuote && adjustmentReason.trim()
+      const finalNote = valueDiffersFromQuote && valueTouched && adjustmentReason.trim()
         ? `Điều chỉnh giá trị hợp đồng: ${adjustmentReason.trim()}${note.trim() ? `\n${note.trim()}` : ""}`
         : note.trim() || undefined;
-      const contract = await seedingContractRepository.createContract({
+      const contactId = activeContactId === ALL ? undefined : activeContactId;
+      if (editing && contract) {
+        const updated = await seedingContractRepository.updateContract(contract.id, {
+          dealId: selectedDealId,
+          quoteId: selectedQuoteId === NONE_QUOTE ? undefined : (selectedVersionId || selectedQuoteId),
+          contractNumber: contractNumber.trim() || undefined,
+          title: title.trim(),
+          status,
+          signedAt: signedAt || undefined,
+          contractValue: contractValue ?? 0,
+          endDate: endDate || undefined,
+          warrantyPeriod: warrantyPeriod.trim() || undefined,
+          fileUrl: fileUrl || linkInput.trim() || undefined,
+          note: finalNote ?? "",
+          contactId: contactId ?? "",
+          dealPhase: contractKind === "recorded" ? "" : contractKind,
+        });
+        toast.success("Đã cập nhật hợp đồng");
+        onCreated(updated);
+        return;
+      }
+      const created = await seedingContractRepository.createContract({
         dealId: selectedDealId,
         // Gui DUNG id phien ban da chon (selectedVersionId) - KHAC selectedQuoteId
         // (id cua bản CURRENT trong chuoi, chi dung de loc dropdown) khi nguoi
@@ -497,12 +687,15 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
         signedAt: signedAt || undefined,
         contractValue: contractValue ?? 0,
         endDate: endDate || undefined,
+        warrantyPeriod: warrantyPeriod.trim() || undefined,
         source: "external",
         fileUrl: fileUrl || linkInput.trim() || undefined,
         note: finalNote,
+        dealPhase: contractKind === "recorded" ? undefined : contractKind,
+        contactId,
       });
-      toast.success("Đã ghi nhận hợp đồng");
-      onCreated(contract);
+      toast.success(contractKind === "purchase" ? "Đã thêm hợp đồng Mua vào" : contractKind === "sale" ? "Đã thêm hợp đồng Bán ra" : "Đã ghi nhận hợp đồng");
+      onCreated(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không ghi nhận được hợp đồng.");
     } finally {
@@ -524,7 +717,11 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
 
   return (
     <>
-      <div onClick={onClose} className="fixed inset-0 z-[99984] bg-black/40 backdrop-blur-sm" />
+      {/* Backdrop TRONG SUOT (k co lop mo/blur, theo dung yeu cau 2026-10-23)
+       * nhung van bat click de dong khi bam ra ngoai. Sidebar trai
+       * (AllPlatformSidebar.tsx, z-[99990]) van sang + bam dieu huong binh
+       * thuong vi no render DE LEN tren backdrop nay (z-[99984]). */}
+      <div onClick={onClose} className="fixed inset-0 z-[99984]" />
       {/* Feedback 2026-10-01 (3 lan): (1) "để khi mở báo giá k bị giật" ->
        * (2) "to quá... chỉ mở thêm kế bên chứ k phải dồn content ra" -> (3)
        * "t mún form nó to như ảnh nè nma bỏ cái xem nhanh đi... khi bấm xem
@@ -569,8 +766,8 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
           <div className="flex h-full w-[46rem] shrink-0 flex-col">
             <header className="flex shrink-0 items-start justify-between border-b border-slate-200 px-5 py-4">
               <div>
-                <h2 className="text-lg font-bold text-slate-800">Ghi nhận hợp đồng có sẵn</h2>
-                <p className="mt-0.5 text-xs text-slate-500">Thêm hợp đồng đã ký bên ngoài vào CRM</p>
+                <h2 className="text-lg font-bold text-slate-800">{editing ? "Sửa hợp đồng" : "Thêm hợp đồng"}</h2>
+                <p className="mt-0.5 text-xs text-slate-500">{editing ? (contract?.contract_number || "Hợp đồng chưa có mã") : "Chọn loại hợp đồng rồi nhập thông tin"}</p>
               </div>
               <button onClick={onClose} className="rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600">
                 <X className="size-4" />
@@ -578,11 +775,35 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
             </header>
 
             <form id="registerExternalContractForm" className="crm-scroll-hidden w-full flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm" onSubmit={handleSubmit}>
+              <div>
+                <span className="mb-1 block text-xs font-semibold text-slate-600">Loại hợp đồng</span>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { key: "recorded", label: "Hợp đồng ghi nhận", hint: "Hợp đồng tạo/ký trong trang" },
+                    { key: "purchase", label: "Mua vào (Phase 1)", hint: "Hợp đồng/báo giá mua" },
+                    { key: "sale", label: "Bán ra (Phase 2)", hint: "Hợp đồng/báo giá bán" },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => { setContractKind(opt.key); setError(""); }}
+                      className={`rounded-md border px-3 py-2 text-left transition ${contractKind === opt.key ? "border-[#c2185b] bg-rose-50 text-[#c2185b]" : "border-slate-300 text-slate-600 hover:bg-slate-50"}`}
+                    >
+                      <span className="block text-xs font-semibold">{opt.label}</span>
+                      <span className="block text-[11px] font-normal opacity-80">{opt.hint}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-                Hợp đồng này đã được ký/làm bên ngoài. Vui lòng nhập các thông tin cơ bản và đính kèm file hoặc link.
+                {contractKind === "recorded"
+                  ? "Hợp đồng này đã được ký/làm bên ngoài. Vui lòng nhập các thông tin cơ bản và đính kèm file hoặc link."
+                  : `Hợp đồng ${contractKind === "purchase" ? "Mua vào (Phase 1)" : "Bán ra (Phase 2)"}: nhập thông tin như hợp đồng ghi nhận và dán link/đính kèm file hợp đồng, báo giá ${contractKind === "purchase" ? "mua" : "bán"}.`}
               </div>
 
               {error ? <p className="text-red-600">{error}</p> : null}
+
 
               <SectionHeader n={1} title="Liên kết dữ liệu CRM" />
 
@@ -668,7 +889,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                * van mac dinh phien ban moi nhat qua effect getQuoteVersions
                * o tren). */}
               <div className="rounded-md border border-slate-300 p-3">
-                <span className="mb-2 block text-xs font-semibold text-slate-600">Báo giá / phiên bản</span>
+                <span className="mb-2 block text-xs font-semibold text-slate-600">Báo giá / phiên bản <span className="text-red-500">*</span></span>
                 {selectedVersion ? (
                   <div className="mb-2 text-sm font-semibold text-slate-800">
                     {selectedVersion.quoteNumber} · V{selectedVersion.versionNumber || 1} · {formatVND(quotePrice)} · {isLatestVersion ? "Mới nhất" : "Phiên bản cũ"}
@@ -683,7 +904,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                     disabled={!filteredQuotes.length}
                     className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-xs disabled:bg-slate-50 disabled:text-slate-400"
                   >
-                    <option value={NONE_QUOTE}>{filteredQuotes.length ? 'Không gắn báo giá' : 'Khách hàng chưa có báo giá nào'}</option>
+                    <option value={NONE_QUOTE} disabled>{filteredQuotes.length ? '-- Chọn báo giá --' : 'Khách hàng chưa có báo giá nào'}</option>
                     {filteredQuotes.map(q => (
                       <option key={q.id} value={q.id}>{q.label}{q.versionCount && q.versionCount > 1 ? ` (${q.versionCount} phiên bản)` : ''}</option>
                     ))}
@@ -735,7 +956,21 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                   <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-xs">
                     <div>
                       <div className="text-slate-400">GIÁ KHÁCH</div>
-                      <div className="font-medium text-slate-700">{formatVND(selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null)}</div>
+                      {(() => {
+                        const summary = resolveQuoteDiscountSummary(selectedVersion);
+                        const subtotal = summary?.subtotalAfterDiscount ?? selectedVersion.customerPriceBeforeVat ?? selectedVersion.totalAmount ?? null;
+                        const grand = summary?.grandTotal ?? selectedVersion.totalAmount ?? null;
+                        return (
+                          <>
+                            <div className="font-medium text-slate-700">
+                              Chưa VAT: {formatQuoteAmountOr(subtotal, selectedVersion.currency, formatVND)}
+                            </div>
+                            {grand != null ? (
+                              <div className="font-medium text-slate-700">Giá sau giảm · Gồm VAT: {formatQuoteAmountOr(grand, selectedVersion.currency, formatVND)}</div>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div>
                       <div className="text-slate-400">LIÊN HỆ CHÍNH</div>
@@ -768,7 +1003,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                * da chon (feedback 2026-09-30), van sua tay duoc binh thuong. */}
               <label className="block">
                 <span className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-                  Tên hợp đồng *
+                  Tên hợp đồng <span className="text-red-500">*</span>
                   <Pill>Tự điền</Pill>
                 </span>
                 <input
@@ -798,7 +1033,15 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                 />
                 {quotePrice != null ? (
                   <div className="mt-1 flex items-center justify-between">
-                    <span className="text-[11px] text-slate-400">Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1}</span>
+                    <span className="text-[11px] text-slate-400">
+                      Theo {selectedVersion?.quoteNumber} · V{selectedVersion?.versionNumber || 1} · <strong className="font-semibold text-slate-500">gồm VAT</strong>
+                      {(() => {
+                        const summary = resolveQuoteDiscountSummary(selectedVersion);
+                        if (!summary) return "";
+                        const subtotal = quoteAmountVnd(summary.subtotalAfterDiscount, selectedVersion as Quote);
+                        return subtotal != null ? ` (chưa VAT: ${formatVND(subtotal)})` : "";
+                      })()}
+                    </span>
                     {!showAdjustReason && !valueDiffersFromQuote ? (
                       <button type="button" onClick={() => setShowAdjustReason(true)} className="text-[11px] font-semibold text-primary hover:underline">
                         Điều chỉnh
@@ -815,7 +1058,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                 {showAdjustReason || valueDiffersFromQuote ? (
                   <div className="mt-2">
                     <span className="mb-1 block text-[11px] font-semibold text-slate-600">
-                      Lý do điều chỉnh giá trị hợp đồng {valueDiffersFromQuote ? "*" : ""}
+                      Lý do điều chỉnh giá trị hợp đồng {valueDiffersFromQuote ? <span className="text-red-500">*</span> : null}
                     </span>
                     <input
                       value={adjustmentReason}
@@ -852,12 +1095,59 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="mb-1 block text-xs font-semibold text-slate-600">Ngày ký</span>
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Ngày ký <span className="text-red-500">*</span></span>
                   <input type="date" value={signedAt} onChange={e => setSignedAt(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
                 </label>
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-slate-600">Hiệu lực đến</span>
                   <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Thời gian bảo hành</span>
+                  <select
+                    value={warrantyPeriodMode === "custom" ? "__custom__" : warrantyPeriod}
+                    onChange={e => {
+                      const next = e.target.value;
+                      if (next === "__custom__") {
+                        setWarrantyPeriodMode("custom");
+                        return;
+                      }
+                      setWarrantyPeriodMode("preset");
+                      setWarrantyPeriod(next);
+                    }}
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="" disabled>
+                      Chọn thời gian bảo hành
+                    </option>
+                    {WARRANTY_PERIOD_PRESETS.map(preset => (
+                      <option key={preset} value={preset}>
+                        {preset}
+                      </option>
+                    ))}
+                    <option value="__custom__">Khác (nhập tay)</option>
+                  </select>
+                  {warrantyPeriodMode === "custom" ? (
+                    <input
+                      type="text"
+                      value={warrantyPeriod}
+                      onChange={e => setWarrantyPeriod(e.target.value)}
+                      placeholder="VD: 12 tháng"
+                      className="mt-2 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    />
+                  ) : null}
+                </label>
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Dự kiến hết hạn bảo hành</span>
+                  <input
+                    type="text"
+                    readOnly
+                    value={formatWarrantyEndDate(computeWarrantyEndDate(signedAt, warrantyPeriod)) || "—"}
+                    className="w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500"
+                  />
                 </label>
               </div>
 
@@ -979,7 +1269,7 @@ export function RegisterExternalContractModal({ open, deal, onClose, onCreated, 
                     Hủy
                   </button>
                   <button type="submit" form="registerExternalContractForm" disabled={saving} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50">
-                    {saving ? "Đang lưu..." : "Lưu hợp đồng"}
+                    {saving ? "Đang lưu..." : editing ? "Lưu thay đổi" : "Lưu hợp đồng"}
                   </button>
                 </div>
               </div>

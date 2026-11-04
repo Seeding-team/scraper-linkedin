@@ -285,7 +285,9 @@ export function LeadImportDialog({ open, onClose, onImported }: {
   const step = result ? 3 : preview ? 2 : 1;
 
   return (
-    <div className="crm-modal-backdrop" onClick={closeDialog}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) closeDialog(); }}>
       <div className="crm-modal crm-lead-import-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header crm-lead-import-header">
           <div>

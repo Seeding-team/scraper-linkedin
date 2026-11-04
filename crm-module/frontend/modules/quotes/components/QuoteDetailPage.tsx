@@ -4,13 +4,17 @@ import { Columns3, Printer, RectangleHorizontal, RectangleVertical, RotateCcw } 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from '../constants/quoteConfig';
 import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { Quote } from '../types';
 import { buildPublicQuoteUrl } from '../utils/publicQuoteUrl';
+import { CopyQuoteCrossWorkspaceModal } from './CopyQuoteCrossWorkspaceModal';
+import { MoveQuoteModal } from './MoveQuoteModal';
 import { QuoteDocumentRenderer } from './QuoteDocumentRenderer';
 import { QuotePrintLayoutSaveButton } from './QuotePrintLayoutSaveButton';
 import { TelegramSendButton } from './TelegramSendButton';
+import { calculateQuoteTotals } from '../utils/quoteCalculations';
 
 interface Props {
   quoteId: string;
@@ -18,7 +22,14 @@ interface Props {
 
 export function QuoteDetailPage({ quoteId }: Props) {
   const router = useRouter();
+  const { user } = useAppAuth();
+  const [copyWorkspaceOpen, setCopyWorkspaceOpen] = useState(false);
+  const [moveModalOpen, setMoveModalOpen] = useState(false);
   const [quote, setQuote] = useState<Quote | null>(null);
+
+  function reloadQuote() {
+    seedingQuoteRepository.getQuote(quoteId).then(setQuote).catch(() => undefined);
+  }
   const [versions, setVersions] = useState<Quote[]>([]);
   const [creatingVersion, setCreatingVersion] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -59,15 +70,15 @@ export function QuoteDetailPage({ quoteId }: Props) {
       .finally(() => setLoading(false));
   }, [quoteId]);
 
-  useEffect(() => {
-    if (!quote) return;
-    seedingQuoteRepository.getQuoteVersions(quote.id).then(setVersions).catch(() => undefined);
-  }, [quote?.id]);
-
   function resetColumnWidths() {
     setColumnWidthsDraft(null);
     setPrintResetKey(key => key + 1);
   }
+
+  useEffect(() => {
+    if (!quote) return;
+    seedingQuoteRepository.getQuoteVersions(quote.id).then(setVersions).catch(() => undefined);
+  }, [quote?.id]);
 
   async function createVersion() {
     if (!quote) return;
@@ -132,8 +143,41 @@ export function QuoteDetailPage({ quoteId }: Props) {
             </button>
           ) : null}
           <TelegramSendButton quoteId={quote.id} status={quote.status} />
+          {/* "Copy báo giá cross-workspace" (2026-10-03, Phase 1 → mở rộng
+           * Phase 2 2026-10-23) - hiện cho admin VÀ Sale/Presale (gate THẬT
+           * nằm ở backend qua allowed_instances, đây chỉ là ẩn/hiện UI cho
+           * gọn, không phải lớp bảo mật). */}
+          {user?.role === 'admin' || ['sale', 'presale', 'both'].includes(user?.quote_business_role || '') ? (
+            <>
+              <button type="button" className="quote-button quote-button--secondary" onClick={() => setMoveModalOpen(true)}>
+                Di chuyển báo giá
+              </button>
+              <button type="button" className="quote-button quote-button--secondary" onClick={() => setCopyWorkspaceOpen(true)}>
+                Copy sang workspace khác
+              </button>
+            </>
+          ) : null}
         </div>
       </header>
+      {copyWorkspaceOpen ? (
+        <CopyQuoteCrossWorkspaceModal
+          quotes={[quote]}
+          onClose={() => setCopyWorkspaceOpen(false)}
+          onCopied={() => { /* giữ modal mở để hiện kết quả thành công, người dùng tự bấm Đóng */ }}
+        />
+      ) : null}
+      {moveModalOpen && quote ? (
+        <MoveQuoteModal
+          quote={quote}
+          currentCustomerId={quote.accountId || (quote as any).customer_id || (quote as any).customerId}
+          currentCustomerName={(quote.data?.customerName as string) || (quote.data?.customer_name as string)}
+          onClose={() => setMoveModalOpen(false)}
+          onMoved={updated => {
+            setQuote(updated);
+            reloadQuote();
+          }}
+        />
+      ) : null}
       {/* "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar LUON
        * hien san (xem giai thich day du trong PublicQuotePage.tsx). */}
       <div className="quote-print-preview-toolbar quote-print-preview-toolbar--inline no-print">
@@ -209,14 +253,18 @@ export function QuoteDetailPage({ quoteId }: Props) {
           quoteData={quote.data}
           quoteItems={quote.items}
           solutionItems={quote.data.solutionItems}
-          totals={{
-            subtotalAmount: quote.subtotalAmount,
-            totalVatAmount: quote.vatAmount,
-            totalAmount: quote.totalAmount,
-          }}
+          totals={quote.items && quote.items.length > 0
+            ? calculateQuoteTotals(quote.items, 0, quote.currency)
+            : {
+                subtotalAmount: quote.subtotalAmount,
+                discountAmount: 0,
+                totalVatAmount: quote.vatAmount,
+                totalAmount: quote.subtotalAmount + quote.vatAmount,
+              }}
           mode="detail"
           isPublished={quote.processingStage === 'published'}
           quoteNumber={quote.quoteNumber}
+          currency={quote.currency}
           overallDiscountPercent={quote.overallDiscountPercent}
           printPreviewMode
           printOrientation={printOrientation}

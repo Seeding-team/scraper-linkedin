@@ -27,10 +27,13 @@ import {
   Layers,
   ChevronRight,
   ChevronLeft,
+  Check,
+  ExternalLink,
 } from 'lucide-react';
 import { progressRepository } from '../../repositories/ProgressRepository';
+import { seedingQuoteRepository, type QuoteActivityLogEntry } from '@/modules/quotes';
 import { formatDate } from '../../constants/crmConfig';
-import { PROJECT_STATUS_TONE, CONTRACT_STATUS_TONE } from './progressLabels';
+import { PROJECT_STATUS_TONE, CONTRACT_STATUS_TONE, dealFollowUpState, formatSinceDuration } from './progressLabels';
 import type {
   ProgressQuoteItem,
   ProgressTeamDetail,
@@ -498,13 +501,15 @@ export function ProgressTeamPanel({
     let onTime = 0;
     let dueSoon = 0;
     let overdue = 0;
+    let lateDone = 0;
     let notSet = 0;
 
     for (const q of list) {
       const s = q.sla?.status;
       if (s === 'completed_on_time' || s === 'in_progress') onTime++;
       else if (s === 'due_soon') dueSoon++;
-      else if (s === 'overdue' || s === 'completed_late') overdue++;
+      else if (s === 'overdue') overdue++;
+      else if (s === 'completed_late') lateDone++;
       else notSet++;
     }
 
@@ -513,6 +518,8 @@ export function ProgressTeamPanel({
 
     return {
       total,
+      lateDone,
+      lateDonePct: total > 0 ? ((lateDone / safeTotal) * 100).toFixed(1) : '0.0',
       onTime,
       onTimePct: total > 0 ? ((onTime / safeTotal) * 100).toFixed(1) : '0.0',
       dueSoon,
@@ -526,9 +533,10 @@ export function ProgressTeamPanel({
 
   // Team workflow 6-stage funnel breakdown
   const teamStageBreakdown = useMemo(() => {
+    // 5 bước THẬT mà API trả về trong processingStage (request + kỹ thuật được gộp
+    // thành "presale" ở backend - xem _derive_quote_phase) nên không có bước "Request" riêng.
     const counts = [
-      { key: 'request', label: 'Request', count: 0, color: '#94a3b8' },
-      { key: 'technical', label: 'Kỹ thuật', count: 0, color: '#6366f1' },
+      { key: 'presale', label: 'Presale', count: 0, color: '#6366f1' },
       { key: 'sale_markup', label: 'Sale markup', count: 0, color: '#f59e0b' },
       { key: 'admin_review', label: 'Admin review', count: 0, color: '#e11d48' },
       { key: 'ready_to_send', label: 'Sẵn sàng gửi', count: 0, color: '#14b8a6' },
@@ -536,13 +544,8 @@ export function ProgressTeamPanel({
     ];
 
     (overviewQuotes || []).forEach(q => {
-      const stage = (q.processingStage || '').toLowerCase();
-      if (stage.includes('sent') || stage.includes('đã gửi') || stage.includes('published')) counts[5].count++;
-      else if (stage.includes('ready') || stage.includes('sẵn sàng')) counts[4].count++;
-      else if (stage.includes('admin') || stage.includes('review')) counts[3].count++;
-      else if (stage.includes('markup') || stage.includes('sale') || stage.includes('pricing')) counts[2].count++;
-      else if (stage.includes('tech') || stage.includes('presale') || stage.includes('kỹ thuật')) counts[1].count++;
-      else counts[0].count++;
+      const c = counts.find(x => x.key === q.processingStage);
+      if (c) c.count++;
     });
 
     const maxCount = Math.max(...counts.map(c => c.count), 1);
@@ -704,6 +707,7 @@ export function ProgressTeamPanel({
     { label: 'Đúng hạn', count: slaStats.onTime, color: '#10b981' },
     { label: 'Sắp đến hạn', count: slaStats.dueSoon, color: '#f59e0b' },
     { label: 'Quá hạn', count: slaStats.overdue, color: '#ef4444' },
+    { label: 'Hoàn thành trễ', count: slaStats.lateDone, color: '#fb923c' },
     { label: 'Chưa thiết lập', count: slaStats.notSet, color: '#94a3b8' },
   ];
 
@@ -719,6 +723,8 @@ export function ProgressTeamPanel({
 
   return (
     <div className="progress-team-drawer-container">
+      {/* Header + tabs: dính trên cùng, đứng yên khi cuộn nội dung */}
+      <div className="progress-sticky-top">
       {/* 1. Header Team Độc Quyền (Chuẩn ảnh mẫu media_1790177221664.png) */}
       <div className="progress-team-drawer-header">
         <div className="progress-team-drawer-header-left">
@@ -766,9 +772,9 @@ export function ProgressTeamPanel({
           [
             ['overview', 'Tổng quan'],
             ['members', 'Thành viên'],
-            ['quotes', 'Báo giá'],
-            ['deals', 'Cơ hội'],
             ['projects', 'Dự án'],
+            ['deals', 'Cơ hội'],
+            ['quotes', 'Báo giá'],
             ['contracts', 'Hợp đồng'],
           ] as Array<[TeamDrawerTab, string]>
         ).map(([key, label]) => (
@@ -781,6 +787,7 @@ export function ProgressTeamPanel({
             {label}
           </button>
         ))}
+      </div>
       </div>
 
       {/* 3. Nội dung chi tiết các tab */}
@@ -879,33 +886,6 @@ export function ProgressTeamPanel({
                   </div>
                 </div>
 
-                {/* 8. Báo giá quá SLA (Thẻ cảnh báo đặc biệt) */}
-                <div
-                  className={`progress-team-kpi-card ${
-                    team.quotesOverSlaCount > 0 ? 'is-danger' : ''
-                  }`}
-                >
-                  <div className="team-kpi-card-left">
-                    <span
-                      className={`team-kpi-num ${
-                        team.quotesOverSlaCount > 0 ? 'text-danger' : ''
-                      }`}
-                    >
-                      {team.quotesOverSlaCount}
-                    </span>
-                    <span
-                      className={`team-kpi-lbl ${
-                        team.quotesOverSlaCount > 0 ? 'text-danger' : ''
-                      }`}
-                    >
-                      Báo giá quá SLA
-                    </span>
-                  </div>
-                  <div className="team-kpi-icon-box tone-danger">
-                    <AlertTriangle size={18} strokeWidth={2.2} />
-                  </div>
-                </div>
-
                 {/* 9. Giá trị pipeline */}
                 <div className="progress-team-kpi-card">
                   <div className="team-kpi-card-left">
@@ -936,7 +916,7 @@ export function ProgressTeamPanel({
                 <div className="progress-member-donut-layout">
                   <div className="donut-svg-wrapper">
                     <div className="progress-team-donut-wrapper">
-                      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+                      <svg key={`${slaStats.total}-${slaStats.onTime}-${slaStats.overdue}-${slaStats.dueSoon}`} width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
                         {totalSla === 0 ? (
                           <circle
                             cx={size / 2}
@@ -958,6 +938,13 @@ export function ProgressTeamPanel({
                                 fill="none"
                                 stroke={s.color}
                                 strokeWidth={strokeWidth}
+                                className="pteam-donut-slice"
+                                style={{
+                                  ['--len' as string]: s.length,
+                                  ['--rest' as string]: circumference - s.length,
+                                  ['--circ' as string]: circumference,
+                                  animationDelay: `${(s.offset / circumference) * 0.6}s`,
+                                }}
                                 strokeDasharray={`${s.length} ${circumference - s.length}`}
                                 strokeDashoffset={-s.offset}
                                 transform={`rotate(-90 ${size / 2} ${size / 2})`}
@@ -976,22 +963,27 @@ export function ProgressTeamPanel({
                   </div>
 
                   <div className="donut-legend-vertical">
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-emerald" />
                       <span className="legend-label">Đúng hạn</span>
                       <span className="legend-val">{slaStats.onTimePct}% ({slaStats.onTime})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-amber" />
                       <span className="legend-label">Sắp đến hạn</span>
                       <span className="legend-val">{slaStats.dueSoonPct}% ({slaStats.dueSoon})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-danger" />
                       <span className="legend-label">Quá hạn</span>
                       <span className="legend-val">{slaStats.overduePct}% ({slaStats.overdue})</span>
                     </div>
-                    <div className="donut-legend-item">
+                    <div className="donut-legend-item pteam-legend-anim">
+                      <span className="legend-dot" style={{ backgroundColor: '#fb923c' }} />
+                      <span className="legend-label">Hoàn thành trễ</span>
+                      <span className="legend-val">{slaStats.lateDonePct}% ({slaStats.lateDone})</span>
+                    </div>
+                    <div className="donut-legend-item pteam-legend-anim">
                       <span className="legend-dot bg-slate" />
                       <span className="legend-label">Chưa thiết lập</span>
                       <span className="legend-val">{slaStats.notSetPct}% ({slaStats.notSet})</span>
@@ -1005,7 +997,7 @@ export function ProgressTeamPanel({
                 <div className="progress-member-chart-header">
                   <div className="chart-header-left">
                     <BarChart2 size={16} className="chart-header-icon" />
-                    <h4>Tiến độ báo giá toàn team (6 bước)</h4>
+                    <h4>Tiến độ báo giá toàn team</h4>
                   </div>
                   <button
                     type="button"
@@ -1108,97 +1100,6 @@ export function ProgressTeamPanel({
                 })}
               </div>
             </div>
-
-            {/* Phân khu 3: Danh sách thành viên (N) (Chuẩn bảng 7 cột) */}
-            <div className="progress-team-section">
-              <div className="progress-team-section-header">
-                <h3 className="progress-team-section-title">
-                  Danh sách thành viên ({detail.members.length})
-                </h3>
-                <button
-                  type="button"
-                  className="progress-team-see-all-btn"
-                  onClick={() => setTab('members')}
-                >
-                  Xem tất cả →
-                </button>
-              </div>
-
-              {detail.members.length === 0 ? (
-                <p className="crm-empty-log">Team chưa có thành viên nào.</p>
-              ) : (
-                <div className="progress-team-table-wrap">
-                  <table className="progress-team-table">
-                    <thead>
-                      <tr>
-                        <th style={{ width: '40px' }}>#</th>
-                        <th>Thành viên</th>
-                        <th>Vai trò</th>
-                        <th style={{ textAlign: 'right' }}>Lead</th>
-                        <th style={{ textAlign: 'right' }}>Cơ hội</th>
-                        <th style={{ textAlign: 'right' }}>Báo giá</th>
-                        <th style={{ textAlign: 'center' }}>Quá SLA</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {detail.members.slice(0, 5).map((m, idx) => {
-                        const isLeader =
-                          (m.role || '').toLowerCase().includes('lead') ||
-                          (m.userName || '').toLowerCase().includes('tiên') ||
-                          (m.userName || '').toLowerCase().includes('hồng vân') ||
-                          (m.userName || '').toLowerCase().includes('minh đức') ||
-                          (m.userName || '').toLowerCase().includes('anh dũng') ||
-                          (m.userName || '').toLowerCase().includes('dev');
-
-                        return (
-                          <tr
-                            key={m.userId}
-                            className="progress-team-row-clickable"
-                            onClick={() => onOpenMember(m.userId, m.userName || m.userId)}
-                            title="Click để xem chi tiết tiến độ thành viên"
-                          >
-                            <td className="team-col-index">{idx + 1}</td>
-                            <td>
-                              <div className="progress-team-member-cell">
-                                <MemberAvatar
-                                  name={m.userName || ''}
-                                  index={idx}
-                                  avatarUrl={(m as any).avatarUrl || (m as any).avatar_url}
-                                />
-                                <span className="progress-team-member-name">
-                                  {m.userName || 'Thành viên'}
-                                </span>
-                              </div>
-                            </td>
-                            <td>
-                              <span
-                                className={`progress-team-role-pill ${
-                                  isLeader ? 'is-leader' : 'is-member'
-                                }`}
-                              >
-                                {isLeader ? 'Leader' : 'Member'}
-                              </span>
-                            </td>
-                            <td style={{ textAlign: 'right' }}>{m.leadCount || 0}</td>
-                            <td style={{ textAlign: 'right' }}>{m.dealCount || 0}</td>
-                            <td style={{ textAlign: 'right' }}>{m.quoteCount || 0}</td>
-                            <td style={{ textAlign: 'center' }}>
-                              <span
-                                className={`progress-team-sla-count ${
-                                  (m.quotesOverSlaCount || 0) > 0 ? 'is-danger' : 'is-neutral'
-                                }`}
-                              >
-                                {m.quotesOverSlaCount || 0}
-                              </span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
@@ -1269,16 +1170,9 @@ export function ProgressTeamPanel({
                       >
                         <td className="team-col-index">{(memberPage - 1) * memberPageSize + idx + 1}</td>
                         <td>
-                          <div className="progress-team-member-cell">
-                            <MemberAvatar
-                              name={m.userName || ''}
-                              index={idx}
-                              avatarUrl={(m as any).avatarUrl || (m as any).avatar_url}
-                            />
-                            <span className="progress-team-member-name">
-                              {m.userName || 'Thành viên'}
-                            </span>
-                          </div>
+                          <span className="progress-team-member-name">
+                            {m.userName || 'Thành viên'}
+                          </span>
                         </td>
                         <td>
                           <span
@@ -1325,129 +1219,14 @@ export function ProgressTeamPanel({
           </div>
         )}
 
-        {/* Tab 3: Báo giá (Danh sách báo giá của team) */}
+        {/* Tab 3: Báo giá - cùng cách hiển thị với form thành viên: bảng + bấm 1 báo giá để xem tiến độ xử lý */}
         {tab === 'quotes' && (
-          <div className="progress-team-full-tab">
-            <div className="drawer-search-toolbar">
-              <div className="drawer-search-box">
-                <Search size={15} color="#94a3b8" />
-                <input
-                  type="text"
-                  placeholder="Tìm số báo giá, khách hàng..."
-                  value={quoteSearch}
-                  onChange={e => {
-                    setQuoteSearch(e.target.value);
-                    setQuotePage(1);
-                  }}
-                />
-                {quoteSearch && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setQuoteSearch('');
-                      setQuotePage(1);
-                    }}
-                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0 }}
-                  >
-                    <X size={14} color="#94a3b8" />
-                  </button>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <select
-                  value={quoteStageFilter}
-                  onChange={e => {
-                    setQuoteStageFilter(e.target.value);
-                    setQuotePage(1);
-                  }}
-                  className="progress-team-select-filter"
-                >
-                  <option value="">Tất cả bước</option>
-                  <option value="request">Request</option>
-                  <option value="technical">Kỹ thuật</option>
-                  <option value="pricing">Sale markup</option>
-                  <option value="review">Admin review</option>
-                  <option value="ready_to_publish">Sẵn sàng gửi</option>
-                  <option value="published">Đã gửi</option>
-                </select>
-                <span className="drawer-search-count">
-                  <b>{filteredQuotes.length}</b> báo giá
-                </span>
-              </div>
-            </div>
-
-            {filteredQuotes.length === 0 ? (
-              <p className="crm-empty-log">Không có báo giá nào phù hợp bộ lọc.</p>
-            ) : (
-              <>
-                <div className="progress-team-table-wrap">
-                  <table className="progress-team-table">
-                    <thead>
-                      <tr>
-                        <th>Mã BG</th>
-                        <th>Khách hàng</th>
-                        <th>Bước</th>
-                        <th>SLA</th>
-                        <th style={{ textAlign: 'right' }}>Doanh số</th>
-                        <th style={{ textAlign: 'center' }}>Thao tác</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedQuotes.map(q => {
-                        const isOverdue = q.sla?.status === 'overdue' || q.sla?.status === 'completed_late';
-                        return (
-                          <tr
-                            key={q.quoteId}
-                            className="progress-team-row-clickable"
-                            onClick={() => onOpenQuote(q)}
-                          >
-                            <td style={{ fontWeight: 600, color: '#0284c7' }}>{q.quoteNumber}</td>
-                            <td>{q.customerName || '—'}</td>
-                            <td>
-                              <span className="progress-team-stage-tag">
-                                {q.processingStageLabel || q.processingStage}
-                              </span>
-                            </td>
-                            <td>
-                              <span
-                                className={`progress-team-sla-tag ${
-                                  isOverdue ? 'is-danger' : 'is-success'
-                                }`}
-                              >
-                                {isOverdue ? 'Quá SLA' : 'Đúng hạn'}
-                              </span>
-                            </td>
-                            <td style={{ textAlign: 'right', fontWeight: 600 }}>
-                              {formatVND(q.totalAmountVnd)}
-                            </td>
-                            <td style={{ textAlign: 'center' }}>
-                              <button
-                                type="button"
-                                className="progress-team-icon-btn"
-                                title="Xem chi tiết báo giá"
-                              >
-                                <Eye size={15} />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <DrawerPagination
-                  currentPage={quotePage}
-                  pageSize={quotePageSize}
-                  totalItems={filteredQuotes.length}
-                  onPageChange={setQuotePage}
-                  onPageSizeChange={setQuotePageSize}
-                  itemName="báo giá"
-                />
-              </>
-            )}
-          </div>
+          <QuotesTrackTab
+            quotes={quotes || []}
+            stageFilter={quoteStageFilter}
+            onStageFilterChange={setQuoteStageFilter}
+            onOpenQuote={onOpenQuote}
+          />
         )}
 
         {/* Tab 4: Cơ hội (Danh sách cơ hội của team) */}
@@ -1500,11 +1279,12 @@ export function ProgressTeamPanel({
                     <thead>
                       <tr>
                         <th style={{ width: '32px', textAlign: 'center' }}>#</th>
-                        <th style={{ width: '25%' }}>Khách hàng / Tên cơ hội</th>
-                        <th style={{ width: '20%' }}>Giai đoạn</th>
+                        <th style={{ width: '21%' }}>Khách hàng / Tên cơ hội</th>
+                        <th style={{ width: '17%' }}>Giai đoạn</th>
                         <th style={{ width: '12%' }}>Follow-up</th>
-                        <th style={{ width: '18%', textAlign: 'right' }}>Ngân sách dự kiến</th>
-                        <th style={{ width: '18%' }}>Phụ trách</th>
+                        <th style={{ width: '14%', textAlign: 'center' }}>Hạn follow-up</th>
+                        <th style={{ width: '17%', textAlign: 'right' }}>Ngân sách dự kiến</th>
+                        <th style={{ width: '14%' }}>Phụ trách</th>
                         <th style={{ width: '36px', textAlign: 'center' }}></th>
                       </tr>
                     </thead>
@@ -1531,6 +1311,13 @@ export function ProgressTeamPanel({
                           </td>
                           <td style={{ fontSize: '12px', color: '#64748b' }}>
                             {d.followUpDate ? formatDate(d.followUpDate) : '—'}
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            {dealFollowUpState(d.dealStage, d.followUpDate) === 'overdue' ? (
+                              <span className="qc-badge qc-badge-danger" style={{ whiteSpace: 'nowrap' }}>Quá follow-up</span>
+                            ) : dealFollowUpState(d.dealStage, d.followUpDate) === 'soon' ? (
+                              <span className="qc-badge qc-badge-amber" style={{ whiteSpace: 'nowrap' }}>Sắp follow-up</span>
+                            ) : null}
                           </td>
                           <td style={{ textAlign: 'right', fontWeight: 600 }}>
                             {formatVND(d.estimatedBudgetVnd)}
@@ -1814,6 +1601,416 @@ export function MiniStat({
     <div className="progress-mini-stat">
       <span>{label}</span>
       <b className={danger ? 'danger' : ''}>{isText ? value : value}</b>
+    </div>
+  );
+}
+
+
+/** 5 bước thật của báo giá (khớp processingStage backend). */
+const QUOTE_STEPS = [
+  { key: 'presale', label: 'Presale' },
+  { key: 'sale_markup', label: 'Sale markup' },
+  { key: 'admin_review', label: 'Admin review' },
+  { key: 'ready_to_send', label: 'Sẵn sàng gửi' },
+  { key: 'sent', label: 'Đã gửi' },
+];
+
+function QuoteStepperMini({ stage, overdue }: { stage: string; overdue: boolean }) {
+  const current = Math.max(0, QUOTE_STEPS.findIndex(st => st.key === stage));
+  return (
+    <div className="pqs">
+      <div className="pqs-track">
+        {QUOTE_STEPS.map((st, i) => {
+          const state = i < current ? 'done' : i === current ? (overdue ? 'current-overdue' : 'current') : 'todo';
+          return (
+            <React.Fragment key={st.key}>
+              <span className={`pqs-dot ${state}`} title={st.label} />
+              {i < QUOTE_STEPS.length - 1 && <span className={`pqs-line ${i < current ? 'done' : ''}`} />}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <span className={`pqs-label${overdue ? ' overdue' : ''}`}>{QUOTE_STEPS[current].label}</span>
+    </div>
+  );
+}
+
+
+/* ───────── Tab Báo giá của form team: giống tab Báo giá của form thành viên ───────── */
+
+const TRACK_STEPS = [
+  { key: 'presale', altKey: 'technical', label: 'Presale' },
+  { key: 'sale_markup', altKey: 'pricing', label: 'Sale markup' },
+  { key: 'admin_review', altKey: 'review', label: 'Admin review' },
+  { key: 'ready_to_send', altKey: 'ready_to_publish', label: 'Sẵn sàng gửi' },
+  { key: 'sent', altKey: 'published', label: 'Đã gửi' },
+] as const;
+
+function fmtStepDate(dateStr?: string | null): string {
+  if (!dateStr) return '---';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '---';
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+function fmtDueAt(dateStr?: string | null): string {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '—';
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+function stagePillStyle(stage?: string | null) {
+  const s = (stage || '').toLowerCase();
+  if (s.includes('admin') || s.includes('review')) return { bg: '#fef3c7', text: '#b45309', border: '#fde68a' };
+  if (s.includes('sale') || s.includes('markup')) return { bg: '#dbeafe', text: '#1d4ed8', border: '#bfdbfe' };
+  if (s.includes('sẵn sàng') || s.includes('ready')) return { bg: '#f3e8ff', text: '#7e22ce', border: '#e9d5ff' };
+  if (s.includes('presale')) return { bg: '#e0e7ff', text: '#4338ca', border: '#c7d2fe' };
+  if (s.includes('đã gửi') || s.includes('sent')) return { bg: '#dcfce7', text: '#15803d', border: '#bbf7d0' };
+  return { bg: '#f1f5f9', text: '#475569', border: '#e2e8f0' };
+}
+
+function QuotesTrackTab({
+  quotes,
+  stageFilter,
+  onStageFilterChange,
+  onOpenQuote,
+}: {
+  quotes: ProgressQuoteItem[];
+  stageFilter: string;
+  onStageFilterChange: (v: string) => void;
+  onOpenQuote: (quote: ProgressQuoteItem) => void;
+}) {
+  const [slaFilter, setSlaFilter] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(5);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [logs, setLogs] = useState<Record<string, QuoteActivityLogEntry[]>>({});
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return quotes.filter(item => {
+      if (stageFilter && item.processingStage !== stageFilter) return false;
+      const st = item.sla.status;
+      if (slaFilter === 'overdue' && st !== 'overdue') return false;
+      if (slaFilter === 'on_time' && st !== 'in_progress' && st !== 'completed_on_time') return false;
+      if (slaFilter === 'due_soon' && st !== 'due_soon') return false;
+      if (slaFilter === 'late_done' && st !== 'completed_late') return false;
+      if (slaFilter === 'not_set' && st !== 'not_set') return false;
+      if (q && !`${item.quoteNumber || ''} ${item.customerName || ''} ${item.projectName || ''}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [quotes, stageFilter, slaFilter, search]);
+
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const selected = useMemo(
+    () => filtered.find(q => q.quoteId === selectedId) || filtered[0] || null,
+    [filtered, selectedId]
+  );
+
+  // Nhật ký hoạt động của báo giá đang chọn (để hiện ngày giờ từng bước)
+  useEffect(() => {
+    const id = selected?.quoteId;
+    if (!id || logs[id]) return;
+    let alive = true;
+    seedingQuoteRepository
+      .getQuoteActivityLog(id)
+      .then(log => {
+        if (!alive) return;
+        setLogs(prev => ({
+          ...prev,
+          [id]: [...log].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()),
+        }));
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [selected?.quoteId, logs]);
+
+  const stepper = useMemo(() => {
+    if (!selected) return null;
+    const phase = selected.processingStage || 'presale';
+    let current = TRACK_STEPS.findIndex(st => st.key === phase || st.altKey === phase);
+    if (current < 0) current = 0;
+    const entries = logs[selected.quoteId] || [];
+    const steps = TRACK_STEPS.map((st, idx) => {
+      let dateText = '---';
+      if (idx === 0) {
+        const created = entries.find(l => l.action === 'created');
+        dateText = fmtStepDate(created?.createdAt || selected.sla.startedAt);
+      } else if (idx <= current) {
+        const hit = entries.find(l => {
+          if (l.action !== 'stage_changed') return false;
+          const target = (l.changes as { stage?: string } | null)?.stage;
+          return target === st.key || target === st.altKey;
+        });
+        dateText = hit?.createdAt
+          ? fmtStepDate(hit.createdAt)
+          : idx === current
+            ? fmtStepDate(selected.timeInCurrentStage?.sinceAt || selected.sla.startedAt)
+            : fmtStepDate(selected.sla.startedAt);
+      }
+      return { ...st, idx, isDone: idx < current, isCurrent: idx === current, dateText };
+    });
+    return { steps, overdue: selected.sla.status === 'overdue' };
+  }, [selected, logs]);
+
+  const alert = useMemo(() => {
+    if (!selected) return null;
+    const sla = selected.sla;
+    let hours = 0;
+    let mins = 0;
+    if (sla.dueAt) {
+      const diff = Date.now() - new Date(sla.dueAt).getTime();
+      if (diff > 0) {
+        hours = Math.floor(diff / 3600000);
+        mins = Math.floor((diff % 3600000) / 60000);
+      }
+    }
+    return {
+      overdue: sla.status === 'overdue',
+      dueSoon: sla.status === 'due_soon',
+      notSet: sla.status === 'not_set',
+      hours: Math.max(1, hours),
+      mins,
+      dueAt: fmtDueAt(sla.dueAt),
+    };
+  }, [selected]);
+
+  return (
+    <div className="progress-team-full-tab">
+      <div className="progress-member-quotes-section">
+        <div className="progress-member-quotes-title-row">
+          <h3>Danh sách báo giá ({filtered.length})</h3>
+        </div>
+
+        <div className="progress-member-filter-row">
+          <input
+            type="text"
+            className="progress-member-filter-select"
+            style={{ minWidth: 200 }}
+            placeholder="Tìm số báo giá, khách hàng..."
+            value={search}
+            onChange={e => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+          />
+          <select
+            className="progress-member-filter-select"
+            value={stageFilter}
+            onChange={e => {
+              onStageFilterChange(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Tất cả bước</option>
+            {TRACK_STEPS.map(st => (
+              <option key={st.key} value={st.key}>
+                {st.label}
+              </option>
+            ))}
+          </select>
+          <select
+            className="progress-member-filter-select"
+            value={slaFilter}
+            onChange={e => {
+              setSlaFilter(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">Tất cả trạng thái SLA</option>
+            <option value="overdue">Quá SLA</option>
+            <option value="on_time">Đúng hạn</option>
+            <option value="due_soon">Sắp đến hạn</option>
+            <option value="late_done">Hoàn thành trễ</option>
+            <option value="not_set">Chưa thiết lập</option>
+          </select>
+        </div>
+
+        <div className="progress-member-table-wrap">
+          <table className="progress-member-quotes-table" style={{ tableLayout: 'fixed', width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ width: '15%' }}>Mã báo giá</th>
+                <th style={{ width: '19%' }}>Khách hàng</th>
+                <th style={{ width: '10%' }}>Project</th>
+                <th style={{ width: '16%' }}>Bước hiện tại</th>
+                <th style={{ width: '11%' }}>Ở bước này</th>
+                <th style={{ width: '11%', textAlign: 'center' }}>SLA</th>
+                <th style={{ width: '12%', textAlign: 'right' }}>Giá trị</th>
+                <th style={{ width: '6%', textAlign: 'center' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="progress-quotes-empty-cell">
+                    Không tìm thấy báo giá nào phù hợp.
+                  </td>
+                </tr>
+              ) : (
+                paged.map(quote => {
+                  const st = quote.sla.status;
+                  const pill = stagePillStyle(quote.processingStageLabel);
+                  const isOverdue = st === 'overdue';
+                  const isLate = st === 'completed_late';
+                  const isSoon = st === 'due_soon';
+                  const isNotSet = st === 'not_set';
+                  return (
+                    <tr
+                      key={quote.quoteId}
+                      className={`progress-member-quote-tr ${selected?.quoteId === quote.quoteId ? 'is-selected' : ''}`}
+                      onClick={() => setSelectedId(quote.quoteId)}
+                    >
+                      <td className="quote-code-cell">
+                        <b>{quote.quoteNumber || quote.quoteId.slice(0, 8)}</b>
+                      </td>
+                      <td className="quote-customer-cell" title={quote.customerName || ''}>
+                        {quote.customerName || '—'}
+                      </td>
+                      <td className="quote-project-cell" title={quote.projectName || ''}>
+                        {quote.projectName || '—'}
+                      </td>
+                      <td>
+                        <span
+                          className="quote-stage-pill"
+                          style={{ backgroundColor: pill.bg, color: pill.text, borderColor: pill.border }}
+                        >
+                          {quote.processingStageLabel}
+                        </span>
+                      </td>
+                      <td className="quote-duration-cell">{formatSinceDuration(quote.timeInCurrentStage?.sinceAt)}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span
+                          className={`quote-sla-pill ${
+                            isOverdue ? 'sla-badge-danger' : isSoon || isLate ? 'sla-badge-warning' : isNotSet ? 'sla-badge-neutral' : 'sla-badge-success'
+                          }`}
+                        >
+                          {isOverdue ? 'Quá SLA' : isSoon ? 'Sắp đến hạn' : isLate ? 'Xong trễ' : isNotSet ? 'Chưa thiết lập' : 'Đúng hạn'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }} className="quote-val-cell">
+                        {formatVND(quote.totalAmountVnd)}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          type="button"
+                          className="quote-action-eye-btn"
+                          onClick={e => {
+                            e.stopPropagation();
+                            onOpenQuote(quote);
+                          }}
+                          title="Xem chi tiết báo giá"
+                        >
+                          <Eye size={14} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <DrawerPagination
+          currentPage={page}
+          pageSize={pageSize}
+          totalItems={filtered.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          itemName="báo giá"
+        />
+      </div>
+
+      {selected && stepper ? (
+        <div className="progress-member-timeline-section">
+          <div className="progress-member-timeline-header">
+            <h4>
+              Tiến độ xử lý báo giá: <span className="quote-hl">#{selected.quoteNumber || selected.quoteId.slice(0, 8)}</span>
+            </h4>
+            <button type="button" className="progress-member-view-detail-link" onClick={() => onOpenQuote(selected)}>
+              <span>Xem chi tiết</span>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+
+          <div className="progress-member-stepper-wrap">
+            <div className="progress-member-stepper">
+              {stepper.steps.map((step, idx) => {
+                const isLast = idx === stepper.steps.length - 1;
+                const next = stepper.steps[idx + 1];
+                let line = 'line-upcoming';
+                if (step.isDone && (next?.isDone || next?.isCurrent)) {
+                  line = next?.isCurrent && stepper.overdue ? 'line-red' : 'line-blue';
+                }
+                return (
+                  <div key={step.key} className="progress-step-item">
+                    <div className="progress-step-node-row">
+                      <div
+                        className={`progress-step-circle ${
+                          step.isDone ? 'step-done' : step.isCurrent ? (stepper.overdue ? 'step-current-overdue' : 'step-current-blue') : 'step-upcoming'
+                        }`}
+                      >
+                        {step.isDone ? (
+                          <Check size={12} strokeWidth={3} />
+                        ) : step.isCurrent ? (
+                          <span className="step-current-inner-dot" />
+                        ) : (
+                          <span className="step-upcoming-inner-dot" />
+                        )}
+                      </div>
+                      {!isLast ? <div className={`progress-step-line ${line}`} /> : null}
+                    </div>
+                    <div className="progress-step-text-wrap">
+                      <span
+                        className={`progress-step-label ${
+                          step.isCurrent ? (stepper.overdue ? 'label-current-red' : 'label-current') : step.isDone ? 'label-done' : 'label-upcoming'
+                        }`}
+                      >
+                        {step.label}
+                      </span>
+                      <span className="progress-step-date">{step.dateText}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {alert ? (
+            <div
+              className={`progress-member-sla-alert-box ${
+                alert.overdue ? 'alert-overdue' : alert.dueSoon ? 'alert-duesoon' : alert.notSet ? 'alert-notset' : 'alert-ontime'
+              }`}
+            >
+              <div className="sla-alert-left">
+                <div className="sla-alert-icon-square">
+                  <AlertTriangle size={18} />
+                </div>
+                <div className="sla-alert-text-block">
+                  <h5 className="sla-alert-title">
+                    {alert.overdue ? `Quá SLA ${alert.hours} giờ` : alert.dueSoon ? 'Sắp đến hạn SLA' : alert.notSet ? 'Chưa thiết lập SLA' : 'Đúng hạn SLA'}
+                  </h5>
+                  <p className="sla-alert-sub">
+                    Hạn hoàn tất: {alert.dueAt}
+                    {alert.overdue ? ` | Đã quá hạn: ${alert.hours} giờ ${alert.mins} phút` : ''}
+                  </p>
+                </div>
+              </div>
+              <a href={`/all-platform/quotes/${selected.quoteId}`} className="sla-alert-action-btn">
+                <span>Mở báo giá</span>
+                <ExternalLink size={13} />
+              </a>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

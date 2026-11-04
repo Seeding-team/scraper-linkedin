@@ -1,14 +1,17 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads } from "react-icons/fa6";
-import { SeedingExtensionPanel } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
+import { FaThreads, FaYoutube } from "react-icons/fa6";
+import { SeedingExtensionPanel, type PanelTab } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
+import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
+import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { useSearchParams, useRouter } from "next/navigation";
+import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
 import { QuickReviewToolbar } from "@/components/all-platform/posts/QuickReviewToolbar";
@@ -20,17 +23,10 @@ import { PostDetailModal } from "@/components/all-platform/components/post-detai
 import { VerifyAccountModal } from "@/components/all-platform/components/verify-account-modal";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/KpiRewardSections";
-import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
-import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
-import { MemberOnlineTimeWidget } from "@/components/all-platform/feed/MemberOnlineTimeWidget";
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { GroupManagementContent } from "@/components/all-platform/group-management";
-import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
-import { SeedingAccountsOverview } from "@/components/all-platform/seeding-accounts-overview";
-import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
-import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService } from "@/services/all-platform.service";
+import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, type TeamMember } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -221,6 +217,21 @@ function matchesServiceArea(team: string | undefined, area: ServiceAreaKey): boo
 }
 
 // â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+const INITIAL_FILTERS: FilterState = {
+  search: "",
+  intent: "",
+  industry: "",
+  team: "",
+  tier: "",
+  icp: "",
+  content_type: "",
+  product_seeding: "",
+  member: "",
+  sort: "lead_score_high",
+  dateRange: "",
+  seeding_status: "all",
+};
+
 export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boolean }) {
   const { user } = useAppAuth();
   const CURRENT_USER_EMAIL = user?.email || "";
@@ -229,23 +240,127 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [isQuickReviewActive, setIsQuickReviewActive] = useState(false);
   const [showKeywordsPanel, setShowKeywordsPanel] = useState(false);
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
-  // 4 tab phụ theo mockup "Seeding bên ngoài" (markee_seeding_optimized_user_leader_split_v4):
-  // Hoạt động seeding (danh sách bài viết, mặc định) / Dashboard leader (chỉ admin+leader,
-  // giống gate của SeedingActivityPanel) / Kho thư viện Group / Lịch crawl & Hàng đợi.
-  // 2 tab sau tái dùng NGUYÊN trang thật đã có sẵn trong sidebar ("Kho nhóm",
-  // "Giám sát hàng đợi cào") — không xây lại, tránh 2 nơi hiển thị lệch dữ liệu nhau.
-  const [subView, setSubView] = useState<"activity" | "leader" | "library" | "queue">("activity");
-  // 3 tab con trong "Lịch crawl & Hàng đợi" (2026-09-30): "Tài khoản seeding" (mặc định —
-  // bảng thành viên/extension/group/lịch sử cào) / "Lịch cào" (nhiều lịch xoay vòng độc
-  // lập) / "Hàng đợi VPS" (giám sát job đa VPS cào Facebook — trang cũ, không đổi).
-  const [queueSubTab, setQueueSubTab] = useState<"accounts" | "schedule" | "vps">("accounts");
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  // Status filter: 'all' | 'todo' | 'doing' | 'done' | 'skip'
+  const [seedingStatusFilter, setSeedingStatusFilter] = useState<string>(() => {
+    return searchParams?.get("status") || "pending";
+  });
+  const [callFilter, setCallFilter] = useState<string>("all");
+
+  useEffect(() => {
+    const s = searchParams?.get("status");
+    if (s) {
+      setSeedingStatusFilter(s);
+      setCallFilter("all");
+      setPage(1);
+      setClientPage(1);
+    } else {
+      // Khi khong co status query param (Hoat dong seeding mac dinh):
+      // mac dinh vao submenu "Chua danh gia" (pending)
+      setSeedingStatusFilter("pending");
+      setCallFilter("all");
+      setServiceArea("all");
+      setFilters(INITIAL_FILTERS);
+      setPage(1);
+      setClientPage(1);
+    }
+  }, [searchParams]);
+
+  // Lang nghe su kien click vao menu "Hoat dong seeding" tren Sidebar de tu dong xoa loc
+  useEffect(() => {
+    const handleResetAll = () => {
+      setFilters(INITIAL_FILTERS);
+      setServiceArea("all");
+      setSeedingStatusFilter("all");
+      setCallFilter("all");
+      setPage(1);
+      setClientPage(1);
+      setIsReviewMode(false);
+      setReviewedPostIds(new Set());
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        if (url.search) {
+          url.search = "";
+          window.history.replaceState({}, "", url.pathname);
+        }
+      }
+      toast.success("✓ Đã làm mới bộ lọc, hiển thị toàn bộ bài viết!");
+    };
+
+    window.addEventListener("allplatform_reset_post_feed_filters", handleResetAll);
+    return () => window.removeEventListener("allplatform_reset_post_feed_filters", handleResetAll);
+  }, []);
+
+
+
+  useEffect(() => {
+    const urlSub = searchParams?.get("sub");
+    if (urlSub === "queue") {
+      router.replace("/all-platform/lich-cao-hang-doi");
+    } else if (urlSub === "library") {
+      router.replace("/all-platform/quan-ly-nhom");
+    } else if (urlSub === "leader") {
+      router.replace("/all-platform/leader-dashboard");
+    } else if (urlSub === "accounts") {
+      router.replace("/all-platform/thong-ke-tai-khoan");
+    }
+  }, [searchParams, router]);
+
+  const [quickViewPost, setQuickViewPost] = useState<UnifiedPost | null>(null);
+  const [isReviewMode, setIsReviewMode] = useState(false);
+  const [isCleaningFeed, setIsCleaningFeed] = useState(false);
+  const [reviewedPostIds, setReviewedPostIds] = useState<Set<string>>(new Set());
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
   const [detailModalPost, setDetailModalPost] = useState<UnifiedPost | null>(null);
   const [verifyModalPost, setVerifyModalPost] = useState<UnifiedPost | null>(null);
+  // YouTube: modal gõ comment -> extension mở video + điền sẵn, tính KPI khi nhân viên bấm Bình luận.
+  const [youtubeCommentPost, setYoutubeCommentPost] = useState<UnifiedPost | null>(null);
+
+  const handleCleanFeed = async () => {
+    setIsCleaningFeed(true);
+    try {
+      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.success) {
+        const total = data.data?.total_deleted || 0;
+        toast.success(
+          total > 0
+            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
+            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
+        );
+        fetchPosts();
+      } else {
+        toast.error(data.message || "Không thể dọn dẹp bài viết");
+      }
+    } catch (e: any) {
+      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
+    } finally {
+      setIsCleaningFeed(false);
+    }
+  };
+  const [panelFocus, setPanelFocus] = useState<{ tab: PanelTab; nonce: number } | null>(null);
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+
+  useEffect(() => {
+    allPlatformUsersService
+      .getAllProfiles()
+      .then((res) => {
+        if (res.success && res.data) {
+          setTeamMembers(res.data);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // "Xem seeding theo team" (admin/leader) — roster toàn bộ team sở hữu group
   // của 1 bài viết, kèm ai đã/chưa seeding + nội dung.
@@ -261,6 +376,156 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   // States
   const [posts, setPosts] = useState<UnifiedPost[]>([]);
+
+  const [evaluationsMap, setEvaluationsMap] = useState<Record<string, string>>({});
+  const [callsMap, setCallsMap] = useState<Record<string, { result: string; attempts: number; lastCall?: string }>>({});
+
+  // Sync evaluations and calls from server (Master Requirement: all members see identical data)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const evMap: Record<string, string> = {};
+    const cMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
+
+    posts.forEach((p) => {
+      const pid = String(p.id || p.post_url || "");
+      const idKey = p.id ? String(p.id) : "";
+      const urlKey = p.post_url ? String(p.post_url) : "";
+
+      const savedEv =
+        localStorage.getItem(`post_eval_${pid}`) ||
+        (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_eval_${urlKey}`)) ||
+        localStorage.getItem(`evaluation_${pid}`) ||
+        (idKey && localStorage.getItem(`evaluation_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`evaluation_${urlKey}`));
+
+      if (savedEv) {
+        evMap[pid] = savedEv;
+        if (idKey) evMap[idKey] = savedEv;
+        if (urlKey) evMap[urlKey] = savedEv;
+      }
+
+      const savedCall =
+        localStorage.getItem(`post_call_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_call_${urlKey}`));
+
+      let callResult = "";
+      if (savedCall) {
+        if (savedCall.startsWith("{")) {
+          try {
+            callResult = JSON.parse(savedCall).result || "";
+          } catch {
+            callResult = savedCall;
+          }
+        } else {
+          callResult = savedCall;
+        }
+      }
+
+      const savedAttempts = parseInt(
+        localStorage.getItem(`post_call_attempts_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_attempts_${idKey}`)) || "0",
+        10
+      ) || 0;
+
+      const savedLast =
+        localStorage.getItem(`post_call_last_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_last_${idKey}`)) || "";
+
+      if (callResult || savedAttempts > 0) {
+        const item = { result: callResult, attempts: savedAttempts, lastCall: savedLast };
+        cMap[pid] = item;
+        if (idKey) cMap[idKey] = item;
+        if (urlKey) cMap[urlKey] = item;
+      }
+    });
+
+    // Populate local cache without wiping existing server state
+    setEvaluationsMap((prev) => ({ ...evMap, ...prev }));
+    setCallsMap((prev) => ({ ...cMap, ...prev }));
+
+    const loadServerData = () => {
+      void fetch("/api/all-platform/posts/evaluations")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && data?.data) {
+            const newEvMap: Record<string, string> = {};
+            const newCallsMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
+
+            Object.entries(data.data).forEach(([key, val]) => {
+              if (typeof val === "string") {
+                newEvMap[key] = val;
+              } else if (val && typeof val === "object") {
+                const item = val as any;
+                if (item.status) {
+                  newEvMap[key] = item.status;
+                }
+                if (item.call_result !== undefined || item.call_attempts !== undefined) {
+                  newCallsMap[key] = {
+                    result: item.call_result || "",
+                    attempts: Number(item.call_attempts) || 0,
+                    lastCall: item.last_call || "",
+                  };
+                }
+              }
+            });
+
+            // Server state takes absolute precedence
+            setEvaluationsMap((prev) => ({ ...prev, ...newEvMap }));
+            setCallsMap((prev) => ({ ...prev, ...newCallsMap }));
+          }
+        })
+        .catch((err) => console.debug("Fetch evaluations failed:", err));
+    };
+
+    // Load server evaluations immediately
+    loadServerData();
+
+    // Poll server every 30s to keep all members completely in sync
+    const pollTimer = setInterval(loadServerData, 30000);
+
+    const handleEvUpdate = (e: any) => {
+      const pId = String(e.detail?.postId || "");
+      const pUrl = String(e.detail?.postUrl || "");
+      const val = e.detail?.status || e.detail?.evaluation || "";
+      if (val) {
+        setEvaluationsMap((prev) => {
+          const updated = { ...prev };
+          if (pId) updated[pId] = val;
+          if (pUrl) updated[pUrl] = val;
+          return updated;
+        });
+      }
+    };
+
+    const handleCallUpdate = (e: any) => {
+      const pId = String(e.detail?.postId || "");
+      const pUrl = String(e.detail?.postUrl || "");
+      const item = {
+        result: e.detail?.result || "",
+        attempts: Number(e.detail?.attempts) || 0,
+        lastCall: e.detail?.lastCall || "",
+      };
+      setCallsMap((prev) => {
+        const updated = { ...prev };
+        if (pId) updated[pId] = item;
+        if (pUrl) updated[pUrl] = item;
+        return updated;
+      });
+    };
+
+    window.addEventListener("seeding_post_eval_updated", handleEvUpdate);
+    window.addEventListener("seeding_post_evaluation_updated", handleEvUpdate);
+    window.addEventListener("seeding_post_call_updated", handleCallUpdate);
+
+    return () => {
+      clearInterval(pollTimer);
+      window.removeEventListener("seeding_post_eval_updated", handleEvUpdate);
+      window.removeEventListener("seeding_post_evaluation_updated", handleEvUpdate);
+      window.removeEventListener("seeding_post_call_updated", handleCallUpdate);
+    };
+  }, [posts]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
   const [stats, setStats] = useState<UnifiedStats>({
@@ -281,26 +546,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [clientPage, setClientPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
   // Filter & Taxonomy States
   const [categories, setCategories] = useState<Category[]>([]);
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
-  const [filters, setFilters] = useState<FilterState>({
-    search: "",
-    intent: "",
-    industry: "",
-    team: "",
-    tier: "",
-    icp: "",
-    content_type: "",
-    product_seeding: "",
-    member: "",
-    sort: "latest",
-    dateRange: "",
-    seeding_status: "all",
-  });
+  const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const filterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Fetch Taxonomy
@@ -374,6 +627,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         dateFrom = d.toISOString().split("T")[0];
       }
 
+      // Mac dinh nap 50 bai/lan de luon co du du lieu san trong bo nho cho cac tab con
+      // Backend da duoc toi uu batching 25 IDs nen 50-100 bai load chi ton ~1s.
+      const requestPage = page;
+      const requestPageSize = 50;
+
       const res = await fetchWithRetry(() =>
         allPlatformPostsService.filter({
           email: CURRENT_USER_EMAIL,
@@ -389,8 +647,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           product_seeding: filters.product_seeding || undefined,
           search: filters.search || undefined,
           sort: filters.sort,
-          page,
-          page_size: 15,
+          page: requestPage,
+          page_size: requestPageSize,
         })
       );
 
@@ -460,31 +718,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     }
   }, [CURRENT_USER_EMAIL, feedPlatform, filters, page]);
 
-  // Xu huong 14 ngay gan nhat (tong bai/comment/inbox) — bo sung cho 4 the chi
-  // co so hom nay, theo yeu cau Thanh: "cần thêm dashboard để biết tổng
-
-  // comment, inbox... các ngày ra sao".
-  const [dailyTrend, setDailyTrend] = useState<Array<{ date: string; posts: number; comments: number; inbox: number }>>([]);
-  // Cung ly do voi isLoadingPosts o tren: fetchDailyTrend cung guard
-  // !CURRENT_USER_EMAIL nen phai khoi tao true, khong la false.
-  const [isLoadingTrend, setIsLoadingTrend] = useState(true);
-  const fetchDailyTrend = useCallback(async () => {
-    if (!CURRENT_USER_EMAIL) return;
-    setIsLoadingTrend(true);
-    try {
-      const res = await allPlatformPostsService.getDailyTrend({
-        email: CURRENT_USER_EMAIL,
-        platform: feedPlatform,
-      });
-      if (res.success && res.data) {
-        setDailyTrend(res.data);
-      }
-    } catch {
-      // im lang: khoi xu huong la thong tin bo sung, khong chan trang chinh
-    } finally {
-      setIsLoadingTrend(false);
-    }
-  }, [CURRENT_USER_EMAIL, feedPlatform]);
+  
 
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
@@ -496,11 +730,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     fetchStats();
   }, [fetchStats]);
 
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    fetchDailyTrend();
-  }, [fetchDailyTrend]);
-
+  
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
     fetchCategories();
@@ -518,6 +748,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     filterDebounceRef.current = setTimeout(() => {
       setFilters(f);
       setPage(1);
+      setClientPage(1);
       // Phase 6: persist filter state in URL (refresh won't lose filters)
       if (typeof window !== "undefined") {
         const params = new URLSearchParams();
@@ -525,7 +756,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (f.intent) params.set("intent", f.intent);
         if (f.industry) params.set("industry", f.industry);
         if (f.team) params.set("team", f.team);
-        if (f.sort !== "latest") params.set("sort", f.sort);
+        if (f.sort !== "lead_score_high") params.set("sort", f.sort);
         if (f.dateRange) params.set("date", f.dateRange);
         if (f.seeding_status && f.seeding_status !== "all")
           params.set("seeding", f.seeding_status);
@@ -555,7 +786,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       intent: params.get("intent") || "",
       industry: params.get("industry") || "",
       team: params.get("team") || "",
-      sort: (params.get("sort") as typeof prev.sort) || "latest",
+      sort: (params.get("sort") as typeof prev.sort) || "lead_score_high",
       dateRange: params.get("date") || "",
       seeding_status: (params.get("seeding") as typeof prev.seeding_status) || "all",
     }));
@@ -577,6 +808,18 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const fbDiff = stats.totalPostsToday - stats.postsYesterday;
 
+  // Extension báo về sau khi nhân viên đã bấm "Bình luận" trên tab YouTube.
+  useYouTubeCommentResults((result) => {
+    if (result.success) {
+      toast.success(result.message || "Đã ghi nhận comment YouTube và tính KPI.");
+      fetchPosts();
+      fetchStats();
+      
+    } else {
+      toast.error(result.message || "Comment YouTube chưa được tính KPI.");
+    }
+  });
+
   const handleDeletePost = useCallback(
     async (post: UnifiedPost) => {
       if (!post?.id) {
@@ -595,7 +838,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       try {
         const res = post.platform === "threads"
           ? await allPlatformPostsDeleteService.deleteThreadsPost({ id: post.id })
-          : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
+          : post.platform === "youtube"
+            ? await allPlatformPostsDeleteService.deleteYoutubePost({ id: post.id })
+            : await allPlatformPostsDeleteService.deleteFacebookPost({ id: post.id });
         if (!res?.success) {
           throw new Error(res?.message || "Xóa thất bại");
         }
@@ -621,6 +866,45 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         const res = await allPlatformPostsService.getPostSeedingRoster(CURRENT_USER_EMAIL, post.id, post.platform || feedPlatform);
         if (res.success && res.data) {
           setSeedingRosterData(res.data);
+          // Đồng bộ ngay dữ liệu seeding từ roster vào card post ngoài feed
+          const seededItems = (res.data.items || []).filter((i: any) => i.has_seeded);
+          if (seededItems.length > 0) {
+            const currentEmail = (CURRENT_USER_EMAIL || "").trim().toLowerCase();
+            const currentName = (user?.name || "").trim().toLowerCase();
+            const currentId = user?.id ? String(user.id) : "";
+
+            const mySeeded = seededItems.find((i: any) => {
+              if (currentId && String(i.id_member) === currentId) return true;
+              if (currentEmail && (i.email || "").trim().toLowerCase() === currentEmail) return true;
+              const iName = (i.name || "").trim().toLowerCase();
+              if (currentName && (iName === currentName || iName.includes(currentName) || currentName.includes(iName))) return true;
+              return false;
+            });
+
+            setPosts((prev) =>
+              prev.map((p) => {
+                if (p.id === post.id || (p.post_url && p.post_url === post.post_url)) {
+                  return {
+                    ...p,
+                    seeding_content: mySeeded?.content || p.seeding_content || seededItems[0].content,
+                    link_comment: (mySeeded?.link_comment || p.link_comment || seededItems[0].link_comment) || undefined,
+                    verify_status: (mySeeded?.verify_status || p.verify_status || "yes") as any,
+                    is_my_seeding: Boolean(mySeeded),
+                    all_seedings: seededItems.map((i: any) => ({
+                      id_member: i.id_member,
+                      member_id: i.id_member,
+                      member_name: i.name,
+                      member_email: i.email,
+                      seeding_content: i.content,
+                      link_comment: i.link_comment,
+                      verify_status: i.verify_status,
+                    })),
+                  };
+                }
+                return p;
+              })
+            );
+          }
         } else {
           toast.error(res.message || "Không tải được danh sách seeding theo team.");
         }
@@ -630,7 +914,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         setIsLoadingSeedingRoster(false);
       }
     },
-    [CURRENT_USER_EMAIL, feedPlatform],
+    [CURRENT_USER_EMAIL, feedPlatform, user],
   );
 
   const closeSeedingRosterModal = useCallback(() => {
@@ -638,14 +922,236 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     setSeedingRosterData(null);
   }, []);
 
-  // Loc client-side theo mang dich vu da chon (xem SERVICE_AREA_TABS o dau
-  // file) - khong doi lai backend/pagination, chi an/hien trong trang hien
-  // tai. Neu can loc dung tren toan bo du lieu (khong chi trang dang xem),
-  // viec nay nen chuyen xuong backend (them tham so service_area) o phien sau.
-  const visiblePosts = useMemo(
-    () => posts.filter(p => matchesServiceArea(p.team, serviceArea)),
-    [posts, serviceArea],
+  // Helper to get effective evaluation and call result for a post
+  const getPostRatingAndCall = useCallback((p: UnifiedPost) => {
+    const pid = String(p.id || p.post_url || "");
+    const idKey = p.id ? String(p.id) : "";
+    const urlKey = p.post_url ? String(p.post_url) : "";
+
+    let rating =
+      evaluationsMap[pid] ||
+      (idKey && evaluationsMap[idKey]) ||
+      (urlKey && evaluationsMap[urlKey]) ||
+      (typeof window !== "undefined"
+        ? localStorage.getItem(`post_eval_${pid}`) ||
+          (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
+          (urlKey && localStorage.getItem(`post_eval_${urlKey}`)) ||
+          localStorage.getItem(`evaluation_${pid}`)
+        : null) ||
+      (p as any).evaluation_status ||
+      (p as any).evaluation ||
+      (p as any).rating ||
+      "chua_danh_gia";
+
+    if (rating === "Cần liên hệ") rating = "can_lien_he";
+    if (rating === "Cần xem xét") rating = "can_xem_xet";
+    if (rating === "Phù hợp") rating = "phu_hop";
+    if (rating === "Không phù hợp" || rating === "Chưa phù hợp") rating = "khong_phu_hop";
+    if (rating === "chua_phu_hop") rating = "khong_phu_hop";
+    if (rating === "Chưa đánh giá") rating = "chua_danh_gia";
+
+    const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
+    let call = "";
+    if (typeof callData === "string") {
+      call = callData;
+    } else if (callData && typeof callData === "object") {
+      call = callData.result || "";
+    } else if (typeof window !== "undefined") {
+      const rawCall =
+        localStorage.getItem(`post_call_${pid}`) ||
+        (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
+        (urlKey && localStorage.getItem(`post_call_${urlKey}`));
+      if (rawCall) {
+        if (rawCall.startsWith("{")) {
+          try {
+            call = JSON.parse(rawCall).result || "";
+          } catch {
+            call = rawCall;
+          }
+        } else {
+          call = rawCall;
+        }
+      }
+    }
+
+    return { rating, call };
+  }, [evaluationsMap, callsMap]);
+
+  // Posts matching current service area
+  const areaPosts = useMemo(
+    () => posts.filter((p) => matchesServiceArea(p.team, serviceArea)),
+    [posts, serviceArea]
   );
+
+  // 4 metric summary counts
+  const seedingMetrics = useMemo(() => {
+    let todo = 0;
+    let doing = 0;
+    let done = 0;
+    let skip = 0;
+    let pending = 0;
+
+    areaPosts.forEach((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isDoing = call === "consulting" || call === "waiting";
+      const isDone = call === "interested" || call === "refused" || call === "nointerest";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+      const isPending = (rating === "chua_danh_gia" || !rating) && !isSkip && !isTodo && !isDoing && !isDone;
+
+      if (isSkip) {
+        skip++;
+      } else if (isDoing) {
+        doing++;
+      } else if (isDone) {
+        done++;
+      } else if (isTodo) {
+        todo++;
+      } else if (isPending) {
+        pending++;
+      }
+    });
+
+    return {
+      all: areaPosts.length,
+      pending,
+      todo,
+      doing,
+      done,
+      skip,
+    };
+  }, [areaPosts, getPostRatingAndCall]);
+
+  const callResultOptions: [string, string][] = [
+    ["all", "Tất cả"],
+    ["none", "Chưa liên hệ"],
+    ["noanswer", "Không nghe máy"],
+    ["callback", "Hẹn gọi lại"],
+    ["consulting", "Đang tư vấn"],
+    ["waiting", "Chờ phản hồi"],
+    ["interested", "Có nhu cầu"],
+    ["nointerest", "Không có nhu cầu"],
+    ["refused", "Đã từ chối"],
+  ];
+
+  const callFilterCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    callResultOptions.forEach(([k]) => {
+      counts[k] = 0;
+    });
+
+    areaPosts.forEach((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
+      if (isTodo) {
+        counts["all"]++;
+        if (!call) {
+          counts["none"]++;
+        } else if (counts[call] !== undefined) {
+          counts[call]++;
+        }
+      }
+    });
+
+    return counts;
+  }, [areaPosts, getPostRatingAndCall]);
+
+  // Loc client-side theo ca serviceArea, seedingStatusFilter va callFilter
+  const visiblePosts = useMemo(() => {
+    return areaPosts.filter((p) => {
+      const { rating, call } = getPostRatingAndCall(p);
+
+      const isSkip = rating === "khong_phu_hop" || call === "invalid";
+      const isDoing = call === "consulting" || call === "waiting";
+      const isDone = call === "interested" || call === "refused" || call === "nointerest";
+      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
+
+      if (seedingStatusFilter === "pending" || seedingStatusFilter === "chua_danh_gia") {
+        const isPending = (rating === "chua_danh_gia" || !rating) && !isSkip && !isTodo && !isDoing && !isDone;
+        return isPending;
+      }
+
+      if (seedingStatusFilter === "todo") {
+        if (!isTodo) return false;
+
+        if (callFilter === "all") return true;
+        if (callFilter === "none") return !call;
+        return call === callFilter;
+      }
+
+      if (seedingStatusFilter === "skip") {
+        return isSkip;
+      }
+
+      if (seedingStatusFilter === "doing") {
+        return isDoing && !isSkip;
+      }
+
+      if (seedingStatusFilter === "done") {
+        return isDone && !isSkip;
+      }
+
+      return true;
+    });
+  }, [areaPosts, seedingStatusFilter, callFilter, getPostRatingAndCall]);
+
+  const isClientFiltered = Boolean(
+    (seedingStatusFilter && seedingStatusFilter !== "all") ||
+    (callFilter && callFilter !== "all") ||
+    (filters.seeding_status && filters.seeding_status !== "all") ||
+    (serviceArea && serviceArea !== "all")
+  );
+
+  const CLIENT_PAGE_SIZE = 15;
+  const effectiveTotalCount = isClientFiltered ? visiblePosts.length : totalCount;
+  const effectiveTotalPages = isClientFiltered
+    ? Math.max(1, Math.ceil(visiblePosts.length / CLIENT_PAGE_SIZE))
+    : totalPages;
+  const currentPage = isClientFiltered ? clientPage : page;
+
+  const displayPosts = useMemo(() => {
+    const list = !isClientFiltered
+      ? visiblePosts
+      : visiblePosts.slice((clientPage - 1) * CLIENT_PAGE_SIZE, clientPage * CLIENT_PAGE_SIZE);
+
+    return list.map((p) => {
+      const pid = String(p.id || p.post_url || "");
+      const idKey = p.id ? String(p.id) : "";
+      const urlKey = p.post_url ? String(p.post_url) : "";
+      const { rating, call } = getPostRatingAndCall(p);
+      const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
+      const attempts = (callData && typeof callData === "object" ? callData.attempts : 0) || 0;
+      const lastCall = (callData && typeof callData === "object" ? callData.lastCall : "") || "";
+
+      return {
+        ...p,
+        evaluation_status: rating,
+        evaluation: rating,
+        call_result: call,
+        callResult: call,
+        call_attempts: attempts,
+        callAttempts: attempts,
+        last_call: lastCall,
+        lastCall: lastCall,
+      };
+    });
+  }, [visiblePosts, isClientFiltered, clientPage, getPostRatingAndCall, callsMap]);
+
+  const handlePageChange = useCallback((newPage: number) => {
+    if (isClientFiltered) {
+      setClientPage(Math.max(1, Math.min(effectiveTotalPages, newPage)));
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    } else {
+      setPage(Math.max(1, Math.min(totalPages, newPage)));
+      if (typeof window !== "undefined") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    }
+  }, [isClientFiltered, effectiveTotalPages, totalPages]);
 
   // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
   // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
@@ -668,13 +1174,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
         { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
         { key: "threads", label: "Threads", icon: <FaThreads /> },
+        { key: "youtube", label: "YouTube", icon: <FaYoutube className="text-[#ff0000]" /> },
       ] as const).map((t) => (
         <button
           key={t.key}
           type="button"
           role="tab"
           aria-selected={feedPlatform === t.key}
-          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
+          onClick={() => { setFeedPlatform(t.key); setPage(1); setClientPage(1); }}
           className={cn(
             "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
             feedPlatform === t.key
@@ -690,7 +1197,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   );
 
   const platformHint =
-    feedPlatform === "threads"
+    feedPlatform === "youtube"
+      ? "Đang xem YouTube — tìm video theo từ khoá hoặc dán link, comment tính KPI theo kênh đã liên kết."
+      : feedPlatform === "threads"
       ? "Đang xem Threads — tìm bài theo từ khoá."
       : feedPlatform === "linkedin"
         ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
@@ -707,124 +1216,34 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   return (
     <div className="w-full space-y-6">
       {!hideHeader ? (
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-xs">
           <div className="space-y-1">
-            <h1 className="text-2xl font-bold text-foreground tracking-tight">Unified Post Feed</h1>
-            <p className="text-sm text-muted-foreground">
-              Quản lý và theo dõi bài viết đa nền tảng với trí tuệ nhân tạo.
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
+              <span className="material-symbols-outlined text-[28px] text-[#be123c]">bolt</span>
+              Hoạt động Seeding bên ngoài
+            </h1>
+            <p className="text-xs text-gray-500 font-medium">
+              Quản lý và tương tác bài viết đa nền tảng (Facebook, LinkedIn, Threads, YouTube), hỗ trợ cào bài và comment tự động.
             </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
-            {platformTabs}
           </div>
         </div>
       ) : null}
 
       {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
           (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
-      <div className="flex gap-1.5 rounded-2xl border border-border bg-card p-1.5 overflow-x-auto">
-        {SUB_TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setSubView(t.key)}
-            className={cn(
-              "flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 text-sm font-bold transition-colors cursor-pointer",
-              subView === t.key
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
-          >
-            <span className="material-symbols-outlined text-[16px]">{t.icon}</span>
-            {t.label}
-          </button>
-        ))}
+
+      
+        {/* Chọn nền tảng */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-1">
+        <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
+          Chọn nền tảng
+        </span>
+        {platformTabs}
+        <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
       </div>
 
-      {(subView === "activity" || subView === "leader") && (
-        /* Tab "Seeding bên ngoài": làm nổi bật hẳn (khung viền + icon + mô tả) vì đây là
-           lựa chọn quan trọng nhất của trang - 3 nút nhỏ canh phải rất dễ bị lướt qua. */
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-primary/30 bg-gradient-to-r from-primary/5 to-transparent p-3 sm:p-4">
-          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
-            Chọn nền tảng
-          </span>
-          {platformTabs}
-          <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
-        </div>
-      )}
-
-      {subView === "leader" && isLeaderOrAdmin && (
-        <div className="space-y-4 mb-4">
-          {/* Dashboard xu huong 14 ngay gan nhat (2026-07-04) — theo yeu cau Thanh:
-              4 the o tren chi co so HOM NAY, khong biet cac ngay truoc ra sao.
-              Chart nhe (khong chan trang neu loi/rong). Chuyen sang tab Dashboard
-              leader (2026-09-29) theo mockup markee_seeding_optimized_user_leader_split_v4 —
-              day la so lieu tong quan cho leader/admin, khong phai viec hang ngay cua user. */}
-          <div className="bg-card border border-border rounded-2xl p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-foreground">Xu hướng 14 ngày gần nhất</h3>
-                <p className="text-xs text-muted-foreground">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
-              </div>
-              {isLoadingTrend && <span className="text-xs text-muted-foreground">Đang tải...</span>}
-            </div>
-            {dailyTrend.length === 0 ? (
-              <div className="flex h-[220px] items-center justify-center text-sm text-muted-foreground">
-                {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
-                    tick={{ fontSize: 11, fill: "#737373" }}
-                    axisLine={{ stroke: "#e5e5e5" }}
-                    tickLine={false}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip
-                    labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
-                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
-            <div className="xl:col-span-2">
-              <SeedingActivityPanel email={CURRENT_USER_EMAIL} />
-            </div>
-            <TeamEfficiencyWidget email={CURRENT_USER_EMAIL} />
-          </div>
-
-          <MemberOnlineTimeWidget email={CURRENT_USER_EMAIL} />
-        </div>
-      )}
-
-      {subView === "activity" && (
-        <>
+      
+      <>
           <div className="bg-card border border-border rounded-2xl p-5 mb-4">
             <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
               <StatCard
@@ -882,21 +1301,22 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
               Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
               "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
-              Threads: chỉ cào (tìm theo từ khoá), feed/xu hướng tải lại mỗi khi lưu xong 1 từ khoá. */}
+              Threads/YouTube: chỉ cào (tìm theo từ khoá hoặc link), feed/xu hướng tải lại mỗi khi lưu xong. */}
           {CURRENT_USER_EMAIL && (
             <SeedingExtensionPanel
               platform={feedPlatform}
               posts={posts}
+              focusRequest={panelFocus}
               onCrawlSaved={(platform, data) => {
-                if (platform === "threads" && data.count > 0) {
+                if ((platform === "threads" || platform === "youtube") && data.count > 0) {
                   fetchPosts();
-                  fetchDailyTrend();
+                  
                 }
               }}
               onCrawlDone={(platform, data) => {
                 fetchPosts();
                 fetchStats();
-                if (platform === "threads") fetchDailyTrend();
+                if (platform === "threads" || platform === "youtube") 
                 setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
                 setShowCrawlResultModal(true);
               }}
@@ -909,6 +1329,152 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             />
           )}
 
+          {/* 4 Metric Summary Cards chuẩn HTML template */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-2">
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("all");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "all" ? "border-blue-500 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Tổng bài viết</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#6078eb]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-gray-900">
+                {seedingMetrics.all}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("todo");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "todo" ? "border-amber-500 ring-2 ring-amber-100 bg-amber-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Cần liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#ee9a50]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-amber-600">
+                {seedingMetrics.todo}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("doing");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "doing" ? "border-blue-400 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Đang liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#6087e6]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-blue-600">
+                {seedingMetrics.doing}
+              </strong>
+            </div>
+
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("done");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "done" ? "border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Đã liên hệ</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#1ab28c]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-emerald-600">
+                {seedingMetrics.done}
+              </strong>
+            </div>
+
+            {/* Card 5: Chưa phù hợp / Bỏ qua (Đầy đủ 5 cột theo đúng Master Requirement) */}
+            <div
+              onClick={() => {
+                setSeedingStatusFilter("skip");
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              className={cn(
+                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
+                seedingStatusFilter === "skip" ? "border-rose-500 ring-2 ring-rose-100 bg-rose-50/20" : "border-gray-200/80 hover:border-gray-300"
+              )}
+            >
+              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
+                <span>Chưa phù hợp (Bỏ qua)</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#f43f5e]" />
+              </div>
+              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-rose-600">
+                {seedingMetrics.skip}
+              </strong>
+            </div>
+          </div>
+
+          {/* Filter Chips cho Kết Quả Cuộc Gọi (chỉ hiện khi đang xem "Cần liên hệ") */}
+          {seedingStatusFilter === "todo" && (
+            <div className="flex flex-wrap items-center gap-2 p-3 sm:p-3.5 bg-white border border-gray-200/80 rounded-2xl mb-4 shadow-xs">
+              <span className="text-xs font-bold text-gray-500 mr-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[16px] text-amber-500">call</span>
+                Kết quả gọi:
+              </span>
+              {callResultOptions.map(([key, label]) => {
+                const isSelected = callFilter === key;
+                const count = callFilterCounts[key] || 0;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => { setCallFilter(key); setPage(1); setClientPage(1); }}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
+                      isSelected
+                        ? "bg-[#fff0f4] text-[#bc2851] border border-[#f2b8c9] shadow-xs"
+                        : "bg-gray-100/80 text-gray-600 border border-transparent hover:bg-gray-200/70"
+                    )}
+                  >
+                    <span>{label}</span>
+                    <span
+                      className={cn(
+                        "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
+                        isSelected ? "bg-[#fde8ee] text-[#bc2851]" : "bg-gray-200/80 text-gray-500"
+                      )}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ
               thống, xem ghi chú serviceAreaTabs/matchesServiceArea ở trên. */}
           <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
@@ -916,7 +1482,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               <button
                 key={tab.key}
                 type="button"
-                onClick={() => setServiceArea(tab.key)}
+                onClick={() => { setServiceArea(tab.key); setPage(1); setClientPage(1); }}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
                   serviceArea === tab.key
@@ -929,7 +1495,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             ))}
           </div>
 
-          {/* Quản lý từ khóa loại trừ & Review Nhanh */}
+          {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
             <QuickReviewToolbar
               posts={visiblePosts}
@@ -949,21 +1515,36 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               }}
             />
 
-            {(user?.role === "admin" || user?.role === "leader") && (
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setShowKeywordsPanel((prev) => !prev)}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
-                  showKeywordsPanel
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-card hover:bg-muted text-foreground border-border"
-                }`}
-                title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+                onClick={handleCleanFeed}
+                disabled={isCleaningFeed}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
+                title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
               >
-                <span className="material-symbols-outlined text-[16px]">filter_alt</span>
-                <span>Từ khóa loại trừ</span>
+                <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
+                  {isCleaningFeed ? "sync" : "mop"}
+                </span>
+                {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
               </button>
-            )}
+
+              {(user?.role === "admin" || user?.role === "leader") && (
+                <button
+                  type="button"
+                  onClick={() => setShowKeywordsPanel((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
+                    showKeywordsPanel
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card hover:bg-muted text-foreground border-border"
+                  }`}
+                  title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+                >
+                  <span className="material-symbols-outlined text-[16px]">filter_alt</span>
+                  <span>Từ khóa loại trừ</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
@@ -996,7 +1577,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 Thử lại
               </button>
             </div>
-          ) : visiblePosts.length === 0 ? (
+          ) : displayPosts.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               {posts.length === 0
                 ? "Không có bài viết nào phù hợp với bộ lọc."
@@ -1005,10 +1586,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           ) : (
             <>
               <div className="flex flex-col gap-4">
-                {visiblePosts.map((post) => (
+                {displayPosts.map((post) => (
                     <PostCard
                       key={post.id || post.post_url}
                       post={post}
+                      teamMembers={teamMembers}
                       userRole={user?.role}
                       seeded={!!post.verify_status && post.verify_status !== "no"}
                       verifyStatus={post.verify_status as "pending" | "yes" | "no"}
@@ -1021,31 +1603,32 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                         fetchStats();
                       }}
                       onVerify={() => {}}
-                      onSchedule={post.platform === "threads" ? undefined : (post) => setScheduleModalPost(post)}
-                      onViewDetail={(post) => setDetailModalPost(post)}
+                      onSchedule={post.platform === "threads" || post.platform === "youtube" ? undefined : (post) => setScheduleModalPost(post)}
+                      onViewDetail={(post) => setQuickViewPost(post)}
                       onDelete={(p) => void handleDeletePost(p)}
-                      onViewSeedingRoster={post.platform === "threads" ? undefined : (p) => void openSeedingRosterModal(p)}
+                      onViewSeedingRoster={post.platform === "threads" || post.platform === "youtube" ? undefined : (p) => void openSeedingRosterModal(p)}
+                      onComment={post.platform === "youtube" ? (p) => setYoutubeCommentPost(p) : undefined}
                     />
                 ))}
               </div>
 
-              {totalPages > 1 && (
+              {effectiveTotalPages > 1 && (
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-center">
                   <button
                     type="button"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
                     className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
                   >
                     ‹ Trước
                   </button>
                   <span className="w-full whitespace-nowrap text-sm text-muted-foreground sm:w-auto">
-                    Trang {page} / {totalPages} ({totalCount} bài)
+                    Trang {currentPage} / {effectiveTotalPages} ({effectiveTotalCount} bài)
                   </span>
                   <button
                     type="button"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === effectiveTotalPages}
                     className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50 cursor-pointer whitespace-nowrap"
                   >
                     Sau ›
@@ -1055,51 +1638,56 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </>
           )}
         </>
-      )}
-
-      {subView === "library" && <GroupManagementContent />}
-
-      {subView === "queue" && (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-            {(
-              [
-                { key: "accounts", label: "Tài khoản seeding" },
-                { key: "schedule", label: "Lịch cào" },
-                { key: "vps", label: "Hàng đợi VPS" },
-              ] as const
-            ).map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setQueueSubTab(tab.key)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-                  queueSubTab === tab.key
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {queueSubTab === "accounts" && <SeedingAccountsOverview />}
-          {queueSubTab === "schedule" && <RotationCrawlPanel />}
-          {queueSubTab === "vps" && <CrawlQueueMonitor />}
-        </div>
-      )}
+      <PostQuickViewModal
+        post={quickViewPost}
+        teamMembers={teamMembers}
+        onClose={() => setQuickViewPost(null)}
+        onStartSeeding={(post) => {
+          if (!post.post_url) return;
+          const currentOrigin = typeof window !== "undefined" ? window.location.origin : "https://seeding.markeeai.com";
+          window.postMessage({
+            type: "SYNC_ACTIVE_MEMBER",
+            action: "SYNC_ACTIVE_MEMBER",
+            payload: {
+              email_member: CURRENT_USER_EMAIL,
+              apiBase: currentOrigin,
+              facebook_post_id: post.id || "unknown",
+              target_link: post.post_url,
+              id_post: post.id,
+              platform: post.platform,
+              group_name: post.group_name || "",
+            },
+          }, "*");
+          window.open(post.post_url, "_blank");
+          toast.success("🚀 Đã mở bài viết và kích hoạt theo dõi Seeding!");
+        }}
+      />
 
       <PostDetailModal
         post={detailModalPost}
         isOpen={!!detailModalPost}
         onClose={() => setDetailModalPost(null)}
-        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads.
-        onVerify={detailModalPost?.platform === "threads" ? undefined : (post) => {
+        // Xác minh seeding (chọn tài khoản FB/LinkedIn) chưa hỗ trợ bài Threads; YouTube dùng nút
+        // "Bình luận" riêng (KPI tự ghi nhận khi extension thấy comment đã đăng).
+        onVerify={detailModalPost?.platform === "threads" || detailModalPost?.platform === "youtube" ? undefined : (post) => {
           setVerifyModalPost(post);
         }}
+        onComment={detailModalPost?.platform === "youtube" ? (post) => {
+          setDetailModalPost(null);
+          setYoutubeCommentPost(post);
+        } : undefined}
         verifyStatus={detailModalPost?.verify_status as any}
+      />
+
+      <YouTubeCommentModal
+        // key theo video: mở video khác thì modal reset sạch nội dung đã gõ.
+        key={youtubeCommentPost?.id ?? "closed"}
+        post={youtubeCommentPost}
+        onClose={() => setYoutubeCommentPost(null)}
+        onNeedLinkChannel={() => {
+          setYoutubeCommentPost(null);
+          setPanelFocus({ tab: "channel", nonce: Date.now() });
+        }}
       />
 
       {verifyModalPost && (
@@ -1132,15 +1720,30 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           <div className="w-[min(640px,100%)] max-h-[85vh] bg-card rounded-2xl shadow-xl overflow-hidden flex flex-col">
             <div className="flex justify-between items-start p-5 border-b border-border">
               <div>
-                <h3 className="text-base font-bold text-foreground">Seeding theo team</h3>
-                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
-                  {seedingRosterData?.team_name ? `Team: ${seedingRosterData.team_name} · ` : ""}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-bold text-foreground">
+                    {seedingRosterData?.role === "admin" ? "👥 Toàn bộ tiến độ Seeding theo Team" : "👤 Tiến độ Seeding theo Team"}
+                  </h3>
+                  {seedingRosterData?.team_name && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                      {seedingRosterData.team_name}
+                    </span>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1 line-clamp-1">
                   Bài: {seedingRosterPost.content || "(Bài viết không có nội dung văn bản)"}
                 </div>
+                {seedingRosterData && seedingRosterData.items.length > 0 && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-[11px] font-semibold text-foreground">
+                      Đã hoàn thành: <strong className="text-emerald-600">{seedingRosterData.items.filter(i => i.has_seeded).length}</strong> / {seedingRosterData.items.length} thành viên ({Math.round((seedingRosterData.items.filter(i => i.has_seeded).length / seedingRosterData.items.length) * 100)}% KPI)
+                    </span>
+                  </div>
+                )}
               </div>
               <button
                 type="button"
-                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0"
+                className="w-8 h-8 rounded-full hover:bg-muted flex items-center justify-center text-muted-foreground font-bold shrink-0 cursor-pointer"
                 onClick={closeSeedingRosterModal}
                 aria-label="Đóng"
               >
@@ -1150,47 +1753,71 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
             <div className="p-4 overflow-y-auto flex-1">
               {isLoadingSeedingRoster ? (
-                <div className="p-8 text-center text-muted-foreground text-sm">Đang tải danh sách seeding theo team...</div>
+                <div className="p-8 text-center text-muted-foreground text-sm flex flex-col items-center gap-2">
+                  <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <span>Đang tải danh sách thành viên...</span>
+                </div>
               ) : !seedingRosterData || seedingRosterData.items.length === 0 ? (
                 <div className="p-8 text-center text-muted-foreground text-sm">
-                  {seedingRosterData?.team_name
-                    ? "Team này chưa có thành viên nào."
-                    : "Bài viết này chưa xác định được team sở hữu (nhóm crawl chưa gán team)."}
+                  Chưa có thành viên nào trong danh sách quản lý của bạn.
                 </div>
               ) : (
-                <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-2.5">
                   {seedingRosterData.items.map((m) => (
                     <div
                       key={m.id_member}
                       className={cn(
-                        "px-3 py-2 rounded-lg border flex flex-col gap-1",
-                        m.has_seeded ? "bg-emerald-50/50 border-emerald-100" : "bg-muted/40 border-border",
+                        "px-3.5 py-2.5 rounded-xl border flex flex-col gap-1.5 transition",
+                        m.has_seeded ? "bg-emerald-50/50 border-emerald-200" : "bg-muted/30 border-border",
                       )}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-foreground">{m.name}</span>
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-foreground">{m.name}</span>
+                          {m.team_name && (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-surface border border-border text-muted-foreground">
+                              {m.team_name}
+                            </span>
+                          )}
+                        </div>
                         {m.has_seeded ? (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">
-                            ✓ Đã seeding
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0 border border-emerald-200">
+                            ✓ Đã seeding (+1 KPI)
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-700 shrink-0">
-                            Chưa seeding
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-neutral-100 text-neutral-600 shrink-0 border border-neutral-200">
+                            Chưa làm nhiệm vụ
                           </span>
                         )}
                       </div>
                       {m.has_seeded && m.content ? (
-                        <p className="text-sm text-muted-foreground line-clamp-2">
-                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none mr-1">"</span>
+                        <p className="text-xs text-muted-foreground line-clamp-2 bg-surface/60 px-2.5 py-1.5 rounded-lg border border-border/50">
+                          <span className="text-emerald-500 font-serif font-bold text-base leading-none mr-1">"</span>
                           {m.content}
-                          <span className="text-emerald-500 font-serif font-bold text-lg leading-none ml-1">"</span>
+                          <span className="text-emerald-500 font-serif font-bold text-base leading-none ml-1">"</span>
                         </p>
                       ) : null}
-                      {m.link_comment ? (
-                        <a href={m.link_comment} target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium text-blue-600 hover:underline inline-flex items-center gap-1 w-fit">
-                          Xem bình luận <FiExternalLink className="w-3 h-3" />
-                        </a>
-                      ) : null}
+                      <div className="flex items-center justify-between mt-0.5">
+                        {m.link_comment ? (
+                          <a
+                            href={m.link_comment}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 transition shadow-xs"
+                            title="Mở tab mới xem minh chứng bình luận trực tiếp"
+                          >
+                            <span>👁️ Xem minh chứng bình luận</span>
+                            <FiExternalLink className="w-3.5 h-3.5 ml-0.5" />
+                          </a>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground italic">Chưa có liên kết minh chứng</span>
+                        )}
+                        {m.has_seeded && (
+                          <span className="text-[10px] text-emerald-700 font-semibold">
+                            {m.verify_status === "yes" ? "✓ Đã xác minh" : "Chờ xác minh"}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

@@ -23,6 +23,21 @@ const JOB_STATUS_LABEL: Record<string, string> = {
   failed: "Thất bại",
 };
 
+const JOB_ERROR_MAP: Record<string, string> = {
+  NO_FB_ACCOUNT_FOR_MEMBER: "Chưa liên kết tài khoản Facebook",
+  FB_LOGIN_LOST: "Tài khoản FB mất đăng nhập",
+  FB_RATE_LIMIT: "Bị giới hạn tần suất Facebook",
+  GROUP_NOT_FOUND: "Không tìm thấy nhóm Facebook",
+  GROUP_NOT_ACCESSIBLE: "Nhóm kín hoặc không có quyền truy cập",
+  TIMEOUT: "Hết thời gian chờ phản hồi",
+  EMPTY_RESPONSE: "Không trích xuất được bài viết mới",
+};
+
+function formatJobError(err: string | null): string {
+  if (!err) return "—";
+  return JOB_ERROR_MAP[err] || err;
+}
+
 const JOB_STATUS_COLOR: Record<string, string> = {
   pending: "bg-slate-50 text-slate-600 border-slate-200",
   assigned: "bg-amber-50 text-amber-700 border-amber-200",
@@ -104,9 +119,14 @@ export function CrawlQueueMonitor() {
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
         <div className="px-4 py-3 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
           <h2 className="text-sm font-bold text-on-surface">VPS Worker</h2>
-          <span className="text-xs font-semibold text-on-surface-variant px-2 py-0.5 bg-surface-container-highest rounded-full">
-            {data?.workers.length ?? 0} worker
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-emerald-700 px-2.5 py-0.5 bg-emerald-50 border border-emerald-200 rounded-full">
+              🟢 {(data?.workers || []).filter(w => isWorkerOnline(w.last_heartbeat)).length} đang online
+            </span>
+            <span className="text-xs font-semibold text-on-surface-variant px-2 py-0.5 bg-surface-container-highest rounded-full">
+              {data?.workers.length ?? 0} worker
+            </span>
+          </div>
         </div>
         {!data?.workers.length ? (
           <div className="text-center py-10 text-xs text-on-surface-variant">Chưa có VPS worker nào từng kết nối.</div>
@@ -201,8 +221,14 @@ export function CrawlQueueMonitor() {
                     </td>
                     <td className="py-3 px-4 font-mono text-[10px]">{job.assigned_worker_id ? job.assigned_worker_id.slice(0, 8) : "—"}</td>
                     <td className="py-3 px-4 text-center tabular-nums">{job.retry_count}</td>
-                    <td className="py-3 px-4 max-w-[200px] truncate text-[11px] text-red-500" title={job.error_message || ""}>
-                      {job.error_message || "—"}
+                    <td className="py-3 px-4 max-w-[220px] text-[11px]" title={job.error_message || ""}>
+                      {job.error_message ? (
+                        <span className="text-red-600 font-medium bg-red-50 px-2 py-0.5 rounded border border-red-200 inline-block truncate max-w-[210px]">
+                          {formatJobError(job.error_message)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="py-3 px-4 font-mono text-[11px]">{new Date(job.created_at).toLocaleString("vi-VN")}</td>
                   </tr>

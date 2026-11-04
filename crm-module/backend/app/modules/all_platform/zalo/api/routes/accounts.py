@@ -253,7 +253,7 @@ async def create_account(
         )
     except RuntimeError as exc:
         msg = str(exc)
-        if "zalo_module_users_id_member_fkey" in msg or "zalo_module_accounts_id_member_fkey" in msg:
+        if "zalo_users_id_member_fkey" in msg or "zalo_accounts_id_member_fkey" in msg:
             raise HTTPException(
                 status_code=400,
                 detail="Lỗi tạo tài khoản: Không tìm thấy người dùng trên hệ thống (id_member không hợp lệ). Hãy tải lại trang hoặc đăng nhập lại."

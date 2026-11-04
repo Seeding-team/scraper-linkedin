@@ -9,11 +9,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   useQuickInboxLibrary,
   type QuickInboxLibraryEntry,
-} from "@/components/all-platform/components/use-quick-inbox-library";
+} from "@/hooks/useQuickInboxLibrary";
 import {
   useQuickCommentLibrary,
   type QuickCommentTemplate,
-} from "@/components/all-platform/components/use-quick-comment-library";
+} from "@/hooks/useQuickCommentLibrary";
 
 const INBOX_LABELS = ["Chào hỏi", "Follow-up", "Chốt đơn", "Giới thiệu", "CSKH", "Khác"];
 const COMMENT_LABELS = ["Khen ngợi", "Hỏi giá", "Quan tâm", "Chia sẻ trải nghiệm", "Khác"];

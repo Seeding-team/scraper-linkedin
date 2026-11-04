@@ -83,6 +83,7 @@ from app.modules.all_platform.schemas.service_catalog import (
     ServiceCatalogUnitUpdateRequest,
     ServiceCatalogVatRateCreateRequest,
     ServiceCatalogVatRateUpdateRequest,
+    ServiceCatalogWorkspaceAssignRequest,
     BundleComponentInput,
     BundleComponentsSetRequest,
     QuoteFormCatalogLinksSetRequest,
@@ -129,6 +130,9 @@ from app.modules.all_platform.schemas.contract import (
     ContractGenerateRequest,
     ContractReviewRequest,
     ContractRefineRequest,
+    ContractPrecheckRequest,
+    ContractSuggestTypeRequest,
+    ContractNumberSettingsRequest,
 )
 
 from app.modules.all_platform.schemas.post_evaluation import (

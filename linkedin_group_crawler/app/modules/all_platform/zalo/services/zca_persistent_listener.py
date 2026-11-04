@@ -370,6 +370,7 @@ def _to_message(row: Dict[str, Any]) -> Message:
         cli_msg_id=row.get("cli_msg_id") or None,
         mentions=[m for m in raw_mentions if isinstance(m, dict) and "uid" in m],
         msg_kind=row.get("msg_kind") or None,
+        raw_content=row.get("raw") or row.get("raw_content") or None,
     )
 
 
@@ -842,13 +843,12 @@ class ZcaPersistentListenerManager:
             # Safety: if crashed more than 10 times in a row, stop entirely.
             # This prevents resource leaks from cascading crashes (e.g. ZCA buffer overflow).
             if state.restart_attempt > 10:
-                logger.error(
-                    f"ZCA listener for user={state.user_id} crashed {state.restart_attempt} times "
-                    f"in a row (last error: {state.last_error}) — STOPPING. "
-                    f"Manual restart via /api/zalo/listener/restart required."
+                logger.warning(
+                    f"ZCA listener for user={state.user_id} restarted {state.restart_attempt} times "
+                    f"(last error: {state.last_error}). Continuing supervised retry with 60s backoff."
                 )
-                state.desired = False
-                return
+                await asyncio.sleep(60.0)
+                continue
             
             delay = _RESTART_BACKOFFS[min(state.restart_attempt - 1, len(_RESTART_BACKOFFS) - 1)]
             logger.warning(
@@ -1077,24 +1077,18 @@ class ZcaPersistentListenerManager:
             return
         if event_name == "connected":
             state.connected = True
-            # Only reset crash counter if we've been running stably for 60s
-            # This prevents premature reset from crashing immediately after startup
-            if state.last_event_at:
-                try:
-                    last_ts = datetime.fromisoformat(state.last_event_at.replace("Z", "+00:00"))
-                    age_s = (datetime.now(timezone.utc) - last_ts).total_seconds()
-                    if age_s > 60:
-                        state.restart_attempt = 0
-                except Exception:
-                    # Fallback: reset on first successful connect after any startup
-                    if state.restart_attempt > 0:
-                        state.restart_attempt = 0
+            state.restart_attempt = 0
             state.last_error = None
             logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
             await self._sync_recent_groups_after_connect(state)
             return
         if event_name in {"disconnected", "closed", "stopping"}:
             state.connected = False
+            if event_name != "stopping":
+                code = event.get("code")
+                reason = str(event.get("reason") or "").strip()
+                state.last_error = f"socket_{event_name}: code={code} reason={reason}"[:1000]
+                logger.warning(f"ZCA listener socket {event_name} user={state.user_id}: {state.last_error}")
             return
         if event_name in {"error", "fatal", "login_failed"}:
             detail = event.get("error_detail") or event.get("error") or event
@@ -1241,18 +1235,20 @@ class ZcaPersistentListenerManager:
                 # Personal chat (DM): tìm tên từ sender của bất kỳ message nào trong batch.
                 # Không chỉ dùng messages[0] vì message đầu có thể là tin của chính mình
                 # (sender_name = "__me__") — cần tìm tin từ đối phương.
-                _dm_skip = {"__me__", "me", "ban", "bạn", "", None}
+                _dm_skip = {"__me__", "me", "ban", "bạn", "markee", "", None}
                 for _msg in messages:
-                    if _msg.sender_name not in _dm_skip:
-                        group_name = _msg.sender_name
+                    s_name = (_msg.sender_name or "").strip()
+                    if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                        group_name = s_name
                         break
                 # Nếu toàn bộ batch là tin của mình (gửi đi), kiểm tra in-memory cache
                 # để xem đối phương có tên trong tin nhắn cũ không.
                 if not group_name:
                     cached_msgs = list((self._cache.get((state.user_id, group_id)) or {}).values())
                     for _msg in reversed(cached_msgs):  # tin mới nhất trước
-                        if _msg.sender_name not in _dm_skip:
-                            group_name = _msg.sender_name
+                        s_name = (_msg.sender_name or "").strip()
+                        if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                            group_name = s_name
                             break
                 if not group_name:
                     # Cuối cùng mới dùng group_id — vẫn hiển thị đẹp hơn "Conversation g123"

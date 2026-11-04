@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -21,6 +21,7 @@ export interface NavLeafItem {
   // (vd "Teams" va "Rule KPI & Thuong" cung nam duoi /admin/teams-management/... -
   // neu khong co co nay, ca 2 muc sidebar se sang mau cung luc).
   exactMatch?: boolean;
+  children?: NavLeafItem[];
 }
 
 export interface NavSubGroupItem {
@@ -71,9 +72,35 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
   return pathname.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`);
 }
 
-export function isLeafActive(pathname: string, item: NavLeafItem) {
-  if (item.exactMatch) return pathname === item.href;
-  if (pathname === item.href) return true;
+export function isLeafActive(pathname: string, item: NavLeafItem, searchParams?: URLSearchParams | null) {
+  if (item.href.includes("?")) {
+    const [itemPath, itemQuery] = item.href.split("?");
+    if (pathname !== itemPath) return false;
+    if (!searchParams) return false;
+    const itemParams = new URLSearchParams(itemQuery);
+    for (const [k, v] of itemParams.entries()) {
+      const currentVal = searchParams.get(k);
+      // Mặc định không có query param ?status tại /all-platform/post-feed coi như đang xem "Chưa đánh giá" (pending)
+      if (k === "status" && v === "pending" && !currentVal) {
+        continue;
+      }
+      if (currentVal !== v) return false;
+    }
+    return true;
+  }
+  if (item.exactMatch) {
+    if (searchParams && searchParams.has("status") && item.children && item.children.length > 0) {
+      return false;
+    }
+    return pathname === item.href.split("?")[0];
+  }
+  if (pathname === item.href) {
+    if (searchParams && (searchParams.has("tab") || searchParams.has("sub"))) {
+      const tabVal = searchParams.get("tab");
+      return !tabVal || tabVal === "feed";
+    }
+    return true;
+  }
   if (item.matchStartsWith?.some((prefix) => pathMatchesPrefix(pathname, prefix))) return true;
   return pathMatchesPrefix(pathname, item.href) && item.href !== "/all-platform/post-feed";
 }
@@ -238,22 +265,129 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
   ];
 
-  const contentItems: NavLeafItem[] = [
+  const contentItems: NavGroupChild[] = [
     {
       type: "item",
       id: "internal-engagement",
       href: "/all-platform/internal-engagement",
       icon: "chat_bubble",
       label: "Tương tác nội bộ",
-      matchStartsWith: ["/all-platform/internal-engagement"],
+      exactMatch: true,
+      children: [
+        {
+          type: "item",
+          id: "internal-unseeded",
+          href: "/all-platform/internal-engagement?status=need",
+          icon: "schedule",
+          label: "Chưa seeding",
+        },
+        {
+          type: "item",
+          id: "internal-seeded",
+          href: "/all-platform/internal-engagement?status=completed",
+          icon: "check",
+          label: "Đã seeding",
+        },
+      ],
+    },
+    {
+      type: "subgroup",
+      id: "external-seeding-subgroup",
+      icon: "travel_explore",
+      label: "Seeding bên ngoài",
+      defaultOpen: true,
+      items: [
+        {
+          type: "item",
+          id: "external-activity",
+          href: "/all-platform/post-feed?status=pending",
+          icon: "bolt",
+          label: "Hoạt động seeding",
+          exactMatch: true,
+          children: [
+            {
+              type: "item",
+              id: "external-pending",
+              href: "/all-platform/post-feed?status=pending",
+              icon: "help",
+              label: "Chưa đánh giá",
+            },
+            {
+              type: "item",
+              id: "external-todo",
+              href: "/all-platform/post-feed?status=todo",
+              icon: "schedule",
+              label: "Cần liên hệ",
+            },
+            {
+              type: "item",
+              id: "external-skip",
+              href: "/all-platform/post-feed?status=skip",
+              icon: "block",
+              label: "Không phù hợp",
+            },
+          ],
+        },
+        {
+          type: "item",
+          id: "external-library-tools",
+          href: "/all-platform/quan-ly-nhom",
+          icon: "article",
+          label: "Thư viện & Công cụ",
+          children: [
+            {
+              type: "item",
+              id: "external-groups",
+              href: "/all-platform/quan-ly-nhom",
+              icon: "folder",
+              label: "Kho thư viện Group",
+              matchStartsWith: ["/all-platform/quan-ly-nhom"],
+            },
+            {
+              type: "item",
+              id: "external-schedules",
+              href: "/all-platform/lich-cao-hang-doi",
+              icon: "calendar_today",
+              label: "Lịch cào & Hàng đợi",
+              matchStartsWith: ["/all-platform/lich-cao-hang-doi"],
+            },
+            {
+              type: "item",
+              id: "quick-comments",
+              href: "/all-platform/quick-comments",
+              icon: "chat_bubble",
+              label: "Thư viện mẫu câu",
+              matchStartsWith: ["/all-platform/quick-comments"],
+            },
+          ],
+        },
+        {
+          type: "item",
+          id: "external-accounts-stats",
+          href: "/all-platform/thong-ke-tai-khoan",
+          icon: "manage_accounts",
+          label: "Thống kê tài khoản",
+        },
+        ...(isAdmin || isLeader
+          ? [
+              {
+                type: "item",
+                id: "external-leader-dashboard",
+                href: "/all-platform/leader-dashboard",
+                icon: "analytics",
+                label: "Dashboard leader",
+              } as NavLeafItem,
+            ]
+          : []),
+      ],
     },
     {
       type: "item",
-      id: "quick-comments",
-      href: "/all-platform/quick-comments",
-      icon: "chat_bubble",
-      label: "Thư viện mẫu câu",
-      matchStartsWith: ["/all-platform/quick-comments"],
+      id: "overview-reports",
+      href: "/all-platform/overview",
+      icon: "analytics",
+      label: "Tổng quan báo cáo",
+      exactMatch: true,
     },
     {
       type: "item",
@@ -276,19 +410,18 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
   const channelItems: NavLeafItem[] = [
     {
       type: "item",
-      id: "inbox",
-      href: "/all-platform/inbox",
-      icon: "inbox",
-      label: "Inbox FB",
-      matchStartsWith: ["/all-platform/inbox"],
-      badge: 5,
+      id: "omnichannel-inbox",
+      href: "/all-platform/omnichannel-inbox",
+      icon: "forum",
+      label: "Hộp thư đa kênh",
+      matchStartsWith: ["/all-platform/omnichannel-inbox"],
     },
     {
       type: "item",
       id: "zalo-accounts",
       href: "/all-platform/tai-khoan",
       icon: "chat",
-      label: "Zalo Chat",
+      label: "Tài khoản Zalo",
       matchStartsWith: ["/all-platform/tai-khoan"],
     },
     {
@@ -296,7 +429,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       id: "telegram-chat",
       href: "/all-platform/telegram-chat",
       icon: "send",
-      label: "Telegram Chat",
+      label: "Tài khoản Telegram",
       matchStartsWith: ["/all-platform/telegram-chat"],
     },
   ];
@@ -330,14 +463,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "domain",
       label: "Khách hàng",
       matchStartsWith: ["/all-platform/crm/customers"],
-    },
-    {
-      type: "item",
-      id: "crm",
-      href: "/all-platform/crm",
-      icon: "track_changes",
-      label: "Cơ hội",
-      exactMatch: true,
     },
     {
       type: "item",
@@ -586,7 +711,8 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Inbox Zalo Admin",
       matchStartsWith: ["/all-platform/zalo-inbox"],
     },
-    ...(isAdmin || isLeader ? zaloAdvancedItems : []),
+    // Tạm thời ẩn 5 menu Zalo nâng cao theo lệnh Master (Chuyển tiếp tự động, Gửi hàng loạt, Chiến dịch tự động, Gửi nhiều nhóm, Quét thành viên nhóm), khi cần sẽ mở lại
+    // ...(isAdmin || isLeader ? zaloAdvancedItems : []),
   ];
 
   const resourceItems: NavLeafItem[] = [
@@ -676,14 +802,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       ...(isAdmin ? [phoneBridgeEntry, mobileProxyEntry] : []),
       channelGroup,
       ...crmEntries,
-      {
-        type: "item",
-        id: "fb-accounts-personal",
-        href: "/all-platform/quan-ly-tai-khoan",
-        icon: "account_circle",
-        label: "Tài khoản FB",
-        matchStartsWith: ["/all-platform/quan-ly-tai-khoan"],
-      },
+
       connectionSettingsEntry,
     ];
   }
@@ -759,7 +878,14 @@ function SidebarLink({
         collapsed && "justify-center px-2",
       )}
       aria-current={active ? "page" : undefined}
-      onClick={onNavigate}
+      onClick={() => {
+        onNavigate?.();
+        if (item.id === "external-activity") {
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("allplatform_reset_post_feed_filters"));
+          }
+        }
+      }}
     >
       <MaterialIcon name={item.icon} className={cn(iconClass, active && "text-[var(--color-markee-primary)]")} />
       {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}
@@ -784,12 +910,14 @@ function SidebarGroup({
   onNavigate,
   homeHref,
 }: {
+
   entry: NavGroupItem;
   pathname: string;
   collapsed?: boolean;
   onNavigate?: () => void;
   homeHref?: string;
 }) {
+  const searchParams = useSearchParams();
   const hasActiveChild = entry.items.some((item) =>
     item.type === "item"
       ? item.href !== homeHref && isLeafActive(pathname, item)
@@ -851,13 +979,27 @@ function SidebarGroup({
           {entry.items.map((child) => {
             if (child.type === "item") {
               return (
-                <SidebarLink
-                  key={child.id}
-                  item={child}
-                  active={isLeafActive(pathname, child)}
-                  indented
-                  onNavigate={onNavigate}
-                />
+                <div key={child.id} className="space-y-1">
+                  <SidebarLink
+                    item={child}
+                    active={isLeafActive(pathname, child, searchParams)}
+                    indented
+                    onNavigate={onNavigate}
+                  />
+                  {child.children && child.children.length > 0 && (
+                    <div className="ml-3 space-y-1 border-l border-outline-variant/40 pl-2">
+                      {child.children.map((subLeaf) => (
+                        <SidebarLink
+                          key={subLeaf.id}
+                          item={subLeaf}
+                          active={isLeafActive(pathname, subLeaf, searchParams)}
+                          indented
+                          onNavigate={onNavigate}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             }
             return (
@@ -868,13 +1010,27 @@ function SidebarGroup({
                 </div>
                 <div className="ml-3 space-y-1 border-l border-outline-variant/60 pl-2">
                   {child.items.map((subItem) => (
-                    <SidebarLink
-                      key={subItem.id}
-                      item={subItem}
-                      active={isLeafActive(pathname, subItem)}
-                      indented
-                      onNavigate={onNavigate}
-                    />
+                    <div key={subItem.id} className="space-y-1">
+                      <SidebarLink
+                        item={subItem}
+                        active={isLeafActive(pathname, subItem)}
+                        indented
+                        onNavigate={onNavigate}
+                      />
+                      {subItem.children && subItem.children.length > 0 && (
+                        <div className="ml-3 space-y-1 border-l border-outline-variant/40 pl-2">
+                          {subItem.children.map((subLeaf) => (
+                            <SidebarLink
+                              key={subLeaf.id}
+                              item={subLeaf}
+                              active={isLeafActive(pathname, subLeaf)}
+                              indented
+                              onNavigate={onNavigate}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -934,7 +1090,14 @@ export function AllPlatformSidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
+          // z-[99990]: cao hon moi backdrop/drawer trong app (cao nhat la
+          // z-[99985] o QuoteQuickViewDrawer.tsx) - truoc day sidebar z-50
+          // thap hon backdrop nen vua bi mo VUA bi chan click (backdrop
+          // hung het su kien chuot dung ngay vung sidebar). Tang z-index
+          // sidebar len tren backdrop giai quyet ca 2 cung luc: sidebar tu
+          // ve de len backdrop (het mo), va la phan tu tren cung nhan dung
+          // click chuot (het bi chan dieu huong).
+          "fixed inset-y-0 left-0 z-[99990] flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
           isCollapsed ? "w-[70px]" : "w-[280px]",
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}

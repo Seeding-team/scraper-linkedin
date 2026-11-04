@@ -15,6 +15,8 @@ from app.modules.all_platform.routers import (
     teams_router,
     auth_router,
     social_accounts_router,
+    keywords_library_router,
+    rotation_schedules_router,
 )
 from app.modules.all_platform.routers.platforms import router as platforms_router
 from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
@@ -29,6 +31,8 @@ from app.modules.all_platform.routers.crawl_facebook import crawl_facebook_route
 from app.modules.all_platform.routers.extension_crawl import router as extension_crawl_router
 from app.modules.all_platform.routers.extension_crawl_linkedin import router as extension_crawl_linkedin_router
 from app.modules.all_platform.routers.extension_crawl_threads import router as extension_crawl_threads_router
+from app.modules.all_platform.routers.extension_crawl_youtube import router as extension_crawl_youtube_router
+from app.modules.all_platform.routers.youtube_seeding import router as youtube_seeding_router
 from app.modules.all_platform.routers.crawl_queue import router as crawl_queue_router
 from app.modules.all_platform.routers.fb_account_pool import router as fb_account_pool_router
 from app.modules.all_platform.routers.fb import router as fb_automation_router
@@ -41,6 +45,7 @@ from app.modules.all_platform.routers.vendor_imports import router as vendor_imp
 from app.modules.all_platform.routers.vendors import router as vendors_router
 from app.modules.all_platform.routers.crm_customer import router as crm_customer_router
 from app.modules.all_platform.routers.crm_lead import router as crm_lead_router
+from app.modules.all_platform.routers.crm_scope_items import router as crm_scope_items_router
 from app.modules.all_platform.routers.crm_contact import detail_router as crm_contact_detail_router
 from app.modules.all_platform.routers.crm_contact import router as crm_contact_router
 from app.modules.all_platform.routers.crm_permission_group import router as crm_permission_group_router
@@ -48,12 +53,17 @@ from app.modules.all_platform.routers.crm_team import router as crm_team_router
 from app.modules.all_platform.routers.quote import quote_forms_router, quotes_router, quote_email_provider_router, quote_approval_rules_router
 from app.modules.all_platform.routers.price_book import price_book_router, price_book_admin_router
 from app.modules.all_platform.routers.contract import contracts_router
+from app.modules.all_platform.routers.contract_docx import contract_docx_router
+from app.modules.all_platform.routers.contract_versions import contract_versions_router
+from app.modules.all_platform.routers.contract_edit import contract_edit_router
 from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
+from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
+from app.modules.all_platform.routers.auto_seeding_comments import router as auto_seeding_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
 from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
 from app.modules.all_platform.routers.presence import router as presence_router
@@ -111,6 +121,16 @@ all_platform_router.include_router(
     extension_crawl_threads_router,
     prefix="/extension/threads",
     tags=["All-Platform Extension Threads Crawl"],
+)
+all_platform_router.include_router(
+    extension_crawl_youtube_router,
+    prefix="/extension/youtube",
+    tags=["All-Platform Extension YouTube Crawl"],
+)
+all_platform_router.include_router(
+    youtube_seeding_router,
+    prefix="/youtube",
+    tags=["All-Platform YouTube Seeding"],
 )
 all_platform_router.include_router(
     crawl_queue_router,
@@ -224,6 +244,20 @@ all_platform_router.include_router(
     tags=["All-Platform Quick Inbox"],
 )
 
+# ── Keywords Library (platform-agnostic) ──────────────────────────────────────
+all_platform_router.include_router(
+    keywords_library_router,
+    prefix="/keywords-library",
+    tags=["All-Platform Keywords Library"],
+)
+
+# ── Rotation Crawl Schedules (RBAC + Creator Identity) ───────────────────────
+all_platform_router.include_router(
+    rotation_schedules_router,
+    prefix="/rotation-schedules",
+    tags=["All-Platform Rotation Schedules"],
+)
+
 # ── Users & Teams ──────────────────────────────────────────────────────────────
 all_platform_router.include_router(
     users_router,
@@ -329,6 +363,7 @@ all_platform_router.include_router(
     prefix="/crm/leads",
     tags=["All-Platform CRM Leads"],
 )
+all_platform_router.include_router(crm_scope_items_router, prefix="/crm/scope-items", tags=["All-Platform CRM Scope Items"])
 all_platform_router.include_router(
     crm_contact_router,
     prefix="/crm/customers/{customer_id}/contacts",
@@ -394,6 +429,21 @@ all_platform_router.include_router(
     tags=["All-Platform Contracts"],
 )
 all_platform_router.include_router(
+    contract_docx_router,
+    prefix="/contract-docs",
+    tags=["All-Platform Contract Documents (DOCX engine)"],
+)
+all_platform_router.include_router(
+    contract_versions_router,
+    prefix="/contract-docs",
+    tags=["All-Platform Contract Documents (versions, risk, readiness)"],
+)
+all_platform_router.include_router(
+    contract_edit_router,
+    prefix="/contracts",
+    tags=["All-Platform Contract Word Editor (OnlyOffice, dev only)"],
+)
+all_platform_router.include_router(
     contract_templates_router,
     prefix="/contract-templates",
     tags=["All-Platform Contract Templates"],
@@ -411,6 +461,13 @@ all_platform_router.include_router(
     service_catalog_router,
     prefix="/service-catalog",
     tags=["All-Platform Service Catalog"],
+)
+
+# ── Dong bo Hang hoa MSC → CRM (manual + xem trang thai; scheduled o jobs) ────
+all_platform_router.include_router(
+    msc_sync_router,
+    prefix="/msc-sync",
+    tags=["All-Platform MSC Sync"],
 )
 
 all_platform_router.include_router(
@@ -478,8 +535,27 @@ all_platform_router.include_router(
     tags=["All-Platform Scheduled Comments"],
 )
 
+# ── Auto Seeding Comments (tu dong trigger khi bai Facebook diem AI cao) ────────
+all_platform_router.include_router(
+    auto_seeding_comments_router,
+    prefix="/auto-seeding-comments",
+    tags=["All-Platform Auto Seeding Comments"],
+)
 
-# ── Post Evaluation (Review Nhanh) & Crawl Keywords ───────────────────────────
+# ── Email Inbox (IMAP/SMTP & Google OAuth Omnichannel) ────────────────────────
+from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
+
+all_platform_router.include_router(
+    email_inbox_router,
+    prefix="/email-inbox",
+    tags=["All-Platform Email Inbox"],
+)
+
+# ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role & cleanup feed) ──
+from app.modules.all_platform.routers.post_evaluations import router as post_evaluations_router
+all_platform_router.include_router(post_evaluations_router)
+
+# ── Post Evaluation (Review Nhanh Supabase) & Crawl Keywords ──────────────────
 from app.modules.all_platform.routers.post_evaluation import router as post_evaluation_router
 from app.modules.all_platform.routers.post_call_result import router as post_call_result_router
 from app.modules.all_platform.routers.crawl_keywords import router as crawl_keywords_router

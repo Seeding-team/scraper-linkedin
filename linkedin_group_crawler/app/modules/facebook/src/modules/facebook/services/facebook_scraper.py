@@ -140,30 +140,25 @@ def _pick_by_keywords_and_threshold(
     # - posts_in_day < 3   => lấy 1
     if not kws:
         b_count = len(posts_in_day)
-        if b_count > 10:
-            extra = 3
-        elif 3 <= b_count <= 10:
-            extra = 2
-        else:
-            extra = 1 if b_count > 0 else 0
-
-        selected = sorted(posts_in_day, key=lambda p: p.score, reverse=True)[:extra]
-
         if post_limit is not None and post_limit > 0:
-            selected = selected[:post_limit]
+            limit_no_kw = post_limit
+        elif b_count > 10:
+            limit_no_kw = 3
+        elif 3 <= b_count <= 10:
+            limit_no_kw = 2
+        else:
+            limit_no_kw = 1 if b_count > 0 else 0
 
-        return selected
+        return sorted(posts_in_day, key=lambda p: p.score, reverse=True)[:limit_no_kw]
 
-    # Có keyword: ưu tiên bài khớp từ khóa (trong phạm vi posts_in_day - đã lọc hôm nay từ
-    # trước), nếu thiếu so với target thì bù bằng bài tương tác cao nhất (loại trừ bài đã
-    # chọn), nếu 0 bài khớp thì lấy thẳng top tương tác cao nhất thay thế - không bao giờ
-    # trả về rỗng chỉ vì không có bài nào khớp từ khóa hôm nay.
-    target = post_limit if (post_limit is not None and post_limit > 0) else 5
-
-    sorted_by_score = sorted(posts_in_day, key=lambda p: p.score, reverse=True)
+    # Có keyword: CHỈ giữ các bài thực sự khớp với từ khóa mà người dùng đã chọn.
+    # Không tự động lấy bài lệch từ khóa (fallback/backfill) để tránh lưu bài rác sai chủ đề.
+    target = post_limit if (post_limit is not None and post_limit > 0) else 20
 
     def matches(p: Post) -> bool:
         content = (p.content or "").lower()
+        if not content:
+            return False
         matched_any = False
         for kw in kws:
             ok = kw in content
@@ -181,29 +176,17 @@ def _pick_by_keywords_and_threshold(
     matched = [p for p in posts_in_day if matches(p)]
 
     logger.info(
-        "[DEBUG pick_by_keywords] target=%s matched_count=%s posts_in_day_count=%s",
+        "[DEBUG pick_by_keywords] STRICT match target=%s matched_count=%s posts_in_day_count=%s",
         target,
         len(matched),
         len(posts_in_day),
     )
 
     if not matched:
-        # 0 bài khớp từ khóa hôm nay -> lấy top `target` bài tương tác cao nhất thay thế.
-        return sorted_by_score[:target]
+        return []
 
     matched_sorted = sorted(matched, key=lambda p: p.score, reverse=True)
-
-    if len(matched_sorted) >= target:
-        return matched_sorted[:target]
-
-    # Thiếu so với target -> bù thêm bài tương tác cao nhất trong ngày, loại trừ bài đã
-    # chọn (khớp keyword) để tránh trùng lặp.
-    matched_urls = {p.url for p in matched_sorted}
-    backfill = [p for p in sorted_by_score if p.url not in matched_urls]
-    remaining_needed = target - len(matched_sorted)
-
-    selected = matched_sorted + backfill[:remaining_needed]
-    return selected
+    return matched_sorted[:target]
 
 from app.modules.facebook.src.core.utils.logger import setup_logger
 

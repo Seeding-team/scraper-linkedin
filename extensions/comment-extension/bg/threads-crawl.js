@@ -15,7 +15,11 @@
     let running = false;
     let shouldStop = false;
     let crawlTabId = null;
+    let crawlWindowId = null;
     let dashboardTabId = null;
+    // Từ khoá đang cào - gắn vào lô bài crawl.js đẩy về (MK_TH_COLLECT_BATCH) để web biết
+    // bài thuộc từ khoá nào khi hiện danh sách realtime.
+    let currentKeyword = "";
 
     function sleep(ms) {
         return new Promise((r) => setTimeout(r, ms));
@@ -57,14 +61,19 @@
     }
 
     function buildSearchUrl(keyword, sortRecent) {
-        const params = new URLSearchParams({ q: keyword, serp_type: "default" });
-        // Tab "Gần đây" của trang tìm kiếm - chỉ có tác dụng khi đã đăng nhập Threads.
-        if (sortRecent) params.set("filter", "recent");
+        const cleanKw = (keyword || "").trim();
+        const params = new URLSearchParams();
+        params.set("q", cleanKw);
+        params.set("serp_type", "default");
+        // Mode recent đảm bảo lấy bài viết mới nhất và hiện đại nhất theo yêu cầu
+        if (sortRecent !== false) {
+            params.set("filter", "recent");
+        }
         return `https://www.threads.com/search?${params.toString()}`;
     }
 
-    async function collectFromTab(tabId, targetCount) {
-        const message = { action: "MK_TH_COLLECT_POSTS", targetCount, maxScrolls: 15 };
+    async function collectFromTab(tabId, targetCount, maxScrolls = 15) {
+        const message = { action: "MK_TH_COLLECT_POSTS", targetCount, maxScrolls: Number(maxScrolls) > 0 ? Number(maxScrolls) : 15 };
         try {
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (e) {
@@ -73,6 +82,15 @@
             await sleep(500);
             return chrome.tabs.sendMessage(tabId, message);
         }
+    }
+
+    // "API 40 · JSON trang 18 · DOM 3 (DOM bổ sung dữ liệu còn thiếu cho 2 bài) · 4 lần cuộn, 3 response API (BarcelonaSearchResultsRefetchableQuery x3)"
+    function describeSources(result) {
+        const parts = [`API ${result.fromApi || 0}`, `JSON trang ${result.fromJson || 0}`, `DOM ${result.fromDom || 0}`];
+        if (result.domEnriched) parts[2] += ` (DOM bổ sung dữ liệu còn thiếu cho ${result.domEnriched} bài)`;
+        const names = (result.apiNames || []).map((n) => `${n.name} x${n.count}`).join(", ");
+        parts.push(`${result.scrolls || 0} lần cuộn, ${result.apiResponses || 0} response API${names ? ` (${names})` : ""}`);
+        return parts.join(" · ");
     }
 
     async function postToBackend(apiBase, body) {
@@ -99,6 +117,9 @@
     }
 
     async function runCrawl(keywords, config) {
+        // Xem giai thich o fb-crawl.js: khi goi truc tiep tu rotation-crawl.js,
+        // dashboardTabId phai duoc truyen qua config, khong de mac dinh null/broadcast-all.
+        if (config.dashboardTabId != null) dashboardTabId = config.dashboardTabId;
         const apiBase = config.apiBase || DEFAULT_API_BASE;
         const postLimit = Number(config.postLimit) > 0 ? Math.min(100, Math.floor(Number(config.postLimit))) : 20;
         const maxAgeDays = Number(config.maxAgeDays) > 0 ? Math.floor(Number(config.maxAgeDays)) : null;
@@ -111,18 +132,39 @@
         let loginHintShown = false;
         let wasStopped = false;
 
+        // Bao tien do chi tiet cho rotation-crawl.js (neu dang chay qua lich xoay vong)
+        // theo doi va hien thi ro rang len UI - xem self.__mkThreadsProgressHook.
+        const reportProgress = (keywordIndex) => {
+            if (typeof self.__mkThreadsProgressHook === "function") {
+                self.__mkThreadsProgressHook({ groupIndex: keywordIndex, totalGroups: keywords.length, savedSoFar: totalSaved });
+            }
+        };
+
         try {
             log(`Bắt đầu tìm bài Threads cho ${keywords.length} từ khoá (tối đa ${postLimit} bài mới/từ khoá)...`);
             for (let i = 0; i < keywords.length; i++) {
                 if (shouldStop) break;
                 const keyword = keywords[i];
+                currentKeyword = keyword;
                 notifyApp({ action: "MK_TH_CRAWL_PROGRESS", groupIndex: i, totalGroups: keywords.length, keyword, posts: totalPosts });
+                reportProgress(i);
                 log(`[${i + 1}/${keywords.length}] Đang tìm: "${keyword}"`);
 
                 const url = buildSearchUrl(keyword, sortRecent);
                 if (crawlTabId == null) {
-                    const tab = await chrome.tabs.create({ url, active: true });
-                    crawlTabId = tab.id;
+                    // Mo 1 cua so rieng, thu nho/khong focus - khong cuop focus cua
+                    // tab/cua so nguoi dung dang dung (xem giai thich o fb-crawl.js).
+                    const win = await chrome.windows.create({
+                        url,
+                        focused: false,
+                        width: 1280,
+                        height: 850,
+                        left: 100,
+                        top: 100,
+                        type: "normal"
+                    });
+                    crawlWindowId = win.id;
+                    crawlTabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
                 } else {
                     await chrome.tabs.update(crawlTabId, { url });
                 }
@@ -132,11 +174,22 @@
 
                 let result;
                 try {
-                    result = await collectFromTab(crawlTabId, targetCount);
+                    result = await collectFromTab(crawlTabId, targetCount, config.maxScrolls || 15);
                 } catch (e) {
                     log(`Không đọc được trang kết quả: ${e.message}`, "error");
                     continue;
                 }
+                                if (result && result.circuitBreaker) {
+                    log(`🚨 [CẦU DAO KHẨN CẤP THREADS] Instagram/Threads phát hiện hoạt động bất thường: "${result.error || 'Challenge/Checkpoint'}". DỪNG CÀO ĐỂ BẢO VỆ TÀI KHOẢN TUYỆT ĐỐI!`, "error");
+                    notifyApp({
+                        action: "MK_TH_CRAWL_CIRCUIT_BREAKER",
+                        reason: result.error,
+                        keyword
+                    });
+                    shouldStop = true;
+                    break;
+                }
+
                 if (!result || !result.success) {
                     log(`Lỗi gom bài: ${(result && result.error) || "không có phản hồi"}`, "error");
                     continue;
@@ -149,7 +202,7 @@
                 const posts = result.data || [];
                 totalPosts += posts.length;
                 notifyApp({ action: "MK_TH_CRAWL_PROGRESS", groupIndex: i, totalGroups: keywords.length, keyword, posts: totalPosts });
-                log(`Tìm thấy ${posts.length} bài cho "${keyword}"${result.fromDom ? ` (${result.fromDom} bài lấy từ giao diện, thiếu số tương tác)` : ""}.`);
+                log(`Tìm thấy ${posts.length} bài cho "${keyword}" — ${describeSources(result)}.`);
                 if (posts.length === 0) continue;
 
                 try {
@@ -159,7 +212,7 @@
                         id_member: config.idMember || null,
                         post_limit: postLimit,
                         max_age_days: maxAgeDays,
-                        extension_version: "Markee-Seeding-Extension-2.1",
+                        extension_version: `Markee-Seeding-Extension-${chrome.runtime.getManifest().version}`,
                     });
                     const count = saved.count || 0;
                     totalSaved += count;
@@ -171,18 +224,24 @@
                 } catch (e) {
                     log(`Lỗi lưu bài cho "${keyword}": ${e.message}`, "error");
                 }
-                await sleep(INTER_KEYWORD_DELAY_MS);
+                reportProgress(i + 1);
+                const kwDelayMs = (config.groupRestSec != null && Number(config.groupRestSec) >= 15)
+                    ? Number(config.groupRestSec) * 1000
+                    : (Math.floor(Math.random() * 17000) + 18000);
+                log(`🛡️ Chống bot sinh học Threads: Chờ an toàn ${(kwDelayMs / 1000).toFixed(1)}s trước khi tìm từ khoá tiếp theo...`);
+                await sleep(kwDelayMs);
             }
             log(shouldStop ? `Đã dừng. Tổng đã lưu: ${totalSaved} bài mới.` : `Hoàn tất! Tổng đã lưu: ${totalSaved} bài mới.`, "success");
         } catch (e) {
             log(`Lỗi nghiêm trọng: ${e.message}`, "error");
         } finally {
             wasStopped = shouldStop;
-            const tabId = crawlTabId;
+            const windowId = crawlWindowId;
             running = false;
             shouldStop = false;
             crawlTabId = null;
-            if (tabId != null) chrome.tabs.remove(tabId).catch(() => {});
+            crawlWindowId = null;
+            if (windowId != null) chrome.windows.remove(windowId).catch(() => {});
             notifyApp({ action: "MK_TH_CRAWL_DONE", totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped });
         }
         return { totalGroups: keywords.length, totalPosts, totalSaved, stopped: wasStopped };
@@ -190,8 +249,16 @@
 
     // Cho phep bg/rotation-crawl.js goi truc tiep va await - xem giai thich o fb-crawl.js.
     self.__mkStartThreadsCrawl = runCrawl;
-    self.__mkStopThreadsCrawl = () => { if (running) shouldStop = true; };
+    self.__mkStopThreadsCrawl = () => {
+        if (!running) return;
+        shouldStop = true;
+        stopCollectInTab();
+    };
     self.__mkThreadsCrawlStatus = () => running;
+
+    function stopCollectInTab() {
+        if (crawlTabId != null) chrome.tabs.sendMessage(crawlTabId, { action: "MK_TH_COLLECT_STOP" }).catch(() => {});
+    }
 
     chrome.tabs.onRemoved.addListener((tabId) => {
         if (running && tabId === crawlTabId) {
@@ -203,6 +270,13 @@
 
     chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!msg) return;
+        if (msg.action === "MK_TH_COLLECT_BATCH") {
+            // Lô bài crawl.js vừa gom được trong tab cào -> chuyển nguyên cho trang web.
+            if (running && sender.tab && sender.tab.id === crawlTabId) {
+                notifyApp({ action: "MK_TH_CRAWL_POSTS", keyword: currentKeyword, posts: msg.posts || [], keywordTotal: msg.total || 0 });
+            }
+            return;
+        }
         if (msg.action === "MK_TH_CRAWL_START") {
             if (running) {
                 sendResponse({ success: false, error: "Đang có một tiến trình cào Threads chạy." });
@@ -226,7 +300,8 @@
         if (msg.action === "MK_TH_CRAWL_STOP") {
             if (running) {
                 shouldStop = true;
-                log("Đã nhận lệnh dừng, sẽ dừng sau bước hiện tại...", "warn");
+                stopCollectInTab();
+                log("Đã nhận lệnh dừng, sẽ lưu nốt bài đã gom của từ khoá hiện tại rồi dừng...", "warn");
             }
             sendResponse({ success: true });
             return;

@@ -279,6 +279,13 @@ async def fb_health(request: Request, authorization: str | None = Header(None)) 
 @router.get("/sessions")
 async def fb_sessions(request: Request, authorization: str | None = Header(None)) -> JSONResponse:
     user = _current_user(request, authorization)
+    if not MARKEE_ADMIN_API_KEY:
+        # Facebook is an optional Omnichannel provider. An unconfigured local
+        # bridge means there are no accounts, not that the whole inbox is down.
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "configured": False, "sessions": []},
+        )
     status, payload = await _markee_json("GET", "/sessions", params=_scope_query(user), cache_ttl=5.0)
     return _json_response(status, payload)
 

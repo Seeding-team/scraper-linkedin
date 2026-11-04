@@ -9,11 +9,30 @@ import type { QuoteSchema, SummaryFieldConfig } from '../types';
  * riêng required:true trong CHÍNH schema.summaryFields của mẫu đó, không suy
  * diễn từ hằng số dùng chung này. */
 export const DEFAULT_SUMMARY_FIELDS: SummaryFieldConfig[] = [
-  { key: 'subtotalBeforeVat', label: 'Tổng cộng chưa bao gồm thuế GTGT', order: 1, defaultVisible: true, required: false },
-  { key: 'overallDiscount', label: 'Giảm giá tổng (%)', order: 2, defaultVisible: true, required: false },
-  { key: 'subtotalAfterDiscount', label: 'Tổng sau giảm giá', order: 3, defaultVisible: true, required: false },
-  { key: 'vatTotal', label: 'Thuế GTGT', order: 4, defaultVisible: true, required: false },
-  { key: 'grandTotal', label: 'Tổng thanh toán', order: 5, defaultVisible: true, required: false },
+  // "Giá gốc trước giảm" (2026-10-13) - TỔNG GỐC thật (truoc CA giam gia
+  // hang muc lan toan bao gia, xem Totals.subtotalAmount) - CHI hien khi co
+  // giam gia hang muc (QuoteDocumentRenderer tu an 'subtotalBeforeVat' luc
+  // do de khong lap lai 2 dong gan nhu giong nhau) - tranh bug thuc te "hien
+  // số đã giảm rồi (92,5tr) ngay phía trên dòng Giảm giá hạng mục (-17,4tr),
+  // nhìn như bị trừ 2 lần" du tinh toan cuoi cung van dung.
+  { key: 'grossSubtotal', label: 'Giá gốc trước giảm', order: 1, defaultVisible: true, required: false },
+  { key: 'subtotalBeforeVat', label: 'Tổng cộng chưa bao gồm thuế GTGT', order: 2, defaultVisible: true, required: false },
+  { key: 'overallDiscount', label: 'Giảm giá tổng (%)', order: 3, defaultVisible: true, required: false },
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13,
+  // gop lai thanh 1 dong duy nhat - BO rieng dong "Giảm giá hạng mục" theo
+  // phan hoi "sếp thấy trùng với Tổng tiền giảm" khi khong co giam gia toan
+  // bao gia, 2 dong hien y het nhau) - dong TONG HOP rieng, LUON hien mien
+  // tong > 0 - xem cong thuc o totals.discountAmount +
+  // discountSummary.overallDiscountAmount trong QuoteDocumentRenderer. Chuc
+  // nang giam gia TUNG hang muc (cot "Giảm giá (%)" trong bang) KHONG doi gi.
+  { key: 'totalDiscount', label: 'Tổng tiền giảm', order: 4, defaultVisible: true, required: false },
+  // "chưa thấy tổng sau giảm giá" (2026-10-13) - truoc day CHI hien khi co
+  // Giảm giá TOÀN báo giá (hasOverallDiscount), bo sot truong hop CHI co
+  // giam gia hang muc (nhu quote 202610071107) - sua dieu kien thanh "co BAT
+  // KY loai giam gia nao" trong QuoteDocumentRenderer.
+  { key: 'subtotalAfterDiscount', label: 'Tổng sau giảm giá', order: 5, defaultVisible: true, required: false },
+  { key: 'vatTotal', label: 'Thuế GTGT', order: 6, defaultVisible: true, required: false },
+  { key: 'grandTotal', label: 'Tổng thanh toán', order: 7, defaultVisible: true, required: false },
 ];
 
 /** Trường "Tổng hợp giá" THẬT của mẫu này - đọc thẳng schema.summaryFields (mẫu

@@ -8,6 +8,7 @@ import { seedingCrmRepository } from '../../repositories/SeedingCrmRepository';
 import type { CrmCustomerSummary, CrmUserOption, Deal } from '../../types';
 import type { Quote } from '@/modules/quotes';
 import type { Project } from '@/services/all-platform.service';
+import { customerDisplay } from '../../utils/customerNames';
 
 /** Chu cai dau (toi da 2 tu) de lam avatar-initials - vd "Nguyen Van An" -> "NA". */
 function initialsOf(name: string): string {
@@ -245,6 +246,20 @@ export function SelectCustomerStep({
 
   const activeLinkedDeal = lockedDeal || linkedDeal || null;
 
+  // Feedback 2026-09-25: "chọn dự án bên báo giá thì nó biết lấy cơ hội nào"
+  // - moi khi Du an doi (va DUNG khach hang), tu tim cơ hội gan voi DUNG
+  // project_id+customer_id nay va tu gan lam "cơ hội liên kết" (KHONG can bam
+  // "Đổi cơ hội" tay nua). CHI tu dong khi match DUNG 1 cơ hội duy nhat -
+  // nhieu cơ hội cung Du an (hiem) thi giu nguyen de nguoi dung tu chon tay,
+  // khong doan bua. Khong dong lockedDeal (da khoa san, khong lien quan).
+  useEffect(() => {
+    if (lockedDeal || !onChangeLinkedDeal || !customerIdForProjects || !projectId) return;
+    if (linkedDeal?.projectId === projectId) return;
+    const matches = deals.filter(d => d.customerId === customerIdForProjects && d.projectId === projectId);
+    if (matches.length === 1) onChangeLinkedDeal(matches[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, customerIdForProjects, lockedDeal]);
+
   return (
     <section className="crm-wizard-form-section">
       <div className="crm-wizard-section-head">
@@ -298,9 +313,9 @@ export function SelectCustomerStep({
                           >
                             <span className="crm-quote-customer-card-avatar">{initialsOf(found.customerName)}</span>
                             <span className="crm-quote-customer-card-body">
-                              <strong>{found.companyName || found.customerName}</strong>
+                              <strong title={customerDisplay(found).full}>{customerDisplay(found).title}</strong>
                               <small>
-                                {found.companyName ? found.customerName : found.position || 'Khách hàng'}
+                                {customerDisplay(found).sub || found.position || 'Khách hàng'}
                                 {found.dealCount ? ` · ${found.dealCount} deal` : ''}
                               </small>
                               {found.phone ? <small>{found.phone}</small> : null}

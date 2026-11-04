@@ -2,28 +2,28 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { API_BASE_URL, API_KEY, IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import { seedingQuoteRepository, QuoteApprovalRequiresExceptionError, QuoteDocumentRenderer, QuotePrintLayoutSaveButton, buildPublicQuoteUrl } from '@/modules/quotes';
-import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany } from '@/modules/quotes';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
+import type { Quote, QuoteActivityLogEntry, QuoteHandoffChecklist, QuoteItem, QuoteProcessingStage, QuoteApprovalRuleSet, QuoteApprovalRuleType, QuoteRuleEvaluation, QuoteDeliveryLogEntry, QuoteForm, QuoteData, IssuerCompany, QuoteAccessSuggestion } from '@/modules/quotes';
 import type { ContactOption } from './dealHydration';
 import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot } from '../integrations/quotes/types';
 import type { AppUser } from '@/types/unified.types';
 import { canApproveQuote, canEditQuoteCost, canEditQuotePricingFields, canWriteDeal, getPackageText, getServicePackageText, SOURCE_OPTIONS, SERVICE_PACKAGE_OPTIONS, CRM_PACKAGE_OPTIONS, INDUSTRY_OPTIONS } from '../constants/crmConfig';
 import { CurrencyInput } from '@/components/CurrencyInput';
-import type { CrmUserOption, Deal, CreateDealInput } from '../types';
+import type { CrmUserOption, CrmCustomerRow, Deal } from '../types';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
 import { priceBookZoneRepository, type PriceBookItem } from '@/modules/service-catalog/repositories/PriceBookZoneRepository';
 import { previewPriceBookItem, formatVnd as formatPriceBookVnd, formatPercent as formatPriceBookPercent } from '@/modules/service-catalog/price-book-preview';
-import { customerPriceFromTargetGrossMargin } from '@/modules/service-catalog/pricing-math';
+import { customerPriceFromMarkup, customerPriceFromTargetGrossMargin } from '@/modules/service-catalog/pricing-math';
 import { CatalogPickerModal, type CatalogPickerListItem } from '@/modules/service-catalog/CatalogPickerModal';
 import { useCatalogItemAdd } from '@/modules/service-catalog/useCatalogItemAdd';
 import { QuickAddProductModal } from '@/modules/service-catalog/QuickAddProductModal';
 import { QuickAddGroupModal } from '@/modules/service-catalog/QuickAddGroupModal';
 import {
-  dealBusinessCode,
   formatDate,
-  formatMoney,
+  formatMoney as formatVndMoney,
   formatPercentTrim,
   initialsOf,
   quoteDisplayStatus,
@@ -37,7 +37,7 @@ import { CustomerAddDrawer } from './CustomerAddDrawer';
 import { CrmCategoryManageDrawer, CrmCategoryQuickModal, invalidateCrmCategoryCache } from './CrmCategorySelect';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import { ProjectFormModal } from './ProjectFormModal';
-import { DealFormModal, clearDealDraft } from './DealFormModal';
+import { CreateOpportunityDrawer } from './CreateOpportunityDrawer';
 import { seedingContractRepository } from '@/modules/contracts/repositories/SeedingContractRepository';
 import { CONTRACT_STATUS_LABELS } from '@/modules/contracts/constants/contractConfig';
 import { ContractDetailPage } from '@/modules/contracts/components/ContractDetailPage';
@@ -48,9 +48,16 @@ import { QuoteColumnVisibilityPicker } from '../integrations/quotes/QuoteColumnV
 import type { QuoteDraft } from '../integrations/quotes/types';
 import { CustomBlocksEditor } from '../integrations/quotes/CustomBlocksEditor';
 import { PaymentPlanEditor } from '@/modules/quotes/components/PaymentPlanEditor';
-import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemTotal, calculateSectionTotal } from '@/modules/quotes/utils/quoteCalculations';
-import { paymentPlanAmount, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
+import { formatQuoteMoney, normalizeQuoteCurrency, roundQuoteMoney, type QuoteCurrency } from '@/lib/currency';
+import { describeSystemRate, fetchSystemUsdVndRateInfo } from '@/modules/service-catalog/useSystemExchangeRate';
+import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepository';
+import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
+import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
+import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemDiscount, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal, billingTermMultiplier } from '@/modules/quotes/utils/quoteCalculations';
+import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
+import { QuoteOutcomeSection } from './QuoteOutcomeSection';
+import { customerDisplay } from '../utils/customerNames';
 
 /** 4 buoc THAT (Yeu cau bao gia/Thong tin ky thuat/Hoan thien gia ban/Cho
  * duyet-Phat hanh) - anh xa dung 1-1 voi `quotes.processing_stage` (migration
@@ -74,6 +81,8 @@ type QuoteCustomerOption = {
   label: string;
   name?: string;
   companyName?: string;
+  shortName?: string | null;
+  customerCode?: string | null;
   phone?: string;
   email?: string;
   address?: string;
@@ -113,6 +122,38 @@ function bundleSnapshotTargetGm(item: QuoteItem): number {
   return 30;
 }
 
+/** "Ẩn/Hiện GIÁ của thành phần con trên báo giá khách" (2026-10-14, đổi ý
+ * nghĩa - tên thành phần con LUÔN hiện với khách, field này chỉ còn quyết
+ * định GIÁ riêng từng thành phần có hiện hay không) - mac dinh FALSE (an
+ * gia), CHI bat khi Sale CHU DONG bam bat (showComponentsOnQuote===true ro
+ * rang). Dung chung field/helper nay o man Sale CHI de hien thi dung trang
+ * thai hien tai cua Combo (nut bam), KHONG anh huong man Sale sua (luon thay
+ * du gia moi thanh phan bat ke co nay). */
+function bundleSnapshotShowComponentsOnQuote(item: QuoteItem): boolean {
+  const snapshot = item.bundleSnapshot as unknown;
+  return !!(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === true);
+}
+
+/** "Chuan hoa gia von Combo" (2026-10-13) - mac dinh 'rollup' ca khi field
+ * chua ton tai (bao gia cu) - dam bao bao gia cu GIU NGUYEN cong thuc cu
+ * (calculateBundleComponentCost), KHONG tu doi sang combo_target. */
+function bundleSnapshotCostSource(item: QuoteItem): 'target' | 'rollup' {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { costSource?: unknown }).costSource === 'target') {
+    return 'target';
+  }
+  return 'rollup';
+}
+
+function bundleSnapshotTargetCostPerMonthVnd(item: QuoteItem): number | null {
+  const snapshot = item.bundleSnapshot as unknown;
+  const raw = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? (snapshot as { targetCostPerMonthVnd?: unknown }).targetCostPerMonthVnd
+    : undefined;
+  const num = Number(raw);
+  return raw != null && Number.isFinite(num) ? num : null;
+}
+
 function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent[], patch: Partial<BundleSnapshotValue> = {}): BundleSnapshotValue {
   const snapshot = item.bundleSnapshot as unknown;
   const existing = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) ? snapshot as Partial<BundleSnapshotValue> : {};
@@ -120,6 +161,9 @@ function makeBundleSnapshot(item: QuoteItem, components: BundleSnapshotComponent
     ...existing,
     pricingMode: patch.pricingMode ?? existing.pricingMode ?? 'fixed',
     targetGrossMarginPercent: patch.targetGrossMarginPercent ?? existing.targetGrossMarginPercent ?? 30,
+    showComponentsOnQuote: patch.showComponentsOnQuote ?? existing.showComponentsOnQuote ?? false,
+    costSource: patch.costSource ?? existing.costSource ?? 'rollup',
+    targetCostPerMonthVnd: 'targetCostPerMonthVnd' in patch ? patch.targetCostPerMonthVnd : (existing.targetCostPerMonthVnd ?? null),
     components,
   };
 }
@@ -184,6 +228,76 @@ function formatPercentFixed2(value: number | null | undefined): string {
   return `${value.toFixed(2)}%`;
 }
 
+function resolveItemDiscountMode(item: Partial<QuoteItem>, currency: unknown): 'amount' | 'percent' {
+  if (item.discountType === 'amount') return 'amount';
+  if (item.discountType === 'percent') return 'percent';
+  const subtotal = calculateItemSubtotal(item, currency);
+  const amt = item.discountAmount;
+  const pct = item.discountPercent;
+  if (amt != null && amt > 0 && (pct == null || pct === 0)) return 'amount';
+  if (pct != null && pct > 0 && (amt == null || amt === 0)) return 'percent';
+  if (amt != null && amt > 0 && pct != null && pct > 0) {
+    if (pct % 1 !== 0) return 'amount';
+    const pctCalculated = roundQuoteMoney((subtotal * pct) / 100, currency as QuoteCurrency);
+    if (amt !== pctCalculated) return 'amount';
+    return 'percent';
+  }
+  return 'percent';
+}
+
+function DiscountPercentInput({ value, ariaLabel, onLiveChange, onCommit }: {
+  value: number | null | undefined;
+  ariaLabel: string;
+  onLiveChange: (value: number) => void;
+  onCommit: (value: number) => void;
+}) {
+  // Không bind thẳng input vào number trong QuoteItem: chuỗi rỗng/"14."
+  // là trạng thái nhập hợp lệ tạm thời. Ép Number ở mỗi key stroke từng làm
+  // rỗng -> 0 ngay lập tức, khiến Sale phải xoá/gõ hai lần và mất caret.
+  const [draft, setDraft] = useState(() => String(clampDiscountPercent(value ?? 0)));
+  const focusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(clampDiscountPercent(value ?? 0)));
+  }, [value]);
+
+  function commit() {
+    focusedRef.current = false;
+    const normalized = draft.trim().replace(',', '.');
+    const next = clampDiscountPercent(normalized === '' ? 0 : normalized);
+    setDraft(String(next));
+    onLiveChange(next);
+    onCommit(next);
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      className="qc-cell-input qc-cell-input-money"
+      aria-label={ariaLabel}
+      value={draft}
+      onFocus={() => { focusedRef.current = true; }}
+      onChange={event => {
+        const nextDraft = event.target.value;
+        // Cho phép rỗng và dấu thập phân đang gõ dở; giới hạn 2 chữ số lẻ.
+        if (!/^\d{0,3}(?:[.,]\d{0,2})?$/.test(nextDraft)) return;
+        setDraft(nextDraft);
+        const normalized = nextDraft.replace(',', '.');
+        if (normalized !== '' && normalized !== '.') onLiveChange(clampDiscountPercent(normalized));
+      }}
+      onBlur={commit}
+      onKeyDown={event => {
+        // Tránh Enter submit form cha rồi cuộn workspace về đầu trang.
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 /** "TỶ TRỌNG" (C, cot noi bo) = amount / quoteTotal * 100 - dung CHUNG cong
  * thuc voi calculateQuoteTotals (ca 2 deu cong tren calculateItemTotal) de
  * tu so/mau so luon cung 1 co so "Thành tiền" gồm VAT, khong bao gio lech
@@ -227,11 +341,15 @@ function sanitizeDraftQuoteItems(items: QuoteItem[]): QuoteItem[] {
 
 function resolveQuoteItemCostTotal(item: Partial<QuoteItem>): number | null {
   if (item.costNotApplicable) return 0;
-  if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
   if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) {
     const quantity = Number.isFinite(Number(item.quantity)) ? Math.max(0, Number(item.quantity)) : 0;
-    return Math.max(0, Number(item.costPrice)) * quantity;
+    // "Giá vốn định kỳ phải tính đủ thời gian sử dụng" (2026-10-14) - dung
+    // CHUNG he so voi calculateItemSubtotal (doanh thu) de Cost tong khop
+    // dung khoang thoi gian voi Thanh tien khi Chu ky = Tra nam, tranh margin
+    // hien sai lac quan (cost bi thieu he so 12 nhung doanh thu da nhan du).
+    return Math.max(0, Number(item.costPrice)) * quantity * billingTermMultiplier(item);
   }
+  if (item.costTotal != null && Number.isFinite(Number(item.costTotal))) return Math.max(0, Number(item.costTotal));
   return null;
 }
 
@@ -256,20 +374,36 @@ function resolveCatalogCustomerPrice(item: ServiceCatalogItem): number {
     Number.isFinite(item.defaultCostPriceVnd) &&
     Number.isFinite(item.defaultMarkupPercent)
   ) {
-    return customerPriceFromTargetGrossMargin(item.defaultCostPriceVnd, item.defaultMarkupPercent) ?? 0;
+    return customerPriceFromMarkup(item.defaultCostPriceVnd, item.defaultMarkupPercent) ?? 0;
   }
   return 0;
 }
 
-function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item)): QuoteItem {
-  const bundleCost = calculateBundleComponentCost(components);
+/** Tieu de mac dinh khi Presale tao yeu cau chua dat ten - KHONG phai ten that Sale phai dat o Buoc 2. */
+const DEFAULT_QUOTE_TITLE = 'Yêu cầu hỗ trợ báo giá';
+function isQuoteTitleMissing(value: unknown): boolean {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return !text || text === DEFAULT_QUOTE_TITLE;
+}
+
+function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComponent[], mode: 'fixed' | 'auto' = bundleSnapshotPricingMode(item), targetGm = bundleSnapshotTargetGm(item), fx: QuoteFx = VND_FX): QuoteItem {
+  // "Chuan hoa gia von Combo" (2026-10-14) - costSource==='target': gia von LUON
+  // la targetCostPerMonthVnd da dong bang luc them vao bao gia, KHONG doc lai
+  // components (xoa/sua thanh phan con khong lam doi gia von Combo). Fixed/Auto
+  // dung CHUNG nguon nay, chi khac cach suy ra unitPrice. costSource==='rollup'
+  // (mac dinh/bao gia cu) giu 100% hanh vi cu.
+  const costSource = bundleSnapshotCostSource(item);
+  // Gia von/gia combo tinh o VND (snapshot goc) roi moi quy doi sang tien te cua quote.
+  const bundleCostVnd = costSource === 'target' ? bundleSnapshotTargetCostPerMonthVnd(item) : calculateBundleComponentCost(components);
+  const bundleCost = toQuoteMoney(bundleCostVnd, fx);
   let unitPrice = item.unitPrice;
-  if (mode === 'auto' && bundleCost != null) {
-    unitPrice = roundBundlePrice(bundleCost / (1 - targetGm / 100));
+  if (mode === 'auto' && bundleCostVnd != null) {
+    unitPrice = toQuoteMoney(roundBundlePrice(bundleCostVnd / (1 - targetGm / 100)), fx);
   }
   return {
     ...item,
     costPrice: bundleCost,
+    ...(fx.currency !== 'VND' ? { costPriceVnd: bundleCostVnd } : {}),
     costNotApplicable: false,
     unitPrice,
     markupPercent: calculateMarkupFromCostPrice(bundleCost, unitPrice),
@@ -277,13 +411,25 @@ function recalculateBundleParent(item: QuoteItem, components: BundleSnapshotComp
   };
 }
 
-function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceCatalogItem[] = []): QuoteItem[] {
+function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceCatalogItem[] = [], fx: QuoteFx = VND_FX): QuoteItem[] {
+  // BUG THAT DA GAP ("chọn 2 [bundle] mà nó chưa thay đổi theo"): ham nay
+  // TRUOC DAY luon tinh lai hang muc con THANG tu bundleSnapshot goc (coi
+  // nhu luon dung 1 bo bundle), hoan toan bo qua item.quantity (so bo
+  // bundle Sale da chon o dong cha) - doi SL dong cha tu 1 len 2 chi lam
+  // "COST TỔNG" cua CHINH dong cha nhan doi (phep tinh rieng, khong lien
+  // quan ham nay), con tung dong con hien thi van dung y het nhu chi co 1
+  // bo. Nhan them "unitMultiplier" = SL dong cha (toi thieu 1, tranh 0/am
+  // lam bay dong con) vao SL tung dong con - dung y nghia nghiep vu "mua N
+  // bo bundle = moi thanh phan trong bo nhan N".
+  const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
   const catalogBundle = item.catalogItemId ? catalogItems.find(candidate => candidate.id === item.catalogItemId) : undefined;
   const fallbackComponentsById = new Map(
     (catalogBundle?.components || []).map(component => [component.componentId, component])
   );
+  // Sale phai thay DU moi thanh phan con de quan ly, ke ca showOnQuote=false
+  // (yeu cau 2026-10-14) - filter theo showOnQuote CHI ap dung cho khach hang
+  // (QuoteDocumentRenderer.tsx), khong ap dung o bang sua cua Sale.
   const components = bundleSnapshotComponents(item)
-    .filter(component => component.showOnQuote !== false)
     .map(component => {
       const fallback = fallbackComponentsById.get(component.componentId);
       return {
@@ -318,9 +464,9 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
         serviceDescription: appendBundleQuota(label, component.quotaPoolQuota || component.quota),
         description: '',
         unit: component.unit || '',
-        quantity: 1,
-        unitPrice: componentCustomerPriceValue,
-        costPrice: componentCost,
+        quantity: unitMultiplier,
+        unitPrice: toQuoteMoney(componentCustomerPriceValue, fx) ?? 0,
+        costPrice: toQuoteMoney(componentCost, fx),
         markupPercent: componentMarkup,
         discountPercent: 0,
         vatRate: 0,
@@ -339,9 +485,9 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
       serviceDescription: appendBundleQuota(label, component.quota),
       description: component.description || '',
       unit: component.unit || '',
-      quantity: component.computedQuantity || component.quantity || 1,
-      unitPrice: componentCustomerPriceValue,
-      costPrice: componentCost,
+      quantity: (component.computedQuantity || component.quantity || 1) * unitMultiplier,
+      unitPrice: toQuoteMoney(componentCustomerPriceValue, fx) ?? 0,
+      costPrice: toQuoteMoney(componentCost, fx),
       markupPercent: componentMarkup,
       discountPercent: 0,
       vatRate: 0,
@@ -355,6 +501,24 @@ function bundleComponentsToWorkspaceRows(item: QuoteItem, catalogItems: ServiceC
   return rows;
 }
 
+/** Option dropdown khach hang: ten viet tat uu tien (kem ten day du dong phu); tim duoc theo ten day du, viet tat, ma KH, SDT.
+ * `label`/`name`/`companyName` giu nguyen de bao gia/PDF/hop dong van dung ten phap ly day du. */
+function customerPickerOption(c: QuoteCustomerOption) {
+  const d = customerDisplay({ shortName: c.shortName, companyName: c.companyName, customerName: c.name });
+  return {
+    value: c.id,
+    label: d.sub ? `${d.title} · ${d.sub}` : d.title,
+    searchText: [c.shortName, c.companyName, c.name, c.customerCode, c.phone, c.email].filter(Boolean).join(' '),
+    richLabel: (
+      <span title={d.full}>
+        <strong>{d.title}</strong>
+        {d.sub ? <small style={{ marginLeft: 6, opacity: 0.7 }}>{d.sub}</small> : null}
+        {c.customerCode ? <small style={{ marginLeft: 6, opacity: 0.6 }}>· {c.customerCode}</small> : null}
+      </span>
+    ),
+  };
+}
+
 async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (API_KEY) headers['X-API-Key'] = API_KEY;
@@ -365,6 +529,8 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
     id: string;
     customer_name?: string;
     company_name?: string;
+    short_name?: string | null;
+    customer_code?: string | null;
     phone?: string;
     email?: string;
     address?: string;
@@ -375,6 +541,8 @@ async function loadQuoteCustomerOptions(): Promise<QuoteCustomerOption[]> {
     label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     phone: row.phone,
     email: row.email,
     address: row.address,
@@ -392,6 +560,8 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
     id: string;
     customer_name?: string;
     company_name?: string;
+    short_name?: string | null;
+    customer_code?: string | null;
     phone?: string;
     email?: string;
     address?: string;
@@ -402,6 +572,8 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
     label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
     name: row.customer_name,
     companyName: row.company_name,
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     phone: row.phone,
     email: row.email,
     address: row.address,
@@ -409,19 +581,6 @@ async function loadQuoteCustomerOption(customerId: string): Promise<QuoteCustome
   };
 }
 
-const ACTIVITY_LABELS: Record<string, string> = {
-  created: 'Tạo báo giá',
-  updated: 'Cập nhật báo giá',
-  approved: 'Duyệt báo giá',
-  cancelled: 'Huỷ báo giá',
-  version_created: 'Tạo phiên bản mới',
-  stage_changed: 'Chuyển bước xử lý',
-  handoff_updated: 'Cập nhật bàn giao kỹ thuật',
-  owner_assigned: 'Gán người phụ trách',
-  version_reason: 'Ghi lý do tạo phiên bản',
-  approved_with_exception: 'đã phê duyệt ngoại lệ',
-  auto_approved_by_rule_engine: 'Tự động duyệt bởi Rule Engine',
-};
 
 /** Section 5 - hien cau tu nhien "<Ten> đã phê duyệt ngoại lệ cho V2 lúc …"
  * cho rieng action nay (khac cach hien chung "<Ten> <nhan>" cua cac action
@@ -477,6 +636,138 @@ function NoStaffConfigured({ isAdminOrLeader }: { isAdminOrLeader: boolean }) {
         <span className="qc-no-staff-cta qc-no-staff-cta--muted">Vui lòng liên hệ Admin.</span>
       )}
     </span>
+  );
+}
+
+function parseAllowListValue(value: string): string[] {
+  return value.split(/[\n,;]/).map(v => v.trim()).filter(Boolean);
+}
+
+function normalizeAccessEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function normalizeAccessPhone(value: string): string {
+  return value.trim().replace(/[\s.-]/g, '');
+}
+
+function isValidAccessEmailFormat(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function isValidAccessPhoneFormat(value: string): boolean {
+  return /^\+?\d{8,15}$/.test(value);
+}
+
+/** Picker "Giới hạn theo Email/SĐT" (thay the textarea don thuan) - goi y tu
+ * CRM (Khach hang/Nguoi lien he/Sale/Presale cua CHINH quote nay, xem
+ * getAccessSuggestions o backend), cho chon nhieu bang 1 cai click (an trong
+ * danh sach goi y sau khi chon, hien lai thanh chip co nut xoa), van cho nhap
+ * tay ngoai danh sach goi y. `value`/`onChange` van la 1 string noi boi
+ * \n (giu nguyen dinh dang cu de saveAccessRestriction() khong doi) - component
+ * nay chi la 1 UI khac tren CUNG 1 nguon du lieu, KHONG tu dong chon san gi ca. */
+function AccessAllowListPicker({ kind, value, onChange, suggestions }: {
+  kind: 'email' | 'phone';
+  value: string;
+  onChange: (next: string) => void;
+  suggestions: QuoteAccessSuggestion[];
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const normalize = kind === 'email' ? normalizeAccessEmail : normalizeAccessPhone;
+  const isValidFormat = kind === 'email' ? isValidAccessEmailFormat : isValidAccessPhoneFormat;
+  const selected = useMemo(() => parseAllowListValue(value), [value]);
+  const selectedNormSet = useMemo(() => new Set(selected.map(normalize)), [selected, normalize]);
+
+  function commit(next: string[]) {
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    for (const raw of next) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      const norm = normalize(trimmed);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      deduped.push(trimmed);
+    }
+    onChange(deduped.join('\n'));
+  }
+
+  function addValue(raw: string) {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    commit([...selected, trimmed]);
+    setQuery('');
+  }
+
+  function removeValue(raw: string) {
+    const norm = normalize(raw);
+    commit(selected.filter(v => normalize(v) !== norm));
+  }
+
+  const relevantSuggestions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return suggestions
+      .map(s => ({ s, field: (kind === 'email' ? s.email : s.phone) || '' }))
+      .filter(({ field }) => field && !selectedNormSet.has(normalize(field)))
+      .filter(({ s, field }) => !q || field.toLowerCase().includes(q) || s.name.toLowerCase().includes(q) || s.role.toLowerCase().includes(q));
+  }, [suggestions, query, kind, selectedNormSet, normalize]);
+
+  function handleManualSubmit() {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    if (!isValidFormat(trimmed)) {
+      window.alert(kind === 'email' ? 'Email không đúng định dạng.' : 'Số điện thoại không đúng định dạng (chỉ gồm số, 8-15 ký tự).');
+      return;
+    }
+    addValue(trimmed);
+  }
+
+  return (
+    <div className="qc-access-picker">
+      <div className="qc-access-picker-chips">
+        {selected.length === 0 ? (
+          <span className="qc-access-picker-empty">Chưa chọn {kind === 'email' ? 'email' : 'số điện thoại'} nào.</span>
+        ) : null}
+        {selected.map(v => (
+          <span key={v} className="qc-access-picker-chip" title={v}>
+            <span>{v}</span>
+            <button type="button" className="qc-access-picker-chip-remove" onClick={() => removeValue(v)} aria-label="Xoá">×</button>
+          </span>
+        ))}
+      </div>
+      <div className="qc-access-picker-input-row">
+        <input
+          type="text"
+          className="qc-access-picker-input"
+          placeholder={kind === 'email' ? 'Tìm hoặc nhập email...' : 'Tìm hoặc nhập số điện thoại...'}
+          value={query}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleManualSubmit();
+            }
+          }}
+        />
+        <button type="button" className="qc-mini-btn" onClick={handleManualSubmit} disabled={!query.trim()}>Thêm</button>
+      </div>
+      {open && relevantSuggestions.length > 0 ? (
+        <div className="qc-access-picker-dropdown">
+          {relevantSuggestions.map(({ s, field }, idx) => (
+            <label key={`${field}-${idx}`} className="qc-access-picker-option" onMouseDown={e => e.preventDefault()} title={`${field} — ${s.name} · ${s.role}`}>
+              <input type="checkbox" checked={false} onChange={() => addValue(field)} />
+              <span className="qc-access-picker-option-text">
+                <span className="qc-access-picker-option-main">{field}</span>
+                <span className="qc-access-picker-option-meta">{s.name} · {s.role}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -625,7 +916,6 @@ function normalizeLoadedParentIds(items: QuoteItem[]): QuoteItem[] {
   }
   return out;
 }
-
 
 /** [start, end) cua 1 "khoi" bat dau tu `index` - neu la 1 hang muc thuong
  * (rowType='item') thi khoi chi co dung 1 dong; neu la Muc cha (Section) thi
@@ -796,6 +1086,7 @@ export function QuoteWorkspaceModal({
   quoteForms = [],
   initialCustomerId,
   initialProjectId,
+  initialDealId,
   lockCustomer = false,
   lockProject = false,
 }: {
@@ -826,6 +1117,8 @@ export function QuoteWorkspaceModal({
    * text tinh - CHI ap dung khi quoteId=null. */
   initialCustomerId?: string;
   initialProjectId?: string;
+  /** Deal can tu chon san khi mo tu chi tiet co hoi/customer deal tab. */
+  initialDealId?: string;
   lockCustomer?: boolean;
   lockProject?: boolean;
 }) {
@@ -1037,16 +1330,64 @@ export function QuoteWorkspaceModal({
   // moi noi can doc (xem effectiveDeals/effectiveDealsById ben duoi) de hien
   // ngay khong can cho cha tai lai.
   const [locallyCreatedDeals, setLocallyCreatedDeals] = useState<Deal[]>([]);
-  const effectiveDeals = useMemo(
-    () => (locallyCreatedDeals.length ? [...deals, ...locallyCreatedDeals] : deals),
-    [deals, locallyCreatedDeals]
-  );
+  const [fetchedCustomerDeals, setFetchedCustomerDeals] = useState<Deal[]>([]);
+  // Co hoi nao vua tai XONG (thanh cong hoac loi deu tinh la "xong") cho dung
+  // draftCustomerId hien tai - dung lam dieu kien cho auto-chon Co hoi ben
+  // duoi, tranh dua voi `deals` prop tu trang cha (vd mo "Yêu cầu hỗ trợ báo
+  // giá" ngay luc trang Báo giá chua tai xong danh sach Deal toan he thong -
+  // bug thuc te: dropdown hien dung 1 lua chon khi mo tay sau do, nhung
+  // auto-chon da dem thieu truoc khi fetch nay kip tra ve nen bo lo oan uong).
+  const [fetchedCustomerDealsReadyFor, setFetchedCustomerDealsReadyFor] = useState('');
+  useEffect(() => {
+    if (quote || !draftCustomerId) {
+      setFetchedCustomerDeals([]);
+      setFetchedCustomerDealsReadyFor('');
+      return;
+    }
+    let alive = true;
+    setFetchedCustomerDealsReadyFor('');
+    seedingCrmRepository.getDeals()
+      .then(rows => {
+        if (!alive) return;
+        setFetchedCustomerDeals(rows.filter(d => d.customerId === draftCustomerId));
+        setFetchedCustomerDealsReadyFor(draftCustomerId);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setFetchedCustomerDeals([]);
+        setFetchedCustomerDealsReadyFor(draftCustomerId);
+      });
+    return () => { alive = false; };
+  }, [quote, draftCustomerId]);
+  const effectiveDeals = useMemo(() => {
+    const map = new Map<string, Deal>();
+    [...deals, ...fetchedCustomerDeals, ...locallyCreatedDeals].forEach(deal => map.set(deal.id, deal));
+    return [...map.values()];
+  }, [deals, fetchedCustomerDeals, locallyCreatedDeals]);
   const effectiveDealsById = useMemo(() => {
-    if (!locallyCreatedDeals.length) return dealsById;
     const map = new Map(dealsById);
+    fetchedCustomerDeals.forEach(d => map.set(d.id, d));
     locallyCreatedDeals.forEach(d => map.set(d.id, d));
     return map;
-  }, [dealsById, locallyCreatedDeals]);
+  }, [dealsById, fetchedCustomerDeals, locallyCreatedDeals]);
+  // Khach hang chi co DUNG 1 co hoi -> tu chon co hoi do (khong bat Sale mo dropdown); nhieu co hoi thi de Sale tu chon.
+  // Moi khach chi tu chon 1 lan de khong gianh quyen voi lua chon sau cua Sale.
+  const autoDealCustomerRef = useRef<string>('');
+  useEffect(() => {
+    if (quote || !draftCustomerId || draftDealId || autoDealCustomerRef.current === draftCustomerId) return;
+    // Cho fetch rieng theo draftCustomerId tai XONG roi moi dem so Co hoi -
+    // `deals` prop (tu trang cha) co the con cu/chua tai luc nguoi dung vua
+    // chon khach hang (xem comment o fetchedCustomerDealsReadyFor ben tren).
+    if (fetchedCustomerDealsReadyFor !== draftCustomerId) return;
+    const candidates = effectiveDeals
+      .filter(d => d.customerId === draftCustomerId)
+      .filter(d => !lockProject || !draftProjectId || d.projectId === draftProjectId);
+    if (candidates.length === 1) {
+      autoDealCustomerRef.current = draftCustomerId;
+      handleSelectDeal(candidates[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote, draftCustomerId, draftDealId, effectiveDeals, lockProject, fetchedCustomerDealsReadyFor]);
   const CREATE_NEW_DEAL_OPTION = '__create_new_deal__';
   const CREATE_NEW_PROJECT_OPTION = '__create_new_project__';
   // "Tạo dự án mới"/"Tạo cơ hội mới" nhanh ngay trong workspace - tái dùng
@@ -1056,29 +1397,28 @@ export function QuoteWorkspaceModal({
   // trung lap. `agents` chi can fetch 1 lan cho ca 2 modal nay dung chung.
   const [projectModalOpen, setProjectModalOpen] = useState(false);
   const [dealModalOpen, setDealModalOpen] = useState(false);
-  const [dealCreateBusy, setDealCreateBusy] = useState(false);
-  const [dealCreateError, setDealCreateError] = useState('');
-  const [quickCreateAgents, setQuickCreateAgents] = useState<CrmUserOption[]>([]);
-  useEffect(() => {
-    void seedingCrmRepository.getAgents().then(setQuickCreateAgents).catch(() => setQuickCreateAgents([]));
-  }, []);
-
-  async function handleCreateQuickDeal(input: CreateDealInput) {
-    setDealCreateBusy(true);
-    setDealCreateError('');
-    try {
-      const created = await seedingCrmRepository.createDeal(input);
-      clearDealDraft();
-      setLocallyCreatedDeals(prev => [...prev, created]);
-      setDraftDealId(created.id);
-      if (created.projectId) setDraftProjectId(created.projectId);
-      setDealModalOpen(false);
-    } catch (err) {
-      setDealCreateError(err instanceof Error ? err.message : 'Không tạo được cơ hội.');
-    } finally {
-      setDealCreateBusy(false);
-    }
-  }
+  // "+ Tạo cơ hội mới" trong "Cơ hội CRM" (feedback 2026-10-10: dùng ĐÚNG form
+  // "+Deal upsell"/"Tạo cơ hội bán hàng" (CreateOpportunityDrawer) thay vì bản
+  // "Tạo cơ hội nhanh" (DealFormModal) đơn giản hơn trước đây - khách hàng đã
+  // chọn sẵn ở Bước 1 nên CreateOpportunityDrawer có đủ ngữ cảnh. Build 1
+  // CrmCustomerRow TỐI THIỂU từ `customers` (QuoteCustomerOption, nhẹ hơn) -
+  // CreateOpportunityDrawer tự fetch lại dealCount/ownerId/canEdit thật khi mở
+  // (xem effect "Khi doi sang khach hang khac" trong chinh no), khong can day
+  // du moi field o day.
+  const dealModalCustomer = useMemo<CrmCustomerRow | null>(() => {
+    if (!dealModalOpen || !draftCustomerId) return null;
+    const option = customers.find(c => c.id === draftCustomerId);
+    return {
+      id: draftCustomerId,
+      customerName: option?.name || option?.label || '',
+      companyName: option?.companyName,
+      shortName: option?.shortName,
+      customerCode: option?.customerCode,
+      phone: option?.phone,
+      email: option?.email,
+      taxCode: option?.taxCode,
+    };
+  }, [dealModalOpen, draftCustomerId, customers]);
   // "Mau bao gia" - Sale duoc doi lai mau goi y mac dinh (defaultFormId) qua
   // dropdown rieng, CHI o che do tao moi (quoteId=null). '' = chua co goi y
   // nao (dang cho fetch defaultFormId) - fallback ve defaultFormId luc gui.
@@ -1090,6 +1430,12 @@ export function QuoteWorkspaceModal({
   // KHONG theo Co hoi (1 Du an co nhieu Co hoi). "" = "Chua thuoc du an".
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [draftProjectId, setDraftProjectId] = useState(initialProjectId || '');
+  useEffect(() => {
+    if (quoteId !== null) return;
+    setDraftCustomerId(initialCustomerId || '');
+    setDraftProjectId(initialProjectId || '');
+    setDraftDealId(initialDealId || '');
+  }, [quoteId, initialCustomerId, initialProjectId, initialDealId]);
   // SLA / han hoan tat noi bo that (migration 097) - datetime-local string,
   // KHAC HOAN TOAN validUntil (hieu luc bao gia voi khach hang).
   const [draftSlaDueAt, setDraftSlaDueAt] = useState('');
@@ -1192,6 +1538,21 @@ export function QuoteWorkspaceModal({
   // duoc vao dau (ke ca popup preview) cho toi khi quote duoc tao. Them state
   // rieng mirror dung pattern `draftPaymentTermsDays` da co san trong file nay.
   const [draftOverallDiscountPercent, setDraftOverallDiscountPercent] = useState<number | null | undefined>(undefined);
+  const [draftOverallDiscountAmount, setDraftOverallDiscountAmount] = useState<number | null | undefined>(undefined);
+  const [overallDiscountInputMode, setOverallDiscountInputMode] = useState<'percent' | 'amount'>('percent');
+  useEffect(() => {
+    if (quote?.data?.overallDiscountType) {
+      setOverallDiscountInputMode(quote.data.overallDiscountType);
+    } else if (
+      typeof quote?.data?.overallDiscountAmount === 'number' &&
+      quote.data.overallDiscountAmount > 0 &&
+      (quote.overallDiscountPercent == null || (quote.overallDiscountPercent > 0 && quote.overallDiscountPercent % 1 !== 0))
+    ) {
+      setOverallDiscountInputMode('amount');
+    } else {
+      setOverallDiscountInputMode('percent');
+    }
+  }, [quote?.id]);
   const [requiredFieldErrors, setRequiredFieldErrors] = useState<Record<string, string>>({});
 
   function focusFirstRequiredError(errors: Record<string, string>) {
@@ -1270,6 +1631,8 @@ export function QuoteWorkspaceModal({
   // { linkIndex } (bam dau "+" canh 1 hang muc da co san trong bao gia -
   // san pham tao xong CHI GAN ID nguoc lai dong do, KHONG tao dong moi).
   const [quickAddProductTarget, setQuickAddProductTarget] = useState<'newRow' | { linkIndex: number; locked?: boolean } | null>(null);
+  // Sua san pham ngay trong popup "Chon san pham / dich vu" (dung chinh QuickAddProductModal o che do sua).
+  const [quickEditProduct, setQuickEditProduct] = useState<ServiceCatalogItem | null>(null);
   // BUG THAT DA GAP ("tự động thêm thẳng vào báo giá ngay sau khi lưu sản
   // phẩm"): luong 'newRow' TRUOC DAY tu goi catalogAdd.handleAddSelected()
   // ngay sau khi tao xong - sai vi Sale co the tao nham hoac muon tao nhieu
@@ -1603,14 +1966,135 @@ export function QuoteWorkspaceModal({
   // data LAN items hien tai, neu khong se VO TINH XOA SACH item/data con lai
   // (bug thuc te phat hien khi doc lai RPC, khong phai gia dinh).
   const [itemsDraft, setItemsDraft] = useState<QuoteItem[]>([]);
+  // Ctrl+Z/Ctrl+Y (hoan tac/lam lai) cho bang "Hang muc & cau truc gia" -
+  // yeu cau "giong Excel", chi trong PHIEN dang mo (khong luu lau dai qua
+  // F5/dong modal, dung y "mat lich su khi dong modal/F5"). Khong refactor
+  // tung noi goi setItemsDraft rai rac khap file (qua nhieu cho, de sot/vo
+  // tinh doi hanh vi) - thay vao do THEO DOI moi lan itemsDraft thuc su DOI
+  // qua useEffect, tu dong day snapshot CU vao undo stack. Gom cac thay doi
+  // lien tiep trong 800ms thanh 1 buoc (go chu/keo thanh truot gia lien tuc
+  // khong bi bam vun thanh hang chuc buoc Ctrl+Z moi ky tu).
+  const undoStackRef = useRef<QuoteItem[][]>([]);
+  const redoStackRef = useRef<QuoteItem[][]>([]);
+  const lastHistoryPushRef = useRef<number>(0);
+  const isUndoRedoActionRef = useRef(false);
+  const prevItemsDraftRef = useRef<QuoteItem[]>(itemsDraft);
+  useEffect(() => {
+    if (isUndoRedoActionRef.current) {
+      isUndoRedoActionRef.current = false;
+      prevItemsDraftRef.current = itemsDraft;
+      return;
+    }
+    if (prevItemsDraftRef.current === itemsDraft) return;
+    const now = Date.now();
+    if (now - lastHistoryPushRef.current > 800) {
+      undoStackRef.current.push(prevItemsDraftRef.current);
+      if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+      redoStackRef.current = [];
+    }
+    lastHistoryPushRef.current = now;
+    prevItemsDraftRef.current = itemsDraft;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsDraft]);
+  function undoItemsDraft() {
+    if (undoStackRef.current.length === 0) return;
+    const prev = undoStackRef.current.pop()!;
+    redoStackRef.current.push(itemsDraft);
+    isUndoRedoActionRef.current = true;
+    setItemsDraft(prev);
+    showToast(true, 'Đã hoàn tác.');
+  }
+  function redoItemsDraft() {
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop()!;
+    undoStackRef.current.push(itemsDraft);
+    isUndoRedoActionRef.current = true;
+    setItemsDraft(next);
+    showToast(true, 'Đã làm lại.');
+  }
   const [itemsFullscreen, setItemsFullscreen] = useState(false);
   const [selectedDiscountRowKeys, setSelectedDiscountRowKeys] = useState<Set<string>>(new Set());
+  // Chon nhieu thanh phan CON trong 1 Combo (bundle) de xoa 1 lan (yeu cau
+  // "có thêm cái checkbox để chọn các mục nào sẽ xoá cho nhanh") - khac
+  // selectedDiscountRowKeys (danh cho dong THUONG trong itemsDraft that su,
+  // dong Combo child chi la dong TINH TOAN de hien thi tu bundleSnapshot,
+  // khong nam trong itemsDraft nen can 1 co che chon rieng). Key = ket hop
+  // parentIndex + child.id (child.id da duy nhat trong 1 bundle, nhung
+  // khong duy nhat giua nhieu bundle khac nhau trong cung bao gia).
+  const [selectedBundleChildKeys, setSelectedBundleChildKeys] = useState<Set<string>>(new Set());
+  // Modal xac nhan "GÓI TÙY CHỈNH / GIỮ GIÁ GÓI CỐ ĐỊNH" truoc khi THAT SU
+  // xoa thanh phan Combo (xem removeBundleComponent/removeSelectedBundleComponents/
+  // executeBundleRemoval) - null = khong co gi dang cho xac nhan.
+  const [pendingBundleRemoval, setPendingBundleRemoval] = useState<{ parentIndex: number; componentIds: string[]; label: string } | null>(null);
+  function bundleChildKey(parentIndex: number, child: QuoteItem): string {
+    return `${parentIndex}__${child.id}`;
+  }
+  function toggleBundleChildSelection(key: string, checked: boolean) {
+    setSelectedBundleChildKeys(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }
   const [itemDiscountInput, setItemDiscountInput] = useState('');
+  // "Chiết khấu hạng mục" - cho nhap SO TIEN muon giam (tren tong Thanh tien
+  // cac dong duoc chon/tat ca) THAY VI phai tu quy doi ra % (bug thuc te: Sale
+  // go "66,67%" tuc la da tu tinh tay "giảm 2tr trên 3tr"). 'percent' (mac
+  // dinh) = itemDiscountInput la %, hanh vi cu y het truoc gio. 'amount' =
+  // itemDiscountInput la SO TIEN, applyItemDiscount() tu quy doi ra % DUA TREN
+  // tong Thanh tien HIEN TAI cua cac dong trong pham vi roi ap CUNG 1 % do cho
+  // tung dong (giu nguyen co che "1 % dong deu" cu, chi doi CACH NHAP).
+  const [itemDiscountInputMode, setItemDiscountInputMode] = useState<'percent' | 'amount'>('percent');
   const persistedDraftSnapshotRef = useRef('');
   const persistedItemsDraftRef = useRef<QuoteItem[]>([]);
   const persistedQuoteDataRef = useRef<Quote['data'] | undefined>(undefined);
   const persistedOverallDiscountRef = useRef<number | null | undefined>(undefined);
   const [discardCloseConfirmOpen, setDiscardCloseConfirmOpen] = useState(false);
+  const [zeroPriceConfirm, setZeroPriceConfirm] = useState<string[] | null>(null);
+
+  // ---- Tien te CAP QUOTE (multi-currency, migration 169) -------------------
+  // Quote da ton tai: currency + exchangeRate doc tu server (DA DONG BANG, khong doi khi
+  // reload/approve). Tao moi (!quote): giu trong draft state den luc tao.
+  const [draftCurrency, setDraftCurrency] = useState<QuoteCurrency>('VND');
+  const [draftExchangeRate, setDraftExchangeRate] = useState<number | null>(null);
+  const [systemExchangeRate, setSystemExchangeRate] = useState<number | null>(null);
+  const [systemRateInfo, setSystemRateInfo] = useState<SystemExchangeRate | null>(null);
+  const [currencySwitch, setCurrencySwitch] = useState<{ target: QuoteCurrency; rateInput: number | null; custom?: boolean } | null>(null);
+  const workspaceCurrency: QuoteCurrency = normalizeQuoteCurrency(quote ? quote.currency : draftCurrency);
+  const workspaceExchangeRate: number | null = quote ? quote.exchangeRate ?? null : draftExchangeRate;
+  const workspaceFx: QuoteFx = { currency: workspaceCurrency, rate: workspaceExchangeRate };
+  // Format MOI so tien cua QUOTE theo tien te cua no (VND "1.250.000 đ" / USD "$48.08") -
+  // che (shadow) formatMoney VND import tu quoteDisplay. Gia tri khong thuoc quote (VD gia
+  // tri uoc tinh cua Co hoi) dung formatVndMoney.
+  const formatMoney = (value: number | null | undefined) => formatQuoteMoney(value ?? 0, workspaceCurrency);
+  // O nhap tien: USD can 2 so le (locale en-US de dau cham = thap phan).
+  const moneyInput = workspaceCurrency === 'USD' ? ({ decimals: 2, locale: 'en-US' } as const) : ({} as const);
+  // VND giu nguyen hanh vi cu (khong lam tron o FE, server lam tron khi luu).
+  const roundForQuote = (value: number) => (workspaceCurrency === 'VND' ? value : roundQuoteMoney(value, workspaceCurrency));
+  // Ty gia he thong ve cham hon luc mo hop thoai doi tien te -> tu dien vao o ty gia neu con trong.
+  useEffect(() => {
+    if (!systemExchangeRate) return;
+    setCurrencySwitch(current =>
+      current && current.target === 'USD' && !(current.rateInput && current.rateInput > 0)
+        ? { ...current, rateInput: systemExchangeRate }
+        : current
+    );
+  }, [systemExchangeRate, currencySwitch?.target]);
+  useEffect(() => {
+    let alive = true;
+    seedingQuoteRepository
+      .getExchangeRate()
+      .then(result => {
+        if (alive) setSystemExchangeRate(result?.rate ?? null);
+      })
+      .catch(() => {
+        if (alive) setSystemExchangeRate(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   function makeWorkspaceSnapshot(items: QuoteItem[], data: Quote['data'] | undefined, overallDiscountPercent: number | null | undefined): string {
     return JSON.stringify({
       items: buildItemsPayload(cloneQuoteItems(items)),
@@ -1619,7 +2103,17 @@ export function QuoteWorkspaceModal({
     });
   }
   useEffect(() => {
-    const nextItems = quote?.items ? normalizeLoadedParentIds(sanitizeDraftQuoteItems(flattenItemTree(quote.items))) : [];
+    const rawItems = quote?.items ? normalizeLoadedParentIds(sanitizeDraftQuoteItems(flattenItemTree(quote.items))) : [];
+    const itemDiscountTypes = quote?.data?.itemDiscountTypes || {};
+    const nextItems = rawItems.map((item, idx) => {
+      const key = item.id || `row_${idx}`;
+      const savedType = item.discountType || itemDiscountTypes[key] || (item.id ? itemDiscountTypes[item.id] : undefined);
+      const resolvedType = savedType || resolveItemDiscountMode(item, quote?.currency);
+      return {
+        ...item,
+        discountType: resolvedType,
+      };
+    });
     setItemsDraft(nextItems);
     persistedItemsDraftRef.current = cloneQuoteItems(nextItems);
     persistedQuoteDataRef.current = quote?.data ? deepClone(quote.data) : quote?.data;
@@ -1628,11 +2122,27 @@ export function QuoteWorkspaceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote?.id]);
 
+  // Che do TAO MOI (chua co quote that): "dirty" = nguoi dung da nhap/chon gi do
+  // vao form (khach hang, co hoi, hang muc, mo ta...) nhung chua bam Luu.
+  const createModeDirty =
+    (draftCustomerId || '') !== (initialCustomerId || '') ||
+    (draftDealId || '') !== (initialDealId || '') ||
+    Boolean(draftTitle.trim() || draftScope.trim() || draftSummary.trim() ||
+      draftExpectedProducts.trim() || draftInternalNote.trim()) ||
+    draftCustomBlocks.length > 0 || draftQuoteTypeCodes.length > 0 ||
+    itemsDraft.some(row => Boolean(row.description?.trim()) || Boolean(row.unitPrice) || row.costPrice != null);
+  const createdQuoteIdRef = useRef<string | null>(null);
+
   const workspaceDirty = useMemo(() => {
-    if (!quote) return false;
+    if (!quote) return !loading && createModeDirty;
+    // Bao gia da duyet: khoa chinh sua, dong popup khong can hoi "luu thay doi".
+    if (quote.status === 'approved') return false;
+    // Buoc 3 (stage 'review'): da khoa chinh sua, chi cho Admin duyet/tra ve
+    // -> khong co gi de "luu", khong hoi khi dong popup.
+    if (quote.processingStage === 'review' || quote.processingStage === 'ready_to_publish' || quote.processingStage === 'published') return false;
     return makeWorkspaceSnapshot(itemsDraft, quote.data, quote.overallDiscountPercent ?? null) !== persistedDraftSnapshotRef.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itemsDraft, quote?.data, quote?.overallDiscountPercent, quote?.id]);
+  }, [itemsDraft, quote?.data, quote?.overallDiscountPercent, quote?.id, quote?.status, quote?.processingStage, loading, createModeDirty]);
 
   function discardDraftChanges() {
     setItemsDraft(cloneQuoteItems(persistedItemsDraftRef.current));
@@ -1654,6 +2164,19 @@ export function QuoteWorkspaceModal({
     onClose();
   }
 
+  async function confirmSaveAndClose() {
+    setDiscardCloseConfirmOpen(false);
+    if (!quote) {
+      // Che do tao moi: "Lưu" = tao ban nhap that. Validate loi thi o lai form.
+      createdQuoteIdRef.current = null;
+      await createRequest(false);
+      if (createdQuoteIdRef.current) onClose();
+      return;
+    }
+    await persistQuote({});
+    onClose();
+  }
+
   function confirmDiscardAndClose() {
     discardDraftChanges();
     onClose();
@@ -1669,6 +2192,34 @@ export function QuoteWorkspaceModal({
     return () => window.removeEventListener('keydown', handleWorkspaceEscape);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceDirty]);
+
+  // Ctrl+Z (hoan tac) / Ctrl+Y hoac Ctrl+Shift+Z (lam lai) cho bang "Hang
+  // muc & cau truc gia" - chi active khi modal dang mo. Khong chan phim khi
+  // dang go trong 1 o text/textarea CO SAN lich su undo rieng cua trinh
+  // duyet (vd Tieu de bao gia) - CHI xu ly cho cac o thuoc bang hang muc
+  // (class qc-cell-input*), de khong vo tinh "nuot" Ctrl+Z nguoi dung dang
+  // mong doi hoan tac VAN BAN binh thuong o noi khac trong modal. Khong gate
+  // theo canEdit/isDraft (khai bao sau trong file) - vo hai khi stack rong
+  // (khong co gi de hoan tac) vi khong ai sua duoc bang luc khong co quyen.
+  useEffect(() => {
+    function handleUndoRedoKeydown(event: KeyboardEvent) {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const inTableCell = Boolean(target?.closest('.qc-workspace-items-table, .qc-cell-input'));
+      if (!inTableCell) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        undoItemsDraft();
+      } else if (key === 'y' || (key === 'z' && event.shiftKey)) {
+        event.preventDefault();
+        redoItemsDraft();
+      }
+    }
+    window.addEventListener('keydown', handleUndoRedoKeydown);
+    return () => window.removeEventListener('keydown', handleUndoRedoKeydown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsDraft]);
 
   function discountRowKey(row: QuoteItem, index: number) {
     return row.id || `draft-${index}`;
@@ -1726,6 +2277,30 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev => prev.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   }
 
+  function commitRowDiscount(index: number, discountPercent: number) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== index) return row;
+      const subtotal = calculateItemSubtotal(row, workspaceCurrency);
+      const clampedPct = clampDiscountPercent(discountPercent);
+      const amt = roundQuoteMoney((subtotal * clampedPct) / 100, workspaceCurrency);
+      return { ...row, discountType: 'percent' as const, discountPercent: clampedPct, discountAmount: amt };
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  function commitRowDiscountAmount(index: number, discountAmount: number) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== index) return row;
+      const subtotal = calculateItemSubtotal(row, workspaceCurrency);
+      const clampedAmount = roundQuoteMoney(Math.max(0, Math.min(discountAmount, subtotal)), workspaceCurrency);
+      const pct = subtotal > 0 ? clampDiscountPercent((clampedAmount / subtotal) * 100) : 0;
+      return { ...row, discountType: 'amount' as const, discountAmount: clampedAmount, discountPercent: pct };
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
   function toggleDiscountRowSelection(key: string, checked: boolean) {
     setSelectedDiscountRowKeys(prev => {
       const next = new Set(prev);
@@ -1742,25 +2317,75 @@ export function QuoteWorkspaceModal({
   function applyItemDiscount(scope: 'selected' | 'all') {
     const normalized = itemDiscountInput.trim().replace(',', '.');
     const rawValue = normalized === '' ? 0 : Number(normalized);
-    if (!Number.isFinite(rawValue)) {
-      window.alert('Chiết khấu phải là một số từ 0% đến 100%.');
+    if (!Number.isFinite(rawValue) || rawValue < 0) {
+      window.alert(itemDiscountInputMode === 'amount' ? 'Số tiền giảm phải là một số từ 0 trở lên.' : 'Giảm giá phải là một số từ 0% đến 100%.');
       return;
     }
-    const discountPercent = clampDiscountPercent(rawValue);
     if (scope === 'selected' && selectedDiscountCount === 0) {
       window.alert('Chọn ít nhất một hạng mục để áp chiết khấu.');
       return;
     }
     const targetKeys = scope === 'all' ? new Set(selectableDiscountRowKeys) : selectedDiscountRowKeys;
-    const nextItems = itemsDraft.map((row, index) => {
-      if (row.rowType === 'section') return row;
-      const key = discountRowKey(row, index);
-      return targetKeys.has(key) ? { ...row, discountPercent } : row;
-    });
+    let nextItems: QuoteItem[];
+    if (itemDiscountInputMode === 'amount') {
+      // Giữ nguyên số tiền giảm đã nhập làm giá trị tính toán chính (discountAmount),
+      // phân bổ chính xác xuống các dòng trong phạm vi (dòng cuối nhận phần dư làm tròn
+      // để tổng giảm bằng đúng số tiền nhập). % chỉ để hiển thị, không nhân ngược từ % làm tròn.
+      const targetSubtotal = itemsDraft.reduce((sum, row, index) => {
+        if (row.rowType === 'section') return sum;
+        return targetKeys.has(discountRowKey(row, index)) ? sum + calculateItemSubtotal(row, workspaceCurrency) : sum;
+      }, 0);
+      if (targetSubtotal <= 0) {
+        window.alert('Các hạng mục trong phạm vi chưa có Thành tiền để quy đổi % từ số tiền.');
+        return;
+      }
+      const totalDiscountTarget = roundQuoteMoney(Math.max(0, Math.min(rawValue, targetSubtotal)), workspaceCurrency);
+      const discountPercent = clampDiscountPercent((totalDiscountTarget / targetSubtotal) * 100);
+      const positiveTargetIndices = itemsDraft
+        .map((row, idx) =>
+          row.rowType !== 'section' && targetKeys.has(discountRowKey(row, idx)) && calculateItemSubtotal(row, workspaceCurrency) > 0
+            ? idx
+            : -1
+        )
+        .filter(idx => idx >= 0);
+      const lastPositiveIdx = positiveTargetIndices.length > 0 ? positiveTargetIndices[positiveTargetIndices.length - 1] : -1;
+      let allocated = 0;
+      nextItems = itemsDraft.map((row, index) => {
+        if (row.rowType === 'section') return row;
+        const key = discountRowKey(row, index);
+        if (!targetKeys.has(key)) return row;
+        const rowSubtotal = calculateItemSubtotal(row, workspaceCurrency);
+        if (totalDiscountTarget <= 0 || rowSubtotal <= 0) {
+          return { ...row, discountType: 'amount', discountPercent: totalDiscountTarget <= 0 ? 0 : discountPercent, discountAmount: 0 };
+        }
+        let rowDiscount: number;
+        if (index === lastPositiveIdx) {
+          rowDiscount = roundQuoteMoney(Math.max(0, Math.min(rowSubtotal, totalDiscountTarget - allocated)), workspaceCurrency);
+        } else {
+          const rawShare = (totalDiscountTarget * rowSubtotal) / targetSubtotal;
+          rowDiscount = roundQuoteMoney(Math.max(0, Math.min(rowSubtotal, totalDiscountTarget - allocated, rawShare)), workspaceCurrency);
+          allocated = roundQuoteMoney(allocated + rowDiscount, workspaceCurrency);
+        }
+        const rowPct = rowSubtotal > 0 ? clampDiscountPercent((rowDiscount / rowSubtotal) * 100) : 0;
+        return { ...row, discountType: 'amount', discountPercent: rowPct, discountAmount: rowDiscount };
+      });
+    } else {
+      const discountPercent = clampDiscountPercent(rawValue);
+      nextItems = itemsDraft.map((row, index) => {
+        if (row.rowType === 'section') return row;
+        const key = discountRowKey(row, index);
+        if (!targetKeys.has(key)) return row;
+        const rowSubtotal = calculateItemSubtotal(row, workspaceCurrency);
+        const rowDiscount = roundQuoteMoney((rowSubtotal * discountPercent) / 100, workspaceCurrency);
+        return { ...row, discountType: 'percent', discountPercent, discountAmount: rowDiscount };
+      });
+    }
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
     showToast(true, scope === 'all' ? 'Đã áp chiết khấu cho tất cả hạng mục.' : `Đã áp chiết khấu cho ${selectedDiscountCount} hạng mục.`);
   }
+
+
 
   function removeSelectedItemRows() {
     if (selectedDiscountCount === 0) return;
@@ -1798,6 +2423,8 @@ export function QuoteWorkspaceModal({
     return {
       ...row,
       costPrice: cost,
+      // Sua tay gia von bao gia USD -> goc VND cu khong con dung, doi lai VND dung gia tri nhap * ty gia.
+      ...(workspaceCurrency === 'USD' ? { costPriceVnd: null } : {}),
       costNotApplicable: false,
       markupPercent: calculateMarkupFromCostPrice(cost, row.unitPrice),
     };
@@ -1817,6 +2444,10 @@ export function QuoteWorkspaceModal({
   }
 
   function handleCostPriceBlur() {
+    void persistQuote({}, { silent: true });
+  }
+
+  function handlePricingBlur() {
     void persistQuote({}, { silent: true });
   }
 
@@ -1877,7 +2508,7 @@ export function QuoteWorkspaceModal({
         if (raw.trim() === '') return { ...row, markupPercent: null };
         if (parsed == null || !Number.isFinite(parsed)) return row;
         const markup = parsed;
-        return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)) };
+        return { ...row, markupPercent: markup, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + markup / 100))), discountAmount: undefined };
       })
     );
   }
@@ -1887,7 +2518,61 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev =>
       prev.map((row, i) => {
         if (i !== index) return row;
-        return { ...row, unitPrice: price, markupPercent: calculateMarkupFromCostPrice(row.costPrice, price) };
+        // Bug thuc te (2026-10-10): Gia khach da co nhung Gia von con 0/rong thi Markup luon
+        // hien "—" (khong tinh duoc), bat Sale tu dien Gia von tay moi thay Markup. Neu dong
+        // da lien ket san pham danh muc co san defaultMarkupPercent, tu suy nguoc Gia von =
+        // Gia khach / (1 + Markup% mac dinh cua san pham do) thay vi cho dien tay. Markup% la
+        // ty le, dung chung duoc cho ca VND lan USD (khong phu thuoc don vi tien te).
+        let costPrice = row.costPrice;
+        let costPriceChanged = false;
+        // Chi tu dien khi Sale THAT SU co quyen sua Gia von (canEditCostCells) - neu khong,
+        // nguoi khong co quyen se thay/ghi 1 Gia von suy doan ma khong duoc phep dong vao
+        // bao gia (backend se tu choi field nay neu thieu quyen, gay loi luu kho hieu).
+        if (canEditCostCells && (costPrice == null || costPrice <= 0) && row.catalogItemId && price != null && price > 0) {
+          const catalogItem = catalogFlatItems.find(entry => entry.id === row.catalogItemId);
+          const defaultMarkup = catalogItem?.defaultMarkupPercent;
+          if (defaultMarkup != null && defaultMarkup > -100) {
+            costPrice = price / (1 + defaultMarkup / 100);
+            costPriceChanged = true;
+          }
+        }
+        return {
+          ...row,
+          unitPrice: price,
+          discountAmount: undefined,
+          ...(workspaceCurrency === 'USD' ? { unitPriceVnd: undefined } : {}),
+          costPrice,
+          // Giong het pattern cua handleCostPriceChange (sua Gia von tay): costPriceVnd (goc VND
+          // pin cho quote USD) khong con dung voi Gia von vua tu tinh - xoa de khong lech du lieu.
+          ...(costPriceChanged && workspaceCurrency === 'USD' ? { costPriceVnd: null } : {}),
+          markupPercent: calculateMarkupFromCostPrice(costPrice, price),
+        };
+      })
+    );
+  }
+
+  /** Tinh nang "Chu ky" (migration 189) - doi Tra thang/Tra nam cho hang muc
+   * CO SAN ca 2 gia da snapshot tu danh muc (catalogMonthlyPriceVnd/
+   * catalogAnnualCommitMonthlyPriceVnd, dat o catalogItemToQuoteItem() luc
+   * them hang). CHI doi dung 1 trong 2 muc gia DA CO SAN - khong phai sua gia
+   * tuy y, nen backend (quote.py _is_billing_cycle_price_toggle) cho phep ca
+   * Presale doi o dong DA LUU, khong can quyen sua gia ban nhu cac o khac. */
+  function handleBillingCycleChange(index: number, cycle: 'monthly' | 'annual') {
+    setItemsDraft(prev =>
+      prev.map((row, i) => {
+        if (i !== index) return row;
+        const vnd = cycle === 'annual' ? row.catalogAnnualCommitMonthlyPriceVnd : row.catalogMonthlyPriceVnd;
+        if (vnd == null) return row;
+        const price = toQuoteMoney(vnd, workspaceFx) ?? 0;
+        return {
+          ...row,
+          billingCycle: cycle,
+          billingTermMonths: cycle === 'annual' ? 12 : 1,
+          unitPrice: price,
+          discountAmount: undefined,
+          ...(workspaceCurrency === 'USD' ? { unitPriceVnd: vnd } : {}),
+          markupPercent: calculateMarkupFromCostPrice(row.costPrice ?? null, price),
+        };
       })
     );
   }
@@ -1899,14 +2584,14 @@ export function QuoteWorkspaceModal({
       const currentComponents = bundleSnapshotComponents(row);
       if (currentComponents.length === 0) return row;
       const nextComponents = currentComponents.map(component => (targetIds.has(component.componentId) ? patcher(component) : component));
-      return recalculateBundleParent(row, nextComponents);
+      return recalculateBundleParent(row, nextComponents, undefined, undefined, workspaceFx);
     });
     setItemsDraft(nextItems);
-    if (quote) void persistQuote({ items: nextItems }, { silent: true });
   }
 
   function setBundleComponentCost(parentIndex: number, componentIds: string[], value: number | null) {
-    const cost = toSafeNonNegative(value);
+    // Hang muc con cua Combo hien thi theo tien te quote, nhung snapshot goc luu VND.
+    const cost = fromQuoteMoney(toSafeNonNegative(value), workspaceFx);
     updateBundleComponents(parentIndex, componentIds, component => {
       const price = componentCustomerPrice(component);
       return {
@@ -1918,7 +2603,7 @@ export function QuoteWorkspaceModal({
   }
 
   function setBundleComponentPrice(parentIndex: number, componentIds: string[], value: number | null) {
-    const price = toSafeNonNegative(value) ?? 0;
+    const price = fromQuoteMoney(toSafeNonNegative(value), workspaceFx) ?? 0;
     updateBundleComponents(parentIndex, componentIds, component => {
       const cost = componentCostPrice(component);
       return {
@@ -1947,25 +2632,78 @@ export function QuoteWorkspaceModal({
   function toggleBundleAutoPricing(parentIndex: number, auto: boolean) {
     const nextItems = itemsDraft.map((row, i) => {
       if (i !== parentIndex) return row;
-      return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row));
+      return recalculateBundleParent(row, bundleSnapshotComponents(row), auto ? 'auto' : 'fixed', bundleSnapshotTargetGm(row), workspaceFx);
     });
     setItemsDraft(nextItems);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
   }
 
+  /** "Ẩn/Hiện GIÁ thành phần con trên báo giá khách" (2026-10-14) - CHI patch
+   * bundleSnapshot, KHONG goi recalculateBundleParent - thuan hien thi, khong
+   * dung gi den gia von/gia ban/chiet khau/margin cua Combo. Ten thanh phan
+   * con LUON hien voi khach (khong con gate), field nay chi quyet dinh co
+   * hien GIA rieng tung thanh phan hay khong. */
+  function toggleBundleShowComponentsOnQuote(parentIndex: number, show: boolean) {
+    const nextItems = itemsDraft.map((row, i) => {
+      if (i !== parentIndex) return row;
+      return {
+        ...row,
+        bundleSnapshot: makeBundleSnapshot(row, bundleSnapshotComponents(row), { showComponentsOnQuote: show }),
+      };
+    });
+    setItemsDraft(nextItems);
+    if (quote) void persistQuote({ items: nextItems }, { silent: true });
+  }
+
+  /** Yeu cau "xoá thành phần con trong Combo PHẢI hỏi lại 2 che do gia"
+   * (2026-10-13): truoc day xoa xong tu dong giu NGUYEN che do dang co san
+   * cua Combo (bundleSnapshotPricingMode), khong cho Sale chon lai tai thoi
+   * diem xoa NAY. Gio CHI mo modal xac nhan (xem pendingBundleRemoval +
+   * executeBundleRemoval ben duoi) - KHONG xoa ngay, KHONG doi gi neu bam
+   * Huy. Dung chung cho ca xoa 1 (removeBundleComponent) lan xoa nhieu
+   * (removeSelectedBundleComponents, tu checkbox). */
   function removeBundleComponent(parentIndex: number, child: QuoteItem) {
-    if (child.__bundleRequired) return;
     const componentIds = child.__bundleComponentIds || [];
     if (componentIds.length === 0) return;
-    const label = child.serviceDescription || 'thành phần';
-    if (typeof window !== 'undefined' && !window.confirm(`Bỏ ${label} khỏi gói Combo này?`)) return;
+    setPendingBundleRemoval({ parentIndex, componentIds, label: child.serviceDescription || 'thành phần' });
+  }
+
+  /** Ban xoa HANG LOAT cua removeBundleComponent() o tren - mo CUNG 1 modal
+   * xac nhan, chi khac nhan/label hien thi. */
+  function removeSelectedBundleComponents(parentIndex: number, componentIds: string[]) {
+    if (componentIds.length === 0) return;
+    setPendingBundleRemoval({ parentIndex, componentIds, label: `${componentIds.length} thành phần đã chọn` });
+  }
+
+  /** Thuc thi xoa thanh phan Combo SAU KHI Sale da chon 1 trong 2 che do o
+   * modal xac nhan (xem render <ConfirmModal> cho pendingBundleRemoval):
+   * - 'auto' ("Gói tuỳ chỉnh"): tinh LAI gia ban combo theo cong thuc
+   *   cost/(1-targetGM%) tu cac thanh phan CON LAI - xem recalculateBundleParent.
+   * - 'fixed' ("Giữ giá gói cố định"): GIU NGUYEN gia ban dang co, chi tinh
+   *   lai gia von/loi nhuan theo thanh phan con lai.
+   * Ca 2 che do deu CUNG 1 cong thuc da co san (recalculateBundleParent,
+   * dung chung voi nut "Tu tinh theo GM"/"Giu gia co dinh" o dau Combo) -
+   * danh dau lai bundleSnapshot.pricingMode tuong ung, badge UI tu doi theo
+   * (khong can sua rieng). Luu/mo lai bao gia van giu dung che do vi
+   * pricingMode nam TRONG bundleSnapshot, duoc luu cung quote_items.bundle_snapshot. */
+  function executeBundleRemoval(mode: 'auto' | 'fixed') {
+    if (!pendingBundleRemoval) return;
+    const { parentIndex, componentIds } = pendingBundleRemoval;
     const targetIds = new Set(componentIds);
     const nextItems = itemsDraft.map((row, i) => {
       if (i !== parentIndex) return row;
       const nextComponents = bundleSnapshotComponents(row).filter(component => !targetIds.has(component.componentId));
-      return recalculateBundleParent(row, nextComponents);
+      return recalculateBundleParent(row, nextComponents, mode, bundleSnapshotTargetGm(row), workspaceFx);
     });
     setItemsDraft(nextItems);
+    setSelectedBundleChildKeys(prev => {
+      const next = new Set(prev);
+      for (const key of next) {
+        if (key.startsWith(`${parentIndex}__`)) next.delete(key);
+      }
+      return next;
+    });
+    setPendingBundleRemoval(null);
     if (quote) void persistQuote({ items: nextItems }, { silent: true });
   }
 
@@ -2031,7 +2769,7 @@ export function QuoteWorkspaceModal({
       // khong the suy unitPrice tu markup neu khong co cost).
       if (row.costPrice == null) return row;
       const markup = source.markupPercent ?? 0;
-      return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)) };
+      return { ...row, markupPercent: markup, unitPrice: Math.max(0, row.costPrice * (1 + markup / 100)), discountAmount: undefined };
     });
     setItemsDraft(next);
     if (quote) void persistQuote({ items: next }, { silent: true });
@@ -2126,8 +2864,13 @@ export function QuoteWorkspaceModal({
       quantity: row.quantity,
       unitPrice: row.unitPrice,
       discountPercent: row.discountPercent ?? 0,
-      vatRate: row.vatRate ?? 10,
+      discountAmount: row.discountAmount,
+      discountType: row.discountType,
+      vatRate: row.vatRate ?? 0,
       costPrice: row.costPrice ?? null,
+      // Goc VND (migration 169) - chi co y nghia o bao gia USD; gui kem de doi lai VND khong troi do.
+      costPriceVnd: row.costPriceVnd ?? null,
+      unitPriceVnd: row.unitPriceVnd,
       markupPercent: row.markupPercent != null && isValidMarkupPercent(row.markupPercent) ? row.markupPercent : null,
       costNotApplicable: row.costNotApplicable ?? false,
       catalogItemId: row.catalogItemId,
@@ -2145,6 +2888,16 @@ export function QuoteWorkspaceModal({
       priceBookItemId: row.priceBookItemId,
       priceBookVersionId: row.priceBookVersionId,
       priceBookSnapshot: row.priceBookSnapshot,
+      // Chu ky (migration 189) - CUNG LOI y het bug priceBookItemId o tren:
+      // toItemInput() liet ke tung field mot, quen 4 field nay se lam MOI
+      // lan doi Chu ky (Trả tháng/Trả năm) bi ROI RA khi Luu/Bàn giao (xac
+      // nhan thuc te qua network payload: billingCycle doi dung tren UI/
+      // unitPrice tinh dung, nhung gui len BE billing_cycle=null) - DB luu
+      // NULL, mat het lua chon Chu ky ngay sau lan Luu dau tien.
+      billingCycle: row.billingCycle,
+      billingTermMonths: row.billingTermMonths,
+      catalogMonthlyPriceVnd: row.catalogMonthlyPriceVnd,
+      catalogAnnualCommitMonthlyPriceVnd: row.catalogAnnualCommitMonthlyPriceVnd,
       // De quy - hang muc thuoc 1 nhom (Section) duoc gui long trong
       // `children` cua dong section do, dung DINH DANG API cu da co san
       // (xem buildItemTree() gop itemsDraft PHANG thanh cay truoc khi goi
@@ -2169,7 +2922,7 @@ export function QuoteWorkspaceModal({
     skipNextAutoSaveRef.current = true;
   }
 
-  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null; quoteTypeCodes?: string[] }, opts?: { silent?: boolean }) {
+  async function persistQuote(overrides: { data?: Quote['data']; items?: QuoteItem[]; overallDiscountPercent?: number | null; quoteTypeCodes?: string[]; currency?: QuoteCurrency; exchangeRate?: number | null }, opts?: { silent?: boolean; force?: boolean }) {
     if (!quote) return;
     // BUG THAT DA GAP (fix 2026-09-22, xem commit e38f1635 "stabilize pricing
     // draft behavior" 2026-09-20): 1 dong `if (opts?.silent) return;` bi
@@ -2190,7 +2943,7 @@ export function QuoteWorkspaceModal({
     // de bao truoc "sap dong, dung luu autosave nua" - CHI chan cuoc goi
     // SILENT (autosave ngam), KHONG anh huong nut "Lưu thay đổi" chinh (luon
     // goi khong co silent, van luu binh thuong khi nguoi dung chu dong bam).
-    if (opts?.silent && skipNextAutoSaveRef.current) return;
+    if (opts?.silent && !opts.force && skipNextAutoSaveRef.current) return;
     // silent=true: dung cho auto-save NGAM khi go/blur tung o (mo ta/SL/gia
     // von/markup...) - KHONG dung chung co `busy`/`activeAction` voi cac nut
     // hanh dong chinh (Bàn giao/Gửi duyệt...) nua. BUG THAT DA GAP: truoc day
@@ -2208,11 +2961,36 @@ export function QuoteWorkspaceModal({
     try {
       const nextItems = overrides.items ?? itemsDraft;
       const contentRevision = quoteContentRevisionRef.current;
+      const baseData = overrides.data ?? quote.data;
+      const nextItemDiscountTypes = {
+        ...(quote.data?.itemDiscountTypes || {}),
+        ...(baseData?.itemDiscountTypes || {}),
+        ...nextItems.reduce<Record<string, 'percent' | 'amount'>>((acc, item, idx) => {
+          const key = item.id || `row_${idx}`;
+          if (item.discountType) {
+            acc[key] = item.discountType;
+          }
+          return acc;
+        }, {}),
+      };
+      const mergedData = {
+        ...baseData,
+        overallDiscountType: overallDiscountInputMode,
+        overallDiscountAmount:
+          overallDiscountInputMode === 'amount'
+            ? (typeof baseData?.overallDiscountAmount === 'number'
+                ? baseData.overallDiscountAmount
+                : (effectiveOverallDiscountAmount ?? liveCommercialSummary.overallDiscountAmount))
+            : null,
+        itemDiscountTypes: nextItemDiscountTypes,
+      };
       const updated = await seedingQuoteRepository.updateQuote(quote.id, {
-        data: overrides.data ?? quote.data,
+        data: mergedData,
         items: buildItemsPayload(nextItems),
         overallDiscountPercent: 'overallDiscountPercent' in overrides ? overrides.overallDiscountPercent : (quote.overallDiscountPercent ?? null),
         ...('quoteTypeCodes' in overrides ? { quoteTypeCodes: overrides.quoteTypeCodes } : {}),
+        // Doi tien te (da kem toan bo items quy doi) - CHI gui khi nguoi dung doi tien te.
+        ...(overrides.currency ? { currency: overrides.currency, exchangeRate: overrides.exchangeRate ?? null } : {}),
       });
       setQuote(current => current?.id === updated.id && contentRevision !== quoteContentRevisionRef.current
         ? { ...updated, data: { ...updated.data, paymentPlan: current.data.paymentPlan, customBlocks: current.data.customBlocks } }
@@ -2224,6 +3002,7 @@ export function QuoteWorkspaceModal({
       persistedOverallDiscountRef.current = updated.overallDiscountPercent ?? null;
       persistedDraftSnapshotRef.current = makeWorkspaceSnapshot(savedItems, updated.data, updated.overallDiscountPercent ?? null);
       await onChanged();
+      if (!opts?.silent) showToast(true, 'Đã lưu thành công.');
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không lưu được thay đổi.');
     } finally {
@@ -2238,7 +3017,7 @@ export function QuoteWorkspaceModal({
     clearRequiredError('items');
     setItemsDraft(prev => [
       ...prev,
-      { description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0, costPrice: null, markupPercent: null, parentItemId: trailingParentItemId(prev) },
+      { description: '', quantity: 1, unitPrice: 0, vatRate: 0, discountPercent: 0, costPrice: null, markupPercent: null, parentItemId: trailingParentItemId(prev) },
     ]);
   }
 
@@ -2265,7 +3044,7 @@ export function QuoteWorkspaceModal({
       const sourceRow = prev[index];
       if (!sourceRow) return prev;
       const newRow: QuoteItem = {
-        description: '', quantity: 1, unitPrice: 0, vatRate: 10, discountPercent: 0,
+        description: '', quantity: 1, unitPrice: 0, vatRate: 0, discountPercent: 0,
         costPrice: null, markupPercent: null, parentItemId: sourceRow.parentItemId,
       };
       return [...prev.slice(0, index + 1), newRow, ...prev.slice(index + 1)];
@@ -2276,7 +3055,14 @@ export function QuoteWorkspaceModal({
     setItemsDraft(prev => {
       const source = prev[index];
       if (!source) return prev;
-      const clone: QuoteItem = { ...deepClone(source), id: undefined };
+      const clone: QuoteItem = {
+        ...deepClone(source),
+        id: undefined,
+        costTotal: undefined,
+        totalAmount: undefined,
+        amountAfterDiscount: undefined,
+        vatAmount: undefined,
+      };
       const next = [...prev.slice(0, index + 1), clone, ...prev.slice(index + 1)];
       if (quote) void persistQuote({ items: next }, { silent: true });
       return next;
@@ -2434,10 +3220,74 @@ export function QuoteWorkspaceModal({
       showOnQuote: component.showOnQuote,
       sortOrder: component.sortOrder,
     }));
-    const defaultUnitPrice = resolveCatalogCustomerPrice(item);
-    const defaultCostPrice = item.itemType === 'bundle' ? calculateBundleComponentCost(bundleSnapshot) : (item.defaultCostPriceVnd ?? null);
+    // Gia danh muc luon VND goc; quote USD: quy doi theo ty gia da dong bang cua quote
+    // (khong sua danh muc), giu goc VND o unitPriceVnd/costPriceVnd de doi lai khong troi.
+    const defaultUnitPriceVnd = resolveCatalogCustomerPrice(item);
+    // "Chuan hoa gia von Combo" (2026-10-14) - Combo tu dong dung combo_target
+    // (item.defaultCostPriceVnd CUA CHINH Combo, o "Giá vốn target" luc tao/sua
+    // Combo trong Thu vien San pham) NEU catalog DA khai bao; chua khai bao (NULL,
+    // vd 3 goi Markee Chat hien tai) thi giu nguyen rollup (calculateBundleComponentCost).
+    // Khong co toggle nao cho Sale chon - hoan toan tu dong theo du lieu catalog.
+    const bundleCostSource: 'target' | 'rollup' = item.itemType === 'bundle' && item.defaultCostPriceVnd != null ? 'target' : 'rollup';
+    let defaultCostPriceVnd = item.itemType === 'bundle'
+      ? (bundleCostSource === 'target' ? item.defaultCostPriceVnd : calculateBundleComponentCost(bundleSnapshot))
+      : (item.defaultCostPriceVnd ?? null);
+    // "VAT cộng luôn vào Giá vốn hiển thị" (2026-10-13) - item.defaultCostPriceVnd
+    // la gia von THUAN (truoc VAT, xem migration 191); nhan them VAT dau vao
+    // RIENG (defaultCostVatRate, KHAC defaultVatRate la VAT dau ra ap cho Gia
+    // khach) NGAY luc them vao bao gia - tu do Gia von/Cost tong/Markup/Margin
+    // cua dong bao gia nay deu tinh tren gia von DA GOM VAT. Combo khong ap
+    // (calculateBundleComponentCost tinh tu tung thanh phan rieng, ngoai pham
+    // vi dot nay).
+    if (item.itemType !== 'bundle' && defaultCostPriceVnd != null && item.defaultCostVatRate) {
+      defaultCostPriceVnd = defaultCostPriceVnd * (1 + item.defaultCostVatRate / 100);
+    }
+    // Bug thuc te (2026-10-11, mentor bao cao): san pham le chi cau hinh san Gia khach
+    // + Markup mac dinh (khong luu san Gia von) thi luc "Chon tu danh muc" hang muc bi
+    // them vao voi Gia von RONG ("Bat buoc nhap"), bat Sale tu nham tinh Gia khach /
+    // (1+Markup%) roi dien tay - cung cong thuc he thong DA tu lam khi Sale go Gia khach
+    // tay o dong trong (handleUnitPriceChange). Ap dung NGAY luc them tu danh muc, dung
+    // chung item.defaultMarkupPercent (da duoc backend tra san, xem service_catalog.py),
+    // khong doi hanh vi cac san pham DA co san Gia von (item.defaultCostPriceVnd != null).
+    if (
+      item.itemType !== 'bundle' &&
+      defaultCostPriceVnd == null &&
+      item.defaultMarkupPercent != null &&
+      item.defaultMarkupPercent > -100 &&
+      defaultUnitPriceVnd != null &&
+      defaultUnitPriceVnd > 0
+    ) {
+      defaultCostPriceVnd = defaultUnitPriceVnd / (1 + item.defaultMarkupPercent / 100);
+    }
+    const defaultUnitPrice = toQuoteMoney(defaultUnitPriceVnd, workspaceFx) ?? 0;
+    const defaultCostPrice = toQuoteMoney(defaultCostPriceVnd, workspaceFx);
+    // Chu ky "tra thang/tra nam" (migration 189, mo rong cho Combo 2026-10-13)
+    // - ap dung cho MOI loai hang muc co du CA 2 gia trong danh muc (vd Markee
+    // Chat MCHAT-AGENT: Gia thang 39.000/Gia tra nam-thang 29.000), KE CA
+    // Combo (card "Giá gói" luc tao Combo da co san 2 o Gia thang/Gia tra
+    // nam-thang, chi truoc day bi loai tru o day). Dung CHUNG 1 co che voi
+    // san pham le - khong xay dung rieng cho Combo (yeu cau ro). Chon Chu ky
+    // MAC DINH khop voi gia resolveCatalogCustomerPrice() DA chon
+    // (firstPositiveNumber uu tien defaultCustomerPriceVnd truoc - Combo luon
+    // gui defaultCustomerPriceVnd=Gia thang luc tao, nen mac dinh tu nhien la
+    // 'monthly') - giu dung hanh vi/con so hien thi NHU CU luc moi them, chi
+    // mo khoa dropdown doi qua lai, khong tu doi gia mac dinh đang co. Rieng
+    // Combo dang o pricingMode==='auto' (Tu tinh theo GM%) se KHONG cho doi
+    // Chu ky o day (xem dieu kien render dropdown ben duoi) vi 2 co che xung
+    // dot nhau (gia tu tinh lai vs gia co dinh da snapshot).
+    const hasDualCatalogPrice =
+      typeof item.monthlyPriceVnd === 'number' && item.monthlyPriceVnd > 0 &&
+      typeof item.annualCommitMonthlyPriceVnd === 'number' && item.annualCommitMonthlyPriceVnd > 0;
+    const defaultBillingCycle: 'monthly' | 'annual' = defaultUnitPriceVnd === item.annualCommitMonthlyPriceVnd ? 'annual' : 'monthly';
     return {
-      description: item.quoteDescription || item.description || item.name,
+      ...(workspaceCurrency === 'USD'
+        ? { unitPriceVnd: defaultUnitPriceVnd, costPriceVnd: costViewAllowed ? defaultCostPriceVnd : null }
+        : {}),
+      // Bug thuc te (2026-10-10, xac nhan tu mentor): truoc day fallback ve item.name khi
+      // "Mo ta chi tiet" de trong luc tao san pham - Sale co y de trong (khong go gi) nhung
+      // cot Mo ta van bi dien trung ten san pham, tuong nham la da luu dung du lieu go. Chi lay
+      // dung mo ta that (quoteDescription uu tien, roi toi description), de trong neu ca 2 trong.
+      description: item.quoteDescription || item.description || '',
       serviceDescription: item.quoteDisplayName || (item.sku ? `${item.sku} - ${item.name}` : item.name),
       unit: item.unit || '',
       quantity: item.specQuantityPerUnit || 1,
@@ -2446,7 +3296,7 @@ export function QuoteWorkspaceModal({
       // CHUA duoc cau hinh bo gia moi, tranh Gia khach ve 0 vo ly.
       unitPrice: defaultUnitPrice,
       discountPercent: item.defaultDiscountPercent || 0,
-      vatRate: item.defaultVatRate ?? 10,
+      vatRate: item.defaultVatRate ?? 0,
       // Bo gia MAC DINH cua danh muc chung (migration 107,
       // service_catalog_item_pricing) - CHI la GIA TRI MAC DINH luc chon,
       // sua trong quote KHONG ghi nguoc ve danh muc (dung nguyen tac
@@ -2468,8 +3318,22 @@ export function QuoteWorkspaceModal({
         : calculateMarkupFromCostPrice(costViewAllowed ? defaultCostPrice : null, defaultUnitPrice) ?? item.defaultMarkupPercent ?? null,
       catalogItemId: item.id,
       bundleSnapshot: item.itemType === 'bundle'
-        ? { pricingMode: 'fixed', targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30, components: bundleSnapshot }
+        ? {
+            pricingMode: 'fixed',
+            targetGrossMarginPercent: item.targetGrossMarginPercent ?? 30,
+            components: bundleSnapshot,
+            costSource: bundleCostSource,
+            targetCostPerMonthVnd: bundleCostSource === 'target' ? item.defaultCostPriceVnd ?? null : null,
+          }
         : undefined,
+      ...(hasDualCatalogPrice
+        ? {
+            billingCycle: defaultBillingCycle,
+            billingTermMonths: defaultBillingCycle === 'annual' ? 12 : 1,
+            catalogMonthlyPriceVnd: item.monthlyPriceVnd,
+            catalogAnnualCommitMonthlyPriceVnd: item.annualCommitMonthlyPriceVnd,
+          }
+        : {}),
     };
   }
 
@@ -2497,10 +3361,16 @@ export function QuoteWorkspaceModal({
       serviceDescription: `${item.sku} - ${item.name}`,
       unit: item.unit || '',
       quantity: item.defaultQuantity || 1,
-      unitPrice: canEditPricingCells ? preview.unitPrice || 0 : 0,
+      unitPrice: canEditPricingCells ? toQuoteMoney(preview.unitPrice || 0, workspaceFx) ?? 0 : 0,
       discountPercent: 0,
-      vatRate: item.vatEuPercent ?? 10,
-      costPrice: canEditCostCells ? preview.costUnit ?? null : null,
+      vatRate: item.vatEuPercent ?? 0,
+      costPrice: canEditCostCells ? toQuoteMoney(preview.costUnit ?? null, workspaceFx) : null,
+      ...(workspaceCurrency === 'USD'
+        ? {
+            unitPriceVnd: canEditPricingCells ? preview.unitPrice || 0 : undefined,
+            costPriceVnd: canEditCostCells ? preview.costUnit ?? null : null,
+          }
+        : {}),
       // Cung bug/fix voi catalogItemToQuoteItem() o tren - markupPercent la
       // field PRICING (chi sua duoc o stage 'pricing'), khong phai canEditCostCells.
       markupPercent: canEditPricingCells ? item.defaultRatePercent ?? null : null,
@@ -2540,14 +3410,27 @@ export function QuoteWorkspaceModal({
   // extraToolbar neu muon).
   const draftCatalogIssuerCompanyId =
     quote?.issuerCompanyId ?? quoteForms.find(form => form.id === (draftFormId || defaultFormId))?.issuerCompanyId ?? null;
+  // "Đơn vị phát hành mặc định theo workspace" (feedback 2026-10-11, "zone/markee
+  // chưa có mặc định đúng tên workspace"): truoc day mac dinh CHI suy tu mau bao
+  // gia dang chon (draftCatalogIssuerCompanyId) - mau mac dinh toan he thong chi
+  // co 1 (vd "MARKEE..."), khien workspace khac (SecurityZone/Markee tu mau rieng
+  // chua gan) khong ra dung ten minh. Uu tien KHOP WORKSPACE HIEN TAI truoc (dung
+  // 1 dong active co instance == CRM_INSTANCE, mirror luat da test o backend
+  // contract.py:_issuer_of_quote() va CreateQuoteModal.tsx) - chi fallback ve
+  // draftCatalogIssuerCompanyId (theo mau) khi workspace khong co/co qua 1 dong
+  // khop (khong doan mu).
+  const instanceDefaultIssuerCompanyId = (() => {
+    const matches = issuerCompanies.filter(company => company.status === 'active' && company.instance === CRM_INSTANCE);
+    return matches.length === 1 ? matches[0].id : null;
+  })();
   // "Đơn vị phát hành" THAT SU se duoc dung (che do tao moi, !quote) - mac
-  // dinh la draftCatalogIssuerCompanyId (suy tu mau bao gia), Sale van doi
-  // duoc qua dropdown moi (draftIssuerCompanyIdOverride) ma khong mat mac
+  // dinh uu tien dung workspace hien tai, sau do moi toi mau bao gia, Sale van
+  // doi duoc qua dropdown moi (draftIssuerCompanyIdOverride) ma khong mat mac
   // dinh ban dau. Quote da ton tai (co quote) van giu nguyen issuerCompanyId
   // da luu, KHONG bi override nay anh huong.
   const effectiveIssuerCompanyId = quote
     ? quote.issuerCompanyId ?? null
-    : draftIssuerCompanyIdOverride || draftCatalogIssuerCompanyId;
+    : draftIssuerCompanyIdOverride || instanceDefaultIssuerCompanyId || draftCatalogIssuerCompanyId;
   // "Mặc định luôn hiện Markee" (feedback 2026-09-24): quote DA TON TAI ma
   // chua tung gan issuerCompanyId (tao truoc khi tinh nang nay co, hoac Presale
   // tao yeu cau chua dung toi Buoc thuong mai) - hien "MARKEE AI" (code 'MK',
@@ -2586,6 +3469,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
@@ -2698,6 +3585,10 @@ export function QuoteWorkspaceModal({
         context: 'quote_picker',
         quoteId: quote?.id,
         issuerCompanyId: draftCatalogIssuerCompanyId,
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN giu nguyen multi-workspace vi IS_STANDALONE_CRM = false.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
       });
       setCatalogTree(tree);
       setCatalogTreeQuoteId(quote?.id ?? null);
@@ -2724,6 +3615,37 @@ export function QuoteWorkspaceModal({
     void refreshCatalogTree();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemsDraft, catalogTree, catalogTreeQuoteId, quote?.id]);
+
+  // Sua / ngung kinh doanh / xoa san pham ngay trong popup chon san pham (nut o cot "Thao tac").
+  function handleCatalogEditItem(item: { id: string }) {
+    const full = catalogFlatItems.find(entry => entry.id === item.id);
+    if (!full) {
+      showToast(false, 'Không tìm thấy sản phẩm để sửa.');
+      return;
+    }
+    setQuickEditProduct(full);
+  }
+  async function handleCatalogToggleItemStatus(item: { id: string; name?: string; status?: string }) {
+    const next = item.status === 'inactive' ? 'active' : 'inactive';
+    await serviceCatalogRepository.update(item.id, { status: next });
+    await refreshCatalogTree();
+    showToast(true, next === 'inactive' ? `Đã ngừng kinh doanh "${item.name || 'sản phẩm'}".` : `Đã kích hoạt lại "${item.name || 'sản phẩm'}".`);
+  }
+  async function handleCatalogDeleteItem(item: { id: string; name?: string }) {
+    const label = item.name || 'sản phẩm này';
+    if (!window.confirm(`Xoá "${label}" khỏi Sản phẩm & dịch vụ?`)) return;
+    try {
+      const result = await serviceCatalogRepository.delete(item.id);
+      await refreshCatalogTree();
+      if (result?.deactivated) {
+        showToast(true, `"${label}" đang được báo giá khác tham chiếu nên không xoá hẳn được, hệ thống đã chuyển sang Ngừng kinh doanh.`);
+      } else {
+        showToast(true, `Đã xoá "${label}".`);
+      }
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không xoá được sản phẩm.');
+    }
+  }
 
   async function handleGroupCreated(created: ServiceCatalogItem) {
     await refreshCatalogTree();
@@ -2791,26 +3713,107 @@ export function QuoteWorkspaceModal({
         setQuickAddProductTarget(null);
         return;
       }
+      // Gia khach/gia von/markup/VAT cua san pham vua tao phai hien NGAY tren dong hang muc (truoc day chi gan catalogItemId nen
+      // phai xoa dong them lai moi thay gia). Giu nguyen mo ta/so luong Sale da go TREN BANG; nhung neu dong con
+      // trong mo ta (chua go gi) thi lay mo ta Sale vua nhap trong modal tao san pham (bug thuc te 2026-10-10: go
+      // "Mo ta chi tiet" trong modal + bam luu nhung dong bao gia van trong vi field nay bi loai khoi danh sach patch).
+      const priced = catalogItemToQuoteItem(hydrated);
       setItemsDraft(prev => {
-        const next = prev.map((row, i) => (i === linkIndex ? { ...row, catalogItemId: hydrated.id } : row));
+        const next = prev.map((row, i) => {
+          if (i !== linkIndex) return row;
+          return {
+            ...row,
+            catalogItemId: hydrated.id,
+            description: row.description?.trim() ? row.description : priced.description,
+            unit: row.unit || priced.unit,
+            vatRate: priced.vatRate,
+            discountPercent: row.discountPercent || priced.discountPercent,
+            // Dong con TRONG (gia khach/gia von = 0) thi luon lay gia san pham vua tao - giong luc them tu danh muc (khong phu thuoc
+            // quyen sua o; neu khong, Sale khong co quyen sua gia khach se thay 0 d / markup -100%). Dong da co gia thi chi ghi de khi duoc quyen sua.
+            ...((canEditPricingCells || !Number(row.unitPrice))
+              ? { unitPrice: priced.unitPrice, markupPercent: priced.markupPercent, ...(priced.unitPriceVnd !== undefined ? { unitPriceVnd: priced.unitPriceVnd } : {}) }
+              : {}),
+            ...((canEditCostCells || !Number(row.costPrice))
+              ? { costPrice: priced.costPrice, ...(priced.costPriceVnd !== undefined ? { costPriceVnd: priced.costPriceVnd } : {}) }
+              : {}),
+          };
+        });
         if (quote) void persistQuote({ items: next }, { silent: true });
         return next;
       });
-      showToast(true, `Đã thêm "${created.name}" vào Sản phẩm & dịch vụ và liên kết với hạng mục này.`);
+      showToast(true, `Đã thêm "${created.name}" vào Sản phẩm & dịch vụ và điền giá vào hạng mục này.`);
     } else {
       // 'newRow' - CHI tao san pham + tu tich chon trong Picker (van dang
       // mo), KHONG tu dong them vao bao gia (xem giai thich o khai bao
       // autoSelectCatalogItemId) - Sale tu bam "+ Thêm vào báo giá" khi da
       // san sang.
       setAutoSelectCatalogItemId(hydrated.id);
+      // Tao xong thi nhay vao dung nhom cua san pham moi (de thay no ngay trong danh sach).
+      setPickerGroupFilter(hydrated.groupName || 'Chưa phân nhóm');
       showToast(true, `Đã tạo "${created.name}" và tự chọn trong danh sách — bấm "+ Thêm vào báo giá" khi sẵn sàng.`);
     }
     setQuickAddProductTarget(null);
   }
 
+  async function requestCurrencyChange(target: QuoteCurrency) {
+    if (target === workspaceCurrency || !canSwitchQuoteCurrency) return;
+    // Chon USD: lay TY GIA HE THONG MOI NHAT (khong dung ban cache cu) de khong bat nhap tay.
+    let rate: number | null;
+    if (target === 'USD') {
+      const info = await fetchSystemUsdVndRateInfo(true);
+      rate = info?.rate ?? null;
+      setSystemRateInfo(info);
+      setSystemExchangeRate(rate);
+    } else {
+      rate = workspaceExchangeRate;
+    }
+    if (!hasPricedItems && (target === 'VND' || (rate != null && rate > 0))) {
+      void applyCurrencySwitch(target, target === 'USD' ? rate : null);
+      return;
+    }
+    setCurrencySwitch({ target, rateInput: target === 'USD' ? rate : null });
+  }
+
+  async function applyCurrencySwitch(target: QuoteCurrency, rate: number | null) {
+    const to: QuoteFx = { currency: target, rate: target === 'USD' ? rate : null };
+    if (target === 'USD' && !(to.rate && to.rate > 0)) {
+      window.alert('Vui lòng nhập tỷ giá USD → VND lớn hơn 0.');
+      return;
+    }
+    const nextItems = convertQuoteItemsCurrency(itemsDraft, workspaceFx, to);
+    if (!quote) {
+      setDraftCurrency(target);
+      setDraftExchangeRate(to.rate);
+      setItemsDraft(nextItems);
+      if (draftOverallDiscountAmount != null && draftOverallDiscountAmount > 0) {
+        const vndVal = fromQuoteMoney(draftOverallDiscountAmount, workspaceFx);
+        setDraftOverallDiscountAmount(toQuoteMoney(vndVal ?? draftOverallDiscountAmount, to));
+      }
+      return;
+    }
+    // Quote da ton tai: luu NGAY (currency + ty gia chot + hang muc da quy doi trong cung 1 request)
+    // de DB khong bao gio lech tien te voi gia tung dong.
+    setLastAppliedMarkupPct(null);
+    setLastAppliedMarginPct(null);
+    const convertedOverallAmount =
+      typeof quote.data?.overallDiscountAmount === 'number' && quote.data.overallDiscountAmount > 0
+        ? toQuoteMoney(fromQuoteMoney(quote.data.overallDiscountAmount, workspaceFx) ?? quote.data.overallDiscountAmount, to)
+        : quote.data?.overallDiscountAmount;
+    await persistQuote({
+      items: nextItems,
+      data: {
+        ...quote.data,
+        currency: target,
+        ...(convertedOverallAmount !== undefined ? { overallDiscountAmount: convertedOverallAmount } : {}),
+      },
+      currency: target,
+      exchangeRate: to.rate,
+    });
+  }
+
   function increaseExistingRowQty(existingIndex: number, addQuantity: number) {
     setItemsDraft(prev => {
-      const next = prev.map((row, index) => (index === existingIndex ? { ...row, quantity: (row.quantity || 0) + (addQuantity || 1) } : row));
+      const next = prev.map((row, index) => (index === existingIndex ? { ...row, quantity: (row.quantity || 0) + (addQuantity || 1), discountAmount: undefined } : row));
       if (quote) void persistQuote({ items: next }, { silent: true });
       return next;
     });
@@ -2858,7 +3861,7 @@ export function QuoteWorkspaceModal({
       quantity: item.quantity,
       unitPrice: 0,
       discountPercent: item.discountPercent ?? 0,
-      vatRate: item.vatRate ?? 10,
+      vatRate: item.vatRate ?? 0,
       costPrice: item.costPrice ?? null,
       markupPercent: null,
       catalogItemId: item.catalogItemId,
@@ -2889,7 +3892,7 @@ export function QuoteWorkspaceModal({
   function doApplyQuickMarkup(percent: number) {
     if (!isValidMarkupPercent(percent)) return;
     const next = itemsDraft.map(row =>
-      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: Math.max(0, row.costPrice * (1 + percent / 100)) } : row
+      row.costPrice != null ? { ...row, markupPercent: percent, unitPrice: roundForQuote(Math.max(0, row.costPrice * (1 + percent / 100))), discountAmount: undefined } : row
     );
     setItemsDraft(next);
     setLastAppliedMarkupPct(percent);
@@ -2906,9 +3909,9 @@ export function QuoteWorkspaceModal({
   function doApplyTargetMargin(marginPercent: number) {
     const next = itemsDraft.map(row => {
       if (row.costPrice == null) return row;
-      const unitPrice = customerPriceFromTargetGrossMargin(row.costPrice, marginPercent);
-      if (unitPrice == null) return row;
-      return { ...row, unitPrice, markupPercent: marginPercent };
+      const rawUnitPrice = customerPriceFromTargetGrossMargin(row.costPrice, marginPercent);
+      if (rawUnitPrice == null) return row;
+      return { ...row, unitPrice: roundForQuote(rawUnitPrice), markupPercent: marginPercent, discountAmount: undefined };
     });
     setItemsDraft(next);
     setLastAppliedMarginPct(marginPercent);
@@ -2925,6 +3928,14 @@ export function QuoteWorkspaceModal({
     const hasExisting = itemsDraft.some(row => row.costPrice != null && row.markupPercent != null);
     if (hasExisting) {
       setMarkupApplyConfirm({ percent });
+      return;
+    }
+    doApplyQuickMarkup(percent);
+  }
+
+  function applyCustomMarkup(percent: number) {
+    if (!isValidMarkupPercent(percent)) {
+      window.alert('Markup phải từ -100% trở lên.');
       return;
     }
     doApplyQuickMarkup(percent);
@@ -3104,6 +4115,26 @@ export function QuoteWorkspaceModal({
   const [accessEmailsText, setAccessEmailsText] = useState('');
   const [accessPhonesText, setAccessPhonesText] = useState('');
   const [accessSaving, setAccessSaving] = useState(false);
+  // Goi y Email/SDT cho picker ben duoi (xem AccessAllowListPicker) - lay tu
+  // CHINH quote nay (khach hang/nguoi lien he/Sale/Presale phu trach) nen chi
+  // fetch duoc SAU KHI quote da ton tai (co quote.id) - rong cho quote moi
+  // chua luu, khong chan Sale nhap tay.
+  const [accessSuggestions, setAccessSuggestions] = useState<QuoteAccessSuggestion[]>([]);
+  useEffect(() => {
+    if (!quote?.id) {
+      setAccessSuggestions([]);
+      return;
+    }
+    let alive = true;
+    seedingQuoteRepository.getAccessSuggestions(quote.id).then(list => {
+      if (alive) setAccessSuggestions(list);
+    }).catch(() => {
+      if (alive) setAccessSuggestions([]);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [quote?.id]);
   useEffect(() => {
     setEditSummary(requestSummaryText);
     setEditScope(scopeBlock?.content || '');
@@ -3275,6 +4306,8 @@ export function QuoteWorkspaceModal({
             id: string;
             customer_name?: string;
             company_name?: string;
+            short_name?: string | null;
+            customer_code?: string | null;
             phone?: string;
             email?: string;
             address?: string;
@@ -3290,6 +4323,8 @@ export function QuoteWorkspaceModal({
             label: `${row.customer_name || 'Khách hàng chưa tên'}${row.company_name ? ' · ' + row.company_name : ''}`,
             name: row.customer_name,
             companyName: row.company_name,
+            shortName: row.short_name || null,
+            customerCode: row.customer_code || null,
             phone: row.phone,
             email: row.email,
             address: row.address,
@@ -3395,7 +4430,7 @@ export function QuoteWorkspaceModal({
   // khong con Leader) - CHI dung de hien goi y trong card "Quy tắc phê
   // duyệt", sua that da chuyen het sang trang "Cài đặt báo giá" rieng.
   const canManageApprovalRules = user?.role === 'admin';
-  const businessCode = deal ? dealBusinessCode(deal) : null;
+  const opportunityDisplayName = deal ? [deal.customerName, deal.companyName].filter(Boolean).join(' · ') : '';
   const opportunityName = deal ? getServicePackageText(deal.servicePackage) || getPackageText(deal.package) : '';
   const stage = quote?.processingStage || 'request';
   const isDraft = quote ? quote.status === 'draft' : true;
@@ -3454,9 +4489,20 @@ export function QuoteWorkspaceModal({
   // stage nhu cu, tranh sua gia non khi chua qua xac nhan ky thuat.
   const isVersionedQuote = (quote?.versionNumber || 1) > 1;
   const costStageOk = true;
-  const pricingStageOk = stage === 'pricing' || isVersionedQuote;
+  // Admin "Yêu cầu chỉnh sửa" tra bao gia ve Buoc 1/2: phai sua duoc nhu binh thuong (khong khoa) - mo khoa
+  // giong Version moi (V2+), backend mirror cung dieu kien o _check_item_field_level_permission.
+  const isReturnedForChanges = Boolean(quote?.requestedChangesAt) && (stage === 'technical' || stage === 'pricing');
+  const pricingStageOk = stage === 'pricing' || isVersionedQuote || isReturnedForChanges;
   const canEditCostCells = canEdit && isDraft && !isLockedForReview && canEditQuoteCost(user, quote) && costStageOk;
   const canEditPricingCells = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote) && pricingStageOk;
+  // "chưa cho chỉnh giảm ở bước 2" (2026-10-13) - rieng cot "Giảm giá (%)" MO
+  // KHOA tu Buoc 2 (khong cho pricingStageOk), KHAC voi Giá khách/Markup/VAT
+  // (van khoa den dung Buoc 3 nhu truoc) - van giu nguyen dieu kien quyen +
+  // trang thai ban nhap (canEdit/isDraft/isLockedForReview/canEditQuotePricingFields),
+  // backend KHONG stage-gate truong nay (chi gate theo quyen, xem
+  // _check_item_field_level_permission/_PRICING_ITEM_FIELD_PAIRS) nen mo o FE
+  // la an toan, khong can doi gi o backend.
+  const canEditDiscountCell = canEdit && isDraft && !isLockedForReview && canEditQuotePricingFields(user, quote);
   // "Loai bao gia" (yeu cau rieng, sua lai 2026-09-24): truoc day chi khoa o
   // stage 'review' nen Presale VAN sua duoc luc con o Buoc 1 (bug nguoi dung
   // phat hien qua screenshot thuc te) - day la phan loai thuong mai giong
@@ -3469,7 +4515,7 @@ export function QuoteWorkspaceModal({
   // tro di, AN het khoi Presale luc con o Buoc 1 (request/technical) hoac
   // dang tao yeu cau (!quote). isVersionedQuote van cho hien (giong
   // pricingStageOk) vi tao V2+ la Sale lam lai tu dau, khong qua lai Buoc 1.
-  const beyondStep1 = Boolean(quote) && (stage !== 'request' && stage !== 'technical' || isVersionedQuote);
+  const beyondStep1 = Boolean(quote) && (stage !== 'request' && stage !== 'technical' || isVersionedQuote || isReturnedForChanges);
   // BUG THAT DA GAP: zonePickerItems truoc day khai bao O TREN (gan
   // catalogPickerItems, ~dong 1248) - nhung lai doc canEditCostCells (khai
   // bao O DUOI, dong nay) ngay trong THAN useMemo, chay NGAY LUC RENDER nen
@@ -3530,6 +4576,14 @@ export function QuoteWorkspaceModal({
   const costViewAllowed = quote ? quote.costViewAllowed !== false : true;
   const pricingViewAllowed = quote ? quote.pricingViewAllowed !== false : true;
   const profitabilityViewAllowed = quote ? quote.profitabilityViewAllowed !== false : true;
+  // Tinh nang "Chu ky" (migration 189) - cot chi hien KHI CO it nhat 1 hang
+  // muc hien tai ho tro ca 2 gia (duoc danh dau boi catalogMonthlyPriceVnd +
+  // catalogAnnualCommitMonthlyPriceVnd deu khac null luc them tu danh muc) -
+  // ap dung cho MOI nhom san pham, khong rieng VPS/Markee Chat nao. Xoa het
+  // hang muc co 2 gia thi cot tu an, dung yeu cau "cột tự ẩn".
+  const hasAnyBillingCycleItem = itemsDraft.some(
+    it => it.catalogMonthlyPriceVnd != null && it.catalogAnnualCommitMonthlyPriceVnd != null
+  );
 
   // Sau khi chon Co hoi CRM (che do tao moi), tu dien cac field nghiep vu tu
   // CHINH Deal that (khong bia noi dung) - CHI dien field dang TRONG, hoi xac
@@ -3538,7 +4592,6 @@ export function QuoteWorkspaceModal({
   // tuong nut khong hoat dong - dung phan hoi UI da xac nhan can sua).
   function handleSelectDeal(dealId: string) {
     if (dealId === CREATE_NEW_DEAL_OPTION) {
-      setDealCreateError('');
       setDealModalOpen(true);
       return;
     }
@@ -3613,6 +4666,7 @@ export function QuoteWorkspaceModal({
         quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
         customBlocks,
         paymentPlan: draftPaymentPlan,
+        ...(draftOverallDiscountAmount != null ? { overallDiscountAmount: draftOverallDiscountAmount } : {}),
         ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
         ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
         ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
@@ -3670,9 +4724,17 @@ export function QuoteWorkspaceModal({
       // (chi ap dung neu block 'payment_terms' con RONG - applyIssuerPaymentTermsSnapshot
       // tu tra ve som neu legacyBlocks o tren da dien san noi dung) - dung
       // LAI 2 helper co san (types.ts), KHONG viet lai logic snapshot rieng.
-      if (effectiveIssuerCompany) {
-        applyIssuerCompanySnapshot(createData, effectiveIssuerCompany);
-        applyIssuerPaymentTermsSnapshot(createData, effectiveIssuerCompany, issuerCompanies);
+      // Bug thuc te (2026-10-10, nghi van race condition): `issuerCompanies` fetch 1 lan
+      // luc mount (useEffect []) - neu Sale tao bao gia ngay khi vua mo form (truoc khi
+      // fetch xong), effectiveIssuerCompany tinh tu state con rong -> mat snapshot (dac
+      // biet logo, text field khac co the da duoc dien san tu defaultValue cua MAU nen
+      // "nhin van dung"). Fetch lai THAT TUOI o day thay vi tin tuong closure co the cu.
+      const freshIssuerCompanies = await seedingQuoteRepository.getIssuerCompanies().catch(() => issuerCompanies);
+      const freshEffectiveIssuerCompany =
+        freshIssuerCompanies.find(company => company.id === effectiveIssuerCompanyId) || effectiveIssuerCompany;
+      if (freshEffectiveIssuerCompany) {
+        applyIssuerCompanySnapshot(createData, freshEffectiveIssuerCompany);
+        applyIssuerPaymentTermsSnapshot(createData, freshEffectiveIssuerCompany, freshIssuerCompanies);
       }
       const created = await seedingQuoteRepository.createQuote({
         dealId: draftDealId,
@@ -3688,12 +4750,22 @@ export function QuoteWorkspaceModal({
         projectId: draftProjectId || null,
         slaDueAt: datetimeLocalValueToIso(draftSlaDueAt),
         quoteTypeCodes: draftQuoteTypeCodes,
-        data: createData,
+        data: { ...createData, currency: workspaceCurrency },
+        // Tien te cap quote + ty gia DONG BANG luc tao (USD) - VND khong gui ty gia.
+        currency: workspaceCurrency,
+        exchangeRate: workspaceCurrency === 'USD' ? workspaceExchangeRate : null,
         // Hang muc da nhap truoc khi quote that ton tai (che do tao moi) -
         // gui luon cung luc tao, KHONG bat nguoi dung phai luu roi moi duoc
         // nhap hang muc (yeu cau da xac nhan).
         items: buildItemsPayload(itemsDraft),
       });
+      createdQuoteIdRef.current = created.id;
+      if (draftOverallDiscountPercent != null && draftOverallDiscountPercent > 0) {
+        await seedingQuoteRepository.updateQuote(created.id, {
+          overallDiscountPercent: draftOverallDiscountPercent,
+          ...(draftOverallDiscountAmount != null ? { data: { ...created.data, overallDiscountAmount: draftOverallDiscountAmount } } : {}),
+        }).catch(() => undefined);
+      }
       // Hai vai tro nay la bat buoc tren form. Khong fallback ngam ve nguoi
       // dang dang nhap, vi nhu vay du lieu luu khac voi lua chon hien tren UI.
       const resolvedTechnicalOwnerId = draftTechnicalOwnerId;
@@ -3938,6 +5010,35 @@ export function QuoteWorkspaceModal({
     }
   }
 
+  async function updateQuoteProject(projectId: string) {
+    setBusy(true);
+    try {
+      await seedingQuoteRepository.updateQuote(quote!.id, { projectId: projectId || null });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không gán được dự án.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // "Sale vẫn chọn được mẫu báo giá chứ" (feedback 2026-09-24) - doi Mau bao
+  // gia THU CONG, doc lap voi auto-fill "an theo" Don vi phat hanh o
+  // updateQuoteIssuerCompany() - 2 duong deu cung goi updateQuote({quoteFormId})
+  // nen deu dong bo lai form_snapshot/form_schema_version o backend (xem
+  // update_quote(), supabase_quote_service.py), khong bi lech schema render.
+  async function updateQuoteFormId(quoteFormId: string) {
+    setBusy(true);
+    try {
+      await seedingQuoteRepository.updateQuote(quote!.id, { quoteFormId });
+      await reload();
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không đổi được mẫu báo giá.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // BUG THAT DA GAP (fix 2026-09-22): "Đơn vị phát hành" tren 1 quote DA TON
   // TAI truoc gio LUON bi khoa (dropdown disabled) - ke ca khi quote chua he
   // co issuer nao (tao TRUOC khi tinh nang nay ton tai, issuerCompanyId
@@ -3981,35 +5082,6 @@ export function QuoteWorkspaceModal({
     }
   }
 
-  async function updateQuoteProject(projectId: string) {
-    setBusy(true);
-    try {
-      await seedingQuoteRepository.updateQuote(quote!.id, { projectId: projectId || null });
-      await reload();
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Không gán được dự án.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // "Sale vẫn chọn được mẫu báo giá chứ" (feedback 2026-09-24) - doi Mau bao
-  // gia THU CONG, doc lap voi auto-fill "an theo" Don vi phat hanh o
-  // updateQuoteIssuerCompany() - 2 duong deu cung goi updateQuote({quoteFormId})
-  // nen deu dong bo lai form_snapshot/form_schema_version o backend (xem
-  // update_quote(), supabase_quote_service.py), khong bi lech schema render.
-  async function updateQuoteFormId(quoteFormId: string) {
-    setBusy(true);
-    try {
-      await seedingQuoteRepository.updateQuote(quote!.id, { quoteFormId });
-      await reload();
-    } catch (err) {
-      window.alert(err instanceof Error ? err.message : 'Không đổi được mẫu báo giá.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function advanceStage(target: QuoteProcessingStage) {
     // Chi con dung cho 'review' (Hoan tat phan gia ban) - hop request-
     // >technical->pricing gio di qua handoffStep1ToPricing() rieng (nut
@@ -4017,6 +5089,8 @@ export function QuoteWorkspaceModal({
     setActiveAction('reviewPricing');
     setBusy(true);
     try {
+      // Cac o gia/gia von khong con tu luu ngam - luu ban dang sua truoc khi chuyen buoc.
+      if (workspaceDirty) await persistQuote({}, { silent: true, force: true });
       await seedingQuoteRepository.setQuoteProcessingStage(quote!.id, target);
       await reload();
     } catch (err) {
@@ -4031,14 +5105,33 @@ export function QuoteWorkspaceModal({
    * 2026-09-24: Dự án bat buoc (*) phai duoc chon TRUOC khi gui duyet, chua
    * chon phai chan lai + hien thong bao ro rang (toast + field error ngay
    * tai o Dự án), khong chi am tham disable nut. */
-  function handoffPricingToReview() {
+  function handoffPricingToReview(skipZeroPriceCheck = false) {
     if (!quote) return;
+    // Ten bao gia BAT BUOC (khong de mac dinh "Yêu cầu hỗ trợ báo giá") truoc khi hoan tat phan gia ban.
+    if (isQuoteTitleMissing(quote.data?.quoteTitle)) {
+      const errors: Record<string, string> = { quoteTitle: 'Vui lòng nhập tên báo giá trước khi hoàn tất phần giá bán.' };
+      if (!quote.projectId) errors.project = 'Vui lòng chọn dự án.';
+      setRequiredFieldErrors(current => ({ ...current, ...errors }));
+      focusFirstRequiredError(errors);
+      showToast(false, 'Cần nhập Tên báo giá (dấu * đỏ) trước khi hoàn tất phần giá bán.');
+      return;
+    }
     if (!quote.projectId) {
       const errors = { project: 'Vui lòng chọn dự án.' };
       setRequiredFieldErrors(current => ({ ...current, ...errors }));
       focusFirstRequiredError(errors);
       showToast(false, 'Vui lòng chọn dự án trước khi gửi duyệt.');
       return;
+    }
+    // Gia khach = 0 la hop le (tang kem/free) - khong chan, chi hoi xac nhan.
+    if (!skipZeroPriceCheck) {
+      const zeroNames = itemsDraft
+        .filter(row => row.rowType !== 'section' && (row.unitPrice ?? 0) === 0)
+        .map(row => (row.description || row.serviceDescription || 'Hạng mục chưa đặt tên').trim());
+      if (zeroNames.length > 0) {
+        setZeroPriceConfirm(zeroNames);
+        return;
+      }
     }
     void advanceStage('review');
   }
@@ -4155,6 +5248,7 @@ export function QuoteWorkspaceModal({
 
   async function approveNow() {
     if (busy) return; // chong double-click
+    if (workspaceDirty) await persistQuote({});
     setActiveAction('approve');
     setBusy(true);
     try {
@@ -4186,6 +5280,7 @@ export function QuoteWorkspaceModal({
       window.alert('Vui lòng nhập lý do phê duyệt ngoại lệ.');
       return;
     }
+    if (workspaceDirty) await persistQuote({});
     setActiveAction('approve');
     setBusy(true);
     try {
@@ -4335,6 +5430,7 @@ export function QuoteWorkspaceModal({
       setSendError('Vui lòng nhập email người nhận.');
       return;
     }
+    if (workspaceDirty) await persistQuote({});
     setSendBusy(true);
     setSendError(null);
     try {
@@ -4497,6 +5593,7 @@ export function QuoteWorkspaceModal({
       quoteTitle: draftTitle.trim() || 'Yêu cầu hỗ trợ báo giá',
       customBlocks,
       paymentPlan: draftPaymentPlan,
+      ...(draftOverallDiscountAmount != null ? { overallDiscountAmount: draftOverallDiscountAmount } : {}),
       ...(draftVisibleColumns ? { visibleColumns: draftVisibleColumns } : {}),
       ...(draftVisibleSummaryFields ? { visibleSummaryFields: draftVisibleSummaryFields } : {}),
       ...(draftVisibleCustomerFields ? { visibleCustomerFields: draftVisibleCustomerFields } : {}),
@@ -4520,19 +5617,37 @@ export function QuoteWorkspaceModal({
       applyIssuerPaymentTermsSnapshot(previewData, effectiveIssuerCompany, issuerCompanies);
     }
     return previewData;
-  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
+  }, [deal, draftCustomerId, customers, draftTitle, draftScope, draftPaymentTermsDays, draftExtraTerms, draftCustomBlocks, draftPaymentPlan, draftOverallDiscountAmount, draftVisibleColumns, draftVisibleSummaryFields, draftVisibleCustomerFields, effectiveIssuerCompany, issuerCompanies]);
   const columnVisibilitySchema = quote?.formSnapshot || draftSelectedForm?.schemaJson;
+  const hasPricedItems = itemsDraft.some(row => row.rowType !== 'section');
+  const isVillaLayout = (quote?.formSnapshot || draftSelectedForm?.schemaJson)?.layoutType === 'villa_solution_package';
+  /** Doi tien te chi cho bao gia DRAFT, Sale/Presale co du quyen cho cac cot bi doi (gia von + gia ban). */
+  const canSwitchQuoteCurrency =
+    !isVillaLayout &&
+    isDraft &&
+    !isLockedForReview &&
+    (!quote || (canEditCostCells && (canEditPricingCells || !itemsDraft.some(row => (row.unitPrice ?? 0) > 0))));
+
   // "Kế hoạch thanh toán" dang chim qua trong 1 accordion phang - badge trang
   // thai + tom tat khi dong de Sale khong bo qua (yeu cau rieng, xem
   // paymentPlanCardOpen ben duoi). KHONG doi logic tinh tien/villa/persistence.
   const paymentPlanRows = quote?.data.paymentPlan || draftPaymentPlan;
-  const paymentPlanFinalPayable = calculateOverallDiscountSummary(calculateQuoteTotals(itemsDraft), quote ? quote.overallDiscountPercent : draftOverallDiscountPercent).grandTotal;
+  const effectiveOverallDiscountAmount = quote
+    ? (typeof quote.data?.overallDiscountAmount === 'number' ? quote.data.overallDiscountAmount : null)
+    : (draftOverallDiscountAmount ?? null);
+  const paymentPlanFinalPayable = calculateOverallDiscountSummary(
+    calculateQuoteTotals(itemsDraft, 0, workspaceCurrency),
+    quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+    workspaceCurrency,
+    effectiveOverallDiscountAmount,
+    overallDiscountInputMode
+  ).grandTotal;
   const paymentPlanPct = paymentPlanPercent(paymentPlanRows);
   const paymentPlanIsEmpty = paymentPlanRows.length === 0;
   const paymentPlanIsComplete = !paymentPlanIsEmpty && paymentPlanPct === 100;
   const paymentPlanBadgeText = paymentPlanIsEmpty ? 'Chưa thiết lập' : paymentPlanIsComplete ? `${paymentPlanRows.length} đợt · 100%` : 'Cần đủ 100%';
   const paymentPlanBadgeClass = paymentPlanIsEmpty ? 'qc-badge-neutral' : paymentPlanIsComplete ? 'qc-badge-success' : 'qc-badge-warning';
-  const paymentPlanTotalAmount = paymentPlanRows.reduce((sum, row) => sum + paymentPlanAmount(paymentPlanFinalPayable, row.percent), 0);
+  const paymentPlanTotalAmount = paymentPlanAmounts(paymentPlanRows, paymentPlanFinalPayable, workspaceCurrency).reduce((sum, amount) => sum + amount, 0);
   const columnVisibilityDraft: QuoteDraft = {
     data: quote ? quote.data : draftPreviewData,
     items: itemsDraft,
@@ -4577,13 +5692,13 @@ export function QuoteWorkspaceModal({
   // bang Decimal sau khi luu that).
   const draftPreviewTotals = useMemo(() => {
     const rows = itemsDraft.filter(i => i.rowType !== 'section');
-    const subtotalAmount = rows.reduce((sum, i) => sum + (i.amountAfterDiscount ?? (i.quantity * (i.unitPrice ?? 0) || 0)), 0);
+    const subtotalAmount = rows.reduce((sum, i) => sum + (i.amountAfterDiscount ?? (calculateItemSubtotal(i, workspaceCurrency) - calculateItemDiscount(i, workspaceCurrency))), 0);
     const totalVatAmount = rows.reduce((sum, i) => {
-      const base = i.amountAfterDiscount ?? (i.quantity * (i.unitPrice ?? 0) || 0);
+      const base = i.amountAfterDiscount ?? (calculateItemSubtotal(i, workspaceCurrency) - calculateItemDiscount(i, workspaceCurrency));
       return sum + (i.vatAmount ?? (base * (i.vatRate || 0)) / 100);
     }, 0);
     return { subtotalAmount, totalVatAmount, totalAmount: subtotalAmount + totalVatAmount };
-  }, [itemsDraft]);
+  }, [itemsDraft, workspaceCurrency]);
 
   const liveCommercialSummary = useMemo(() => {
     const rows = itemsDraft.filter(i => i.rowType !== 'section');
@@ -4591,8 +5706,14 @@ export function QuoteWorkspaceModal({
     const numericCostValues = costValues.filter((value): value is number => value != null);
     const liveHasCostData = rows.length > 0 && numericCostValues.length > 0;
     const costTotal = numericCostValues.reduce((sum, value) => sum + value, 0);
-    const totals = calculateQuoteTotals(rows);
-    const discountSummary = calculateOverallDiscountSummary(totals, quote ? quote.overallDiscountPercent : draftOverallDiscountPercent);
+    const totals = calculateQuoteTotals(rows, 0, workspaceCurrency);
+    const discountSummary = calculateOverallDiscountSummary(
+      totals,
+      quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+      workspaceCurrency,
+      effectiveOverallDiscountAmount,
+      overallDiscountInputMode
+    );
     const netRevenue = discountSummary.subtotalAfterDiscount;
     const grossProfit = liveHasCostData ? netRevenue - costTotal : null;
     const grossMarginPercent = liveHasCostData && netRevenue > 0 && grossProfit != null ? (grossProfit / netRevenue) * 100 : null;
@@ -4607,8 +5728,18 @@ export function QuoteWorkspaceModal({
       grossMarginPercent,
       ratePercent,
       overallDiscountPercent: quote ? quote.overallDiscountPercent : draftOverallDiscountPercent,
+      // Phoi day du cac field cua discountSummary (yeu cau "Tổng hợp thương
+      // mại" ben phai cung tinh LIVE theo bang dang sua, khong doi phai bam
+      // Luu moi dong bo - truoc day khoi do doc thang quote.totalAmount/
+      // vatAmount, la gia tri da LUU lan gan nhat, lech han so voi bang dang
+      // sua neu chua Luu). Dung lai CHINH discountSummary da tinh o tren,
+      // khong tinh lai lan 2 cho ton kem/co nguy co lech cong thuc.
+      subtotalBeforeVat: discountSummary.subtotalBeforeVat,
+      overallDiscountAmount: discountSummary.overallDiscountAmount,
+      subtotalAfterDiscount: discountSummary.subtotalAfterDiscount,
+      vatAfterDiscount: discountSummary.vatAfterDiscount,
     };
-  }, [itemsDraft, quote, draftOverallDiscountPercent]);
+  }, [itemsDraft, quote, draftOverallDiscountPercent, effectiveOverallDiscountAmount, overallDiscountInputMode, workspaceCurrency]);
 
   const summaryHasCostData = liveCommercialSummary.hasCostData || hasCostData;
   const summaryCostTotal = liveCommercialSummary.hasCostData ? liveCommercialSummary.costTotal : (quote?.costTotal || 0);
@@ -4645,10 +5776,10 @@ export function QuoteWorkspaceModal({
     ? { subtotal: quote.subtotalAmount, vat: quote.vatAmount, total: quote.totalAmount }
     : itemsDraft.reduce(
         (acc, item) => {
-          const lineSubtotal = (item.quantity || 0) * (item.unitPrice || 0);
-          const discountAmount = lineSubtotal * ((item.discountPercent ?? 0) / 100);
-          const afterDiscount = lineSubtotal - discountAmount;
-          const vat = afterDiscount * ((item.vatRate ?? 10) / 100);
+          const lineSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+          const discountAmount = calculateItemDiscount(item, workspaceCurrency);
+          const afterDiscount = Math.max(0, lineSubtotal - discountAmount);
+          const vat = afterDiscount * ((item.vatRate ?? 0) / 100);
           return { subtotal: acc.subtotal + lineSubtotal, vat: acc.vat + vat, total: acc.total + afterDiscount + vat };
         },
         { subtotal: 0, vat: 0, total: 0 }
@@ -4707,10 +5838,9 @@ export function QuoteWorkspaceModal({
           hideClearOption
         />
       ) : null}
-      {!quote && draftDealId ? (
+      {!quote && draftDealId && deal?.estimatedBudget ? (
         <div className="qc-row-sub">
-          Mã cơ hội: {businessCode || 'Chưa có mã'}
-          {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+          Giá trị dự kiến: {formatVndMoney(deal.estimatedBudget)}
         </div>
       ) : null}
       {quote ? (
@@ -4722,7 +5852,7 @@ export function QuoteWorkspaceModal({
           <SearchableSelect
             value="current"
             onChange={() => {}}
-            options={[{ value: 'current', label: businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội') }]}
+            options={[{ value: 'current', label: opportunityDisplayName || (deal ? 'Cơ hội đã chọn' : 'Chưa gắn cơ hội') }]}
             disabled
           />
           <div className="qc-row-sub">
@@ -4730,7 +5860,7 @@ export function QuoteWorkspaceModal({
              * co hoi" that (Deal khong co field nay) - ghi nhan ro
              * nguon that de khong trinh bay nhu du lieu that khac. */}
             {opportunityName ? `Gói dịch vụ: ${opportunityName}` : deal ? 'Chưa có gói dịch vụ' : ''}
-            {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatMoney(deal.estimatedBudget)}` : ''}
+            {deal?.estimatedBudget ? ` · Giá trị dự kiến: ${formatVndMoney(deal.estimatedBudget)}` : ''}
           </div>
         </>
       ) : null}
@@ -4812,17 +5942,24 @@ export function QuoteWorkspaceModal({
                  * dung quyen canEditPricingCells nhu truoc (chi Sale duoc sua,
                  * dung luc Buoc 2 nhap gia). */}
                 {canEditPricingCells && isDraft ? (
-                  <input
-                    type="text"
-                    className="qc-workspace-header-quote-title qc-workspace-header-quote-title--input"
-                    placeholder="Vui lòng nhập tên báo giá"
-                    value={typeof quote.data?.quoteTitle === 'string' ? quote.data.quoteTitle : ''}
-                    onChange={event => {
-                      const value = event.target.value;
-                      setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
-                    }}
-                    onBlur={() => quote && void persistQuote({ data: quote.data }, { silent: true })}
-                  />
+                  <div className="qc-title-field" data-qc-required="quoteTitle">
+                    <label className="qc-title-field-label" htmlFor="qc-quote-title-input">
+                      Tên báo giá <span className="qc-required-mark">*</span>
+                    </label>
+                    <input
+                      id="qc-quote-title-input"
+                      type="text"
+                      className={`qc-workspace-header-quote-title qc-workspace-header-quote-title--input qc-title-input--prominent${requiredFieldErrors.quoteTitle ? ' is-error' : ''}`}
+                      placeholder="Nhập tên báo giá (bắt buộc)"
+                      value={isQuoteTitleMissing(quote.data?.quoteTitle) ? '' : String(quote.data?.quoteTitle)}
+                      onChange={event => {
+                        const value = event.target.value;
+                        if (value.trim()) clearRequiredError('quoteTitle');
+                        setQuote(prev => (prev ? { ...prev, data: { ...prev.data, quoteTitle: value } } : prev));
+                      }}
+                    />
+                    {requiredFieldErrors.quoteTitle ? <p className="qc-field-error">{requiredFieldErrors.quoteTitle}</p> : null}
+                  </div>
                 ) : (
                   <h2 className="qc-workspace-header-quote-title">
                     {typeof quote.data?.quoteTitle === 'string' && quote.data.quoteTitle ? quote.data.quoteTitle : 'Vui lòng nhập tên báo giá'}
@@ -4980,7 +6117,7 @@ export function QuoteWorkspaceModal({
               <SearchableSelect
                 value={draftCustomerId}
                 onChange={selectDraftCustomer}
-                options={customers.map(c => ({ value: c.id, label: c.label }))}
+                options={customers.map(c => customerPickerOption(c))}
                 actions={[
                   { key: 'create-customer', label: '+ Tạo khách hàng mới', onSelect: () => setCustomerDrawerOpen(true), type: 'add' },
                   { key: 'manage-customers', label: 'Quản lý khách hàng', onSelect: () => window.open('/all-platform/crm/customers', '_blank', 'noopener,noreferrer'), type: 'manage' },
@@ -5019,7 +6156,8 @@ export function QuoteWorkspaceModal({
            * làm 3 box ngắn cho đẹp"), thay vi xep chong day tung box nhu
            * truoc. */}
           {!beyondStep1 ? dealField : null}
-          {!beyondStep1 ? quoteFormField : null}
+          {/* Mẫu báo giá là phần thương mại của Sale: CHỈ hiện từ Bước 2 (beyondStep1),
+           * KHÔNG hiện ở Bước 1 kể cả sau khi lưu nháp (feedback 2026-10-04). */}
         </div>
         {/* Buoc 2+ (beyondStep1): dealField ("Cơ hội CRM") VAN la field
          * Presale da dien tu Buoc 1 (chi doi CHU hien thi, gia tri/quyen so
@@ -5393,7 +6531,7 @@ export function QuoteWorkspaceModal({
                         <div className="qc-summary-grid">
                           <div><span className="qc-workspace-info-label">Khách hàng</span><strong>{deal?.customerName || 'Chưa gắn khách hàng'}</strong></div>
                           <div><span className="qc-workspace-info-label">Dự án</span><strong>{project ? `${project.projectCode} · ${project.name}` : 'Chưa thuộc dự án'}</strong></div>
-                          <div><span className="qc-workspace-info-label">Cơ hội CRM</span><strong>{businessCode || (deal ? 'Cơ hội chưa có mã' : 'Chưa gắn cơ hội')}</strong></div>
+                          <div><span className="qc-workspace-info-label">Cơ hội CRM</span><strong>{opportunityDisplayName || (deal ? 'Cơ hội đã chọn' : 'Chưa gắn cơ hội')}</strong></div>
                           <div><span className="qc-workspace-info-label">Presale phụ trách</span><strong>{techName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">Sale phụ trách</span><strong>{saleName || 'Chưa gán'}</strong></div>
                           <div><span className="qc-workspace-info-label">SLA</span><strong>{quote.slaDueAt ? formatDate(quote.slaDueAt) : 'Chưa đặt SLA'}</strong></div>
@@ -5422,14 +6560,18 @@ export function QuoteWorkspaceModal({
                                    * xem duoc trong modal), doi sang mau do
                                    * chinh cua app (--color-primary) thay vi
                                    * xanh duong (feedback 2026-09-25). */}
-                                  <button
-                                    type="button"
-                                    className="qc-btn qc-inline-link-btn"
-                                    onClick={() => setContractPreviewId(c.id)}
-                                  >
-                                    <Eye className="qc-icon" />
-                                    Xem hợp đồng {c.contractNumber || c.title}
-                                  </button>
+                                  {/* "Xem hợp đồng" = mở LINK/FILE hợp đồng thật đã lưu trên Contract (contracts.file_url) ở tab mới; không có link thì báo rõ,
+                                   * không mở popup chi tiết hợp đồng (popup ContractDetailPage vẫn giữ trong code, chưa dùng cho CTA này). */}
+                                  {c.fileUrl ? (
+                                    <a className="qc-btn qc-inline-link-btn" href={c.fileUrl} target="_blank" rel="noopener noreferrer">
+                                      <Eye className="qc-icon" />
+                                      Xem hợp đồng {c.contractNumber || c.title}
+                                    </a>
+                                  ) : (
+                                    <span className="qc-btn qc-inline-link-btn" style={{ opacity: 0.7, cursor: 'default' }}>
+                                      {c.contractNumber || c.title} — Chưa có link hợp đồng
+                                    </span>
+                                  )}
                                 </li>
                               ))}
                             </ul>
@@ -5465,6 +6607,28 @@ export function QuoteWorkspaceModal({
                       : canEditCostCells && canEditPricingCells
                       ? 'Bạn sửa được cả Giá vốn và Giá bán'
                       : 'Chỉ xem — không có quyền sửa hạng mục này'}
+                  </span>
+                  <span className="qc-currency-switch" role="group" aria-label="Tiền tệ báo giá" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <span className="qc-row-sub">Tiền tệ:</span>
+                    {canSwitchQuoteCurrency ? (
+                      (['VND', 'USD'] as const).map(code => (
+                        <button
+                          key={code}
+                          type="button"
+                          className={`qc-mini-btn${workspaceCurrency === code ? ' qc-mini-btn-active' : ''}`}
+                          aria-pressed={workspaceCurrency === code}
+                          disabled={busy}
+                          onClick={() => requestCurrencyChange(code)}
+                        >
+                          {code}
+                        </button>
+                      ))
+                    ) : (
+                      <strong>{workspaceCurrency}</strong>
+                    )}
+                    {workspaceCurrency === 'USD' && workspaceExchangeRate ? (
+                      <span className="qc-row-sub">1 USD = {workspaceExchangeRate.toLocaleString('vi-VN')} VND (tỷ giá đã chốt cho báo giá này)</span>
+                    ) : null}
                   </span>
                 </div>
                 {/* "markup /margin cho 1 dòng với hạng mục di" - yeu cau rieng
@@ -5505,7 +6669,7 @@ export function QuoteWorkspaceModal({
                         className="qc-mini-btn"
                         disabled={busy || markupCustomInput.trim() === '' || !Number.isFinite(Number(markupCustomInput)) || !isValidMarkupPercent(Number(markupCustomInput))}
                         title="Áp Markup tuỳ chỉnh cho toàn bộ hạng mục có giá vốn hợp lệ"
-                        onClick={() => applyQuickMarkup(Number(markupCustomInput))}
+                        onClick={() => applyCustomMarkup(Number(markupCustomInput))}
                       >
                         Áp dụng
                       </button>
@@ -5643,18 +6807,21 @@ export function QuoteWorkspaceModal({
                    * .qc-workspace-item-name-cell (van "60px 1fr", 1fr tu
                    * dong nhan them do rong moi). */}
                   <colgroup>
-                    <col style={{ width: '330px' }} />
-                    <col style={{ width: '300px' }} />
-                    <col style={{ width: '92px' }} />
+                    <col style={{ width: '390px' }} />
+                    <col style={{ width: '260px' }} />
+                    <col style={{ width: '84px' }} />
                     <col style={{ width: '64px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '96px' }} />
+                    {hasAnyBillingCycleItem ? <col style={{ width: '112px' }} /> : null}
                     <col style={{ width: '104px' }} />
+                    <col style={{ width: '76px' }} />
+                    <col style={{ width: '70px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
-                    <col style={{ width: '88px' }} />
-                    {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '44px' }} /> : null}
+                    <col style={{ width: '84px' }} />
+                    {canEdit && isDraft && !isLockedForReview ? <col style={{ width: '36px' }} /> : null}
                   </colgroup>
                   <thead>
                     <tr>
@@ -5682,7 +6849,12 @@ export function QuoteWorkspaceModal({
                       <th className="qc-th-money qc-th-cost">Giá vốn/ĐV</th>
                       <th className="qc-th-money qc-th-cost">Cost tổng</th>
                       <th className="qc-th-money qc-th-markup">Markup</th>
-                      <th className="qc-th-money qc-th-markup">Giá khách/ĐV</th>
+                      {hasAnyBillingCycleItem ? (
+                        <th className="qc-th-money qc-th-billing-cycle" title="Trả theo tháng hay cam kết trả theo năm (ưu đãi) — chỉ áp dụng cho hạng mục có cấu hình cả 2 mức giá trong danh mục">Chu kỳ</th>
+                      ) : null}
+                      <th className="qc-th-money qc-th-markup" title="Mặc định là Giá khách/ĐV (nhân với SL). Bấm nút /ĐV ↔ Tổng ở từng dòng để đổi sang nhập Giá khách TỔNG cho cả dòng (vd trọn gói N tháng, không nhân SL) khi SL là số kỳ/tháng chứ không phải số lượng hàng hoá.">Giá khách</th>
+                      <th className="qc-th-money qc-th-discount" title="Giảm giá riêng cho dòng này (% hoặc số tiền), tính trước VAT - khác với 'Giảm giá toàn báo giá' áp sau cùng trên tổng.">Giảm giá</th>
+                      <th className="qc-th-money qc-th-vat" title="Thuế GTGT (%) của hạng mục — lấy theo sản phẩm khi thêm từ danh mục, để 0 nếu không có">VAT (%)</th>
                       <th className="qc-th-money qc-th-total">Thành tiền</th>
                       <th className="qc-th-money qc-th-margin-col">Margin</th>
                       {profitabilityViewAllowed ? (
@@ -5696,7 +6868,7 @@ export function QuoteWorkspaceModal({
                   <tbody>
                     {itemsDraft.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="qc-empty qc-workspace-items-empty-cell">
+                        <td colSpan={13} className="qc-empty qc-workspace-items-empty-cell">
                           {/* CHOT LAI (yeu cau moi nhat "Trả các nút thêm hạng
                            * mục xuống dưới bảng"): 3 nut Chọn từ danh mục/
                            * Thêm hạng mục/+ Mục cha da chuyen XUONG DUOI bang
@@ -5732,7 +6904,7 @@ export function QuoteWorkspaceModal({
                         // calculateItemTotal) de luon cung 1 co so voi tu so
                         // (calculateItemTotal/calculateSectionTotal), khong
                         // lech nhau du hang muc nao thay doi.
-                        const workspaceQuoteTotal = calculateQuoteTotals(itemsDraft).totalAmount;
+                        const workspaceQuoteTotal = calculateQuoteTotals(itemsDraft, 0, workspaceCurrency).totalAmount;
                         return itemsDraft.map((item, index) => {
                           if (item.rowType === 'section') {
                             sectionCounter += 1;
@@ -5742,7 +6914,7 @@ export function QuoteWorkspaceModal({
                             // de quy sau hon, dung chung 1 ham voi
                             // QuoteDocumentRenderer (xem calculateSectionTotal).
                             const sectionChildren = itemsDraft.filter(row => row.parentItemId === item.id);
-                            const sectionTotal = calculateSectionTotal(sectionChildren);
+                            const sectionTotal = calculateSectionTotal(sectionChildren, workspaceCurrency);
                             return (
                               <tr
                                 key={item.id || index}
@@ -5752,8 +6924,8 @@ export function QuoteWorkspaceModal({
                                 onDragOver={canDragRows ? event => event.preventDefault() : undefined}
                                 onDrop={canDragRows ? () => handleRowDrop(index, true) : undefined}
                               >
-                                {/* Ten data columns (them "Mô tả"), plus the separate action cell when editable. */}
-                                <td colSpan={8}>
+                                {/* Ten data columns (them "Mô tả" + "Chu kỳ" khi co), plus the separate action cell when editable. */}
+                                <td colSpan={hasAnyBillingCycleItem ? 11 : 10}>
                                   {canDragRows ? <span className="qc-workspace-drag-handle" title="Kéo để sắp xếp">⠿</span> : null}
                                   {/* Roman numeral (I/II/III...) dat TRUOC ten muc (ben trai) thay vi
                                    * sau nhu cu - o kich thuoc nho, badge "I" dat SAU chu de bi doc
@@ -5765,7 +6937,6 @@ export function QuoteWorkspaceModal({
                                       className="qc-cell-input qc-workspace-section-input"
                                       value={stripLeadingRomanPrefix(item.description || '', roman)}
                                       onChange={e => updateRow(index, { description: e.target.value })}
-                                      onBlur={() => void persistQuote({}, { silent: true })}
                                       placeholder="Tên mục cha"
                                     />
                                   ) : (
@@ -5804,13 +6975,15 @@ export function QuoteWorkspaceModal({
                         const displayNo = String(itemCounter).padStart(2, '0');
                         const unitPriceValue = item.unitPrice ?? 0;
                         const margin = item.costPrice != null && unitPriceValue > 0 ? ((unitPriceValue - item.costPrice) / unitPriceValue) * 100 : null;
-                        const costTotal = item.costPrice != null ? item.costPrice * item.quantity : null;
+                        const costTotal = resolveQuoteItemCostTotal(item);
                         const editableTechnicalCells = canEditCostCells;
                         const editableCells = canEditPricingCells;
-                        const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems);
+                        const bundleChildRows = bundleComponentsToWorkspaceRows(item, catalogFlatItems, workspaceFx);
                         const isBundleRow = bundleChildRows.length > 0;
                         const bundleMode = bundleSnapshotPricingMode(item);
                         const bundleTargetGm = bundleSnapshotTargetGm(item);
+                        const bundleCostSourceIsTarget = isBundleRow && bundleSnapshotCostSource(item) === 'target';
+                        const bundleShowComponentPrices = bundleSnapshotShowComponentsOnQuote(item);
                         const discountKey = discountRowKey(item, index);
                         const discountSelected = selectedDiscountRowKeys.has(discountKey);
                         const mainRow = (
@@ -5849,7 +7022,6 @@ export function QuoteWorkspaceModal({
                                       rows={2}
                                       value={item.serviceDescription || ''}
                                       onChange={e => updateRow(index, { serviceDescription: e.target.value })}
-                                      onBlur={() => void persistQuote({}, { silent: true })}
                                       placeholder="Tên hạng mục"
                                       title={[item.serviceDescription, item.description].filter(Boolean).join(' — ') || ''}
                                     />
@@ -5882,6 +7054,7 @@ export function QuoteWorkspaceModal({
                                    * vao chi hien thong bao huong dan tao
                                    * phien ban moi, KHONG mo form sua/KHONG
                                    * ghi de catalogItemId len version da khoa). */}
+                                  <span className="qc-workspace-item-inline-actions">
                                   {item.catalogItemId || item.priceBookItemId ? (
                                     <span
                                       className="qc-workspace-item-link-badge qc-workspace-item-link-badge--linked"
@@ -5963,6 +7136,8 @@ export function QuoteWorkspaceModal({
                                       </button>
                                     </span>
                                   ) : null}
+                                  </span>
+                                </span>
                                   {isBundleRow ? (
                                     <span className="qc-bundle-pricing-mode">
                                       <span className={`qc-bundle-pricing-chip qc-bundle-pricing-chip--${bundleMode}`}>
@@ -5978,12 +7153,48 @@ export function QuoteWorkspaceModal({
                                           {bundleMode === 'auto' ? 'Tắt tự tính' : 'Tự tính giá gói'}
                                         </button>
                                       ) : null}
+                                      {/* Nhan tinh (khong bam duoc) cho biet nguon gia von -
+                                       * khong co toggle nao o day, Sale khong doi duoc, hoan
+                                       * toan tu dong theo du lieu catalog (defaultCostPriceVnd
+                                       * cua chinh Combo). */}
+                                      {bundleCostSourceIsTarget ? (
+                                        <span className="qc-bundle-pricing-chip" title="Giá vốn Combo lấy theo giá vốn mục tiêu khai báo trong danh mục, không tính từ thành phần con">
+                                          Giá vốn: Combo
+                                        </span>
+                                      ) : null}
+                                      {/* Yeu cau 2026-10-14: toggle la de bat/tat GIA tung
+                                       * thanh phan, KHONG phai an/hien ban than thanh phan
+                                       * (ten thanh phan LUON hien voi khach). Mac dinh an
+                                       * gia ("khong giá" dung roi), co nut bam de Sale chu
+                                       * dong bat gia neu can cho Combo cu the. */}
+                                      <span className="qc-bundle-pricing-chip" title="Tên thành phần con luôn hiện với khách. Bật: hiện thêm giá riêng từng thành phần. Tắt (mặc định): chỉ hiện giá ở dòng gói.">
+                                        {bundleShowComponentPrices ? 'Khách thấy giá từng thành phần' : 'Khách thấy tên thành phần (không giá)'}
+                                      </span>
+                                      {canEdit && isDraft && !isLockedForReview && (editableTechnicalCells || editableCells) ? (
+                                        <button
+                                          type="button"
+                                          className="qc-bundle-pricing-toggle"
+                                          onClick={() => toggleBundleShowComponentsOnQuote(index, !bundleShowComponentPrices)}
+                                          title={bundleShowComponentPrices ? 'Ẩn giá riêng từng thành phần con (chỉ hiện giá ở dòng gói)' : 'Hiện giá riêng từng thành phần con trên báo giá khách'}
+                                        >
+                                          {bundleShowComponentPrices ? 'Ẩn giá thành phần' : 'Hiện giá thành phần'}
+                                        </button>
+                                      ) : null}
                                     </span>
                                   ) : null}
-                                  {(item.discountPercent ?? 0) > 0 ? (
-                                    <span className="qc-line-discount-chip">CK dòng {formatPercentTrim(item.discountPercent)}</span>
-                                  ) : null}
-                                </span>
+                                  {(() => {
+                                    const mode = resolveItemDiscountMode(item, workspaceCurrency);
+                                    if (mode === 'amount' && (item.discountAmount ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)}</span>;
+                                    }
+                                    if ((item.discountPercent ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatPercentTrim(item.discountPercent)}</span>;
+                                    }
+                                    if ((item.discountAmount ?? 0) > 0) {
+                                      return <span className="qc-line-discount-chip">Giảm {formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)}</span>;
+                                    }
+                                    return null;
+                                  })()}
                               </span>
                               </span>
                             </td>
@@ -6001,7 +7212,6 @@ export function QuoteWorkspaceModal({
                                 value={item.description || ''}
                                 disabled={!(editableTechnicalCells || editableCells)}
                                 onChange={e => updateRow(index, { description: e.target.value })}
-                                onBlur={() => void persistQuote({}, { silent: true })}
                                 placeholder={(editableTechnicalCells || editableCells) ? 'Mô tả / nội dung công việc...' : 'Chưa có mô tả.'}
                               />
                             </td>
@@ -6011,7 +7221,6 @@ export function QuoteWorkspaceModal({
                                   className="qc-cell-input"
                                   value={item.unit || ''}
                                   onChange={e => updateRow(index, { unit: e.target.value })}
-                                  onBlur={() => void persistQuote({}, { silent: true })}
                                   placeholder="Gói, Tháng..."
                                 />
                               ) : (
@@ -6020,7 +7229,7 @@ export function QuoteWorkspaceModal({
                             </td>
                             <td className="qc-cell-money qc-cell-qty" data-label="SL">
                               {editableTechnicalCells ? (
-                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0) })} onBlur={() => void persistQuote({}, { silent: true })} />
+                                <input type="number" className="qc-cell-input qc-cell-input-money" value={item.quantity} onChange={e => updateRow(index, { quantity: Math.max(0, Number(e.target.value) || 0), discountAmount: undefined, costTotal: undefined, totalAmount: undefined })} />
                               ) : item.quantity}
                             </td>
                             <td className={`qc-cell-money qc-cell-cost ${!item.costNotApplicable && item.costPrice == null ? 'qc-cell-cost-missing' : ''}`} data-label="Giá vốn/ĐV" title={!editableTechnicalCells && costViewAllowed ? 'Presale đã chốt — chỉ đọc' : undefined}>
@@ -6038,12 +7247,13 @@ export function QuoteWorkspaceModal({
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableTechnicalCells ? (
                                     <CurrencyInput
+                                      {...moneyInput}
                                       className="qc-cell-input qc-cell-input-money"
                                       value={item.costPrice ?? null}
                                       placeholder={item.costNotApplicable ? 'Không áp dụng' : 'Bắt buộc nhập'}
                                       disabled={item.costNotApplicable}
                                       onChange={value => handleCostPriceChange(index, value)}
-                                      onBlur={handleCostPriceBlur}
+
                                     />
                                   ) : (
                                     (item.costNotApplicable ? 'Không áp dụng' : item.costPrice != null ? formatMoney(item.costPrice) : 'Còn thiếu')
@@ -6061,23 +7271,148 @@ export function QuoteWorkspaceModal({
                                   {!pricingViewAllowed ? (
                                     <span className="qc-row-sub">Không có quyền xem</span>
                                   ) : editableCells ? (
-                                    <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={() => void persistQuote({}, { silent: true })} />
+                                    <input type="number" step="0.01" className="qc-cell-input qc-cell-input-money" value={item.markupPercent != null ? Number(item.markupPercent.toFixed(2)) : ''} placeholder="—" disabled={item.costPrice == null} onChange={e => handleMarkupChange(index, e.target.value)} onBlur={handlePricingBlur} />
                                   ) : formatPercentFixed2(item.markupPercent)}
                                 </span>
                                 {renderFillDownIcon(index, 'markupPercent')}
                               </span>
                             </td>
+                            {hasAnyBillingCycleItem ? (
+                              <td className="qc-cell-money qc-cell-billing-cycle" data-label="Chu kỳ">
+                                {item.catalogMonthlyPriceVnd != null && item.catalogAnnualCommitMonthlyPriceVnd != null ? (
+                                  // Combo dang "Tự tính theo GM%" (pricingMode='auto') thi KHONG
+                                  // cho doi Chu ky o day - 2 co che xung dot nhau (gia tu tinh lai
+                                  // theo cost/margin vs gia co dinh da snapshot theo Chu ky), xem
+                                  // giai thich o catalogItemToQuoteItem()/hasDualCatalogPrice.
+                                  (editableTechnicalCells || editableCells) && (!isBundleRow || bundleMode !== 'auto') ? (
+                                    <select
+                                      className="qc-cell-input"
+                                      value={item.billingCycle === 'annual' ? 'annual' : 'monthly'}
+                                      onChange={e => handleBillingCycleChange(index, e.target.value === 'annual' ? 'annual' : 'monthly')}
+                                    >
+                                      <option value="monthly">Trả tháng</option>
+                                      <option value="annual">Trả năm</option>
+                                    </select>
+                                  ) : (
+                                    <span title={isBundleRow && bundleMode === 'auto' ? 'Tắt "Tự tính theo GM%" để đổi Chu kỳ' : undefined}>
+                                      {item.billingCycle === 'annual' ? 'Trả năm' : 'Trả tháng'}
+                                    </span>
+                                  )
+                                ) : '—'}
+                              </td>
+                            ) : null}
                             <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                               {editableCells ? (
                                 <CurrencyInput
+                                  {...moneyInput}
                                   className="qc-cell-input qc-cell-input-money"
                                   value={item.unitPrice ?? null}
                                   onChange={value => handleUnitPriceChange(index, value)}
-                                  onBlur={() => void persistQuote({}, { silent: true })}
                                 />
                               ) : formatMoney(item.unitPrice ?? 0)}
                             </td>
-                            <td className="qc-cell-money" data-label="Thành tiền">{formatMoney(calculateItemTotal(item))}</td>
+                            {/* "cột Giảm giá phải hiện... để Sale chỉnh tiếp" (2026-10-13)
+                             * - truoc day discountPercent CHI co the sua qua cong cu bulk
+                             * "Giảm giá hạng mục" (ap roi quen, khong xem/sua lai TUNG dong
+                             * duoc) + 1 badge nho CHI-DOC duoi ten dong - them han 1 cot
+                             * rieng, sua truc tiep duoc tung dong, giong het pattern o
+                             * VAT (%) ben canh. */}
+                            <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá">
+                              {canEditDiscountCell ? (
+                                <div className="qc-cell-discount-wrapper" style={{ display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                  {resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? (
+                                    <CurrencyInput
+                                      {...moneyInput}
+                                      className="qc-cell-input qc-cell-input-money"
+                                      style={{ width: '82px', minWidth: '70px', padding: '2px 4px' }}
+                                      aria-label={`Giảm giá hạng mục ${index + 1}`}
+                                      value={item.discountAmount ?? 0}
+                                      placeholder="0"
+                                      onChange={rawAmount => {
+                                        const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                        const clamped = rawAmount == null || !Number.isFinite(rawAmount) || rawAmount <= 0 ? 0 : roundQuoteMoney(Math.min(rawAmount, rowSubtotal), workspaceCurrency);
+                                        const pct = rowSubtotal > 0 ? clampDiscountPercent((clamped / rowSubtotal) * 100) : 0;
+                                        updateRow(index, { discountType: 'amount', discountAmount: clamped, discountPercent: pct });
+                                      }}
+                                      onBlur={() => {
+                                        if (item.discountAmount != null) commitRowDiscountAmount(index, item.discountAmount);
+                                      }}
+                                    />
+                                  ) : (
+                                    <DiscountPercentInput
+                                      ariaLabel={`Giảm giá hạng mục ${index + 1}`}
+                                      value={item.discountPercent}
+                                      onLiveChange={discountPercent => {
+                                        const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                        const amt = roundQuoteMoney((rowSubtotal * clampDiscountPercent(discountPercent)) / 100, workspaceCurrency);
+                                        updateRow(index, { discountType: 'percent', discountPercent, discountAmount: amt });
+                                      }}
+                                      onCommit={discountPercent => commitRowDiscount(index, discountPercent)}
+                                    />
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="qc-price-mode-toggle"
+                                    style={{ fontSize: '10px', padding: '1px 3px', minWidth: '22px', height: '22px', lineHeight: '20px' }}
+                                    onClick={() => {
+                                      const currentMode = resolveItemDiscountMode(item, workspaceCurrency);
+                                      const nextMode = currentMode === 'amount' ? 'percent' : 'amount';
+                                      const rowSubtotal = calculateItemSubtotal(item, workspaceCurrency);
+                                      if (nextMode === 'amount') {
+                                        const amt = item.discountAmount ?? roundQuoteMoney((rowSubtotal * (item.discountPercent ?? 0)) / 100, workspaceCurrency);
+                                        const pct = rowSubtotal > 0 ? clampDiscountPercent((amt / rowSubtotal) * 100) : 0;
+                                        updateRow(index, { discountType: 'amount', discountAmount: amt, discountPercent: pct });
+                                        commitRowDiscountAmount(index, amt);
+                                      } else {
+                                        const pct = item.discountPercent ?? (rowSubtotal > 0 ? clampDiscountPercent(((item.discountAmount ?? 0) / rowSubtotal) * 100) : 0);
+                                        const amt = roundQuoteMoney((rowSubtotal * pct) / 100, workspaceCurrency);
+                                        updateRow(index, { discountType: 'percent', discountPercent: pct, discountAmount: amt });
+                                        commitRowDiscount(index, pct);
+                                      }
+                                    }}
+                                    title={resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? 'Đang giảm theo TIỀN — bấm để đổi sang %' : 'Đang giảm theo % — bấm để đổi sang TIỀN'}
+                                  >
+                                    {resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? workspaceCurrency : '%'}
+                                  </button>
+                                </div>
+                              ) : resolveItemDiscountMode(item, workspaceCurrency) === 'amount' ? (
+                                formatQuoteMoney(item.discountAmount ?? 0, workspaceCurrency)
+                              ) : (
+                                formatPercentFixed2(item.discountPercent ?? 0)
+                              )}
+                            </td>
+                            <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">
+                              {editableCells ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  step={0.5}
+                                  className="qc-cell-input qc-cell-input-money"
+                                  aria-label={`VAT hạng mục ${index + 1}`}
+                                  value={item.vatRate ?? 0}
+                                  onChange={e => updateRow(index, { vatRate: Math.min(100, Math.max(0, Number(e.target.value) || 0)), vatAmount: undefined })}
+                                />
+                              ) : (item.vatRate ? `${item.vatRate}%` : '–')}
+                            </td>
+                            {/* Dung calculateItemTotal(item) (tinh TUOI moi
+                             * lan render tu quantity/unitPrice/discountPercent/
+                             * vatRate hien co trong itemsDraft) thay vi doc
+                             * item.totalAmount (chi duoc BE tra ve SAU khi luu
+                             * qua persistQuote khong-silent) - dam bao o nay
+                             * cap nhat NGAY khi go Gia khach/SL/..., cung 1 co
+                             * so voi cot Tỷ trọng cua chinh dong nay va voi
+                             * Tổng tiền cua Mục cha (qc-workspace-section-row,
+                             * xem calculateSectionTotal ben tren) thay vi 2 noi
+                             * lech cong thuc nhau (fallback cu KHONG co VAT/
+                             * chiet khau, item.totalAmount tri hoan toi luc
+                             * luu that su). */}
+                            <td className="qc-cell-money" data-label="Thành tiền">
+                              {formatMoney(calculateItemTotal(item, workspaceCurrency))}
+                              {item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1 ? (
+                                <span className="qc-row-sub" style={{ display: 'block' }}>{item.billingTermMonths} tháng</span>
+                              ) : null}
+                            </td>
                             <td className={`qc-cell-money qc-th-margin-col ${margin != null && margin >= 20 ? 'qc-cell-margin-good' : margin != null ? 'qc-cell-margin-warn' : ''}`} style={{ position: 'relative' }} data-label="Margin">
                               {!profitabilityViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : formatPercentFixed2(margin)}
                             </td>
@@ -6085,7 +7420,7 @@ export function QuoteWorkspaceModal({
                               {!profitabilityViewAllowed ? (
                                 <span className="qc-row-sub">Không có quyền xem</span>
                               ) : (
-                                formatWeightPercent(calculateItemTotal(item), workspaceQuoteTotal)
+                                formatWeightPercent(calculateItemTotal(item, workspaceCurrency), workspaceQuoteTotal)
                               )}
                             </td>
                             {canEdit && isDraft && !isLockedForReview ? (
@@ -6134,20 +7469,57 @@ export function QuoteWorkspaceModal({
                             ) : null}
                           </tr>
                         );
+                        const canSelectBundleChildren = canEdit && isDraft && !isLockedForReview;
+                        const selectedBundleChildCountHere = canSelectBundleChildren
+                          ? bundleChildRows.filter(child => selectedBundleChildKeys.has(bundleChildKey(index, child))).length
+                          : 0;
                         return (
                           <Fragment key={`item-with-bundle-${item.id || index}`}>
                             {mainRow}
+                            {selectedBundleChildCountHere > 0 ? (
+                              <tr className="qc-workspace-item-row--bundle-child qc-bundle-child-bulk-actions-row">
+                                <td colSpan={14}>
+                                  <div className="qc-bundle-child-bulk-actions">
+                                    <span>{selectedBundleChildCountHere} thành phần đã chọn</span>
+                                    <button
+                                      type="button"
+                                      className="qc-mini-btn qc-mini-btn-danger"
+                                      onClick={() => {
+                                        const ids = bundleChildRows
+                                          .filter(child => selectedBundleChildKeys.has(bundleChildKey(index, child)))
+                                          .flatMap(child => child.__bundleComponentIds || []);
+                                        removeSelectedBundleComponents(index, ids);
+                                      }}
+                                    >
+                                      Xoá đã chọn
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null}
                             {bundleChildRows.map(child => (
                               (() => {
                                 const childCostTotal = child.costPrice != null ? child.costPrice * (child.quantity || 1) : null;
                                 const childUnitPrice = child.unitPrice ?? 0;
                                 const childTotal = childUnitPrice * (child.quantity || 1);
                                 const childMargin = child.costPrice != null && childUnitPrice > 0 ? ((childUnitPrice - child.costPrice) / childUnitPrice) * 100 : null;
+                                const childSelectKey = bundleChildKey(index, child);
                                 return (
                                   <tr key={child.id} className="qc-workspace-item-row--bundle-child">
                                     <td data-label="Hạng mục">
                                       <span className="qc-workspace-item-name-cell">
-                                        <span className="qc-workspace-item-no-col" />
+                                        <span className="qc-workspace-item-no-col">
+                                          {canSelectBundleChildren ? (
+                                            <input
+                                              type="checkbox"
+                                              className="qc-workspace-item-select"
+                                              checked={selectedBundleChildKeys.has(childSelectKey)}
+                                              title="Chọn thành phần"
+                                              aria-label="Chọn thành phần"
+                                              onChange={event => toggleBundleChildSelection(childSelectKey, event.target.checked)}
+                                            />
+                                          ) : null}
+                                        </span>
                                         <span className="qc-workspace-item-name-col">
                                           <span className="qc-workspace-item-name-clamp" title={[child.serviceDescription, child.description].filter(Boolean).join(' — ') || ''}>
                                             {child.serviceDescription || '—'}
@@ -6164,6 +7536,7 @@ export function QuoteWorkspaceModal({
                                       ) : editableTechnicalCells ? (
                                         <span className="qc-bundle-child-edit">
                                           <CurrencyInput
+                                            {...moneyInput}
                                             className="qc-cell-input qc-cell-input-money"
                                             value={child.costPrice ?? null}
                                             placeholder="Chưa có giá"
@@ -6181,17 +7554,28 @@ export function QuoteWorkspaceModal({
                                       {!costViewAllowed ? <span className="qc-row-sub">Không có quyền xem</span> : childCostTotal != null ? formatMoney(childCostTotal) : '—'}
                                     </td>
                                     <td className="qc-cell-money qc-cell-markup" data-label="Markup">{formatPercentFixed2(child.markupPercent)}</td>
+                                    {hasAnyBillingCycleItem ? <td className="qc-cell-money qc-cell-billing-cycle" data-label="Chu kỳ">—</td> : null}
                                     <td className="qc-cell-money qc-cell-markup" data-label="Giá khách/ĐV">
                                       {!pricingViewAllowed ? (
                                         <span className="qc-row-sub">Không có quyền xem</span>
                                       ) : editableCells ? (
                                         <CurrencyInput
+                                          {...moneyInput}
                                           className="qc-cell-input qc-cell-input-money"
                                           value={child.unitPrice ?? null}
                                           onChange={value => setBundleComponentPrice(index, child.__bundleComponentIds || [], value)}
                                         />
                                       ) : child.unitPrice ? formatMoney(child.unitPrice) : '—'}
                                     </td>
+                                    {/* BUG THAT DA GAP ("lệch dô ô vat trong khi k có"): hang
+                                     * header co cot VAT (%)/Giảm giá (%) (dung chung voi dong
+                                     * hang muc thuong) nhung dong con Combo truoc day KHONG
+                                     * render o nay - thieu <td> lam MOI cot phia sau (Thanh
+                                     * tien/Margin/Tỷ trọng) bi day lech sang trai. Thanh phan
+                                     * con Combo khong co Giảm giá/VAT rieng (tinh o dong cha)
+                                     * nen chi hien "—" giu cho dung vi tri cot. */}
+                                    <td className="qc-cell-money qc-cell-discount" data-label="Giảm giá (%)">—</td>
+                                    <td className="qc-cell-money qc-cell-vat" data-label="VAT (%)">—</td>
                                     <td className="qc-cell-money" data-label="Thành tiền">{childTotal ? formatMoney(childTotal) : '—'}</td>
                                     <td className={`qc-cell-money qc-th-margin-col ${childMargin != null && childMargin >= 20 ? 'qc-cell-margin-good' : childMargin != null ? 'qc-cell-margin-warn' : ''}`} data-label="Margin">
                                       {formatPercentFixed2(childMargin)}
@@ -6208,8 +7592,7 @@ export function QuoteWorkspaceModal({
                                         <button
                                           type="button"
                                           className="qc-mini-btn-icon qc-bundle-child-remove-btn"
-                                          disabled={child.__bundleRequired}
-                                          title={child.__bundleRequired ? 'Đây là thành phần bắt buộc của gói.' : 'Xoá khỏi gói Combo này'}
+                                          title="Xoá khỏi gói Combo này"
                                           aria-label="Xoá khỏi gói Combo"
                                           onClick={() => removeBundleComponent(index, child)}
                                         >
@@ -6273,10 +7656,20 @@ export function QuoteWorkspaceModal({
                   {/* Sua o "Chiết khấu tổng" tren quickbar (canh Markup nhanh) -
                    * day chi con la HIEN THI (khong sua thang o day nua), tranh
                    * 2 o edit cung 1 field gay hieu nham co 2 co che rieng. */}
-                  <span className="qc-workspace-info-label">Giảm giá toàn báo giá (%)</span>
-                  <strong>{summaryOverallDiscountPercent != null ? `${summaryOverallDiscountPercent}%` : 'Không giảm'}</strong>
+                  <span className="qc-workspace-info-label">
+                    {overallDiscountInputMode === 'amount' ? 'Giảm giá toàn báo giá' : 'Giảm giá toàn báo giá (%)'}
+                  </span>
+                  <strong>
+                    {overallDiscountInputMode === 'amount'
+                      ? (effectiveOverallDiscountAmount != null && effectiveOverallDiscountAmount > 0
+                          ? formatMoney(effectiveOverallDiscountAmount)
+                          : 'Không giảm')
+                      : (summaryOverallDiscountPercent != null && summaryOverallDiscountPercent > 0
+                          ? `${summaryOverallDiscountPercent}%`
+                          : 'Không giảm')}
+                  </strong>
                 </div>
-                {profitabilityViewAllowed && summaryOverallDiscountPercent != null ? (() => {
+                {profitabilityViewAllowed && (summaryOverallDiscountPercent != null || (effectiveOverallDiscountAmount != null && effectiveOverallDiscountAmount > 0)) ? (() => {
                   const amountAfterDiscount = summaryTotalAmount;
                   const marginAfterDiscount = summaryGrossMarginPercent;
                   return (
@@ -6306,17 +7699,39 @@ export function QuoteWorkspaceModal({
                 <div className="qc-workspace-commercial-row">
                   <div className="qc-item-discount-tools" title="Áp chiết khấu cho từng hạng mục thật; thành phần con của Combo chỉ để hiển thị nên không bị tính lần 2.">
                     <span className="qc-workspace-quickbar-field">
-                      Chiết khấu hạng mục
-                      <input
-                        type="number"
-                        min={0}
-                        max={100}
-                        className="qc-workspace-quickbar-input qc-qb-discount-input"
-                        value={itemDiscountInput}
-                        placeholder="0"
-                        onChange={event => setItemDiscountInput(event.target.value)}
-                      />
-                      %
+                      Giảm giá hạng mục
+                      {itemDiscountInputMode === 'amount' ? (
+                        <CurrencyInput
+                          {...moneyInput}
+                          className="qc-workspace-quickbar-input qc-qb-discount-input"
+                          value={itemDiscountInput.trim() === '' ? null : Number(itemDiscountInput.replace(',', '.')) || 0}
+                          placeholder="0"
+                          onChange={value => setItemDiscountInput(value == null ? '' : String(value))}
+                        />
+                      ) : (
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          className="qc-workspace-quickbar-input qc-qb-discount-input"
+                          value={itemDiscountInput}
+                          placeholder="0"
+                          onChange={event => setItemDiscountInput(event.target.value)}
+                        />
+                      )}
+                      {itemDiscountInputMode === 'amount' ? workspaceCurrency : '%'}
+                      {/* "cho fill giá tiền nữa k chỉ fill riêng %" (2026-10-13) -
+                       * nut doi che do nhap: % (mac dinh, hanh vi cu) hoac SO
+                       * TIEN muon giam (tu quy doi ra % dua tren Thanh tien hien
+                       * tai cua cac dong trong pham vi, xem applyItemDiscount). */}
+                      <button
+                        type="button"
+                        className="qc-price-mode-toggle"
+                        onClick={() => { setItemDiscountInputMode(prev => (prev === 'amount' ? 'percent' : 'amount')); setItemDiscountInput(''); }}
+                        title={itemDiscountInputMode === 'amount' ? 'Đang nhập theo SỐ TIỀN muốn giảm — bấm để đổi sang nhập %' : 'Đang nhập theo % — bấm để đổi sang nhập SỐ TIỀN muốn giảm'}
+                      >
+                        {itemDiscountInputMode === 'amount' ? '%' : workspaceCurrency}
+                      </button>
                     </span>
                     <button type="button" className="qc-mini-btn" onClick={() => applyItemDiscount('selected')}>
                       Áp hạng mục được chọn ({selectedDiscountCount})
@@ -6326,28 +7741,99 @@ export function QuoteWorkspaceModal({
                     </button>
                   </div>
                   <span className="qc-workspace-quickbar-sep" aria-hidden="true" />
-                  <label className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
-                    Chiết khấu toàn báo giá
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      className="qc-workspace-quickbar-input qc-qb-discount-input"
-                      value={(quote ? quote.overallDiscountPercent : draftOverallDiscountPercent) ?? ''}
-                      placeholder="0"
-                      onChange={event => {
-                        const raw = event.target.value;
-                        const value = raw.trim() === '' ? null : Number(raw);
+                  <span className="qc-workspace-quickbar-field" title="Áp dụng cho tổng báo giá sau khi đã tính các hạng mục; không tự ghi đè chiết khấu riêng từng dòng.">
+                    Giảm giá toàn báo giá
+                    {overallDiscountInputMode === 'amount' ? (
+                      <CurrencyInput
+                        {...moneyInput}
+                        className="qc-workspace-quickbar-input qc-qb-discount-input"
+                        value={effectiveOverallDiscountAmount}
+                        placeholder="0"
+                        onChange={rawAmount => {
+                          const baseSubtotal = liveCommercialSummary.subtotalBeforeVat;
+                          const clampedAmount =
+                            rawAmount == null || !Number.isFinite(rawAmount) || rawAmount <= 0
+                              ? null
+                              : roundQuoteMoney(Math.max(0, baseSubtotal > 0 ? Math.min(rawAmount, baseSubtotal) : rawAmount), workspaceCurrency);
+                          const displayPct =
+                            clampedAmount != null && clampedAmount > 0 && baseSubtotal > 0
+                              ? clampDiscountPercent((clampedAmount / baseSubtotal) * 100)
+                              : null;
+                          if (quote) {
+                            setQuote(prev =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    overallDiscountPercent: displayPct,
+                                    data: {
+                                      ...prev.data,
+                                      overallDiscountAmount: clampedAmount,
+                                      overallDiscountType: 'amount',
+                                    },
+                                  }
+                                : prev
+                            );
+                          } else {
+                            setDraftOverallDiscountAmount(clampedAmount);
+                            setDraftOverallDiscountPercent(displayPct);
+                          }
+                        }}
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        min={0}
+                        max={100}
+                        className="qc-workspace-quickbar-input qc-qb-discount-input"
+                        value={(quote ? quote.overallDiscountPercent : draftOverallDiscountPercent) ?? ''}
+                        placeholder="0"
+                        onChange={event => {
+                          const raw = event.target.value;
+                          const value = raw.trim() === '' ? null : Number(raw);
+                          if (quote) {
+                            setQuote(prev =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    overallDiscountPercent: value,
+                                    data: {
+                                      ...prev.data,
+                                      overallDiscountAmount: null,
+                                      overallDiscountType: 'percent',
+                                    },
+                                  }
+                                : prev
+                            );
+                          } else {
+                            setDraftOverallDiscountPercent(value);
+                            setDraftOverallDiscountAmount(null);
+                          }
+                        }}
+                      />
+                    )}
+                    {overallDiscountInputMode === 'amount' ? workspaceCurrency : '%'}
+                    <button
+                      type="button"
+                      className="qc-price-mode-toggle"
+                      onClick={() => {
+                        const nextMode = overallDiscountInputMode === 'amount' ? 'percent' : 'amount';
+                        setOverallDiscountInputMode(nextMode);
                         if (quote) {
-                          setQuote(prev => (prev ? { ...prev, overallDiscountPercent: value } : prev));
-                        } else {
-                          setDraftOverallDiscountPercent(value);
+                          setQuote(prev =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  data: { ...prev.data, overallDiscountType: nextMode },
+                                }
+                              : prev
+                          );
                         }
                       }}
-                      onBlur={() => quote && void persistQuote({ overallDiscountPercent: quote.overallDiscountPercent ?? null }, { silent: true })}
-                    />
-                    %
-                  </label>
+                      title={overallDiscountInputMode === 'amount' ? 'Đang nhập theo SỐ TIỀN muốn giảm — bấm để đổi sang nhập %' : 'Đang nhập theo % — bấm để đổi sang nhập SỐ TIỀN muốn giảm'}
+                    >
+                      {overallDiscountInputMode === 'amount' ? '%' : workspaceCurrency}
+                    </button>
+                  </span>
                   {/* "Tiêu đề báo giá" KHONG con o quickbar nay (feedback
                    * 2026-09-26: "bỏ cái tiêu đề báo giá ở dưới đi, bỏ lên chỗ
                    * đó luôn") - da chuyen thanh input sua truc tiep tren
@@ -6405,10 +7891,10 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-card">
                 <h3>Tổng hợp giá</h3>
                 <div className="qc-summary-grid">
-                  <div><span className="qc-workspace-info-label">Điều khoản thanh toán</span><strong>{paymentTermsBlock?.content || 'Chưa có điều khoản'}</strong></div>
+                  <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Điều khoản thanh toán</span><strong title={paymentTermsBlock?.content || undefined}>{paymentTermsBlock?.content || 'Chưa có điều khoản'}</strong></div>
                   <div><span className="qc-workspace-info-label">Hiệu lực báo giá</span><strong>{quote.validUntil ? formatDate(quote.validUntil) : 'Chưa đặt'}</strong></div>
-                  <div><span className="qc-workspace-info-label">Phạm vi công việc</span><strong>{scopeBlock?.content || 'Chưa mô tả'}</strong></div>
-                  <div><span className="qc-workspace-info-label">Trước chiết khấu</span><strong>{formatMoney(quote.subtotalAmount)}</strong></div>
+                  <div className="qc-summary-field--clamp"><span className="qc-workspace-info-label">Phạm vi công việc</span><strong title={scopeBlock?.content || undefined}>{scopeBlock?.content || 'Chưa mô tả'}</strong></div>
+                  <div><span className="qc-workspace-info-label">Trước giảm giá</span><strong>{formatMoney(quote.subtotalAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">VAT</span><strong>{formatMoney(quote.vatAmount)}</strong></div>
                   <div><span className="qc-workspace-info-label">Khách thanh toán</span><strong>{formatMoney(quote.totalAmount)}</strong></div>
                 </div>
@@ -6429,6 +7915,7 @@ export function QuoteWorkspaceModal({
                   </div>
                 </summary>
               <PaymentPlanEditor rows={paymentPlanRows}
+                currency={workspaceCurrency}
                 finalPayable={paymentPlanFinalPayable}
                 disabled={!canEdit || !isDraft || isLockedForReview}
                 onChange={paymentPlan => {
@@ -6677,7 +8164,9 @@ export function QuoteWorkspaceModal({
                       value={draftSlaDueAt}
                       onChange={e => { setDraftSlaDueAt(e.target.value); if (e.target.value) clearRequiredError('sla'); }}
                     />
-                  ) : stage === 'request' && canEdit ? (
+                  ) : (stage === 'request' || stage === 'technical') && canEdit ? (
+                    // SLA sua duoc o CA 'request' va 'technical' (bubble 1 gop 2 stage nay): truoc day chi 'request' nen sau khi gui yeu cau
+                    // xu ly SLA thanh chu, bao gia QUA HAN khong co cho nao tren giao dien de doi han (admin cung khong).
                     // key rieng voi input tren - tranh React tuong "cung 1
                     // input" roi bao "controlled -> uncontrolled" khi quote
                     // tu dong duoc tao xong (tu !quote sang co quote NGAY
@@ -6763,6 +8252,9 @@ export function QuoteWorkspaceModal({
                   <div className="qc-workspace-summary-row"><span>Trạng thái public link</span><strong>{quote.publicEnabled ? 'Đang bật' : 'Chưa bật'}</strong></div>
                 </div>
 
+                {/* Kết quả báo giá (OUT) - KẾT QUẢ CỦA KHÁCH sau phát hành; đặt ngay dưới "Phê duyệt & version" ở sidebar phải. */}
+                <QuoteOutcomeSection quote={quote} onUpdated={updated => { setQuote(updated); void onChanged(); }} />
+
                 {quote.processingStage === 'published' ? (
                   <div className="qc-workspace-card">
                     <h3>{quote.sentAt ? 'Thông tin gửi khách' : 'Thông tin phát hành'}</h3>
@@ -6793,20 +8285,10 @@ export function QuoteWorkspaceModal({
                         </label>
                       </div>
                       {accessMode === 'email' ? (
-                        <textarea
-                          className="qc-workspace-email-gate-textarea"
-                          placeholder={'Nhập email được phép xem, mỗi dòng 1 email\nvd: khach@congty.com'}
-                          value={accessEmailsText}
-                          onChange={e => setAccessEmailsText(e.target.value)}
-                        />
+                        <AccessAllowListPicker kind="email" value={accessEmailsText} onChange={setAccessEmailsText} suggestions={accessSuggestions} />
                       ) : null}
                       {accessMode === 'phone' ? (
-                        <textarea
-                          className="qc-workspace-email-gate-textarea"
-                          placeholder={'Nhập số điện thoại được phép xem, mỗi dòng 1 số\nvd: 0901234567'}
-                          value={accessPhonesText}
-                          onChange={e => setAccessPhonesText(e.target.value)}
-                        />
+                        <AccessAllowListPicker kind="phone" value={accessPhonesText} onChange={setAccessPhonesText} suggestions={accessSuggestions} />
                       ) : null}
                       <button type="button" className="qc-mini-btn" disabled={accessSaving} onClick={() => void saveAccessRestriction()}>
                         {accessSaving ? 'Đang lưu...' : 'Lưu giới hạn xem link'}
@@ -6844,7 +8326,7 @@ export function QuoteWorkspaceModal({
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>Cơ hội</span>
-                  <strong>{businessCode || 'Bổ sung ở bước 2'}</strong>
+                  <strong>{opportunityDisplayName || 'Bổ sung ở bước 2'}</strong>
                 </div>
                 <div className="qc-workspace-summary-row">
                   <span>SLA</span>
@@ -6883,38 +8365,52 @@ export function QuoteWorkspaceModal({
             {stage === 'pricing' || stage === 'review' ? (
             <div className="qc-workspace-card">
               <h3>Tổng hợp thương mại</h3>
-              <div className="qc-workspace-summary-row">
-                <span>Trước chiết khấu</span>
-                <strong>{quote ? formatMoney(quote.subtotalAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>Chiết khấu</span>
-                <strong>{quote ? formatMoney(Math.max(0, quote.subtotalAmount - (quote.netRevenue ?? quote.subtotalAmount))) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>Sau chiết khấu</span>
-                <strong>{quote ? formatMoney(quote.netRevenue ?? quote.subtotalAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row">
-                <span>VAT</span>
-                <strong>{quote ? formatMoney(quote.vatAmount) : '0 đ'}</strong>
-              </div>
-              <div className="qc-workspace-summary-row qc-workspace-summary-row--total">
-                <span>Khách thanh toán</span>
-                <strong>{quote ? formatMoney(quote.totalAmount) : '0 đ'}</strong>
-              </div>
+              {(() => {
+                // Tinh LIVE theo bang dang sua (liveCommercialSummary, dung
+                // chung cong thuc voi khoi "Giá khách sau CK" ben duoi bang) -
+                // TRUOC DAY doc thang quote.totalAmount/vatAmount (gia tri da
+                // LUU lan gan nhat), khien khoi nay hien SO CU neu dang sua
+                // dang do chua bam Luu, lech han so voi so that trong bang
+                // (bug thuc te: "Giá khách sau CK" 114tr nhung "Khách thanh
+                // toán" o day van 7.5tr vi chua Luu).
+                const s = liveCommercialSummary;
+                return (
+                  <>
+                    <div className="qc-workspace-summary-row">
+                      <span>Trước giảm giá</span>
+                      <strong>{formatMoney(s.subtotalBeforeVat)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>Giảm giá</span>
+                      <strong>{formatMoney(s.overallDiscountAmount)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>Sau giảm giá</span>
+                      <strong>{formatMoney(s.subtotalAfterDiscount)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row">
+                      <span>VAT</span>
+                      <strong>{formatMoney(s.vatAfterDiscount)}</strong>
+                    </div>
+                    <div className="qc-workspace-summary-row qc-workspace-summary-row--total">
+                      <span>Khách thanh toán</span>
+                      <strong>{formatMoney(s.totalAmount)}</strong>
+                    </div>
+                  </>
+                );
+              })()}
               <div className="qc-workspace-summary-row">
                 <span>Lợi nhuận dự kiến</span>
-                <strong className={hasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
-                  {hasCostData ? formatMoney(quote!.grossProfit || 0) : 'Chưa có dữ liệu giá vốn'}
+                <strong className={summaryHasCostData ? 'qc-cell-margin-good' : 'qc-workspace-muted'}>
+                  {summaryHasCostData ? formatMoney(liveCommercialSummary.grossProfit ?? 0) : 'Chưa có dữ liệu giá vốn'}
                 </strong>
               </div>
-              {hasCostData && quote?.grossMarginPercent != null ? (
+              {summaryHasCostData && liveCommercialSummary.grossMarginPercent != null ? (
                 <div className="qc-workspace-margin-bar">
                   <div className="qc-workspace-margin-bar-track">
-                    <div className="qc-workspace-margin-bar-fill" style={{ width: `${Math.max(0, Math.min(100, quote.grossMarginPercent))}%` }} />
+                    <div className="qc-workspace-margin-bar-fill" style={{ width: `${Math.max(0, Math.min(100, liveCommercialSummary.grossMarginPercent))}%` }} />
                   </div>
-                  <span>Margin {formatPercentTrim(quote.grossMarginPercent)}</span>
+                  <span>Margin {formatPercentTrim(liveCommercialSummary.grossMarginPercent)}</span>
                 </div>
               ) : null}
             </div>
@@ -7181,7 +8677,7 @@ export function QuoteWorkspaceModal({
                     disabled={busy || !canReadyForApproval}
                     aria-busy={busy && activeAction === 'reviewPricing'}
                     title={!canReadyForApproval ? 'Cần ít nhất 1 hạng mục và tổng tiền > 0 trước khi gửi duyệt' : !quote?.projectId ? 'Cần chọn Dự án trước khi gửi duyệt' : undefined}
-                    onClick={handoffPricingToReview}
+                    onClick={() => handoffPricingToReview()}
                   >
                     {actionButtonContent('reviewPricing', 'Hoàn tất phần giá bán')}
                   </button>
@@ -7247,7 +8743,7 @@ export function QuoteWorkspaceModal({
        * chon lai ngay), KHONG phai ban sao trang quan ly Contact day du
        * (CrmContactsPanel.tsx) - dung LAI dung endpoint API cua trang do. */}
       {createContactOpen ? (
-        <div className="crm-modal-backdrop" onClick={() => !createContactBusy && setCreateContactOpen(false)}>
+        <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget && !createContactBusy) setCreateContactOpen(false); }}>
           <div className="crm-modal" onClick={event => event.stopPropagation()}>
             <header className="crm-modal-header">
               <h2 className="crm-modal-title">Tạo người liên hệ mới</h2>
@@ -7324,36 +8820,21 @@ export function QuoteWorkspaceModal({
         }}
       />
 
-      <DealFormModal
+      <CreateOpportunityDrawer
         open={dealModalOpen}
-        loading={dealCreateBusy}
-        onClose={() => { if (!dealCreateBusy) setDealModalOpen(false); }}
-        onCreate={input => void handleCreateQuickDeal(input)}
-        onUpdate={() => {}}
-        agents={quickCreateAgents}
-        sourceOptions={SOURCE_OPTIONS}
-        servicePackageOptions={SERVICE_PACKAGE_OPTIONS}
-        packageOptions={CRM_PACKAGE_OPTIONS}
-        industryOptions={INDUSTRY_OPTIONS.map(value => ({ value, label: value }))}
+        customer={dealModalCustomer}
         currentUser={user ?? null}
-        initialCustomer={
-          draftCustomerId
-            ? { id: draftCustomerId, name: customers.find(c => c.id === draftCustomerId)?.label || '' }
-            : null
-        }
-        initialProject={draftProjectId ? { id: draftProjectId } : null}
+        suppressNavigation
+        onClose={() => setDealModalOpen(false)}
+        onCreated={created => {
+          if (created) {
+            setLocallyCreatedDeals(prev => [...prev, created]);
+            setDraftDealId(created.id);
+            if (created.projectId) setDraftProjectId(created.projectId);
+          }
+          setDealModalOpen(false);
+        }}
       />
-      {dealCreateError ? (
-        <div className="qc-modal-backdrop qc-modal-backdrop--nested" onMouseDown={() => setDealCreateError('')}>
-          <div className="qc-deal-picker" onMouseDown={event => event.stopPropagation()}>
-            <h3>Không tạo được cơ hội</h3>
-            <div className="qc-workspace-note-box qc-workspace-note-box--warn">{dealCreateError}</div>
-            <div className="qc-workspace-modal-actions">
-              <button type="button" className="qc-btn qc-btn-primary" onClick={() => setDealCreateError('')}>Đóng</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {previewModalOpen ? (() => {
         // BUG THAT DA GAP ("bấm Preview khách hàng ở bước 1 ra bảng cũ chứ
@@ -7427,6 +8908,30 @@ export function QuoteWorkspaceModal({
                     <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
                   </button>
                 ) : null}
+                {/* Bug thuc te (2026-10-10): comment cu phia tren tung ghi "In/Tải PDF nam
+                 * TRUC TIEP trong header popup nay" nhung nut nay da bi mat luc nao khong ro -
+                 * Sale chinh do rong cot xong khong co cach xem thu ban in TAI DAY, phai roi
+                 * qua trang cong khai moi in duoc. Them lai dung window.print() (giong
+                 * PublicQuotePage.tsx) - CSS @media print da san cho view nay (xem comment
+                 * .qc-modal-backdrop/.qc-workspace-preview-modal o quotes.css). Rieng document.title:
+                 * PublicQuotePage set 1 LAN vinh vien vi do la trang doc lap; o day la popup NAM
+                 * TRONG trang CRM dang lam viec - chi doi title NGAY TRUOC khi in (de ten file
+                 * goi y khi "Luu dang PDF" la "Bao-gia-<so>" giong trang cong khai) roi tra lai
+                 * title cu ngay sau, tranh doi luon ten tab trinh duyet cua Sale. */}
+                {previewSchema ? (
+                  <button
+                    type="button"
+                    className="qc-mini-btn"
+                    onClick={() => {
+                      const prevTitle = document.title;
+                      if (quote?.quoteNumber) document.title = `Bao-gia-${quote.quoteNumber}`;
+                      window.print();
+                      document.title = prevTitle;
+                    }}
+                  >
+                    <Printer className="qc-icon" /> Xem trước / In PDF
+                  </button>
+                ) : null}
                 {/* Nut "Lưu" giong het toolbar ban PDF chinh thuc
                  * (QuoteDetailPage) - luu huong giay + do rong cot de lan
                  * in/tai PDF sau dung dung ban da chinh. */}
@@ -7476,13 +8981,26 @@ export function QuoteWorkspaceModal({
                   key={printResetKey}
                   schemaSnapshot={previewSchema}
                   quoteData={quote ? quote.data : draftPreviewData}
+                  // BUG THAT DA GAP ("Mục cha hiện Thành tiền = 0 dù các hàng
+                  // muc con ben duoi co gia tri dung"): itemsDraft LUON o dang
+                  // PHANG (xem comment flattenItemTree/buildItemTree o tren -
+                  // khong dung `children` long nhau de de sua/keo-tha), trong
+                  // khi QuoteDocumentRenderer tinh Tong tien section bang
+                  // calculateSectionTotal(item.children || []) - doc thang
+                  // `item.children`. Truyen thang itemsDraft (moi item.children
+                  // deu undefined) khien tong section LUON ra 0, dung 1 ham
+                  // buildItemTree() da co san (dung de gui du lieu len BE truoc
+                  // luc luu, xem buildItemsPayload) de gop lai thanh cay CHI o
+                  // tang hien thi cho renderer nay - khong doi itemsDraft/state
+                  // edit, khong anh huong luu/gui BE.
                   quoteItems={buildItemTree(itemsDraft)}
                   solutionItems={quote ? quote.data?.solutionItems : undefined}
                   totals={previewSchema.layoutType === 'villa_solution_package' && quote ? {
                     subtotalAmount: quote.subtotalAmount ?? 0,
                     totalVatAmount: quote.vatAmount ?? 0,
                     totalAmount: quote.totalAmount ?? 0,
-                  } : calculateQuoteTotals(itemsDraft)}
+                  } : calculateQuoteTotals(itemsDraft, 0, workspaceCurrency)}
+                  currency={workspaceCurrency}
                   mode="public"
                   isPublished={quote ? quote.processingStage === 'published' : false}
                   quoteNumber={quote?.quoteNumber}
@@ -7529,7 +9047,7 @@ export function QuoteWorkspaceModal({
                         }
                         return (
                           <tr key={item.id || index}>
-                            <td>{item.serviceDescription || '—'}</td>
+                            <td style={{ whiteSpace: 'pre-line' }}>{item.serviceDescription || '—'}</td>
                             <td className="qc-cell-money">{item.quantity}</td>
                             <td className="qc-cell-money">{formatMoney(item.unitPrice ?? 0)}</td>
                             <td className="qc-cell-money">{formatMoney(item.totalAmount || item.quantity * (item.unitPrice ?? 0) || 0)}</td>
@@ -7679,7 +9197,20 @@ export function QuoteWorkspaceModal({
             </div>
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Tổng thanh toán</span>
-              <strong>{formatMoney(quote.totalAmount)}</strong>
+              {/* quote.totalAmount la tong TRUOC "Giam gia toan bao gia"
+                  (overall discount) - dung calculateOverallDiscountSummary (cung
+                  cong thuc QuoteDocumentRenderer dung de in) de hien dung so
+                  khach phai tra, khong phai tong truoc giam (task 2026-11-02).
+                  Totals tinh lai TU items, KHONG dung thang
+                  quote.totalAmount/vatAmount (co the lech voi tong tinh tu
+                  items that). */}
+              <strong>{formatMoney(calculateOverallDiscountSummary(
+                calculateQuoteTotals(quote.items || [], 0, quote.currency),
+                quote.overallDiscountPercent,
+                quote.currency,
+                quote.data?.overallDiscountAmount ?? null,
+                quote.overallDiscountType ?? null
+              ).grandTotal)}</strong>
             </div>
             <div className="qc-workspace-preview-modal-row">
               <span className="qc-workspace-info-label">Margin</span>
@@ -7902,6 +9433,32 @@ export function QuoteWorkspaceModal({
         onGroupFilterChange={catalogSource === 'internal' ? setPickerGroupFilter : undefined}
         onQuickAddProduct={catalogSource === 'internal' ? () => setQuickAddProductTarget('newRow') : undefined}
         onQuickAddGroup={catalogSource === 'internal' ? () => setQuickAddGroupOpen(true) : undefined}
+        onEditItem={catalogSource === 'internal' ? handleCatalogEditItem : undefined}
+        onToggleItemStatus={catalogSource === 'internal' ? handleCatalogToggleItemStatus : undefined}
+        onDeleteItem={catalogSource === 'internal' ? handleCatalogDeleteItem : undefined}
+        quoteCurrency={workspaceCurrency}
+        exchangeRate={workspaceExchangeRate}
+        onQuoteCurrencyChange={canSwitchQuoteCurrency ? requestCurrencyChange : undefined}
+        onIncreaseExisting={id => {
+          const existingIndex = (catalogSource === 'zone' ? existingZoneKeys : existingCatalogKeys).get(id);
+          if (existingIndex == null) return;
+          const currentRow = itemsDraft[existingIndex];
+          const nextQty = (currentRow?.quantity || 0) + 1;
+          increaseExistingRowQty(existingIndex, 1);
+          const rowName = currentRow?.serviceDescription || currentRow?.description || 'dòng này';
+          showToast(true, `Đã tăng số lượng "${rowName}" lên ${nextQty}.`);
+        }}
+        onAddAnother={id => {
+          if (catalogSource === 'zone') {
+            const zoneItem = (priceBookItems || []).find(item => item.id === id);
+            if (zoneItem) addItemsFromCatalog([priceBookItemToQuoteItem(zoneItem)]);
+          } else {
+            const catalogItem = catalogFlatItems.find(item => item.id === id);
+            if (catalogItem) addItemsFromCatalog([catalogItemToQuoteItem(catalogItem)]);
+          }
+          const sameCount = itemsDraft.filter(row => (catalogSource === 'zone' ? row.priceBookItemId : row.catalogItemId) === id).length + 1;
+          showToast(true, `Đã thêm một dòng mới (hiện có ${sameCount} dòng cho sản phẩm này).`);
+        }}
         extraToolbar={
           catalogSource === 'internal' && catalogSectionOptions.length > 0 ? (
             <div className="cp-filter-chips" style={{ paddingTop: 0 }}>
@@ -7921,8 +9478,14 @@ export function QuoteWorkspaceModal({
       />
 
       <QuickAddProductModal
-        open={quickAddProductTarget != null}
-        onClose={() => setQuickAddProductTarget(null)}
+        open={quickAddProductTarget != null || quickEditProduct != null}
+        onClose={() => { setQuickAddProductTarget(null); setQuickEditProduct(null); }}
+        editingItem={quickEditProduct || undefined}
+        onUpdated={updated => {
+          setQuickEditProduct(null);
+          void refreshCatalogTree();
+          showToast(true, `Đã cập nhật "${updated.name}".`);
+        }}
         groups={(catalogTree || []).filter(g => g.itemType === 'group')}
         existingItems={catalogFlatItems}
         defaultGroupId={
@@ -7938,6 +9501,10 @@ export function QuoteWorkspaceModal({
                 return source
                   ? {
                       name: source.serviceDescription || source.description,
+                      // Dien san "Mo ta chi tiet" theo mo ta dong dang co (neu Sale da go) - truoc
+                      // day bo trong, dien duoc Ten nhung khong dien duoc Mo ta (bug thuc te
+                      // 2026-10-10: "mô tả ở đây phải ăn với mô tả chi tiết trong đây").
+                      description: source.description,
                       unit: source.unit,
                       vatRate: source.vatRate,
                       unitPriceVnd: source.unitPrice ?? undefined,
@@ -7950,17 +9517,134 @@ export function QuoteWorkspaceModal({
         onCreated={item => void handleQuickAddProductCreated(item)}
       />
 
+      {currencySwitch ? (
+        <div className="crm-modal-backdrop" style={{ zIndex: 100300 }} onClick={event => { if (event.target === event.currentTarget) setCurrencySwitch(null); }}>
+          <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
+            <header className="crm-modal-header">
+              <h2 className="crm-modal-title">Đổi tiền tệ báo giá sang {currencySwitch.target}</h2>
+              <button type="button" className="crm-modal-close" onClick={() => setCurrencySwitch(null)} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            </header>
+            <div className="crm-modal-body">
+              <p>
+                {hasPricedItems
+                  ? `Toàn bộ giá vốn và giá khách của ${itemsDraft.filter(row => row.rowType !== 'section').length} hạng mục sẽ được quy đổi sang ${currencySwitch.target} và tổng tiền được tính lại. Giá gốc trong Danh mục / Bảng giá (VND) không bị thay đổi.`
+                  : `Báo giá sẽ chuyển sang ${currencySwitch.target}.`}
+              </p>
+              {currencySwitch.target === 'USD' ? (
+                systemExchangeRate && !currencySwitch.custom ? (
+                  <p style={{ marginTop: 12 }}>
+                    Tỷ giá hệ thống: <strong>1 USD = {systemExchangeRate.toLocaleString('vi-VN')} VND</strong> — sẽ được chốt cho báo giá này.
+                    {systemRateInfo ? <small style={{ display: 'block', color: '#667085' }}>{describeSystemRate(systemRateInfo)}</small> : null}
+                    {systemRateInfo?.stale ? <small style={{ display: 'block', color: '#bf7810' }}>Chưa lấy được tỷ giá mới — đang dùng tỷ giá gần nhất. Có thể dùng tỷ giá khác nếu cần.</small> : null}{' '}
+                    <button type="button" className="qc-mini-btn" onClick={() => setCurrencySwitch(current => (current ? { ...current, custom: true } : current))}>
+                      Dùng tỷ giá khác
+                    </button>
+                  </p>
+                ) : (
+                  <label className="qc-workspace-quickbar-field" style={{ display: 'block', marginTop: 12 }}>
+                    Tỷ giá (1 USD = ? VND) — được chốt cho báo giá này
+                    <CurrencyInput
+                      className="qc-cell-input qc-cell-input-money"
+                      decimals={2}
+                      locale="en-US"
+                      value={currencySwitch.rateInput}
+                      placeholder={systemExchangeRate ? undefined : 'Chưa có tỷ giá hệ thống - nhập tỷ giá'}
+                      onChange={value => setCurrencySwitch(current => (current ? { ...current, rateInput: value } : current))}
+                    />
+                    {!systemExchangeRate ? (
+                      <small style={{ display: 'block', color: '#bf7810' }}>
+                        Chưa lấy được tỷ giá tự động — nhập tỷ giá, hoặc Admin vào Cài đặt báo giá → Tỷ giá USD/VND để cập nhật.
+                      </small>
+                    ) : null}
+                  </label>
+                )
+              ) : (
+                <p className="qc-row-sub" style={{ marginTop: 8 }}>
+                  Quy đổi ngược theo tỷ giá đã chốt: 1 USD = {(workspaceExchangeRate ?? 0).toLocaleString('vi-VN')} VND.
+                </p>
+              )}
+            </div>
+            <footer className="crm-modal-footer">
+              <div className="crm-deal-footer-actions">
+                <button type="button" className="crm-cancel-button" onClick={() => setCurrencySwitch(null)}>Huỷ</button>
+                <button
+                  type="button"
+                  className="crm-save-button"
+                  disabled={busy || (currencySwitch.target === 'USD' && !(currencySwitch.rateInput && currencySwitch.rateInput >= 1000 && currencySwitch.rateInput <= 100000))}
+                  onClick={() => {
+                    const target = currencySwitch.target;
+                    const rate = currencySwitch.rateInput;
+                    setCurrencySwitch(null);
+                    void applyCurrencySwitch(target, rate);
+                  }}
+                >
+                  Đổi sang {currencySwitch.target}
+                </button>
+              </div>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {pendingBundleRemoval ? (() => {
+        const row = itemsDraft[pendingBundleRemoval.parentIndex];
+        if (!row) return null;
+        const targetIds = new Set(pendingBundleRemoval.componentIds);
+        const nextComponents = bundleSnapshotComponents(row).filter(component => !targetIds.has(component.componentId));
+        const targetGm = bundleSnapshotTargetGm(row);
+        const beforePrice = row.unitPrice ?? 0;
+        const autoPreview = recalculateBundleParent(row, nextComponents, 'auto', targetGm, workspaceFx);
+        const fixedPreview = recalculateBundleParent(row, nextComponents, 'fixed', targetGm, workspaceFx);
+        return (
+          <ConfirmModal
+            open
+            title={`Xoá ${pendingBundleRemoval.label} khỏi gói Combo?`}
+            message={`Giá bán Combo hiện tại: ${formatMoney(beforePrice)}. Chọn cách tính lại giá sau khi xoá:\n• Gói tuỳ chỉnh: ${formatMoney(autoPreview.unitPrice)} (tính lại theo chi phí còn lại)\n• Giữ giá gói cố định: ${formatMoney(fixedPreview.unitPrice)} (giữ nguyên giá đã chốt)`}
+            cancelLabel="Huỷ"
+            onClose={() => setPendingBundleRemoval(null)}
+            actions={[
+              { label: `Gói tuỳ chỉnh — ${formatMoney(autoPreview.unitPrice)}`, onClick: () => executeBundleRemoval('auto') },
+              { label: `Giữ giá cố định — ${formatMoney(fixedPreview.unitPrice)}`, variant: 'primary', onClick: () => executeBundleRemoval('fixed') },
+            ]}
+          />
+        );
+      })() : null}
+
+      <ConfirmModal
+        open={zeroPriceConfirm != null}
+        title="Có hạng mục giá khách bằng 0"
+        message={zeroPriceConfirm
+          ? `${zeroPriceConfirm.length === 1 ? 'Hạng mục/sản phẩm' : `${zeroPriceConfirm.length} hạng mục/sản phẩm`} sau đang có giá khách bằng 0: ${zeroPriceConfirm.slice(0, 5).join('; ')}${zeroPriceConfirm.length > 5 ? '…' : ''}. Bạn có đồng ý bàn giao để qua Bước 3 không?`
+          : ''}
+        cancelLabel="Quay lại chỉnh sửa"
+        onClose={() => setZeroPriceConfirm(null)}
+        actions={[
+          {
+            label: 'Đồng ý bàn giao',
+            variant: 'primary',
+            onClick: () => { setZeroPriceConfirm(null); handoffPricingToReview(true); },
+          },
+        ]}
+      />
+
       <ConfirmModal
         open={discardCloseConfirmOpen}
         title="Bạn có thay đổi chưa lưu"
-        message="Bạn có muốn thoát và bỏ các thay đổi này không?"
+        message="Bạn có muốn lưu các thay đổi trước khi thoát không?"
         cancelLabel="Tiếp tục chỉnh sửa"
         onClose={() => setDiscardCloseConfirmOpen(false)}
         actions={[
           {
-            label: 'Bỏ thay đổi',
-            variant: 'primary',
+            label: 'Không lưu',
+            variant: 'default',
             onClick: confirmDiscardAndClose,
+          },
+          {
+            label: 'Lưu và thoát',
+            variant: 'primary',
+            onClick: () => { void confirmSaveAndClose(); },
           },
         ]}
       />
@@ -8086,7 +9770,7 @@ export function QuoteWorkspaceModal({
                 </button>
               </div>
               <div className="qc-workspace-preview-modal-body">
-                <p><strong>{drawerItem.serviceDescription || drawerItem.description}</strong></p>
+                <p style={{ whiteSpace: 'pre-line' }}><strong>{drawerItem.serviceDescription || drawerItem.description}</strong></p>
                 {costViewAllowed ? (
                   <>
                     <p>Chế độ giá vốn: {snap.costMode === 'usd' ? 'USD × Tỷ giá' : 'VND trực tiếp'}</p>
@@ -8100,7 +9784,7 @@ export function QuoteWorkspaceModal({
                     <p>VAT đầu vào: {snap.vatInPercent ?? 0}%</p>
                     <p>Nhà cung cấp: {snap.vendorName || '—'}</p>
                     <p>VAT đầu ra: {snap.vatEuPercent ?? 0}%</p>
-                    <p>Giá tham chiếu: {snap.referencePrice != null ? formatMoney(snap.referencePrice) : '—'}</p>
+                    <p>Giá tham chiếu: {snap.referencePrice != null ? formatVndMoney(snap.referencePrice) : '—'}</p>
                     {snap.referenceLink ? <p>Link tham chiếu: <a href={snap.referenceLink} target="_blank" rel="noreferrer">{snap.referenceLink}</a></p> : null}
                     {snap.quoteLink ? <p>Link/chứng từ giá: <a href={snap.quoteLink} target="_blank" rel="noreferrer">{snap.quoteLink}</a></p> : null}
 
@@ -8166,7 +9850,7 @@ export function QuoteWorkspaceModal({
               <div className="qc-workspace-preview-modal-body">
                 <div className="qc-workspace-drawer-field">
                   <span className="qc-workspace-info-label">Tên hạng mục</span>
-                  <p>{descItem.serviceDescription || '—'}</p>
+                  <p style={{ whiteSpace: 'pre-line' }}>{descItem.serviceDescription || '—'}</p>
                 </div>
                 <label className="qc-workspace-drawer-field">
                   <span className="qc-workspace-info-label">Phạm vi bảo hành</span>
@@ -8236,7 +9920,7 @@ export function QuoteWorkspaceModal({
                       onChange={e => updateRow(drawerIndex, { serviceDescription: e.target.value })}
                     />
                   ) : (
-                    <p>{drawerItem.serviceDescription || '—'}</p>
+                    <p style={{ whiteSpace: 'pre-line' }}>{drawerItem.serviceDescription || '—'}</p>
                   )}
                 </label>
                 <label className="qc-workspace-drawer-field">
@@ -8259,7 +9943,7 @@ export function QuoteWorkspaceModal({
                       type="number"
                       className="qc-cell-input"
                       value={drawerItem.quantity}
-                      onChange={e => updateRow(drawerIndex, { quantity: Math.max(0, Number(e.target.value) || 0) })}
+                      onChange={e => updateRow(drawerIndex, { quantity: Math.max(0, Number(e.target.value) || 0), discountAmount: undefined })}
                     />
                   ) : (
                     <p>{drawerItem.quantity}</p>
@@ -8295,6 +9979,7 @@ export function QuoteWorkspaceModal({
                         value={drawerItem.markupPercent ?? ''}
                         disabled={drawerItem.costPrice == null}
                         onChange={e => handleMarkupChange(drawerIndex, e.target.value)}
+                        onBlur={handlePricingBlur}
                       />
                     ) : (
                       <p>{formatPercentTrim(drawerItem.markupPercent)}</p>
@@ -8331,8 +10016,9 @@ export function QuoteWorkspaceModal({
               </div>
               <div className="qc-workspace-preview-modal-body">
                 <label className="qc-field">
-                  <span>Giá vốn mới (VND)</span>
+                  <span>Giá vốn mới ({workspaceCurrency})</span>
                   <CurrencyInput
+                    {...moneyInput}
                     className="qc-cell-input qc-cell-input-money"
                     value={costOverrideModal.value ?? targetItem?.costPrice ?? null}
                     onChange={value => setCostOverrideModal({ ...costOverrideModal, value })}

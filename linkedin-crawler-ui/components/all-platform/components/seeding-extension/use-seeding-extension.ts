@@ -2,11 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { scheduledCommentService } from "@/services/scheduled-comment.service";
+import { autoSeedingCommentService } from "@/services/auto-seeding-comment.service";
 import { API_BASE_URL } from "@/lib/env";
 
-export type ExtensionPlatform = "facebook" | "linkedin" | "threads";
-/** Nền tảng cào/bình luận theo NHÓM (Threads không có nhóm - tìm theo từ khoá). */
-export type GroupPlatform = Exclude<ExtensionPlatform, "threads">;
+export type ExtensionPlatform = "facebook" | "linkedin" | "threads" | "youtube";
+/** Nền tảng cào/bình luận theo NHÓM (Threads/YouTube không có nhóm - tìm theo từ khoá). */
+export type GroupPlatform = Exclude<ExtensionPlatform, "threads" | "youtube">;
+/** Nền tảng tìm bài theo TỪ KHOÁ. */
+export type KeywordPlatform = Extract<ExtensionPlatform, "threads" | "youtube">;
 
 /** Phiên bản tối thiểu của "Markee Seeding Extension" (extensions/comment-extension) có lệnh cào gộp. */
 export const REQUIRED_EXTENSION_VERSION = "2.0";
@@ -15,7 +18,11 @@ export const REQUIRED_EXTENSION_VERSION = "2.0";
 export const THREADS_CRAWL_EXTENSION_VERSION = "2.1";
 
 /** Phiên bản đầu tiên có lệnh cào xoay vòng cả 3 nền tảng (MK_ROTATE_CRAWL_*, feature "rotate_crawl"). */
-export const ROTATE_CRAWL_EXTENSION_VERSION = "2.4";
+export const ROTATE_CRAWL_EXTENSION_VERSION = "2.13";
+/** Phiên bản đầu tiên có YouTube: cào (MK_YT_CRAWL_*, "yt_crawl") + comment tính KPI ("yt_comment").
+ * = bản manifest thực tế gộp tính năng này (2.10) — không giữ "2.2" cũ của nhánh gốc, vì các bản
+ * extension 2.3-2.9 (đã lên main entre đó) KHÔNG có youtube-crawl.js, sẽ lọt qua check sai. */
+export const YOUTUBE_EXTENSION_VERSION = "2.10";
 
 export type ExtensionStatus = "checking" | "ready" | "outdated" | "missing" | "invalidated";
 
@@ -87,6 +94,22 @@ export interface CrawlLogLine {
   at: number;
 }
 
+/** Bài extension vừa gom được, đẩy về realtime trong lúc cào (hiện tại chỉ Threads: MK_TH_CRAWL_POSTS). */
+export interface LiveCrawlPost {
+  post_url: string;
+  author_username: string;
+  author_name: string;
+  content: string;
+  post_time: string | null;
+  reactions: number;
+  comments: number;
+  shares: number;
+  image_urls: string[];
+  /** Nguồn dữ liệu của bài: "api" (bắt request), "embedded" (JSON trong trang), "dom" (đọc giao diện). */
+  sources: string[];
+  keyword: string;
+}
+
 export interface CrawlRuntime {
   running: boolean;
   done: boolean;
@@ -95,10 +118,44 @@ export interface CrawlRuntime {
   totalGroups: number;
   posts: number;
   saved: number;
+  livePosts: LiveCrawlPost[];
 }
 
-const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0 };
-const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_" };
+/** Giữ tối đa chừng này bài trong danh sách realtime (bài mới nhất lên đầu). */
+const MAX_LIVE_POSTS = 500;
+
+const EMPTY_RUNTIME: CrawlRuntime = { running: false, done: false, logs: [], groupIndex: 0, totalGroups: 0, posts: 0, saved: 0, livePosts: [] };
+
+// Gộp lô bài mới vào danh sách realtime: bài đã có (cùng post_url) thì cập nhật tại chỗ
+// (vd DOM thấy trước, API tới sau mang số tương tác chính xác), bài mới lên đầu.
+function mergeLivePosts(current: LiveCrawlPost[], incoming: unknown[], keyword: string): LiveCrawlPost[] {
+  const index = new Map(current.map((p, i) => [p.post_url, i]));
+  const next = [...current];
+  const fresh = new Map<string, LiveCrawlPost>();
+  for (const raw of incoming) {
+    const r = raw as Record<string, unknown>;
+    if (!r || typeof r.post_url !== "string") continue;
+    const post: LiveCrawlPost = {
+      post_url: r.post_url,
+      author_username: String(r.author_username || ""),
+      author_name: String(r.author_name || r.author_username || ""),
+      content: String(r.content || ""),
+      post_time: typeof r.post_time === "string" ? r.post_time : null,
+      reactions: Number(r.reactions) || 0,
+      comments: Number(r.comments) || 0,
+      shares: Number(r.shares) || 0,
+      image_urls: Array.isArray(r.image_urls) ? (r.image_urls as string[]) : [],
+      sources: Array.isArray(r._sources) ? (r._sources as string[]) : [],
+      keyword,
+    };
+    const at = index.get(post.post_url);
+    if (at !== undefined) next[at] = { ...post, keyword: next[at].keyword };
+    else fresh.set(post.post_url, post);
+  }
+  return [...Array.from(fresh.values()).reverse(), ...next].slice(0, MAX_LIVE_POSTS);
+}
+const PREFIX: Record<ExtensionPlatform, string> = { facebook: "MK_FB_CRAWL_", linkedin: "MK_LI_CRAWL_", threads: "MK_TH_CRAWL_", youtube: "MK_YT_CRAWL_" };
+const PLATFORMS = Object.keys(PREFIX) as ExtensionPlatform[];
 
 export interface CrawlGroupInput {
   id?: string;
@@ -118,10 +175,11 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     facebook: EMPTY_RUNTIME,
     linkedin: EMPTY_RUNTIME,
     threads: EMPTY_RUNTIME,
+    youtube: EMPTY_RUNTIME,
   });
   const onSavedRef = useRef(onSaved);
   const onDoneRef = useRef(onDone);
-  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null, threads: null });
+  const startTimeoutRef = useRef<Record<ExtensionPlatform, number | null>>({ facebook: null, linkedin: null, threads: null, youtube: null });
   useEffect(() => {
     onSavedRef.current = onSaved;
     onDoneRef.current = onDone;
@@ -147,13 +205,7 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     const onMessage = (event: MessageEvent) => {
       if (event.source !== window || !event.data || typeof event.data.action !== "string") return;
       const action: string = event.data.action;
-      const platform: ExtensionPlatform | null = action.startsWith(PREFIX.facebook)
-        ? "facebook"
-        : action.startsWith(PREFIX.linkedin)
-          ? "linkedin"
-          : action.startsWith(PREFIX.threads)
-            ? "threads"
-            : null;
+      const platform = PLATFORMS.find((p) => action.startsWith(PREFIX[p])) ?? null;
       if (!platform) return;
       const kind = action.slice(PREFIX[platform].length);
       const p = event.data.payload || {};
@@ -176,6 +228,9 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
           totalGroups: typeof p.totalGroups === "number" ? p.totalGroups : r.totalGroups,
           posts: typeof p.posts === "number" && p.posts > 0 ? p.posts : r.posts,
         }));
+      } else if (kind === "POSTS") {
+        const incoming = Array.isArray(p.posts) ? p.posts : [];
+        if (incoming.length) update(platform, (r) => ({ ...r, running: true, livePosts: mergeLivePosts(r.livePosts, incoming, String(p.keyword || "")) }));
       } else if (kind === "SAVED") {
         const count = Number(p.count) || 0;
         update(platform, (r) => ({ ...r, saved: r.saved + count }));
@@ -189,9 +244,7 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
 
     window.addEventListener("message", onMessage);
     // Trang vừa mở lại giữa lúc extension đang cào (F5) -> vẫn hiện đúng trạng thái "đang chạy".
-    postToExtension("MK_FB_CRAWL_STATUS");
-    postToExtension("MK_LI_CRAWL_STATUS");
-    postToExtension("MK_TH_CRAWL_STATUS");
+    PLATFORMS.forEach((p) => postToExtension(PREFIX[p] + "STATUS"));
     return () => window.removeEventListener("message", onMessage);
   }, [addLog, update]);
 
@@ -219,10 +272,16 @@ export function useExtensionCrawl({ onSaved, onDone }: UseExtensionCrawlOptions 
     [sendStart],
   );
 
-  /** Threads không có group: gửi danh sách TỪ KHOÁ (extension mở trang tìm kiếm cho từng từ khoá). */
+  /** Threads/YouTube không có group: gửi danh sách TỪ KHOÁ (YouTube: từ khoá hoặc link video). */
   const startKeywords = useCallback(
-    (keywords: string[], config: Record<string, unknown>) =>
-      sendStart("threads", keywords.length, "từ khoá", { keywords, config: { apiBase: extensionApiBase(), ...config } }, THREADS_CRAWL_EXTENSION_VERSION),
+    (keywords: string[], config: Record<string, unknown>, platform: KeywordPlatform = "threads") =>
+      sendStart(
+        platform,
+        keywords.length,
+        platform === "youtube" ? "từ khoá/link" : "từ khoá",
+        { keywords, config: { apiBase: extensionApiBase(), ...config } },
+        platform === "youtube" ? YOUTUBE_EXTENSION_VERSION : THREADS_CRAWL_EXTENSION_VERSION,
+      ),
     [sendStart],
   );
 
@@ -259,9 +318,28 @@ export interface RotationScheduleCfg {
   idMember: string | null;
   intervalHours: number;
   repeatEnabled: boolean;
+  antiBotEnabled?: boolean;
   fbGroups: RotationGroupInput[];
   liGroups: RotationGroupInput[];
   threadsKeywords: string[];
+  threadsAutoDiscover?: boolean;
+  threadsTopicIds?: string[];
+  threadsTopicNames?: string[];
+  scrollDistance?: number;
+  scrollDelayMinMs?: number;
+  scrollDelayMaxMs?: number;
+  groupRestSec?: number;
+  maxScrolls?: number;
+  oldPostsLimit?: number;
+  maxPostsPerGroup?: number;
+  maxScrollTimeSec?: number;
+}
+
+export interface ScheduleProgress {
+  stage: ScheduleStage;
+  groupIndex: number;
+  totalGroups: number;
+  savedSoFar: number;
 }
 
 export interface RotationSchedule {
@@ -276,6 +354,17 @@ export interface RotationSchedule {
   lastRoundSummary: { roundNumber: number; totalSaved: number; at: number } | null;
   lastError: string | null;
   createdAt: number;
+  /** Tiến độ chi tiết (nhóm/từ khoá thứ mấy, đã lưu bao nhiêu bài) của vòng ĐANG chạy —
+   * chỉ có khi status === "running", tự xoá khi chuyển nền tảng/kết thúc vòng. */
+  progress?: ScheduleProgress | null;
+  creator?: {
+    user_id?: string;
+    name: string;
+    email: string;
+    role?: string;
+    avatar?: string;
+    is_system?: boolean;
+  };
 }
 
 export function useRotationSchedules() {
@@ -309,12 +398,29 @@ export function useRotationSchedules() {
         setSchedules((prev) =>
           prev.map((s) =>
             s.id === p.scheduleId
-              ? { ...s, currentStage: (p.stage as ScheduleStage) ?? s.currentStage, roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber }
+              ? { ...s, currentStage: (p.stage as ScheduleStage) ?? s.currentStage, roundNumber: typeof p.roundNumber === "number" ? p.roundNumber : s.roundNumber, progress: null }
+              : s,
+          ),
+        );
+      } else if (kind === "PROGRESS") {
+        setSchedules((prev) =>
+          prev.map((s) =>
+            s.id === p.scheduleId
+              ? {
+                  ...s,
+                  progress: {
+                    stage: (p.stage as ScheduleStage) ?? s.currentStage,
+                    groupIndex: typeof p.groupIndex === "number" ? p.groupIndex : 0,
+                    totalGroups: typeof p.totalGroups === "number" ? p.totalGroups : 0,
+                    savedSoFar: typeof p.savedSoFar === "number" ? p.savedSoFar : 0,
+                  },
+                }
               : s,
           ),
         );
       } else if (kind === "ROUND_DONE") {
         addLog("success", `Vòng ${p.roundNumber} hoàn tất — +${p.totalSaved} bài mới.`);
+        setSchedules((prev) => prev.map((s) => (s.id === p.scheduleId ? { ...s, progress: null } : s)));
       }
     };
 
@@ -330,7 +436,7 @@ export function useRotationSchedules() {
       liGroups: RotationGroupInput[],
       threadsKeywords: string[],
       config: Record<string, unknown>,
-    ): Promise<{ success: boolean; error?: string }> => {
+    ): Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }> => {
       return new Promise((resolve) => {
         let settled = false;
         const onMsg = (e: MessageEvent) => {
@@ -341,7 +447,7 @@ export function useRotationSchedules() {
           resolve(e.data.payload || { success: false, error: "Không nhận được phản hồi từ Extension." });
         };
         window.addEventListener("message", onMsg);
-        postToExtension("MK_ROTATE_SCHEDULE_ADD", { label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
+        postToExtension("MK_ROTATE_SCHEDULE_ADD", { id: config.id, label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
         window.setTimeout(() => {
           if (settled) return;
           settled = true;
@@ -365,11 +471,55 @@ export function useRotationSchedules() {
     [addLog],
   );
 
+  const updateSchedule = useCallback(
+    (
+      id: string,
+      label: string,
+      fbGroups: RotationGroupInput[],
+      liGroups: RotationGroupInput[],
+      threadsKeywords: string[],
+      config: Record<string, unknown>,
+    ): Promise<{ success: boolean; error?: string; schedule?: RotationSchedule }> => {
+      return new Promise((resolve) => {
+        let settled = false;
+        const onMsg = (e: MessageEvent) => {
+          if (e.source !== window || e.data?.action !== "MK_ROTATE_SCHEDULE_UPDATE_RESULT") return;
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("message", onMsg);
+          resolve(e.data.payload || { success: false, error: "Không nhận được phản hồi từ Extension." });
+        };
+        window.addEventListener("message", onMsg);
+        postToExtension("MK_ROTATE_SCHEDULE_UPDATE", { id, label, fbGroups, liGroups, threadsKeywords, config: { apiBase: extensionApiBase(), ...config } });
+        window.setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          window.removeEventListener("message", onMsg);
+          resolve({ success: true }); // Không để timeout chặn flow web nếu extension chưa phản hồi ngay
+        }, 5000);
+      });
+    },
+    [],
+  );
+
   const deleteSchedule = useCallback((id: string) => {
     postToExtension("MK_ROTATE_SCHEDULE_DELETE", { id });
   }, []);
 
-  return { schedules, logs, loaded, addSchedule, toggleSchedule, stopSchedule, deleteSchedule };
+  const runNow = useCallback(
+    (id: string) => {
+      postToExtension("MK_ROTATE_SCHEDULE_RUN_NOW", { id });
+      addLog("info", "Đã gửi lệnh ưu tiên chạy ngay lịch cào này tới Extension.");
+    },
+    [addLog],
+  );
+
+  const stopAll = useCallback(() => {
+    postToExtension("MK_ROTATE_SCHEDULE_STOP_ALL");
+    addLog("warn", "Đã gửi lệnh dừng toàn bộ các lịch cào tới Extension.");
+  }, [addLog]);
+
+  return { schedules, logs, loaded, addSchedule, updateSchedule, toggleSchedule, stopSchedule, deleteSchedule, runNow, stopAll };
 }
 
 // ── Bình luận hàng loạt (Facebook + LinkedIn) + hẹn giờ Facebook ─────────────
@@ -397,14 +547,22 @@ interface UseBulkCommentOptions {
 // Chỉ Facebook/LinkedIn có bình luận hàng loạt từ trang này (Threads mới có cào).
 export const PLATFORM_DB_ID: Record<GroupPlatform, number> = { facebook: 1, linkedin: 2 };
 
+// Tài khoản "hệ thống" DUY NHẤT được phép tự động seeding bình luận không cần người bấm
+// (yêu cầu 2026-10-02: "cấm ảnh hưởng tới các tài khoản member" — trước đó hook auto-seeding
+// chạy bất kỳ khi nào có người mở tab Seeding/TaskModal, dùng nhầm phiên FB của member đó để
+// đăng bình luận seeding). Xem [[seeding-system-account]] — đổi email ở đây nếu tài khoản
+// hệ thống đổi (khớp SEEDING_SYSTEM_MEMBER_ID bên backend, unified_posts_service.py).
+const SEEDING_SYSTEM_ACCOUNT_EMAIL = "seedingsystem@markeeai.com";
+
 export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCommentOptions) {
   const [isCommenting, setIsCommenting] = useState(false);
   const [progress, setProgress] = useState<CommentProgress | null>(null);
   const [stopping, setStopping] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const isCommentingRef = useRef(false);
-  const runRef = useRef<{ kind: "manual" | "scheduled"; urls: string[]; scheduledId?: string } | null>(null);
+  const runRef = useRef<{ kind: "manual" | "scheduled" | "auto_seeding"; urls: string[]; scheduledId?: string } | null>(null);
   const processingScheduledRef = useRef<Set<string>>(new Set());
+  const processingAutoSeedingRef = useRef<Set<string>>(new Set());
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -428,6 +586,10 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
         const run = runRef.current;
         runRef.current = null;
         if (run?.kind === "scheduled" && run.scheduledId) processingScheduledRef.current.delete(run.scheduledId);
+        if (run?.kind === "auto_seeding" && run.scheduledId) {
+          autoSeedingCommentService.markFailed(run.scheduledId, event.data.error || "Extension từ chối lệnh bình luận.").catch(() => {});
+          processingAutoSeedingRef.current.delete(run.scheduledId);
+        }
         setLastError(event.data.error || "Extension từ chối lệnh bình luận.");
       } else if (action === "BULK_COMMENT_PROGRESS") {
         if (payload) setProgress(payload);
@@ -440,6 +602,10 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
           scheduledCommentService.markPosted(run.scheduledId).catch(() => {});
           processingScheduledRef.current.delete(run.scheduledId);
           setProgress((p) => (p ? { ...p, status: "Đã hoàn tất comment hẹn giờ!" } : null));
+        } else if (run?.kind === "auto_seeding" && run.scheduledId) {
+          autoSeedingCommentService.markPosted(run.scheduledId).catch(() => {});
+          processingAutoSeedingRef.current.delete(run.scheduledId);
+          setProgress((p) => (p ? { ...p, status: "Đã hoàn tất comment seeding tự động!" } : null));
         } else {
           setProgress((p) => (p ? { ...p, status: "Hoàn tất toàn bộ tiến trình!" } : null));
           onCompleteRef.current?.(run?.urls || []);
@@ -516,6 +682,46 @@ export function useBulkCommentRuntime({ isReady, email, onComplete }: UseBulkCom
             email_member: email,
             id_social_account: item.id_social_account || undefined,
             id_platform: PLATFORM_DB_ID.facebook,
+          },
+        });
+      } catch {
+        // thử lại ở lượt poll kế tiếp
+      }
+    };
+    const interval = window.setInterval(poll, 10000);
+    return () => window.clearInterval(interval);
+  }, [isReady, email]);
+
+  // Comment seeding TỰ ĐỘNG (Facebook + LinkedIn, yêu cầu 2026-10-02, mở rộng LinkedIn
+  // 2026-10-07): backend tự tạo nhiệm vụ (auto_seeding_comments) ngay khi 1 bài acc hệ
+  // thống cào về được chấm điểm AI cao (>=70) — hook này poll danh sách chờ mỗi ~10s và tự
+  // gọi extension comment thật, không cần ai bấm, chỉ cần tab Seeding còn mở (giống cơ chế
+  // comment hẹn giờ ở trên). `item.platform` quyết định id_post/id_platform đúng nền tảng
+  // — item có thể là bài Facebook HOẶC LinkedIn tuỳ nhiệm vụ nào tới lượt trong hàng đợi.
+  useEffect(() => {
+    // CHỈ chạy khi đang đăng nhập bằng đúng tài khoản hệ thống — mọi tài khoản member khác
+    // (kể cả khi họ đang mở tab Seeding/TaskModal) sẽ KHÔNG poll/tự động đăng bình luận gì
+    // cả, tránh dùng nhầm phiên Facebook/LinkedIn của member để seeding tự động.
+    if (!isReady || !email || email.toLowerCase() !== SEEDING_SYSTEM_ACCOUNT_EMAIL) return;
+    const poll = async () => {
+      if (isCommentingRef.current) return;
+      try {
+        const res = await autoSeedingCommentService.getPending(50);
+        const due = (res.data || []).filter((c) => !processingAutoSeedingRef.current.has(c.id));
+        if (due.length === 0 || isCommentingRef.current) return;
+        const item = due[0];
+        processingAutoSeedingRef.current.add(item.id);
+        const idPlatform = item.platform === "linkedin" ? PLATFORM_DB_ID.linkedin : PLATFORM_DB_ID.facebook;
+        const idPost = item.platform === "linkedin" ? item.id_post_li : item.id_post_fb;
+        runRef.current = { kind: "auto_seeding", urls: [item.post_url], scheduledId: item.id };
+        setCommenting(true);
+        postToExtension("START_BULK_COMMENT", {
+          posts: [{ url: item.post_url, id_post: idPost || undefined, id_platform: idPlatform }],
+          text: item.comment_content || "",
+          verifyConfig: {
+            apiBase: extensionApiBase(),
+            email_member: email,
+            id_platform: idPlatform,
           },
         });
       } catch {

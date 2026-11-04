@@ -33,6 +33,7 @@ export type MaterialSymbolName =
   | "group_add"
   | "person_add"
   | "calendar_month"
+  | "schedule"
   | "assignment"
   | "speed"
   | "database"

@@ -1,7 +1,8 @@
 'use client';
 
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CurrencyInput } from '@/components/CurrencyInput';
-import { formatVND, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
+import { formatVND, DEAL_STAGE_META, PIPELINE_COLUMNS } from '../constants/crmConfig';
 import { CrmCategorySelect } from './CrmCategorySelect';
 import { CrmProductMultiSelect } from './CrmProductMultiSelect';
 import { SearchableSelect, type SelectAction } from './SearchableSelect';
@@ -14,8 +15,98 @@ import {
 
 /** "Giai đoạn" cho Deal sap tao (feedback WIP full-flow, mucE.2 "Bàn giao
  * Sale": layout `Giai đoạn | Kết quả Lead`) - chi cho chon trong cac stage
- * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao). */
-const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({ value: stage, label: DEAL_STAGE_META[stage].label }));
+ * PIPELINE THAT (khong gom on_hold/lost, khong hop ly cho 1 co hoi vua tao).
+ * TRUOC DAY doc Object.keys(DEAL_STAGE_META) - object nay con giu 6 key cu
+ * (new_lead/contacted/qualified/contract_sent/won...) trung nhan voi cac stage
+ * hien hanh (vd "Đang deal" x4, "Lên Proposal" x2) de tuong thich nguoc du
+ * lieu cu, lam dropdown hien trung lap (bug "giai đoạn bị lặp"). PIPELINE_COLUMNS
+ * da la danh sach DUNG 10 stage that, khong trung, dung thu tu, dung tinh than
+ * comment ben tren tu truoc gio. */
+const DEAL_STAGE_OPTIONS = PIPELINE_COLUMNS.map(stage => ({
+  value: stage,
+  label: DEAL_STAGE_META[stage]?.label || stage,
+}));
+
+/** Combobox "Dự án" dùng chung UX với ProjectPicker (DealFormFields.tsx) -
+ * cùng class CSS `crm-customer-combobox`/`crm-customer-combobox-menu` để
+ * đồng bộ giao diện, nhưng KHÔNG tự fetch (nhận `options` làm prop, giữ đúng
+ * nguyên tắc "component này chỉ nhận input/callback" của cả panel). */
+function ProjectComboField({
+  value,
+  options,
+  disabled,
+  onPick,
+  onTypeNew,
+}: {
+  value: string;
+  options: Array<{ id: string; name: string; code?: string }>;
+  disabled?: boolean;
+  onPick?: (project: { id: string; name: string }) => void;
+  onTypeNew: (value: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) setOpen(false);
+    }
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  const keyword = query.trim().toLowerCase();
+  const filtered = keyword
+    ? options.filter(p => p.name.toLowerCase().includes(keyword) || (p.code || '').toLowerCase().includes(keyword))
+    : options;
+  const exactMatch = options.some(p => p.name.trim().toLowerCase() === query.trim().toLowerCase());
+
+  return (
+    <div className="crm-customer-combobox" ref={containerRef}>
+      <input
+        disabled={disabled}
+        value={open ? query : value}
+        onFocus={() => { setQuery(value); setOpen(true); }}
+        onChange={event => {
+          setQuery(event.target.value);
+          setOpen(true);
+          onTypeNew(event.target.value);
+        }}
+        placeholder="Chọn dự án có sẵn hoặc gõ tên dự án mới"
+        autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+      />
+      {open ? (
+        <div className="crm-customer-combobox-menu">
+          {filtered.map(project => (
+            <button
+              type="button"
+              key={project.id}
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => { onPick?.(project); setQuery(''); setOpen(false); }}
+            >
+              <strong>{project.name}</strong>
+              {project.code ? <span>{project.code}</span> : null}
+            </button>
+          ))}
+          {query.trim() && !exactMatch ? (
+            <button
+              type="button"
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => { onTypeNew(query.trim()); setOpen(false); }}
+            >
+              + Tạo dự án mới: “{query.trim()}”
+            </button>
+          ) : null}
+          {!filtered.length && !query.trim() ? <p>Chưa có dự án nào — gõ để tạo dự án mới</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * Panel "Thông tin then chốt" + "Bàn giao Sale" (Sale nhận bàn giao - chọn 1
@@ -43,6 +134,20 @@ export function LeadDealQualificationPanel(props: {
   onTimelineChange: (value: string) => void;
   project: string;
   onProjectChange: (value: string) => void;
+  /** Khi cha truyền mảng này (kể cả rỗng) - field "Dự án" đổi sang combobox
+   * chọn Dự án CÓ SẴN của khách hàng + gõ tên mới để tạo (giống ProjectPicker
+   * ở DealFormFields.tsx, nhưng component này KHÔNG tự fetch - cha tự gọi
+   * projectsService.list(customerId) rồi truyền xuống). Không truyền (undefined)
+   * -> giữ nguyên ô nhập tay tự do như cũ (lead chưa convert, chưa có khách
+   * hàng để tra Dự án có sẵn). */
+  projectOptions?: Array<{ id: string; name: string; code?: string }>;
+  onPickProject?: (project: { id: string; name: string }) => void;
+  /** Khi cha truyền node này - RENDER THẲNG node đó thay cho input/combobox
+   * dựng sẵn ở trên (vd cha muốn dùng lại nguyên `ProjectPicker` thật của
+   * DealFormFields.tsx - tự fetch/tạo Dự án - thay vì bản combobox nhận
+   * props rời của riêng panel này). `project`/`projectOptions` vẫn khai báo
+   * required để không phá các nơi gọi cũ, nhưng bị bỏ qua khi có `projectField`. */
+  projectField?: ReactNode;
   note: string;
   onNoteChange: (value: string) => void;
 
@@ -77,7 +182,7 @@ export function LeadDealQualificationPanel(props: {
   showProjectField?: boolean;
 
   verificationOutcome: VerificationOutcome;
-  ruleConditions: Record<string, boolean> | null;
+  ruleConditions: Record<string, boolean | string[]> | null;
   outcomeReasons: string[];
   outcomeMissing: string[];
   sqlProgress: { ok: number; total: number };
@@ -96,6 +201,10 @@ export function LeadDealQualificationPanel(props: {
   readinessRef?: React.RefObject<HTMLElement | null>;
 }) {
   const { canWrite } = props;
+  const activeDealStageOptions = DEAL_STAGE_OPTIONS.some(o => o.value === props.dealStage) || !props.dealStage
+    ? DEAL_STAGE_OPTIONS
+    : [...DEAL_STAGE_OPTIONS, { value: props.dealStage, label: props.dealStage }];
+
   return (
     <div className="crm-verify-compact-grid">
       <section className="crm-form-section crm-verify-section crm-verify-panel" id="crm-verify-quick">
@@ -156,7 +265,7 @@ export function LeadDealQualificationPanel(props: {
             </Field>
             <Field label="Giai đoạn" required>
               <select disabled={!canWrite} value={props.dealStage} onChange={e => props.onDealStageChange(e.target.value)}>
-                {DEAL_STAGE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                {activeDealStageOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </Field>
           </div>
@@ -180,7 +289,7 @@ export function LeadDealQualificationPanel(props: {
               <SearchableSelect disabled={!canWrite} value={props.teamId} onChange={props.onTeamIdChange} options={props.teamOptions} placeholder="-- Chọn --" actions={props.teamActions} />
             </Field>
             <Field label="Sale phụ trách">
-              <SearchableSelect disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
+              <SearchableSelect testId="lead-ae-select" disabled={!canWrite} value={props.aeId} onChange={props.onAeIdChange} options={props.aeOptions} placeholder="Chờ phân công" />
             </Field>
           </div>
           <div className="crm-inline-pair">
@@ -200,12 +309,22 @@ export function LeadDealQualificationPanel(props: {
           </div>
           {props.showProjectField !== false ? (
             <Field label="Dự án" hint="tùy chọn">
-              <input
-                disabled={!canWrite}
-                value={props.project}
-                onChange={e => props.onProjectChange(e.target.value)}
-                placeholder="VD: Website 2026"
-              />
+              {props.projectField ? props.projectField : props.projectOptions ? (
+                <ProjectComboField
+                  disabled={!canWrite}
+                  value={props.project}
+                  options={props.projectOptions}
+                  onPick={props.onPickProject}
+                  onTypeNew={props.onProjectChange}
+                />
+              ) : (
+                <input
+                  disabled={!canWrite}
+                  value={props.project}
+                  onChange={e => props.onProjectChange(e.target.value)}
+                  placeholder="VD: Website 2026"
+                />
+              )}
             </Field>
           ) : null}
         </div>

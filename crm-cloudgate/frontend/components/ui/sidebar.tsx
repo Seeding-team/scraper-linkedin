@@ -78,10 +78,16 @@ function SidebarProvider({
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
-        event.preventDefault();
-        toggleSidebar();
-      }
+      if (event.key !== SIDEBAR_KEYBOARD_SHORTCUT || !(event.metaKey || event.ctrlKey)) return;
+      // Bug (2026-10-10, bao cao thuc te): listener nay bind tren `window`, khong kiem tra
+      // event.target - nen go Ctrl/Cmd+B trong BAT KY input/textarea/select nao (vd o tim kiem
+      // cua SearchableSelect - "Người phụ trách" trong CustomerFormModal) cung vo tinh dong/mo
+      // sidebar ("bấm vô cái nó tắt sidebar"). Bo qua khi dang go trong 1 phan tu co the nhap.
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) return;
+      event.preventDefault();
+      toggleSidebar();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);

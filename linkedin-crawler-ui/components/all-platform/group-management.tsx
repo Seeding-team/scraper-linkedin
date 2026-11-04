@@ -15,9 +15,15 @@ import {
 } from "@/services/all-platform.service";
 import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category } from "@/types/unified.types";
 
-const PLATFORMS: { key: FeedPlatform; label: string; Icon: typeof FaFacebook }[] = [
+import { SiThreads } from "react-icons/si";
+import { ThreadsKeywordsTab } from "./threads-keywords-tab";
+
+type GroupPlatformTab = FeedPlatform | "threads";
+
+const PLATFORMS: { key: GroupPlatformTab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "facebook", label: "Facebook Groups", Icon: FaFacebook },
   { key: "linkedin", label: "LinkedIn Groups", Icon: FaLinkedin },
+  { key: "threads", label: "Threads (Từ khóa)", Icon: SiThreads },
 ];
 
 // ── Searchable Dropdown Component ─────────────────────────────────────────────
@@ -1022,7 +1028,16 @@ export function GroupManagementContent() {
   const isAdmin = user?.role === "admin";
   const isLeader = user?.role === "leader";
 
-  const [platform, setPlatform] = useState<FeedPlatform>("facebook");
+  const [platform, setPlatform] = useState<GroupPlatformTab>(() => {
+    if (typeof window !== "undefined") {
+      const tabParam = new URLSearchParams(window.location.search).get("tab");
+      if (tabParam === "threads" || tabParam === "linkedin" || tabParam === "facebook") {
+        return tabParam as GroupPlatformTab;
+      }
+    }
+    return "facebook";
+  });
+  const [threadsCount, setThreadsCount] = useState<number>(0);
   const [fbGroups, setFbGroups] = useState<FacebookGroup[]>([]);
   const [liGroups, setLiGroups] = useState<LinkedInGroup[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -1247,13 +1262,7 @@ export function GroupManagementContent() {
   const filteredFb = useMemo(() => {
     return fbGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -1282,6 +1291,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1308,13 +1320,7 @@ export function GroupManagementContent() {
   const filteredLi = useMemo(() => {
     return liGroups
       .filter((g) => {
-        if (isLeader && user) {
-          const isOwnerLeader = String(g.id_member) === String(user.id);
-          const isOwnerMemberOfMyTeam = myTeamMemberIds.has(String(g.id_member));
-          if (!isOwnerLeader && !isOwnerMemberOfMyTeam) {
-            return false;
-          }
-        }
+        // [Master Requirement 2026-11-03]: Mở ra thấy full toàn bộ nhóm dù nhóm đó ai thêm thì tất cả mọi người đều thấy
 
         const matchesSearch = !search ||
           g.group_name?.toLowerCase().includes(search.toLowerCase()) ||
@@ -1342,6 +1348,9 @@ export function GroupManagementContent() {
         return matchesSearch && matchesIntent && matchesIndustry && matchesTeam && matchesTier && matchesIcp && matchesMember && matchesContentType && matchesProductSeeding;
       })
       .sort((g1, g2) => {
+        // Nhom nhieu bai diem AI cao len dau truoc tien (yeu cau 2026-10-02, giong post feed).
+        const leadComp = (Number((g2 as any).high_lead_post_count) || 0) - (Number((g1 as any).high_lead_post_count) || 0);
+        if (leadComp !== 0) return leadComp;
         if (isLeader && user) {
           const isLeader1 = String(g1.id_member) === String(user.id);
           const isLeader2 = String(g2.id_member) === String(user.id);
@@ -1422,6 +1431,7 @@ export function GroupManagementContent() {
   };
 
   const currentGroups = platform === "facebook" ? filteredFb : filteredLi;
+  const hasLeadStatsError = currentGroups.some((g) => (g as any).lead_stats_error);
   const totalItems = currentGroups.length;
   const totalPages = Math.ceil(totalItems / pageSize);
   const paginatedGroups = currentGroups.slice((page - 1) * pageSize, page * pageSize);
@@ -1441,22 +1451,28 @@ export function GroupManagementContent() {
               <MaterialIcon name="groups" className="text-primary text-3xl" />
             </div>
             <div>
-              <h1 className="text-h1 text-on-surface font-bold tracking-tight">Quản lý nhóm</h1>
+              <h1 className="text-h1 text-on-surface font-bold tracking-tight">
+                {platform === "threads" ? "Từ khóa Threads & Seeding" : "Quản lý nhóm"}
+              </h1>
               <p className="text-body-md text-on-surface-variant">
-                Danh sách nhóm Facebook &amp; LinkedIn dùng để thu thập dữ liệu
+                {platform === "threads"
+                  ? "Quản lý các loại từ khóa theo chủ đề, đóng góp từ khóa cộng đồng và hỗ trợ cào bài viết chuẩn xác"
+                  : "Danh sách nhóm Facebook & LinkedIn dùng để thu thập dữ liệu"}
               </p>
             </div>
           </div>
-          <button
-            onClick={() => {
-              setShowAddForm(true);
-              setEditingGroup(null);
-            }}
-            className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
-          >
-            <FaPlus />
-            Thêm nhóm
-          </button>
+          {platform !== "threads" && (
+            <button
+              onClick={() => {
+                setShowAddForm(true);
+                setEditingGroup(null);
+              }}
+              className="flex items-center gap-2 bg-primary text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-on-primary-fixed-variant transition-all duration-200 ease-out shrink-0 cursor-pointer active:scale-95 shadow-[0_2px_8px_-1px_rgba(217,55,55,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(217,55,55,0.45)]"
+            >
+              <FaPlus />
+              Thêm nhóm
+            </button>
+          )}
         </div>
       </div>
 
@@ -1479,6 +1495,11 @@ export function GroupManagementContent() {
               setIcpFilter("all");
               setContentTypeFilter("all");
               setProductSeedingFilter("all");
+              if (typeof window !== "undefined") {
+                const url = new URL(window.location.href);
+                url.searchParams.set("tab", key);
+                window.history.replaceState({}, "", url.toString());
+              }
             }}
             className={`flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ease-out cursor-pointer ${
               platform === key
@@ -1491,12 +1512,16 @@ export function GroupManagementContent() {
             <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black ${
               platform === key ? "bg-white/20 text-white" : "bg-surface-container-highest text-on-surface-variant"
             }`}>
-              {key === "facebook" ? filteredFb.length : filteredLi.length}
+              {key === "facebook" ? filteredFb.length : key === "linkedin" ? filteredLi.length : threadsCount}
             </span>
           </button>
         ))}
       </div>
 
+      {platform === "threads" ? (
+        <ThreadsKeywordsTab onTopicCountChange={setThreadsCount} />
+      ) : (
+        <>
       {/* Alerts */}
       {error && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-[0_1px_2px_rgba(16,24,40,0.04)] animate-in fade-in">
@@ -1818,6 +1843,13 @@ export function GroupManagementContent() {
         </div>
       )}
 
+      {hasLeadStatsError && (
+        <div className="flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-medium text-amber-800">
+          <MaterialIcon name="warning" className="text-base text-amber-600" />
+          Không tính được điểm AI (🎯) cho một số nhóm lúc này — danh sách nhóm vẫn đầy đủ, chỉ tạm thời thiếu badge điểm. Không có nhóm nào bị xoá hay ẩn.
+        </div>
+      )}
+
       {/* Groups table */}
       {loading ? (
         <div className="text-center py-16">
@@ -1898,6 +1930,22 @@ export function GroupManagementContent() {
                       >
                         {g.group_name || "—"}
                       </a>
+                      {(g as any).high_lead_post_count > 0 && (
+                        <span
+                          title={`Điểm AI trung bình các bài trong nhóm: ${(g as any).avg_lead_score ?? "—"}`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        >
+                          🎯 {(g as any).high_lead_post_count} bài điểm cao
+                        </span>
+                      )}
+                      {(g as any).lead_stats_warning && (
+                        <span
+                          title={`Đã chấm điểm ${(g as any).scored_post_count ?? 0} bài trong nhóm này nhưng chưa có bài nào điểm cao — nhóm KHÔNG bị xoá tự động, chỉ cảnh báo để bạn tự quyết định (giữ/bỏ/đổi nguồn)`}
+                          className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200"
+                        >
+                          ⚠️ Ít/không ra lead ({(g as any).scored_post_count} bài đã chấm)
+                        </span>
+                      )}
                       {platform === "facebook" && (
                         <div className="mt-1.5 text-xs text-on-surface-variant">
                           Thành viên: <span className="font-semibold text-on-surface">{Number((g as FacebookGroup).members) > 0 ? Number((g as FacebookGroup).members).toLocaleString("vi-VN") : "?"}</span> thành viên
@@ -2300,6 +2348,8 @@ export function GroupManagementContent() {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

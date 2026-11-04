@@ -36,7 +36,34 @@ export interface BundleComponentLine {
    * LUON co mat cho moi request da auth (khong qua cong quyen nay). */
 }
 
+/** TÍCH HỢP BỘ LỌC WORKSPACE: Metadata của 1 Workspace lấy động từ Database */
+export interface WorkspaceMeta {
+  instance_key: string;
+  code?: string | null;
+  name: string;
+  total_groups: number;
+}
+
+/** ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục
+ * từ GET /service-catalog/version (clone backend). */
+export interface CatalogChangeFingerprint {
+  groups_count: number;
+  items_max_updated_at: string | null;
+  junction_count: number;
+}
+
+/** Many-to-many Workspace assignment (migration 190): kết quả của bulk replace-all. */
+export interface WorkspaceAssignResult {
+  assignment: Record<string, string[]>;
+  groups: string[];
+}
+
 export interface ServiceCatalogItem {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace (markee, cloudgate, securityzone,...) */
+  instance?: string;
+  /** Many-to-many Workspace (migration 190):Set đầy đủ các workspace của item
+   * (junction table; thiếu = [instance] legacy fallback). */
+  workspaces?: string[];
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
@@ -58,6 +85,11 @@ export interface ServiceCatalogItem {
   defaultUnitPriceVnd: number;
   defaultDiscountPercent: number;
   defaultVatRate: number | null;
+  /** "VAT giá vốn" (2026-10-13, migration 191) - VAT dau vao RIENG cho Gia
+   * von (mua hang tu NCC), KHAC defaultVatRate (VAT dau ra ap cho Gia khach).
+   * Khi them san pham vao bao gia, Gia von cua dong = defaultCostPriceVnd x
+   * (1 + defaultCostVatRate/100). Null/0 = gia von khong gom VAT (hanh vi cu). */
+  defaultCostVatRate?: number | null;
   customerVisible: boolean;
   quoteDisplayName?: string | null;
   quoteDescription?: string | null;
@@ -132,9 +164,13 @@ export interface ServiceCatalogOptions {
 }
 
 export interface ServiceCatalogItemInput {
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Mã định danh workspace khi tạo mới/chỉnh sửa */
+  instance?: string;
   defaultCostPriceVnd?: number | null;
   defaultMarkupPercent?: number | null;
   defaultCustomerPriceVnd?: number | null;
+  /** "VAT giá vốn" (2026-10-13, migration 191) - xem ServiceCatalogItem.defaultCostVatRate. */
+  defaultCostVatRate?: number | null;
   pricingInputMode?: ServiceCatalogPricingInputMode;
   itemType: ServiceCatalogItemType;
   parentId?: string;
@@ -246,4 +282,25 @@ export interface ServiceCatalogItemPricingUpsertInput {
   otherCost?: number | null;
   pricingPolicy?: string | null;
 
+}
+
+/** Ket qua 1 lan "Đồng bộ hàng hóa từ MSC" (trường data cua /msc-sync/run, va
+ * tung row cua /msc-sync/status — mirror bang msc_sync_runs, migration 175). */
+export interface MscSyncStats {
+  status?: 'success' | 'partial' | 'failed' | string;
+  trigger?: string;
+  dry_run?: boolean;
+  http_status?: number | null;
+  duration_ms?: number | null;
+  fetched_groups?: number;
+  fetched_items?: number;
+  groups_created?: number;
+  groups_updated?: number;
+  inserted?: number;
+  updated?: number;
+  skipped?: number;
+  failed?: number;
+  duplicates?: number;
+  error_message?: string | null;
+  errors?: string[];
 }

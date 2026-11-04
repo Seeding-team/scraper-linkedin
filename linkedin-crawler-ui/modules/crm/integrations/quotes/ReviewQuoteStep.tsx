@@ -4,6 +4,7 @@ import { QuoteDocumentRenderer, calculateQuoteTotals, calculateVillaTotals } fro
 import type { QuoteSchema } from '@/modules/quotes';
 import { QuoteColumnVisibilityPicker } from './QuoteColumnVisibilityPicker';
 import type { QuoteDraft } from './types';
+import { normalizeQuoteCurrency } from '@/lib/currency';
 
 // Cột "khoá" (STT + tên hạng mục), không bao giờ ẩn được - hiện như dòng có
 // khoá trong khối "Cột hiển thị", không phải checkbox. Bộ khoá phụ thuộc bảng
@@ -28,9 +29,11 @@ export function ReviewQuoteStep({
   quoteFormId?: string;
 }) {
   const isVilla = schema.layoutType === 'villa_solution_package';
+  // Tien te cap quote (data.currency do QuoteFormFiller dat); villa luon VND.
+  const currency = isVilla ? 'VND' : normalizeQuoteCurrency(draft.data.currency);
   const totals = isVilla
     ? calculateVillaTotals(draft.solutionItems)
-    : calculateQuoteTotals(draft.items, draft.data.discountPercent);
+    : calculateQuoteTotals(draft.items, draft.data.discountPercent, currency);
 
   return (
     <div className="crm-wizard-review-step">
@@ -59,6 +62,7 @@ export function ReviewQuoteStep({
         quoteItems={draft.items}
         solutionItems={draft.solutionItems}
         totals={totals}
+        currency={currency}
         mode="preview"
         respectVisibleColumns={Boolean(onChange)}
         overallDiscountPercent={draft.overallDiscountPercent}

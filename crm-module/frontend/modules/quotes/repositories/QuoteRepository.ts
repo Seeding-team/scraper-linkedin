@@ -17,6 +17,23 @@ import type {
 } from '../types';
 import type { ServiceCatalogOptions } from '../../service-catalog/types';
 
+export interface SystemExchangeRate {
+  rate: number | null;
+  /** "Tỷ giá USD thị trường tự do – tygiausd.org" | "ExchangeRate-API …" | "Nhập tay" */
+  source: string | null;
+  isManual: boolean;
+  updatedAt: string | null;
+  lastAttemptAt?: string | null;
+  lastError?: string | null;
+  /** true = rate tu dong da cu (>24h) hoac lan lam moi gan nhat loi → canh bao, van dung rate gan nhat. */
+  stale: boolean;
+  note?: string | null;
+  refreshed?: boolean;
+  /** true = vua goi nguon < cooldown nen khong goi lai (dung ket qua da co). */
+  cooldown?: boolean;
+  error?: string | null;
+}
+
 export interface QuoteRepository {
   getForms(): Promise<QuoteForm[]>;
   getForm(id: string): Promise<QuoteForm>;
@@ -51,12 +68,29 @@ export interface QuoteRepository {
   /** Gói bán + dịch vụ thành phần khả dụng cho 1 mẫu báo giá, dùng dựng dropdown khi điền báo giá. */
   getServiceCatalogOptions(formId: string): Promise<ServiceCatalogOptions>;
 
+  /** Ty gia USD->VND he thong cho luong bao gia (rate=null neu chua co va nguon tu dong loi). Backend tu
+   * lam moi tu nguon uy tin khi rate tu dong da cu. Bao gia chi COPY gia tri nay vao snapshot luc
+   * tao/chuyen currency. */
+  getExchangeRate(): Promise<SystemExchangeRate>;
+  /** Nut "Cap nhat ty gia": lay NGAY tu nguon uy tin (quay lai che do tu dong). Loi → giu rate cu + `error`. */
+  refreshExchangeRate(): Promise<SystemExchangeRate>;
+  /** Override THU CONG cua Admin. */
+  setExchangeRate(rate: number, note?: string): Promise<SystemExchangeRate>;
+
   /** Danh sách công ty phát hành báo giá (bên bán) — dropdown "Đơn vị phát hành
    * báo giá" ở Bước 1 wizard tạo báo giá. includeInactive=true dùng cho trang
    * quản trị danh mục công ty. */
   getIssuerCompanies(includeInactive?: boolean): Promise<IssuerCompany[]>;
   createIssuerCompany(input: CreateIssuerCompanyInput): Promise<IssuerCompany>;
   updateIssuerCompany(id: string, input: UpdateIssuerCompanyInput): Promise<IssuerCompany>;
+
+  /** Chuyển (Move) chính báo giá hiện tại sang Customer + Deal khác trong CÙNG workspace. */
+  moveQuoteInWorkspace(
+    quoteId: string,
+    targetCustomerId: string,
+    targetDealId: string,
+    targetContactId?: string | null
+  ): Promise<Quote>;
 
   /** Gửi 1 báo giá ĐÃ DUYỆT qua Telegram (group/topic cố định, cấu hình ở backend). */
   sendQuoteTelegram(quoteId: string): Promise<QuoteTelegramLog>;
@@ -81,6 +115,10 @@ export interface QuoteRepository {
   // ── Phase 1/3 lifecycle (migration 087/089) ──────────────────────────────
   /** Huỷ báo giá (không hard-delete) — bắt buộc lý do, tự tắt public link. */
   cancelQuote(quoteId: string, reason: string): Promise<Quote>;
+  /** Danh sach ly do Khong chot / OUT (nguon o backend). */
+  getLostReasons(): Promise<Array<{ code: string; label: string }>>;
+  /** Khong chot / OUT sau phat hanh - tra ve quote moi + ket qua xet OUT Co hoi. */
+  markQuoteLost(quoteId: string, payload: { reason: string; reasonOther?: string; note?: string }): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }>;
   /** Huỷ công khai — tắt public link, KHÔNG xoá quote. */
   revokePublicQuote(quoteId: string): Promise<Quote>;
   /** Mở lại link báo giá — chiều ngược của revokePublicQuote(), giữ nguyên public_token cũ. */

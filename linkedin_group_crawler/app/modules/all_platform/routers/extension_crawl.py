@@ -17,6 +17,7 @@ from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.websocket import manager
 from app.modules.all_platform.services.supabase_facebook_crawl_service import parse_facebook_time
 from app.modules.all_platform.services import supabase_crawl_queue_service as queue_service
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts, score_text_for_lead
 
 # Reuse facebook keyword picker logic
 from app.modules.facebook.src.modules.facebook.services.facebook_scraper import (
@@ -170,6 +171,8 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
     for p in payload.posts:
         post_url = p.post_url or p.url
         if not post_url or post_url in existing_urls:
+            continue
+        if 'comment_id=' in post_url or 'reply_comment_id=' in post_url:
             continue
 
         raw_time = p.timestamp_raw or p.date or None
@@ -413,23 +416,40 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
 
         logger.info(f"[SAVE] Sẽ lưu {len(posts_to_insert)} bài (top 3 hôm nay) vào DB")
 
+    # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết (Content Deduplication)
+    # So khớp content trong Database và trong chính đợt cào, không phụ thuộc link!
+    from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+    posts_to_insert, skipped_content_dups = filter_posts_by_unique_content(supabase, 'facebook_posts', posts_to_insert)
+    if skipped_content_dups > 0:
+        logger.info(f'[DEDUPE-FB] Đã loại bỏ {skipped_content_dups} bài viết do trùng nội dung content!')
+
     inserted_count = 0
     inserted_post_urls = []
+    inserted_rows = []
     if posts_to_insert:
         try:
-            res = supabase.table("facebook_posts").insert(posts_to_insert).execute()
+            # upsert + ignore_duplicates: existing_urls ở trên lọc theo snapshot lúc ĐẦU
+            # request (TOCTOU race nếu 2 lần cào trùng group gần như đồng thời cùng tìm
+            # ra 1 bài) — UNIQUE(post_url) (migration 158) + ON CONFLICT DO NOTHING làm
+            # backstop ở tầng DB, không còn phụ thuộc hoàn toàn vào pre-check tầng app.
+            res = supabase.table("facebook_posts").upsert(posts_to_insert, on_conflict="post_url", ignore_duplicates=True).execute()
             inserted_count = len(res.data or [])
             if res.data:
                 inserted_post_urls = [p.get("post_url") for p in res.data if p.get("post_url")]
+                inserted_rows = [{"id": p.get("id"), "content": p.get("content"), "post_url": p.get("post_url")} for p in res.data if p.get("id")]
         except Exception as e:
             logger.error(f"Error saving to facebook_posts: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    return inserted_count, inserted_post_urls
+    return inserted_count, inserted_post_urls, inserted_rows
 
 async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str, legacy: bool = False):
     # Offload sync Supabase DB calls to a separate thread to prevent blocking Uvicorn Asyncio EventLoop
-    inserted_count, inserted_post_urls = await asyncio.to_thread(sync_process_and_save_posts_db, payload, legacy)
+    inserted_count, inserted_post_urls, inserted_rows = await asyncio.to_thread(sync_process_and_save_posts_db, payload, legacy)
+
+    # Cham diem "tiem nang seeding" (LLM) CHAY NEN, khong cho response - xem lead_score_service.py.
+    if inserted_rows:
+        asyncio.create_task(score_and_save_posts("facebook_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name, keywords=payload.keywords))
 
     if payload.job_id:
         try:
@@ -442,7 +462,10 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
         except Exception as e:
             logger.warning(f"[CRAWL-QUEUE] Không đóng được job {payload.job_id}: {e}")
 
-    # Realtime WebSocket Broadcast
+    # Realtime WebSocket Broadcast — "involved_users" để GlobalCrawlNotification.tsx chỉ
+    # hiện cho đúng người đang cào (+ admin), KHÔNG hiện cho mọi người đang mở app (trước
+    # đó thiếu field này nên ai cũng thấy thông báo cào của acc khác, kể cả acc hệ thống
+    # cào xoay vòng làm phiền các thành viên khác đang dùng app — bug 2026-10-01).
     msg_prefix = "Legacy: " if legacy else ""
     await manager.broadcast({
         "event": event_name,
@@ -451,7 +474,8 @@ async def process_and_save_posts(payload: ExtensionCrawlRequest, event_name: str
         "group_name": payload.group_name,
         "posts_count": inserted_count,
         "post_urls": inserted_post_urls,
-        "message": f"{msg_prefix}Đã lưu {inserted_count} bài viết từ {payload.group_name}"
+        "message": f"{msg_prefix}Đã lưu {inserted_count} bài viết từ {payload.group_name}",
+        "involved_users": [payload.id_member] if payload.id_member else [],
     })
 
     return {"success": True, "count": inserted_count, "post_urls": inserted_post_urls}
@@ -511,3 +535,18 @@ async def crawl_result(
     logger.info("[KEYWORD-FINAL] payload.keywords sau khi validate = %s", payload.keywords)
 
     return await process_and_save_posts(payload, event_name="extension_crawl_saved_legacy", legacy=True)
+
+
+class ScorePostRequest(BaseModel):
+    content: str
+    post_id: Optional[str] = None
+    author_name: Optional[str] = None
+
+
+@router.post("/score-post")
+async def score_single_post(payload: ScorePostRequest):
+    """Chấm điểm tiềm năng bài viết tức thì (0-100) cho Extension."""
+    result = await score_text_for_lead(payload.content)
+    if not result:
+        return {"success": False, "score": 0, "reason": "Chưa thể đánh giá hoặc nội dung rỗng", "need_category": None}
+    return {"success": True, **result}

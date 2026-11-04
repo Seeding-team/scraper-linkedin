@@ -1,4 +1,6 @@
 'use client';
+import { MessageCircle } from 'lucide-react';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import { useEffect, useState } from 'react';
 import { CalendarDays, FileText, Wallet, X } from './icons';
@@ -31,6 +33,7 @@ function contractRows(contract: Contract, quoteNumber: string | null) {
     { label: 'Ngày bắt đầu', value: formatDate(contract.startDate), icon: CalendarDays },
     { label: 'Ngày kết thúc', value: formatDate(contract.endDate), icon: CalendarDays },
     { label: 'Ngày ký', value: formatDate(contract.signedAt), icon: CalendarDays },
+    { label: 'Thời gian bảo hành', value: contract.warrantyPeriod || '', icon: FileText },
   ];
 }
 
@@ -76,13 +79,29 @@ export function ContractDetailModal({ deal, open, onClose }: Props) {
   if (!open || !deal) return null;
 
   return (
-    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop crm-contract-detail-backdrop" onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="crm-contract-detail-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-contract-detail-header">
           <div>
             <span>Chi tiết hợp đồng</span>
             <h2>{contract ? contract.contractNumber : 'Chưa có hợp đồng chính thức'}</h2>
-            <p>{deal.position ? `${deal.customerName} - ${deal.position}` : deal.customerName}</p>
+            <p className="flex items-center gap-2">
+              <span>{deal.position ? `${deal.customerName} - ${deal.position}` : deal.customerName}</span>
+              {(deal.phone || deal.zalo) ? (
+                <a
+                  href={getZaloChatUrl(deal.phone || deal.zalo)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-[11px] font-semibold text-[#0068ff] hover:bg-blue-100"
+                  title="Nhắn Zalo trên hệ thống"
+                >
+                  <MessageCircle size={12} className="text-[#0068ff]" />
+                  <span>Chat Zalo</span>
+                </a>
+              ) : null}
+            </p>
           </div>
           <button type="button" className="crm-modal-close" onClick={onClose} aria-label="Đóng">
             <X className="crm-icon" />

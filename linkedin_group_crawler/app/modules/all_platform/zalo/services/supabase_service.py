@@ -83,7 +83,8 @@ async def _rest(
 async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
     """Tra cứu zalo_groups để xác định thread_type.
 
-    - Nếu group có is_friend=true → type 0 (cá nhân).
+    - Nếu group có is_friend=true hoặc thread_type in ('direct', 'user') → type 0 (cá nhân/người lạ).
+    - Nếu thread_type == 'group' → type 1 (nhóm).
     - Mặc định type 1 (nhóm) nếu không xác định được.
     """
     try:
@@ -91,14 +92,19 @@ async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
             "GET",
             "zalo_groups",
             params={
-                "select": "is_friend",
+                "select": "is_friend,thread_type",
                 "user_id": f"eq.{account_id}",
                 "group_id": f"eq.{conversation_id}",
                 "limit": "1",
             },
         ) or []
-        if rows and rows[0].get("is_friend"):
-            return 0  # Cá nhân (friend/stranger chat)
+        if rows:
+            r = rows[0]
+            tt = str(r.get("thread_type") or "").strip().lower()
+            if tt in ("direct", "user") or r.get("is_friend"):
+                return 0  # Cá nhân (friend hoặc người lạ/stranger chat)
+            if tt == "group":
+                return 1  # Nhóm chat
     except Exception:
         pass
     return 1  # Nhóm chat
@@ -360,6 +366,7 @@ async def upsert_group(
     last_sender_name: Optional[str] = None,
     last_message_type: Optional[str] = None,
     is_friend: Optional[bool] = None,
+    thread_type: Optional[str] = None,
 ) -> None:
     resolved_name = group_name
     if group_name and (group_name.startswith("Conversation ") or group_name.isdigit() or group_name == group_id):
@@ -404,6 +411,8 @@ async def upsert_group(
         payload["last_message_type"] = last_message_type
     if is_friend is not None:
         payload["is_friend"] = is_friend
+    if thread_type is not None:
+        payload["thread_type"] = thread_type
 
     await _rest(
         "POST",
@@ -547,6 +556,11 @@ async def upsert_zalo_account(
     is_active: bool = True,
     id_member: Optional[str] = None,
     is_shared_with_all: Optional[bool] = None,
+    owner_name: Optional[str] = None,
+    sim_location: Optional[str] = None,
+    sim_location_detail: Optional[str] = None,
+    assigned_domains: Optional[List[str]] = None,
+    assigned_groups: Optional[List[str]] = None,
 ) -> None:
     if not is_supabase_configured():
         return
@@ -568,6 +582,16 @@ async def upsert_zalo_account(
         payload["id_member"] = id_member
     if is_shared_with_all is not None:
         payload["is_shared_with_all"] = is_shared_with_all
+    if owner_name is not None:
+        payload["owner_name"] = owner_name
+    if sim_location is not None:
+        payload["sim_location"] = sim_location
+    if sim_location_detail is not None:
+        payload["sim_location_detail"] = sim_location_detail
+    if assigned_domains is not None:
+        payload["assigned_domains"] = assigned_domains
+    if assigned_groups is not None:
+        payload["assigned_groups"] = assigned_groups
     if status == "confirmed":
         payload["last_login_at"] = now
 
@@ -703,6 +727,10 @@ async def _hard_delete_zalo_account_data_fallback(account_id: str) -> Dict[str, 
 # Realtime: phân quyền user/role + share conversation
 # ----------------------------------------------------------------------------
 
+_USER_BY_EMAIL_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_USER_BY_EMAIL_CACHE_TTL = 60.0  # 60 giây
+
+
 async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Tra cứu ``public.app_users`` theo email (case-insensitive).
 
@@ -712,11 +740,18 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     Lưu ý: bảng ``app_users`` nằm ngoài schema zalo, có thể chưa được tạo trên
     một số môi trường. Hàm fail-soft trả về ``None`` thay vì raise.
     """
+    import time
+    import copy
     if not is_supabase_configured():
         return None
-    email_norm = (email or "").strip()
+    email_norm = (email or "").strip().lower()
     if not email_norm:
         return None
+    cached = _USER_BY_EMAIL_CACHE.get(email_norm)
+    if cached:
+        c_time, c_user = cached
+        if (time.time() - c_time) < _USER_BY_EMAIL_CACHE_TTL:
+            return copy.deepcopy(c_user)
     try:
         rows = await _rest(
             "GET",
@@ -737,6 +772,7 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     row = rows[0]
     if not isinstance(row, dict):
         return None
+    _USER_BY_EMAIL_CACHE[email_norm] = (time.time(), copy.deepcopy(row))
     return row
 
 
@@ -1514,11 +1550,12 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             not raw_group_name
             or raw_group_name == conversation_id
             or raw_group_name == f"Conversation {conversation_id}"
+            or raw_group_name.lower() in {"markee", "zalo", "user", "dm", "me", "__me__"}
         )
         usable_sender_name = (
             bool(sender_name)
             and not row.get("is_sent")
-            and sender_name.lower() not in {"__me__", "me", "ban", "bạn"}
+            and sender_name.lower() not in {"__me__", "me", "ban", "bạn", "markee"}
         )
         conversation_name = (
             sender_name
@@ -1618,6 +1655,24 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
     return sorted(conversations.values(), key=_sort_key, reverse=True)
 
 
+def _message_sort_millis(row: Dict[str, Any]) -> int:
+    return (
+        _parse_to_millis(row.get("timestamp_text"))
+        or _parse_to_millis(row.get("time_text"))
+        or _parse_to_millis(row.get("created_at"))
+    )
+
+
+def _sort_messages_oldest_first(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _message_sort_millis(row),
+            str(row.get("source_message_id") or row.get("id") or ""),
+        ),
+    )
+
+
 async def list_conversation_messages(
     user_id: str,
     conversation_id: str,
@@ -1649,8 +1704,7 @@ async def list_conversation_messages(
         total_count = int(data.get("total_count") or 0)
         
         hydrated_rows = await hydrate_message_groups_from_jobs(user_id, messages_list)
-        hydrated_rows.reverse()
-        return hydrated_rows, total_count
+        return _sort_messages_oldest_first(hydrated_rows), total_count
     except Exception as exc:
         logger.info(f"fn_get_zalo_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
         return await _list_conversation_messages_fallback(user_id, conversation_id, limit, offset)
@@ -1808,8 +1862,7 @@ async def _list_conversation_messages_fallback(
 
     rows, total = await _rest_with_count("zalo_messages", params=query_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
-    hydrated_rows.reverse()
-    return hydrated_rows, total
+    return _sort_messages_oldest_first(hydrated_rows), total
 
 
 async def search_conversation_messages(

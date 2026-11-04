@@ -40,7 +40,9 @@ export function ConfirmModal({
 }) {
   if (!open) return null;
   return (
-    <div className="crm-modal-backdrop" style={elevated ? { zIndex: 100300 } : undefined} onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" style={elevated ? { zIndex: 100300 } : undefined} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <h2 className="crm-modal-title">{title}</h2>

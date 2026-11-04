@@ -188,36 +188,33 @@ function resolveMessageType(msgType, imageUrlsCount) {
 function collectUrls(value, out = []) {
   if (!value) return out;
   if (typeof value === "string") {
-    if (isLikelyImageUrl(value)) out.push(value);
-    return out;
+    const trimmed = value.trim();
+    if (isLikelyImageUrl(trimmed)) out.push(trimmed);
+    if (/^[{[]/.test(trimmed)) {
+      try { collectUrls(JSON.parse(trimmed), out); } catch (_) { /* ignore */ }
+    }
+    return Array.from(new Set(out));
   }
   if (Array.isArray(value)) {
     for (const item of value) collectUrls(item, out);
-    return out;
+    return Array.from(new Set(out));
   }
   if (typeof value === "object") {
     let found = false;
-    for (const key of ["hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src", "fileUrl", "href", "stickerUrl", "stickerWebpUrl"]) {
+    for (const key of ["hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src", "fileUrl", "href", "stickerUrl", "stickerWebpUrl", "oriUrl", "rawUrl", "gifUrl", "thumbUrl"]) {
       if (value[key] && typeof value[key] === "string" && isLikelyImageUrl(value[key])) {
-        out.push(value[key]);
+        out.push(value[key].trim());
         found = true;
-        break;
+        break; // Lấy 1 URL chất lượng cao nhất cho 1 object media, tránh gom cả hdUrl lẫn normalUrl/thumbUrl
       }
     }
-    if (found) {
-      return Array.from(new Set(out));
+    if (!found) {
+      for (const item of Object.values(value)) collectUrls(item, out);
     }
-    for (const item of Object.values(value)) collectUrls(item, out);
   }
   return Array.from(new Set(out));
 }
 
-// Trước đây chỉ collectUrls() (chỉ nhận URL "giống ảnh") — video/file/voice
-// (chat.video.msg, share.file, chat.voice, chat.gif...) không có URL nào được
-// lưu lại, khiến tin nhắn loại này KHÔNG THỂ xem/tải được (chỉ còn text/filename
-// suông). Hàm này quét RỘNG HƠN: nhận mọi URL http(s) hợp lệ ở các key thường
-// chứa link media/file của Zalo, không giới hạn "giống ảnh" — dùng cho
-// media_urls (ảnh/video/file/voice) để đưa vào pipeline lưu asset chung.
 function collectMediaUrls(value, out = []) {
   if (!value) return out;
   if (typeof value === "string") {
@@ -231,10 +228,10 @@ function collectMediaUrls(value, out = []) {
   if (typeof value === "object") {
     let found = false;
     for (const key of [
-      "hdUrl", "normalUrl", "url", "imageUrl", "photoUrl", "src",
+      "hdUrl", "normalUrl", "thumbUrl", "url", "imageUrl", "photoUrl", "src",
       "fileUrl", "href", "stickerUrl", "stickerWebpUrl",
       "videoUrl", "video_url", "voiceUrl", "voice_url", "oriUrl", "rawUrl",
-      "gifUrl", "downloadUrl",
+      "gifUrl", "downloadUrl", "download_url", "previewUrl", "preview_url",
     ]) {
       if (value[key] && typeof value[key] === "string" && /^https?:\/\//i.test(value[key])) {
         out.push(value[key]);
@@ -321,14 +318,20 @@ function firstTimestampMs(...values) {
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
   const content = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
-  const attachmentsBlob = data.attachments || data.attachment || data.photos;
-  const imageUrls = collectUrls(content).concat(collectUrls(attachmentsBlob));
-  // media_urls (rộng hơn imageUrls) — nhận cả URL video/file/voice/gif, không
-  // chỉ ảnh, để tin nhắn chat.video.msg/share.file/chat.voice/chat.gif cũng có
-  // link thật đưa vào pipeline lưu asset (trước đây các loại này KHÔNG hề có
-  // URL nào được lưu, chỉ còn text/filename suông, không xem/tải được).
-  const mediaUrls = Array.from(new Set(collectMediaUrls(content).concat(collectMediaUrls(attachmentsBlob))));
-  const fileNameHint = collectFileName(content) || collectFileName(attachmentsBlob);
+  const attachmentsBlob = data.attachments || data.attachment || data.photos || data.attach || raw.attach || data.params || raw.params;
+  const mediaSource = {
+    content,
+    attachments: attachmentsBlob,
+    attach: data.attach || raw.attach,
+    params: data.params || raw.params,
+    hrefInfo: data.hrefInfo || raw.hrefInfo,
+    data,
+    raw,
+  };
+  const imageUrls = collectUrls(mediaSource);
+  // media_urls (rộng hơn imageUrls) — nhận cả URL video/file/voice/gif từ mọi field ZCA phổ biến.
+  const mediaUrls = Array.from(new Set(collectMediaUrls(mediaSource)));
+  const fileNameHint = collectFileName(mediaSource);
   const msgType = String(data.msgType || data.type || raw.type || "text");
   
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");
@@ -353,26 +356,21 @@ function normalizeMessage(raw, index, ownId = null) {
   );
 
   if (!threadId) {
-    if (ownId && idTo === String(ownId)) {
-      // Received a personal message sent TO ME
-      threadId = senderId;
+    if (!isSent) {
+      // Received an incoming message: thread is ALWAYS the sender (Rule 12 Anti-self collapse)
+      threadId = senderId || idTo;
     } else {
-      // I sent a personal message, OR someone sent a group message, OR I sent a group message
-      threadId = idTo;
-    }
-    // Fallback if idTo was empty
-    if (!threadId) {
-      threadId = senderId;
+      // Outgoing message: thread is the recipient idTo
+      threadId = idTo || senderId;
     }
   }
 
-  // Fix DM: nếu threadId trùng với ownId → Zalo đã trả nhầm ID của chính mình
-  // làm threadId cho cuộc chat cá nhân. Phải lấy lại ID đối phương.
+  // Fix DM / Anti-self collapse (Rule 12): nếu threadId trùng với ownId
   if (ownId && threadId === String(ownId)) {
-    if (idTo && idTo !== String(ownId)) {
-      threadId = idTo;        // Tôi gửi → thread = người nhận
-    } else if (senderId && senderId !== String(ownId)) {
+    if (!isSent && senderId && senderId !== String(ownId)) {
       threadId = senderId;    // Người khác gửi cho tôi → thread = người gửi
+    } else if (isSent && idTo && idTo !== String(ownId)) {
+      threadId = idTo;        // Tôi gửi → thread = người nhận
     }
   }
 
@@ -598,6 +596,10 @@ async function main() {
   });
   listener.on("closed", (code, reason) => {
     emit({ event: "closed", user_id: userId, code, reason: reason ? String(reason) : null });
+    // zca-js has exhausted its own reconnect attempts. Heartbeat/stats timers
+    // would otherwise keep this process alive forever while the socket is dead.
+    // Exiting lets the Python supervisor start a fresh listener with backoff.
+    if (!stopping) setTimeout(() => process.exit(5), 250).unref();
   });
   listener.on("error", (error) => {
     emit({ event: "error", user_id: userId, error: "listener_error", error_detail: serializeError(error) });

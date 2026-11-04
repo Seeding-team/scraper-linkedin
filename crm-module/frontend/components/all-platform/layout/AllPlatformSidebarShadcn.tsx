@@ -22,6 +22,7 @@ import {
   type NavLeafItem,
 } from "./AllPlatformSidebar";
 import { WorkspaceSwitcherShadcn } from "./WorkspaceSwitcherShadcn";
+import { getDashboardHrefForRole } from "./AllPlatformSidebar";
 import {
   Sidebar,
   SidebarContent,
@@ -48,6 +49,8 @@ const GROUPS_STORAGE_KEY = "crm_sidebar_groups_state";
 // chevron nho canh logo de thu gon; luc da thu gon (icon-only) thi logo TU no
 // la nut mo rong, hover vao logo moi hien icon chevron-phai de bam mo lai.
 function SidebarLogoHeader() {
+  const { user } = useAppAuth();
+  const homeLinkHref = getDashboardHrefForRole(user?.role, user?.quote_business_role, user?.crm_function_area);
   const { state, isMobile, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed" && !isMobile;
 
@@ -74,7 +77,7 @@ function SidebarLogoHeader() {
 
   return (
     <div className="flex w-full items-center gap-2">
-      <Link href="/all-platform/internal-engagement" className="flex min-w-0 flex-1 items-center gap-2">
+      <Link href={homeLinkHref} className="flex min-w-0 flex-1 items-center gap-2">
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground text-base font-bold">
           M
         </div>

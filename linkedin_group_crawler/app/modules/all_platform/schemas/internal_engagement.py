@@ -44,6 +44,9 @@ ACTION_TYPES = (
 class InternalEngagementActionRecordRequest(BaseModel):
     email_member: str
     link_post: str | None = ""
+    link_comment: str | None = None
+    comment_id: str | None = None
+    facebook_name: str | None = None
     fanpage_id: str | None = ""
     fanpage_name: str | None = None
     facebook_post_id: str | None = None

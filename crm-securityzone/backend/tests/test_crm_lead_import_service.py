@@ -10,7 +10,13 @@ from types import SimpleNamespace
 from openpyxl import Workbook, load_workbook
 
 
+# Test nay dung module GIA cho cac package `app.*` de nap rieng service duoi test. KHONG duoc de lai trong sys.modules (truoc day lam hong viec
+# collect cac test chay SAU no khi chay ca thu muc tests: "cannot import name ... from app.modules.all_platform.services (unknown location)").
+_STUBBED: dict[str, object] = {}
+
+
 def _module(name: str, **attributes):
+    _STUBBED.setdefault(name, sys.modules.get(name))
     module = types.ModuleType(name)
     for key, value in attributes.items():
         setattr(module, key, value)
@@ -71,6 +77,13 @@ _SPEC = importlib.util.spec_from_file_location("crm_lead_import_service_under_te
 assert _SPEC and _SPEC.loader
 service = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(service)
+
+# Service da nap xong (moi import cua no la module-level) -> tra lai sys.modules nhu cu de khong anh huong test khac.
+for _name, _original in _STUBBED.items():
+    if _original is None:
+        sys.modules.pop(_name, None)
+    else:
+        sys.modules[_name] = _original
 
 
 class _Result:

@@ -71,7 +71,7 @@ function pathMatchesPrefix(pathname: string, prefix: string): boolean {
 }
 
 export function isLeafActive(pathname: string, item: NavLeafItem) {
-  if (item.exactMatch) return pathname === item.href;
+  if (item.exactMatch) return pathname === item.href.split("?")[0];
   if (pathname === item.href) return true;
   if (item.matchStartsWith?.some((prefix) => pathMatchesPrefix(pathname, prefix))) return true;
   return pathMatchesPrefix(pathname, item.href) && item.href !== "/all-platform/post-feed";
@@ -92,9 +92,47 @@ export function getInitials(name?: string) {
 
 /** Trang chủ của module CRM độc lập — module này KHÔNG có Admin Dashboard /
  * Leader Dashboard riêng (những trang đó thuộc app seeding gốc, không nằm
- * trong "Quản lý CRM"), nên mọi role (member/leader/admin) đều về thẳng
- * trang Cơ hội (pipeline) sau khi đăng nhập. */
-export function getDashboardHrefForRole(_role?: string | null): string {
+ * trong "Quản lý CRM"), nên admin/leader về thẳng trang Cơ hội (pipeline)
+ * sau khi đăng nhập như cũ. Sale (2026-10-23, yeu cau sep) - quote_business_role
+ * la 'sale'/'both' - ve thang trang Khach hang thay vi Co hoi, vi cong viec
+ * chinh cua Sale la lam viec voi khach hang co san. Ham nay la NGUON DUY
+ * NHAT quyet dinh trang mac dinh sau dang nhap - duoc goi tu ca 5 luong:
+ * dang nhap mat khau/Google, dang ky moi (AuthPage.tsx), tai lai trang goc
+ * khi da co session (app/page.tsx), va luong chuyen site workspace-handoff
+ * (app/auth/handoff/page.tsx) - sua dung 1 cho nay la phu het ca 5 luong. */
+export function getDashboardHrefForRole(
+  role?: string | null,
+  quoteBusinessRole?: string | null,
+  functionArea?: string | null,
+): string {
+  const normalizedRole = (role || "").trim().toLowerCase();
+  // Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep: "team Thuy la
+  // sales thi CA Thuy (leader) va member deu vao thang trang khach hang; mkt
+  // thi vao lead") - uu tien hon QUOTE_BUSINESS_ROLE LAN admin/leader, AP
+  // DUNG CHO CA leader/member/admin neu ho CO thuoc 1 Team CRM co Khoi ro
+  // rang (2026-10-23, phan hoi lan 2: 1 tai khoan role=admin nhung thuc te
+  // lam Presale, dang thuoc "Presale Dev Team" van muon vao thang Khach
+  // hang chu khong phai /crm chung - admin CHI con la fallback khi KHONG
+  // thuoc team nao / team khong co Khoi ro rang, khong con la truong hop uu
+  // tien tuyet doi dau tien nua).
+  const normalizedFunctionArea = (functionArea || "").trim().toLowerCase();
+  if (normalizedFunctionArea === "sales" || normalizedFunctionArea === "presale") {
+    return "/all-platform/crm/customers";
+  }
+  if (normalizedFunctionArea === "marketing") {
+    return "/all-platform/crm/leads";
+  }
+  if (normalizedRole === "admin" || normalizedRole === "leader") {
+    return "/all-platform/crm";
+  }
+  // Fallback logic CU (gia tri functionArea rong/None - vd 40/57 member CRM
+  // "chua co Leader, can phan team" tai thoi diem viet - KHONG duoc vo hanh
+  // vi dang chay cho nhom nay) hoac functionArea khac sales/marketing
+  // (presale/infrastructure/software/security/finance/operations...).
+  const normalizedQbr = (quoteBusinessRole || "").trim().toLowerCase();
+  if (normalizedQbr === "sale" || normalizedQbr === "both") {
+    return "/all-platform/crm/customers";
+  }
   return "/all-platform/crm";
 }
 
@@ -185,44 +223,52 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
       label: "Giao tiếp",
       items: [
         {
-          type: "subgroup",
-          id: "customer-messages",
+          type: "item",
+          id: "omnichannel-inbox",
+          href: "/all-platform/omnichannel-inbox",
           icon: "forum",
-          label: "Tin nhắn khách hàng",
-          items: [
-            {
-              type: "item",
-              id: "inbox",
-              href: "/all-platform/inbox",
-              icon: "inbox",
-              label: "Inbox Facebook",
-              matchStartsWith: ["/all-platform/inbox"],
-            },
-            {
-              type: "item",
-              id: "zalo-accounts",
-              href: "/all-platform/tai-khoan",
-              icon: "chat",
-              label: "Zalo Chat",
-              matchStartsWith: ["/all-platform/tai-khoan"],
-            },
-            {
-              type: "item",
-              id: "telegram-chat",
-              href: "/all-platform/telegram-chat",
-              icon: "send",
-              label: "Telegram Chat",
-              matchStartsWith: ["/all-platform/telegram-chat"],
-            },
-            {
-              type: "item",
-              id: "zalo-inbox-admin",
-              href: "/all-platform/zalo-inbox",
-              icon: "verified_user",
-              label: "Inbox Admin",
-              matchStartsWith: ["/all-platform/zalo-inbox"],
-            },
-          ],
+          label: "Hộp thư đa kênh",
+          matchStartsWith: ["/all-platform/omnichannel-inbox"],
+        },
+        {
+          type: "item",
+          id: "inbox",
+          href: "/all-platform/inbox",
+          icon: "inbox",
+          label: "Facebook Chat",
+          matchStartsWith: ["/all-platform/inbox"],
+        },
+        {
+          type: "item",
+          id: "zalo-accounts",
+          href: "/all-platform/tai-khoan",
+          icon: "chat",
+          label: "Zalo Chat",
+          matchStartsWith: ["/all-platform/tai-khoan"],
+        },
+        {
+          type: "item",
+          id: "telegram-chat",
+          href: "/all-platform/telegram-chat",
+          icon: "send",
+          label: "Telegram Chat",
+          matchStartsWith: ["/all-platform/telegram-chat"],
+        },
+        {
+          type: "item",
+          id: "zalo-inbox-admin",
+          href: "/all-platform/zalo-inbox",
+          icon: "verified_user",
+          label: "Inbox Zalo",
+          matchStartsWith: ["/all-platform/zalo-inbox"],
+        },
+        {
+          type: "item",
+          id: "fb-accounts",
+          href: "/all-platform/quan-ly-tai-khoan",
+          icon: "account_circle",
+          label: "Tài khoản FB",
+          matchStartsWith: ["/all-platform/quan-ly-tai-khoan"],
         },
       ],
     },
@@ -248,22 +294,15 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           label: "Khách Hàng",
           matchStartsWith: ["/all-platform/crm/customers"],
         },
-        {
-          type: "item",
-          id: "crm",
-          href: "/all-platform/crm",
-          icon: "track_changes",
-          label: "Cơ Hội",
-          exactMatch: true,
-        },
-        {
-          type: "item",
-          id: "quote-center",
-          href: "/all-platform/quote-center",
-          icon: "article",
-          label: "Báo Giá",
-          matchStartsWith: ["/all-platform/quote-center"],
-        },
+        // AN (khong xoa): muc sidebar "Báo Giá" tam thoi bi an. Route /all-platform/quote-center va code van con nguyen; bo comment de hien lai.
+        //{
+        //  type: "item",
+        //  id: "quote-center",
+        //  href: "/all-platform/quote-center",
+        //  icon: "article",
+        //  label: "Báo Giá",
+        //  matchStartsWith: ["/all-platform/quote-center"],
+        //},
         {
           type: "item",
           id: "quote-history",
@@ -272,13 +311,24 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           label: "Lịch sử báo giá",
           matchStartsWith: ["/all-platform/quote-history"],
         },
+        // AN (khong xoa): muc sidebar "Hợp đồng" tam thoi bi an theo yeu cau - trang chi tiet khach hang
+        // van giu nguyen tab "Hop dong ghi nhan" (CustomerContractsTab) nhu cu, khong doi gi. Route
+        // /all-platform/contracts va code van con nguyen; bo comment de hien lai.
+        //{
+        //  type: "item",
+        //  id: "contracts",
+        //  href: "/all-platform/contracts",
+        //  icon: "description",
+        //  label: "Hợp đồng",
+        //  matchStartsWith: ["/all-platform/contracts"],
+        //},
         {
           type: "item",
-          id: "contracts",
-          href: "/all-platform/contracts",
-          icon: "description",
-          label: "Hợp đồng",
-          matchStartsWith: ["/all-platform/contracts"],
+          id: "service-catalog",
+          href: "/all-platform/service-catalog",
+          icon: "inventory_2",
+          label: "Sản phẩm và dịch vụ",
+          matchStartsWith: ["/all-platform/service-catalog"],
         },
       ],
     },
@@ -304,14 +354,6 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, _workspaceTab?
           icon: "bar_chart",
           label: "Phân tích CRM",
           matchStartsWith: ["/all-platform/crm/analytics"],
-        },
-        {
-          type: "item",
-          id: "service-catalog",
-          href: "/all-platform/service-catalog",
-          icon: "inventory_2",
-          label: "Sản phẩm và dịch vụ",
-          matchStartsWith: ["/all-platform/service-catalog"],
         },
         {
           type: "item",
@@ -532,7 +574,7 @@ function SidebarGroup({
         item={{
           type: "item",
           id: entry.id,
-          href: firstHref || "/all-platform/internal-engagement",
+          href: firstHref || "/all-platform/crm",
           icon: entry.icon,
           label: entry.label,
         }}
@@ -677,6 +719,8 @@ export function AllPlatformSidebar({
   onCollapsedChange?: (next: boolean) => void;
 }) {
   const { user, logout } = useAppAuth();
+  // Logo -> trang chu dung theo vai tro (truoc day tro toi /all-platform/internal-engagement - khong ton tai trong CRM -> 404 + prefetch loi trong console).
+  const homeLinkHref = getDashboardHrefForRole(user?.role, user?.quote_business_role, user?.crm_function_area);
   const pathname = usePathname();
   const router = useRouter();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -702,7 +746,14 @@ export function AllPlatformSidebar({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
+          // z-[99990]: cao hon moi backdrop/drawer trong app (cao nhat la
+          // z-[99985] o QuoteQuickViewDrawer.tsx) - truoc day sidebar z-50
+          // thap hon backdrop nen vua bi mo VUA bi chan click (backdrop
+          // hung het su kien chuot dung ngay vung sidebar). Tang z-index
+          // sidebar len tren backdrop giai quyet ca 2 cung luc: sidebar tu
+          // ve de len backdrop (het mo), va la phan tu tren cung nhan dung
+          // click chuot (het bi chan dieu huong).
+          "fixed inset-y-0 left-0 z-[99990] flex flex-col border-r border-outline-variant bg-[#fafafa] text-on-surface shadow-xl transition-all duration-300 lg:translate-x-0 lg:shadow-none",
           isCollapsed ? "w-[70px]" : "w-[280px]",
           isOpen ? "translate-x-0" : "-translate-x-full",
         )}
@@ -743,7 +794,7 @@ export function AllPlatformSidebar({
             ) : null}
             {isCollapsed ? (
               <Link
-                href="/all-platform/internal-engagement"
+                href={homeLinkHref}
                 onClick={onClose}
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl md:hidden"
               >
@@ -751,7 +802,7 @@ export function AllPlatformSidebar({
               </Link>
             ) : (
               <Link
-                href="/all-platform/internal-engagement"
+                href={homeLinkHref}
                 onClick={onClose}
                 className="flex min-w-0 items-center gap-3 rounded-lg p-1 transition hover:bg-surface-container-low active:scale-[0.98]"
               >

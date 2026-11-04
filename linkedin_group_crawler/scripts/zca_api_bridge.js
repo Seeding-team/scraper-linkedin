@@ -911,7 +911,7 @@ async function main() {
     const normalized = (Array.isArray(friends) ? friends : []).map((f) => ({
       group_id: String(f.userId || ""),
       name: String(f.displayName || f.zaloName || ""),
-      avatar_url: String(f.avatar || f.avatarUrl || ""),
+      avatar_url: String(f.avatar || f.avatarUrl || f.avt || f.fullAvt || f.fullAvatar || ""),
       unread_count: 0,
       is_friend: true,
     }));
@@ -1012,7 +1012,7 @@ async function main() {
             return {
               group_id: gid,
               name: String(f.displayName || f.zaloName || ""),
-              avatar_url: String(f.avatar || f.avatarUrl || ""),
+              avatar_url: String(f.avatar || f.avatarUrl || f.avt || f.fullAvt || f.fullAvatar || ""),
               is_friend: true,
             };
           });

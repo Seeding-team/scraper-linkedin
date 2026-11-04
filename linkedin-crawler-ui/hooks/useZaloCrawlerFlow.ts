@@ -161,9 +161,32 @@ export interface ZaloCrawlerFlowValue {
   switchWorker: (workerId: string) => void;
   switchAccount: (accountId: string) => void;
   refreshLoginStatus: () => Promise<void>;
-  createAccount: (label: string, phone?: string) => Promise<void>;
+  createAccount: (
+    label: string,
+    phone?: string,
+    extra?: {
+      owner_name?: string;
+      id_member?: string;
+      sim_location?: string;
+      sim_location_detail?: string;
+      domain_ids?: string[];
+      group_ids?: string[];
+    }
+  ) => Promise<void>;
   deleteAccount: (accountId: string, deleteAuth?: boolean) => Promise<void>;
-  updateAccount: (accountId: string, label: string, phone?: string) => Promise<void>;
+  updateAccount: (
+    accountId: string,
+    label: string,
+    phone?: string,
+    extra?: {
+      owner_name?: string;
+      id_member?: string;
+      sim_location?: string;
+      sim_location_detail?: string;
+      domain_ids?: string[];
+      group_ids?: string[];
+    }
+  ) => Promise<void>;
   startSession: () => Promise<void>;
   openManualScreen: () => Promise<void>;
   resumeManualLogin: () => Promise<void>;
@@ -446,6 +469,8 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ZaloAccountInfo[]>([]);
+  const accountsRef = useRef<ZaloAccountInfo[]>([]);
+  accountsRef.current = accounts;
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [isUserIdReady, setIsUserIdReady] = useState(false);
@@ -566,7 +591,10 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
   }, []);
 
   const loadAccounts = useCallback(async () => {
-    setIsLoadingAccounts(true);
+    // SWR: Chỉ hiện spinner nếu danh sách đang rỗng, nếu đã có dữ liệu thì cập nhật ngầm không làm đơ UI
+    if (accountsRef.current.length === 0) {
+      setIsLoadingAccounts(true);
+    }
     setAccountsError(null);
     try {
       const ownerId = appUser?.id ?? "default";
@@ -577,7 +605,7 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     } finally {
       setIsLoadingAccounts(false);
     }
-  }, [appUser?.id]);
+  }, [appUser?.id, appUser?.email]);
 
   useEffect(() => {
     if (!isUserIdReady) return;
@@ -631,31 +659,50 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     setErrorMessage(null);
   }, [clearAuthEventStream, clearAuthPolling, clearJobEventStream, clearJobPolling, resetAuthState, userId]);
 
-  const createAccount = useCallback(async (label: string, phone?: string) => {
-    const cleanLabel = label.trim();
-    if (!cleanLabel) {
-      setErrorMessage("Nhập tên tài khoản Zalo trước.");
-      return;
-    }
-    setAccountsError(null);
-    try {
-      const accountId = normalizeZaloUserId(cleanLabel);
-      const ownerId = appUser?.id ?? "default";
-      const response = await createZaloAccount({
-        account_id: accountId,
-        owner_id: ownerId,
-        id_member: appUser?.id,
-        label: cleanLabel,
-        phone: phone?.trim() || undefined,
-      });
-      await loadAccounts();
-      switchAccount(response.account_id || accountId);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Không thể tạo tài khoản Zalo.";
-      setAccountsError(msg);
-      setErrorMessage(msg);
-    }
-  }, [loadAccounts, switchAccount]);
+  const createAccount = useCallback(
+    async (
+      label: string,
+      phone?: string,
+      extra?: {
+        owner_name?: string;
+        id_member?: string;
+        sim_location?: string;
+        sim_location_detail?: string;
+        domain_ids?: string[];
+        group_ids?: string[];
+      }
+    ) => {
+      const cleanLabel = label.trim();
+      if (!cleanLabel) {
+        setErrorMessage("Nhập tên tài khoản Zalo trước.");
+        return;
+      }
+      setAccountsError(null);
+      try {
+        const accountId = normalizeZaloUserId(cleanLabel);
+        const ownerId = appUser?.id ?? "default";
+        const response = await createZaloAccount({
+          account_id: accountId,
+          owner_id: ownerId,
+          id_member: extra?.id_member || appUser?.id,
+          label: cleanLabel,
+          phone: phone?.trim() || undefined,
+          owner_name: extra?.owner_name,
+          sim_location: extra?.sim_location || "owner",
+          sim_location_detail: extra?.sim_location_detail,
+          domain_ids: extra?.domain_ids,
+          group_ids: extra?.group_ids,
+        });
+        await loadAccounts();
+        switchAccount(response.account_id || accountId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Không thể tạo tài khoản Zalo.";
+        setAccountsError(msg);
+        setErrorMessage(msg);
+      }
+    },
+    [appUser?.id, loadAccounts, switchAccount]
+  );
 
   const deleteAccount = useCallback(async (accountId: string, deleteAuth = false) => {
     const safeAccountId = normalizeZaloUserId(accountId);
@@ -672,24 +719,45 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     }
   }, [loadAccounts, switchAccount, userId]);
 
-  const updateAccount = useCallback(async (accountId: string, label: string, phone?: string) => {
-    const cleanLabel = label.trim();
-    if (!cleanLabel) {
-      setErrorMessage("Nhập tên tài khoản Zalo trước.");
-      return;
-    }
-    setAccountsError(null);
-    try {
-      const safeAccountId = normalizeZaloUserId(accountId);
-      await updateZaloAccount(safeAccountId, {
-        label: cleanLabel,
-        phone: phone?.trim() || undefined,
-      });
-      await loadAccounts();
-    } catch (error) {
-      setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
-    }
-  }, [loadAccounts]);
+  const updateAccount = useCallback(
+    async (
+      accountId: string,
+      label: string,
+      phone?: string,
+      extra?: {
+        owner_name?: string;
+        id_member?: string;
+        sim_location?: string;
+        sim_location_detail?: string;
+        domain_ids?: string[];
+        group_ids?: string[];
+      }
+    ) => {
+      const cleanLabel = label.trim();
+      if (!cleanLabel) {
+        setErrorMessage("Nhập tên tài khoản Zalo trước.");
+        return;
+      }
+      setAccountsError(null);
+      try {
+        const safeAccountId = normalizeZaloUserId(accountId);
+        await updateZaloAccount(safeAccountId, {
+          label: cleanLabel,
+          phone: phone?.trim() || undefined,
+          owner_name: extra?.owner_name,
+          id_member: extra?.id_member,
+          sim_location: extra?.sim_location,
+          sim_location_detail: extra?.sim_location_detail,
+          domain_ids: extra?.domain_ids,
+          group_ids: extra?.group_ids,
+        });
+        await loadAccounts();
+      } catch (error) {
+        setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
+      }
+    },
+    [loadAccounts]
+  );
 
   const applyAuthStatus = useCallback((statusResponse: ZaloCurrentStatusResponse) => {
     setSessionId(statusResponse.session_id);

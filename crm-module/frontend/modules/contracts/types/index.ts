@@ -36,7 +36,8 @@ export interface Contract {
   manualCustomerName?: string | null;
   quoteId?: string | null;
   title: string;
-  templateType: ContractTemplateType;
+  /** Khoá cũ (service/principle/marketing) HOẶC nhãn tự do do người dùng/AI đặt (vd 'Hợp đồng cung cấp thiết bị'). */
+  templateType: ContractTemplateType | string;
   status: ContractStatus;
   contractValue: number;
   currency: string;
@@ -44,6 +45,8 @@ export interface Contract {
   endDate?: string | null;
   signedAt?: string | null;
   paymentTerms?: string;
+  /** "Thời gian bảo hành" (2026-10-23) - chữ tự do (vd "12 tháng"), không ép số/ngày. */
+  warrantyPeriod?: string | null;
   /** Tiến độ thực hiện hợp đồng (0-100), hiện dạng progress bar ở danh sách. */
   progressPercent: number;
   /** % giá trị hợp đồng đã thu, dùng tính "Công nợ đến hạn" ở dashboard. */
@@ -55,6 +58,10 @@ export interface Contract {
   aiRiskScore?: number | null;
   aiReview: ContractReviewFinding[];
   aiPrompt?: string | null;
+  /** Google Drive (2026-10-26, Phan A4) - trang thai dong bo file goc. */
+  driveFolderId?: string | null;
+  driveSyncStatus?: 'not_applicable' | 'pending' | 'synced' | 'error';
+  aiHighlight?: { fileName: string | null; driveFileId: string | null; confirmedAt: string | null } | null;
   version: number;
   createdById?: string | null;
   updatedById?: string | null;
@@ -66,6 +73,12 @@ export interface Contract {
   source: 'crm' | 'external';
   fileUrl?: string | null;
   note?: string | null;
+  /** Migration 162 — "Hợp đồng báo giá mua (Phase 1)" / "bán (Phase 2)" tạo
+   * từ form Sửa Deal (CrmCustomerModal.tsx). null cho mọi hợp đồng tạo từ
+   * luồng khác (wizard CRM, Ghi nhận hợp đồng có sẵn độc lập). */
+  dealPhase?: 'purchase' | 'sale' | null;
+  /** Migration 167 — người liên hệ chọn trên hợp đồng (null = liên hệ chính của deal). */
+  contactId?: string | null;
 }
 
 export interface ContractDashboardStats {
@@ -79,6 +92,8 @@ export interface ContractDashboardStats {
 }
 
 export interface CreateContractInput {
+  /** Tên viết tắt công ty dùng cho mã hợp đồng ({SHORT}); chỉ để sinh số. */
+  numberShort?: string | null;
   /** Chỉ dùng cho "Ghi nhận hợp đồng có sẵn" (hợp đồng bên ngoài đã có số
    * riêng) - bỏ trống thì backend tự sinh số như mọi luồng tạo khác. */
   contractNumber?: string | null;
@@ -87,7 +102,7 @@ export interface CreateContractInput {
   manualCustomerName?: string | null;
   quoteId?: string | null;
   title: string;
-  templateType?: ContractTemplateType;
+  templateType?: ContractTemplateType | string;
   /** Hợp đồng ngoài thường được ghi lại SAU khi đã ký thật ngoài đời — cho
    * phép chọn trạng thái/ngày ký ngay lúc tạo thay vì luôn mặc định 'draft'. */
   status?: ContractStatus;
@@ -97,6 +112,7 @@ export interface CreateContractInput {
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: string;
+  warrantyPeriod?: string | null;
   progressPercent?: number;
   paymentCollectedPercent?: number;
   ownerId?: string | null;
@@ -110,23 +126,45 @@ export interface CreateContractInput {
   source?: 'crm' | 'external';
   fileUrl?: string | null;
   note?: string | null;
+  /** Phân biệt hợp đồng Mua vào (Phase 1) / Bán ra (Phase 2) — bắt buộc chọn
+   * khi tạo qua "Ghi nhận hợp đồng có sẵn" (feedback mentor 2026-10-03). */
+  dealPhase?: 'purchase' | 'sale' | null;
+  contactId?: string | null;
+  /** Người đại diện ký đã được Sale xác nhận ở AI Copilot (không phải checkbox "Tôi đã hiểu" vượt qua) - điều kiện gửi duyệt/ký. */
+  representativeConfirmed?: boolean;
+  /** Ảnh chụp pháp lý 2 bên lúc tạo/xác nhận hợp đồng (dùng khi Sale chọn "Chỉ dùng cho hợp đồng này") - xem build_parties() backend. */
+  legalSnapshot?: Record<string, unknown> | null;
 }
 
 export interface UpdateContractInput {
   title?: string;
   manualCustomerName?: string | null;
-  templateType?: ContractTemplateType;
+  templateType?: ContractTemplateType | string;
+  status?: ContractStatus;
   contractValue?: number;
   currency?: string;
+  signedAt?: string | null;
   startDate?: string | null;
   endDate?: string | null;
   paymentTerms?: string;
+  warrantyPeriod?: string | null;
   progressPercent?: number;
   paymentCollectedPercent?: number;
   ownerId?: string | null;
   clauses?: ContractClause[];
   aiRiskScore?: number | null;
   aiReview?: ContractReviewFinding[];
+  source?: 'crm' | 'external';
+  fileUrl?: string | null;
+  /** Sửa hợp đồng bằng form đầy đủ. Chuỗi rỗng "" = gỡ giá trị (dealPhase/contactId/quoteId). */
+  note?: string | null;
+  quoteId?: string | null;
+  dealId?: string | null;
+  contactId?: string | null;
+  dealPhase?: 'purchase' | 'sale' | '' | null;
+  contractNumber?: string | null;
+  representativeConfirmed?: boolean;
+  legalSnapshot?: Record<string, unknown> | null;
 }
 
 export interface GenerateContractDraftInput {
@@ -135,11 +173,30 @@ export interface GenerateContractDraftInput {
   /** Tên khách hàng nhập tay — dùng khi không chọn dealId. */
   manualCustomerName?: string;
   quoteId?: string | null;
-  templateType?: ContractTemplateType;
+  templateType?: ContractTemplateType | string;
   detailLevel?: string;
   extraPrompt?: string;
   /** Mẫu hợp đồng tham chiếu (từ modules/contract-templates) — AI bám văn phong/cấu trúc mẫu này. */
   referenceTemplateId?: string;
+  /** Customer 360: backend bắt buộc có dealId hợp lệ. */
+  customerId?: string;
+  /** Người dùng đã xác nhận để trống (………) các trường pháp lý còn thiếu. */
+  acknowledgeMissing?: boolean;
+  /** Text trích từ PDF mẫu vừa tải lên (chỉ tham chiếu văn phong). */
+  referenceText?: string;
+  /** Tuỳ chọn nâng cao (chỉ ảnh hưởng văn phong). */
+  language?: string;
+  style?: string;
+  /** Khách có nhiều Contact: Sale chọn tường minh người liên hệ cho hợp đồng này. */
+  contactId?: string | null;
+  /** Người đại diện ký đã chọn/nhập + xác nhận ở Copilot (không mặc nhiên = Người liên hệ). */
+  representative?: { name: string; position?: string; phone?: string; email?: string; contactId?: string | null } | null;
+  /** "Bổ sung tại chỗ": áp dụng cho phiên soạn thảo này (ghi CRM thật khi saveOverridesToCrm=true). */
+  legalOverrides?: {
+    companyName?: string; taxCode?: string; address?: string;
+    contactName?: string; contactPosition?: string; contactPhone?: string; contactEmail?: string;
+  } | null;
+  saveOverridesToCrm?: boolean;
 }
 
 export interface ReviewContractRiskInput {

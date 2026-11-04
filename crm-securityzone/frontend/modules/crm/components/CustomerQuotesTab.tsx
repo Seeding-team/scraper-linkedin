@@ -1,9 +1,13 @@
 import React, { Fragment, useState, useMemo } from 'react';
-import { FileText, Plus, ChevronRight, ChevronDown, UserCog, Trash2, Search, Filter, Folder, Users, Clock, Zap } from 'lucide-react';
+import { FileText, Plus, ChevronRight, ChevronDown, UserCog, Trash2, Search, Filter, Folder, Users, Clock, Zap, Globe2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 import { ActionMenu, type ActionMenuItem } from './ActionMenu';
 import { CustomerColumnVisibilityMenu } from './CustomerColumnVisibilityMenu';
 import { useQuoteColumnPreferences, type QuoteColumnKey } from '../hooks/useQuoteColumnPreferences';
+import { seedingQuoteRepository, CopyQuoteCrossWorkspaceModal, MoveQuoteModal, calculateOverallDiscountSummary } from '../../quotes';
+import type { Quote } from '../../quotes';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 const QUOTE_COLUMN_OPTIONS: Array<{ key: QuoteColumnKey; label: string }> = [
   { key: 'costTotal', label: 'Giá vốn' },
@@ -104,6 +108,24 @@ export function CustomerQuotesTab({
   const { visible: visibleQuoteColumns, toggle: toggleQuoteColumn, selectAll: selectAllQuoteColumns, resetToDefault: resetQuoteColumnsToDefault } =
     useQuoteColumnPreferences(columnWorkspaceId, columnUserId);
 
+  // Bo loc "Phu trach": CHI nhung nguoi thuc su la Sale (quote_owner_id) / Presale (technical_owner_id) cua cac bao gia o khach nay,
+  // thay vi toan bo thanh vien he thong.
+  const ownerOptions = useMemo(() => {
+    const roles = new Map<string, Set<string>>();
+    const add = (id: unknown, role: string) => {
+      if (!id || typeof id !== 'string') return;
+      if (!roles.has(id)) roles.set(id, new Set());
+      roles.get(id)!.add(role);
+    };
+    for (const chain of allQuoteChains || []) {
+      add(chain?.current?.quote_owner_id, 'Sale');
+      add(chain?.current?.technical_owner_id, 'Presale');
+    }
+    return Array.from(roles.entries())
+      .map(([id, set]) => ({ id, label: `${(() => { const n = memberName(id); return n && n !== 'Chưa gán' ? n : 'Không rõ tên'; })()} (${['Sale', 'Presale'].filter(r => set.has(r)).join(', ')})` }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'vi'));
+  }, [allQuoteChains, memberName]);
+
   // Filter quoteChains by search string and ownerFilter
   const filteredChains = useMemo(() => {
     return quoteChains.filter(({ current }) => {
@@ -121,8 +143,7 @@ export function CustomerQuotesTab({
 
       // Owner filter check
       if (ownerFilter !== 'all') {
-        const ownerId = current.quote_owner_id || current.technical_owner_id;
-        if (ownerId !== ownerFilter) {
+        if (current.quote_owner_id !== ownerFilter && current.technical_owner_id !== ownerFilter) {
           return false;
         }
       }
@@ -175,6 +196,87 @@ export function CustomerQuotesTab({
     const fallbackLabel = QUOTE_STATUS_FILTER_LABELS[current.status] || quoteVersionStatusLabel(current) || 'Chờ duyệt';
     return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800">{fallbackLabel}</span>;
   };
+
+  // "Copy báo giá cross-workspace" (2026-10-03, Phase 1) - chỉ admin thấy mục
+  // menu này (gate THẬT nằm ở backend qua allowed_instances). Fetch lại FULL
+  // Quote qua getQuote() khi bấm thay vì ép kiểu `current` (shape lỏng lẻo,
+  // không chắc khớp type Quote đầy đủ mà modal cần) - tránh bug ngầm do thiếu
+  // field so với khi mở từ QuoteDetailPage.tsx (nguồn gốc feature này).
+  const { user: currentAuthUser } = useAppAuth();
+  const isAdminUser = currentAuthUser?.role === 'admin';
+  // Copy/Di chuyen bao gia sang workspace khac - Phase 2 (2026-10-23, yeu cau
+  // sep): mo them cho Sale/Presale (quyen that enforce o backend qua
+  // allowed_instances, day chi la an/hien UI cho gon).
+  const canUseCrossWorkspaceQuoteActions = isAdminUser
+    || ['sale', 'presale', 'both'].includes(currentAuthUser?.quote_business_role || '');
+  const [copyWorkspaceQuotes, setCopyWorkspaceQuotes] = useState<Quote[] | null>(null);
+  const [copyWorkspaceLoadingId, setCopyWorkspaceLoadingId] = useState<string | null>(null);
+  const [moveQuoteTarget, setMoveQuoteTarget] = useState<Quote | null>(null);
+  const [moveQuoteLoadingId, setMoveQuoteLoadingId] = useState<string | null>(null);
+
+  async function openCopyWorkspaceModal(quoteId: string) {
+    setCopyWorkspaceLoadingId(quoteId);
+    try {
+      const full = await seedingQuoteRepository.getQuote(quoteId);
+      setCopyWorkspaceQuotes([full]);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để copy.');
+    } finally {
+      setCopyWorkspaceLoadingId(null);
+    }
+  }
+
+  async function openMoveQuoteModal(quoteId: string) {
+    setMoveQuoteLoadingId(quoteId);
+    try {
+      const full = await seedingQuoteRepository.getQuote(quoteId);
+      setMoveQuoteTarget(full);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để di chuyển.');
+    } finally {
+      setMoveQuoteLoadingId(null);
+    }
+  }
+
+  // Chon NHIEU bao gia de copy cung luc (yeu cau mo rong 2026-10-03) - chi
+  // admin thay checkbox (dong bo voi gate menu "Copy sang workspace khac" o
+  // tren). Chon theo id cua CHINH xac quote dang hien (current.id - phien
+  // ban moi nhat cua chuoi, khong phai version cu).
+  const [selectedQuoteIds, setSelectedQuoteIds] = useState<Set<string>>(new Set());
+  const [bulkCopyLoading, setBulkCopyLoading] = useState(false);
+  const [moveWorkspaceQuotes, setMoveWorkspaceQuotes] = useState<Quote[] | null>(null);
+  const [bulkMoveLoading, setBulkMoveLoading] = useState(false);
+
+  function toggleQuoteSelection(id: string) {
+    setSelectedQuoteIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  async function openBulkCopyWorkspaceModal() {
+    setBulkCopyLoading(true);
+    try {
+      const fetched = await Promise.all([...selectedQuoteIds].map(id => seedingQuoteRepository.getQuote(id)));
+      setCopyWorkspaceQuotes(fetched);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được các báo giá đã chọn.');
+    } finally {
+      setBulkCopyLoading(false);
+    }
+  }
+
+  async function openBulkMoveQuoteModal() {
+    setBulkMoveLoading(true);
+    try {
+      const fetched = await Promise.all([...selectedQuoteIds].map(id => seedingQuoteRepository.getQuote(id)));
+      setMoveWorkspaceQuotes(fetched);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Không tải được các báo giá đã chọn.');
+    } finally {
+      setBulkMoveLoading(false);
+    }
+  }
 
   const projectList = projectsSummary?.projects || [];
 
@@ -255,8 +357,8 @@ export function CustomerQuotesTab({
               onChange={e => setOwnerFilter(e.target.value)}
             >
               <option value="all">Phụ trách</option>
-              {members.map((m: any) => (
-                <option key={m.id} value={m.id}>{m.display_name || m.name || m.email}</option>
+              {ownerOptions.map(o => (
+                <option key={o.id} value={o.id}>{o.label}</option>
               ))}
             </select>
             <Users className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-slate-400 pointer-events-none" />
@@ -285,20 +387,38 @@ export function CustomerQuotesTab({
             <Plus className="size-3.5" />
             <span>Tạo báo giá</span>
           </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs font-medium bg-white text-[#c2185b] border-slate-200 hover:bg-rose-50 gap-1 px-3 rounded-lg"
-            disabled={quickQuoteLoading}
-            onClick={() => void openQuickQuoteForCustomer()}
-          >
-            <span>Báo giá nhanh</span>
-            <Zap className="size-3 text-[#c2185b] fill-[#c2185b]" />
-          </Button>
         </div>
       </div>
+
+      {/* Copy nhiều báo giá cùng lúc (2026-10-03) - chỉ hiện khi admin đã tick
+       * ít nhất 1 dòng. */}
+      {isAdminUser && selectedQuoteIds.size > 0 ? (
+        <div className="flex items-center justify-between rounded-xl border border-rose-100 bg-rose-50/60 px-4 py-2.5">
+          <span className="text-xs font-medium text-slate-700">Đã chọn {selectedQuoteIds.size} báo giá</span>
+          <div className="flex items-center gap-2">
+            <button type="button" className="text-xs font-medium text-slate-500 hover:text-slate-700 mr-1" onClick={() => setSelectedQuoteIds(new Set())}>
+              Bỏ chọn
+            </button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs font-semibold bg-white text-[#c2185b] border-slate-300 hover:bg-rose-50 gap-1 px-3 rounded-lg"
+              disabled={bulkMoveLoading}
+              onClick={() => void openBulkMoveQuoteModal()}
+            >
+              {bulkMoveLoading ? 'Đang mở...' : `Di chuyển báo giá (${selectedQuoteIds.size})`}
+            </Button>
+            <Button
+              size="sm"
+              className="h-8 text-xs font-semibold bg-[#c2185b] text-white hover:bg-[#a9144e] gap-1 px-3 rounded-lg"
+              disabled={bulkCopyLoading}
+              onClick={() => void openBulkCopyWorkspaceModal()}
+            >
+              {bulkCopyLoading ? 'Đang mở...' : `Sao chép báo giá (${selectedQuoteIds.size})`}
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Main Table Area */}
       <div className="bg-white border border-slate-200/90 rounded-xl shadow-2xs overflow-hidden">
@@ -306,6 +426,7 @@ export function CustomerQuotesTab({
         <table className="w-full text-xs text-left border-collapse">
           <thead className="bg-slate-50/70 text-[11px] uppercase text-slate-500 font-semibold tracking-wide border-b border-slate-200">
             <tr>
+              {isAdminUser ? <th className="py-3 px-3 w-8 text-center"></th> : null}
               <th className="py-3 px-3 w-8 text-center"></th>
               <th className="py-3 px-3">BÁO GIÁ / VERSION</th>
               <th className="py-3 px-3">DỰ ÁN</th>
@@ -326,13 +447,13 @@ export function CustomerQuotesTab({
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr>
-                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-500 font-medium">
+                <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-8 text-center text-slate-500 font-medium">
                   Đang tải danh sách báo giá...
                 </td>
               </tr>
             ) : filteredChains.length === 0 ? (
               <tr>
-                <td colSpan={11 + visibleQuoteColumns.size} className="py-8 text-center text-slate-400 font-medium">
+                <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-8 text-center text-slate-400 font-medium">
                   {quoteProjectFilter || search ? 'Không tìm thấy báo giá nào phù hợp với bộ lọc.' : 'Chưa có báo giá liên quan.'}
                 </td>
               </tr>
@@ -343,8 +464,8 @@ export function CustomerQuotesTab({
                   ? allContacts.find(c => c.id === relatedDeal.primary_contact_id) 
                   : null;
                 
-                const contactName = contactObj?.name || (relatedDeal?.primary_contact_id ? 'Liên hệ ẩn' : 'Trần Hoàng Hiệp');
-                const contactTitle = contactObj?.title || contactObj?.role || 'Giám đốc';
+                const contactName = contactObj?.name || (relatedDeal?.primary_contact_id ? 'Liên hệ ẩn' : 'Chưa có liên hệ');
+                const contactTitle = contactObj?.title || contactObj?.role || '';
                 const contactInitial = contactName.charAt(0).toUpperCase();
 
                 const projectNameStr = projectLabel(current.project_id);
@@ -371,6 +492,19 @@ export function CustomerQuotesTab({
                       className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors cursor-pointer group"
                       onClick={() => void viewQuoteInNewWorkspace(current)}
                     >
+                      {/* Checkbox chon nhieu bao gia (2026-10-03) - chi admin,
+                       * luon chon theo current.id (phien ban MOI NHAT, khong
+                       * phai 1 version cu nam trong sub-row expand). */}
+                      {isAdminUser ? (
+                        <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedQuoteIds.has(current.id)}
+                            onChange={() => toggleQuoteSelection(current.id)}
+                          />
+                        </td>
+                      ) : null}
+
                       {/* Chevron expand column */}
                       <td className="py-3 px-3 text-center" onClick={e => e.stopPropagation()}>
                         {versionCount > 1 ? (
@@ -478,13 +612,27 @@ export function CustomerQuotesTab({
                         </div>
                       </td>
 
-                      {/* GIÁ KHÁCH Column - KHONG doi field/logic o day (van
-                          total_amount || customer_price_before_vat nhu cu),
-                          4 cot moi ben duoi CHI ADD THEM, khong dung chung field
-                          nay. */}
+                      {/* GIÁ KHÁCH Column - total_amount (raw row) la tong
+                          TRUOC khi tru "Giam gia toan bao gia" (overall discount,
+                          migration 106). Dung calculateOverallDiscountSummary
+                          (CUNG cong thuc voi QuoteDocumentRenderer/ban in) thay vi
+                          backend-enriched discountAmount (xap xi, sai co so khi co
+                          chiet khau tung dong - lech vai tram d) de khop DUNG
+                          TONG THANH TOAN tren ban in/PDF (task 2026-11-02). */}
                       <td className="py-3 px-3 text-right">
                         <span className="font-bold text-xs text-emerald-600">
-                          {formatVND(Number(current.total_amount || current.customer_price_before_vat || 0)) || '0 đ'}
+                          {(() => {
+                            const totalAmount = Number(current.total_amount || current.customer_price_before_vat || 0);
+                            const totalVatAmount = Number(current.vat_amount || 0);
+                            const grandTotal = calculateOverallDiscountSummary(
+                              { totalAmount, totalVatAmount },
+                              current.overall_discount_percent ?? current.discountPercent ?? null,
+                              current.currency,
+                              current.data?.overallDiscountAmount ?? null,
+                              current.data?.overallDiscountType ?? null
+                            ).grandTotal;
+                            return formatQuoteAmountOr(grandTotal, current.currency, formatVND) || '0 đ';
+                          })()}
                         </span>
                       </td>
 
@@ -497,7 +645,7 @@ export function CustomerQuotesTab({
                           {current.costViewAllowed === false ? (
                             <span className="text-[11px] text-slate-400" title="Chỉ Presale/Sale được phân công hoặc Admin mới xem được giá vốn">—</span>
                           ) : current.hasCostData ? (
-                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.costTotal || 0))}</span>
+                            <span className="font-medium text-xs text-slate-700">{formatQuoteAmountOr(Number(current.costTotal || 0), current.currency, formatVND)}</span>
                           ) : (
                             <span className="text-[11px] text-slate-400">Chưa có</span>
                           )}
@@ -511,7 +659,7 @@ export function CustomerQuotesTab({
                           {current.profitabilityViewAllowed === false ? (
                             <span className="text-[11px] text-slate-400" title="Chỉ Sale phụ trách hoặc Admin mới xem được lợi nhuận">—</span>
                           ) : current.hasCostData && current.grossProfit !== null && current.grossProfit !== undefined ? (
-                            <span className="font-medium text-xs text-slate-700">{formatVND(Number(current.grossProfit || 0))}</span>
+                            <span className="font-medium text-xs text-slate-700">{formatQuoteAmountOr(Number(current.grossProfit || 0), current.currency, formatVND)}</span>
                           ) : (
                             <span className="text-[11px] text-slate-400">Chưa tính</span>
                           )}
@@ -546,7 +694,7 @@ export function CustomerQuotesTab({
                             <>
                               <div className="font-medium text-xs text-slate-700">{Number(current.discountPercent).toFixed(1)}%</div>
                               {current.discountAmount ? (
-                                <div className="text-[11px] text-slate-400 font-normal mt-0.5">{formatVND(Number(current.discountAmount))}</div>
+                                <div className="text-[11px] text-slate-400 font-normal mt-0.5">{formatQuoteAmountOr(Number(current.discountAmount), current.currency, formatVND)}</div>
                               ) : null}
                             </>
                           ) : (
@@ -612,6 +760,26 @@ export function CustomerQuotesTab({
                                   onSelect: () => openContactAssignModal(current.deal_id!, current.quote_number || current.id, relatedDeal?.primary_contact_id),
                                 } satisfies ActionMenuItem]
                                 : []),
+                              ...(canUseCrossWorkspaceQuoteActions
+                                ? [
+                                  {
+                                    key: 'move_in_workspace',
+                                    label: moveQuoteLoadingId === current.id ? 'Đang mở...' : 'Di chuyển báo giá',
+                                    icon: Folder,
+                                    group: 1,
+                                    disabled: moveQuoteLoadingId === current.id,
+                                    onSelect: () => void openMoveQuoteModal(current.id),
+                                  } satisfies ActionMenuItem,
+                                  {
+                                    key: 'copy_cross_workspace',
+                                    label: copyWorkspaceLoadingId === current.id ? 'Đang mở...' : 'Copy sang workspace khác',
+                                    icon: Globe2,
+                                    group: 1,
+                                    disabled: copyWorkspaceLoadingId === current.id,
+                                    onSelect: () => void openCopyWorkspaceModal(current.id),
+                                  } satisfies ActionMenuItem,
+                                ]
+                                : []),
                               {
                                 key: 'delete',
                                 label: quoteDeleteBusy === current.id ? 'Đang xoá...' : 'Xóa',
@@ -631,7 +799,7 @@ export function CustomerQuotesTab({
                     {expanded ? (
                       expanded.loading || expanded.error || expanded.versions.length === 0 ? (
                         <tr className="bg-slate-50/50">
-                          <td colSpan={11 + visibleQuoteColumns.size} className="py-3 text-center text-slate-500 text-xs">
+                          <td colSpan={(isAdminUser ? 12 : 11) + visibleQuoteColumns.size} className="py-3 text-center text-slate-500 text-xs">
                             {expanded.loading ? 'Đang tải phiên bản cũ…' : expanded.error || 'Không có phiên bản cũ nào khác.'}
                           </td>
                         </tr>
@@ -649,6 +817,7 @@ export function CustomerQuotesTab({
                               className="bg-slate-50/40 border-b border-slate-100 hover:bg-slate-50 transition-colors cursor-pointer"
                               onClick={() => void viewQuoteInNewWorkspace({ ...current, id: version.id })}
                             >
+                              {isAdminUser ? <td className="py-2.5 px-3 text-center"></td> : null}
                               <td className="py-2.5 px-3 text-center"></td>
                               <td className="py-2.5 px-3 pl-8">
                                 <div className="text-slate-800 font-bold text-xs flex items-center gap-1.5">
@@ -671,14 +840,14 @@ export function CustomerQuotesTab({
                                 {version.technicalOwnerId ? memberName(version.technicalOwnerId) : (version.quoteOwnerId ? memberName(version.quoteOwnerId) : '—')}
                               </td>
                               <td className="py-2.5 px-3 text-right font-bold text-emerald-600 text-xs">
-                                {formatVND(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0)) || '0 đ'}
+                                {formatQuoteAmountOr(Number(version.customerPriceBeforeVat ?? version.totalAmount ?? 0), version.currency, formatVND) || '0 đ'}
                               </td>
                               {visibleQuoteColumns.has('costTotal') ? (
                                 <td className="py-2.5 px-3 text-right text-xs">
                                   {version.costViewAllowed === false ? (
                                     <span className="text-[11px] text-slate-400">—</span>
                                   ) : version.hasCostData ? (
-                                    <span className="text-slate-700">{formatVND(Number(version.costTotal || 0))}</span>
+                                    <span className="text-slate-700">{formatQuoteAmountOr(Number(version.costTotal || 0), version.currency, formatVND)}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-400">Chưa có</span>
                                   )}
@@ -689,7 +858,7 @@ export function CustomerQuotesTab({
                                   {version.profitabilityViewAllowed === false ? (
                                     <span className="text-[11px] text-slate-400">—</span>
                                   ) : version.hasCostData && version.grossProfit !== null && version.grossProfit !== undefined ? (
-                                    <span className="text-slate-700">{formatVND(Number(version.grossProfit || 0))}</span>
+                                    <span className="text-slate-700">{formatQuoteAmountOr(Number(version.grossProfit || 0), version.currency, formatVND)}</span>
                                   ) : (
                                     <span className="text-[11px] text-slate-400">Chưa tính</span>
                                   )}
@@ -789,6 +958,38 @@ export function CustomerQuotesTab({
         </div>
       </div>
     </div>
+    {copyWorkspaceQuotes ? (
+      <CopyQuoteCrossWorkspaceModal
+        quotes={copyWorkspaceQuotes}
+        onClose={() => setCopyWorkspaceQuotes(null)}
+        onCopied={() => setSelectedQuoteIds(new Set())}
+      />
+    ) : null}
+    {moveQuoteTarget ? (
+      <MoveQuoteModal
+        quote={moveQuoteTarget}
+        currentCustomerId={(moveQuoteTarget as any).customer_id || moveQuoteTarget.accountId}
+        currentCustomerName={customerName || (moveQuoteTarget.data?.customerName as string)}
+        onClose={() => setMoveQuoteTarget(null)}
+        onMoved={() => {
+          setSelectedQuoteIds(new Set());
+          window.location.reload();
+        }}
+      />
+    ) : null}
+    {moveWorkspaceQuotes ? (
+      <MoveQuoteModal
+        quotes={moveWorkspaceQuotes}
+        currentCustomerId={(moveWorkspaceQuotes[0] as any)?.customer_id || moveWorkspaceQuotes[0]?.accountId}
+        currentCustomerName={customerName || (moveWorkspaceQuotes[0]?.data?.customerName as string)}
+        onClose={() => setMoveWorkspaceQuotes(null)}
+        onMoved={() => {
+          setSelectedQuoteIds(new Set());
+          setMoveWorkspaceQuotes(null);
+          window.location.reload();
+        }}
+      />
+    ) : null}
   </div>
   );
 }

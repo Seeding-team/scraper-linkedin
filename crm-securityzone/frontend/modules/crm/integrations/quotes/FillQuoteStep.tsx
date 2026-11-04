@@ -102,6 +102,7 @@ export function FillQuoteStep({
         onChange={onChange}
         quoteFormId={quoteFormId}
         showTotals
+        showCurrencyInItems={!alwaysVisibleFields.some(f => f.key === 'currency')}
       />
 
       {notesFields.length ? (

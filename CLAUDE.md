@@ -1,3 +1,25 @@
+**TRƯỚC KHI SỬA LỖI TRONG CRM (modules/crm, modules/quotes), ĐỌC `thao/CRM_KNOWN_BUGS_FIXED.md`.**
+Đây là nhật ký các pattern lỗi đã gặp + đã fix (dropdown portal làm đóng nhầm modal/sidebar, owner-picker
+sai nguồn, race condition auto-chọn, thiếu `notifyDealsChanged()`/callback refresh...) — kiểm tra trước
+để không sửa lại từ đầu hoặc tái tạo đúng bug đã fix ở chỗ khác. Gặp lỗi mới đã sửa xong thì note tiếp
+vào cuối file đó theo đúng format (Triệu chứng / Nguyên nhân gốc / Cách fix / File liên quan).
+
+# Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
+
+Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`
+(gộp 3 nguồn theo `post_url`: API > JSON nhúng > DOM; DOM cuộn tới bài cuối + đọc số like/bình luận/đăng lại
+từ `<svg><title>`; đẩy bài realtime `MK_TH_COLLECT_BATCH` -> bg -> web `MK_TH_CRAWL_POSTS`), UI
+`keyword-crawl-section.tsx` có danh sách "Bài vừa tìm thấy" + lọc theo nguồn. Bot xoay vòng
+(`rotation-crawl.js`) gọi `__mkStartThreadsCrawl` tự động thừa hưởng luồng thu thập mới.
+
+# Tiến độ phiên làm việc (2026-10-05) — Multi-currency (VND | USD) cho Báo giá
+
+**ĐỌC `docs/QUOTE_MULTI_CURRENCY_2026-10-05.md` TRƯỚC KHI SỬA báo giá / tỷ giá / tiền tệ.** Tóm tắt: tiền tệ thuộc cấp
+Quote (`quotes.currency` + `exchange_rate` + `currency_snapshot`, đóng băng lúc tạo/chuyển), migration main `169`
+(clone `162`), tỷ giá hệ thống ở bảng `quote_exchange_rates`. Đã code + test (unit, SSR, tích hợp DB cục bộ, E2E
+Playwright) cả main + 3 clone; **CHƯA commit/push, migration CHƯA áp DB thật** — chờ user review. `LeadDetailDrawer.tsx`
+đang có thay đổi chưa commit KHÔNG phải của việc này (lỗi tsc `projectOptions` redeclare có sẵn).
+
 # Tiến độ phiên làm việc (2026-09-27) — "Siêu Tốc Cào Dữ Liệu" cho Threads (tab Seeding bên ngoài)
 
 Mentor yêu cầu: tab "Seeding bên ngoài" duyệt Threads để tìm bài viết, giống "Siêu Tốc Cào

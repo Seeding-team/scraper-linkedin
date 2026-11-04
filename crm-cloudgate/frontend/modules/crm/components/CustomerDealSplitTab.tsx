@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Link from 'next/link';
-import { Target, X, Search, Filter, Plus, ChevronRight, Briefcase, UserCheck, Calendar, Clock, AlertCircle, Phone, Mail, FileText, Activity, MoreHorizontal, LayoutGrid, CheckCircle2, Sparkles, MessageCircle, Trash2 } from 'lucide-react';
+import { Target, X, Search, Filter, Plus, ChevronRight, Briefcase, UserCheck, Calendar, Clock, AlertCircle, Phone, Mail, FileText, Activity, MoreHorizontal, LayoutGrid, CheckCircle2, Sparkles, MessageCircle, Trash2, Pencil } from 'lucide-react';
 import { customerLeadService, type ActivityLogEntry, type Customer as LiveDealRow, type StageTransitionPayload } from '@/services/customer-lead.service';
 import { formatVND, getStageMeta, PIPELINE_COLUMNS, DEAL_STAGE_META } from '../constants/crmConfig';
 import { relativeTime } from '../utils/quoteDisplay';
@@ -15,7 +15,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CatalogPickerModal, type CatalogPickerListItem } from '@/modules/service-catalog/CatalogPickerModal';
 import { serviceCatalogRepository } from '@/modules/service-catalog/repositories/ServiceCatalogRepository';
+import { IS_STANDALONE_CRM, CURRENT_WORKSPACE_INSTANCE } from '@/lib/env';
 import type { ServiceCatalogItem } from '@/modules/service-catalog/types';
+import { HandoverDocsCard, type HandoverDoc } from './HandoverDocsCard';
 
 export function getStageSolidBgClass(stage?: string | null): string {
   if (!stage) return 'bg-slate-500';
@@ -27,6 +29,20 @@ export function getStageSolidBgClass(stage?: string | null): string {
   if (s === 'won' || s === 'thanh_cong') return 'bg-emerald-500';
   if (s === 'lost' || s === 'that_bai') return 'bg-rose-500';
   return 'bg-slate-500';
+}
+
+
+function normalizePipelineStage(stage?: string | null): DealStage {
+  const raw = String(stage || 'dealing') as DealStage;
+  const legacyMap: Partial<Record<DealStage, DealStage>> = {
+    new_lead: 'dealing',
+    contacted: 'dealing',
+    qualified: 'dealing',
+    contract_sent: 'proposal_sent',
+    won: 'post_sale_care',
+  };
+  const mapped = legacyMap[raw] || raw;
+  return PIPELINE_COLUMNS.includes(mapped) ? mapped : 'dealing';
 }
 
 function formatCrmDate(value?: string | null): string {
@@ -149,6 +165,7 @@ export function CustomerDealSplitTab({
   onOpenQuote,
   onEditDeal,
   onChanged,
+  handoverDocs = [],
 }: { 
   deals: any[];
   customerId: string;
@@ -163,6 +180,8 @@ export function CustomerDealSplitTab({
   onOpenQuote?: (quoteId: string, dealId: string) => void;
   onEditDeal?: (deal: LiveDealRow) => void;
   onChanged?: () => void;
+  /** Link Doc/Sheet ban giao Lead (loc theo Co hoi dang chon). */
+  handoverDocs?: HandoverDoc[];
 }) {
   const { user } = useAppAuth();
   const [selectedDealId, setSelectedDealIdState] = useState<string | null>(() => {
@@ -270,7 +289,13 @@ export function CustomerDealSplitTab({
     if (categoryModalOpen) {
       let alive = true;
       setLoadingCatalog(true);
-      serviceCatalogRepository.list({ context: 'quote_picker' })
+      serviceCatalogRepository.list({
+        context: 'quote_picker',
+        // Workspace isolation (issue A): clone standalone LUON pin dung
+        // workspace cua minh — giong guard cua useWorkspaceFilter (P&S page);
+        // MAIN (IS_STANDALONE_CRM=false) giu nguyen view da workspace.
+        instances: IS_STANDALONE_CRM ? [CURRENT_WORKSPACE_INSTANCE] : undefined,
+      })
         .then(data => {
           if (alive) setCatalogItems(data || []);
         })
@@ -358,6 +383,7 @@ export function CustomerDealSplitTab({
 
   const optimisticDeal = deals.find(d => d.id === selectedDealId);
   const currentDisplayDeal = detailDeal?.id === selectedDealId ? detailDeal : optimisticDeal;
+  const currentDisplayStage = normalizePipelineStage(currentDisplayDeal?.deal_stage);
 
   const [saleRoleUsers, setSaleRoleUsers] = useState<QuoteBusinessRoleUser[]>([]);
   const [presaleRoleUsers, setPresaleRoleUsers] = useState<QuoteBusinessRoleUser[]>([]);
@@ -998,9 +1024,9 @@ export function CustomerDealSplitTab({
                     <td className="px-4 py-3.5 whitespace-nowrap">
                       <div className="flex items-center gap-1.5">
                         <div className="size-5 rounded-full bg-slate-200 text-slate-600 font-bold text-[9px] uppercase flex items-center justify-center shrink-0">
-                          {memberName((deal as any).quote_owner_id || (deal as any).owner_id)[0] || 'C'}
+                          {memberName((deal as any).quote_owner_id || (deal as any).owner_id || (deal as any).sdr_id || (deal as any).leaded_by)[0] || 'C'}
                         </div>
-                        <span className="font-medium text-slate-700 text-xs">{memberName((deal as any).quote_owner_id || (deal as any).owner_id)}</span>
+                        <span className="font-medium text-slate-700 text-xs">{memberName((deal as any).quote_owner_id || (deal as any).owner_id || (deal as any).sdr_id || (deal as any).leaded_by)}</span>
                       </div>
                     </td>
 
@@ -1111,10 +1137,10 @@ export function CustomerDealSplitTab({
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h2 className="text-xl font-bold text-slate-900 truncate">{currentDisplayDeal.customer_name || currentDisplayDeal.id}</h2>
                         <Badge variant="outline" className="text-blue-600 border-blue-200 bg-blue-50 text-[10px] uppercase font-mono px-1.5">{currentDisplayDeal.id.split('-')[1]?.substring(0,8)}</Badge>
-                        <Badge className="bg-blue-100 text-blue-700 shadow-none hover:bg-blue-100 font-semibold text-[11px]">{getStageMeta((currentDisplayDeal.deal_stage as DealStage) || 'new_lead').label}</Badge>
+                        <Badge className="bg-blue-100 text-blue-700 shadow-none hover:bg-blue-100 font-semibold text-[11px]">{getStageMeta(currentDisplayStage).label}</Badge>
                       </div>
                       <div className="text-xs text-slate-400 truncate">
-                        Company: {currentDisplayDeal.company_name || 'Hilab'} • Owner: {memberName(currentDisplayDeal.quote_owner_id)}
+                        Company: {currentDisplayDeal.company_name || 'Hilab'} • Owner: {memberName((currentDisplayDeal as any).quote_owner_id || currentDisplayDeal.owner_id || (currentDisplayDeal as any).sdr_id || (currentDisplayDeal as any).leaded_by)}
                       </div>
                     </div>
                   </div>
@@ -1128,6 +1154,11 @@ export function CustomerDealSplitTab({
                       </span>
                       <span className="text-rose-500 text-[9px] font-bold uppercase tracking-wider">AI Score</span>
                     </div>
+                    {onEditDeal ? (
+                      <Button size="sm" variant="outline" className="h-8 text-xs font-medium gap-1" onClick={() => onEditDeal(currentDisplayDeal)}>
+                        <Pencil className="size-3.5" /> Sửa cơ hội
+                      </Button>
+                    ) : null}
                     <Button size="sm" className="bg-[#c2185b] hover:bg-[#a91549] text-white shadow-2xs h-8 text-xs font-medium" onClick={() => onCreateQuote?.(selectedDealId!)}>
                       + Tạo báo giá
                     </Button>
@@ -1142,8 +1173,8 @@ export function CustomerDealSplitTab({
                   <div className="flex items-center min-w-[700px] justify-between px-1">
                     {PIPELINE_COLUMNS.map((stageKey, idx) => {
                       const step = DEAL_STAGE_META[stageKey].label;
-                      const isCurrent = currentDisplayDeal?.deal_stage === stageKey;
-                      const currentOrder = DEAL_STAGE_META[currentDisplayDeal?.deal_stage as DealStage]?.order || 1;
+                      const isCurrent = currentDisplayStage === stageKey;
+                      const currentOrder = DEAL_STAGE_META[currentDisplayStage]?.order || 1;
                       const stepOrder = DEAL_STAGE_META[stageKey].order;
                       const isPassed = stepOrder < currentOrder;
                       const daysInStage = (currentDisplayDeal as any).days_in_stage;
@@ -1435,6 +1466,9 @@ export function CustomerDealSplitTab({
                     {/* Right Rail Column (Width 310px) */}
                     <div className="w-full xl:w-[310px] shrink-0 flex flex-col gap-5 min-w-0">
                       
+                      {selectedDealId && handoverDocs.some(doc => doc.dealId === selectedDealId) ? (
+                        <HandoverDocsCard docs={handoverDocs.filter(doc => doc.dealId === selectedDealId)} />
+                      ) : null}
                       {/* 4. Phụ trách (Clean Text Rows, NO 4 mini-card boxes) */}
                       <div className="bg-white border border-slate-200/90 rounded-xl p-4 shadow-2xs space-y-3 text-xs">
                         <div className="flex justify-between items-center">
