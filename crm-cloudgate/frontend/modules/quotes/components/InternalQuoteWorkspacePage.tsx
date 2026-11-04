@@ -42,7 +42,7 @@ import { getPackageText, getServicePackageText } from '@/modules/crm/constants/c
 import { quoteDisplayStatus } from '@/modules/crm/utils/quoteDisplay';
 import { Button } from '@/components/ui/button';
 import { formatQuoteMoney } from '@/lib/currency';
-import { calculateItemTotal, calculateOverallDiscountSummary, calculateSectionTotal } from '../utils/quoteCalculations';
+import { billingTermMultiplier, calculateItemTotal, calculateOverallDiscountSummary, calculateSectionTotal } from '../utils/quoteCalculations';
 import { ACTIVITY_LABELS, PROCESSING_STAGE_LABELS } from '../utils/quoteActivity';
 import { paymentPlanAmounts } from '../utils/paymentPlan';
 
@@ -262,11 +262,11 @@ export function InternalQuoteWorkspacePage({ quoteId }: Props) {
   );
   const costTotals = flatItems.map(item => {
     if (item.costNotApplicable) return 0;
-    if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) return Math.max(0, Number(item.costPrice)) * Math.max(0, Number(item.quantity) || 0);
+    if (item.costPrice != null && Number.isFinite(Number(item.costPrice))) return Math.max(0, Number(item.costPrice)) * Math.max(0, Number(item.quantity) || 0) * billingTermMultiplier(item);
     return null;
   });
   const numericCost = costTotals.filter((v): v is number => v != null);
-  const hasCostData = flatItems.length > 0 && numericCost.length > 0;
+  const hasCostData = flatItems.length > 0 && costTotals.every(value => value != null);
   const totalCost = hasCostData ? numericCost.reduce((a, b) => a + b, 0) : null;
   const netRevenue = summary.subtotalAfterDiscount;
   const grossProfit = hasCostData && totalCost != null ? netRevenue - totalCost : null;

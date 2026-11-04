@@ -16,6 +16,7 @@ interface Props {
   onSelect: (accountId: string) => void;
   role: string;
   owner: string;
+  onManageAccounts?: () => void;
 }
 
 interface OwnerGroup {

@@ -514,6 +514,104 @@ async function cmdGroupMembersFull(api, args) {
   return { ok: true, group_id: String(groupId), total_member: info.totalMember || memberIds.length, members: profiles };
 }
 
+// ── Zalo tập trung: recall/reaction/sticker/invite (port tu app goc, 2026-11-04) ─
+
+async function cmdRecallMessage(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.undo({ msgId, cliMsgId }, String(threadId), threadType);
+  return { ok: true, response };
+}
+
+// Tha cam xuc (reaction) cho 1 tin nhan - giong bam giu tin nhan tren app Zalo
+// roi chon icon. Can dung msgId (source_message_id, so nguyen) + cliMsgId cua
+// tin DANG duoc react toi (khong phai tin moi), giong het recall-message.
+async function cmdAddReaction(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { msg_id: msgId, cli_msg_id: cliMsgId, icon } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+  if (!icon) throw new Error("Missing icon in payload");
+  const { ThreadType, Reactions } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  // icon la ten enum Reactions (vd "HEART", "LIKE"..., hoac "NONE" de BO react
+  // - Reactions.NONE = "" nen KHONG duoc check bang "!reactionValue" (chuoi
+  // rong la falsy trong JS, se bi coi nham la "khong tim thay") - phai check
+  // dung bang "key co ton tai trong enum hay khong".
+  const iconKey = String(icon).toUpperCase();
+  if (!(iconKey in Reactions)) throw new Error(`Unknown reaction icon: ${icon}`);
+  const reactionValue = Reactions[iconKey];
+  const response = await api.addReaction(reactionValue, {
+    data: { msgId: String(msgId), cliMsgId: String(cliMsgId) },
+    threadId: String(threadId),
+    type: threadType,
+  });
+  return { ok: true, response };
+}
+
+async function cmdAcceptFriendRequest(api, args) {
+  const { uid } = args;
+  if (!uid) throw new Error("Missing --uid");
+  const response = await api.acceptFriendRequest(String(uid));
+  return { ok: true, response };
+}
+
+async function cmdStickersDetail(api, args) {
+  const { ids } = args;
+  if (!ids) throw new Error("Missing --ids");
+  const idList = String(ids).split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+  const response = await api.getStickersDetail(idList);
+  return { ok: true, stickers: response };
+}
+
+// Truoc day UI chi co o nhap "sticker id da biet" (Zalo khong co API liet ke
+// du moi category qua zca-js) - searchSticker(keyword) la API TIM sticker
+// that theo tu khoa (giong thanh tim sticker trong app Zalo), tra ve
+// {cate_id, sticker_id} nen phai goi tiep getStickersDetail de lay URL anh
+// that hien thi len UI. Gop 2 lenh thanh 1 round-trip cho FE don gian.
+async function cmdSearchStickers(api, args) {
+  const { keyword, limit = "24" } = args;
+  if (!keyword) throw new Error("Missing --keyword");
+  const basics = await api.searchSticker(String(keyword), Number(limit) || 24);
+  const ids = Array.from(new Set((basics || []).map((b) => Number(b.sticker_id)).filter((n) => Number.isFinite(n))));
+  if (ids.length === 0) return { ok: true, stickers: [] };
+  const details = await api.getStickersDetail(ids);
+  return { ok: true, stickers: details };
+}
+
+async function cmdInviteToGroup(api, args) {
+  // "add thang neu da ban be, invite neu quen biet" - zca-js expose 2 API
+  // khac nhau tuy quan he; thu addUserToGroup (them thang) truoc, fallback
+  // inviteUserToGroups (gui loi moi) neu bi tu choi.
+  const { uid, "group-id": groupId } = args;
+  if (!uid) throw new Error("Missing --uid");
+  if (!groupId) throw new Error("Missing --group-id");
+  try {
+    const response = await api.addUserToGroup(String(uid), String(groupId));
+    const failed = Array.isArray(response.errorMembers) && response.errorMembers.includes(String(uid));
+    if (!failed) return { ok: true, mode: "add", response };
+  } catch (_) {
+    // roi qua invite ben duoi
+  }
+  const response = await api.inviteUserToGroups(String(uid), String(groupId));
+  return { ok: true, mode: "invite", response };
+}
+
+async function cmdSendSticker(api, args, payload) {
+  const { "thread-id": threadId, type = "1" } = args;
+  const { id, cateId, type: stickerType } = payload || {};
+  if (!threadId) throw new Error("Missing --thread-id");
+  if (id == null || cateId == null) throw new Error("Missing id/cateId in payload");
+  const { ThreadType } = require("zca-js");
+  const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+  const response = await api.sendSticker({ id: Number(id), cateId: Number(cateId), type: Number(stickerType || 1) }, String(threadId), threadType);
+  return { ok: true, response };
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 const COMMANDS = {
@@ -542,6 +640,13 @@ const COMMANDS = {
   "friend-status": cmdFriendStatus,
   "send-friend-request": cmdSendFriendRequest,
   "group-members-full": cmdGroupMembersFull,
+  "recall-message": cmdRecallMessage,
+  "add-reaction": cmdAddReaction,
+  "accept-friend-request": cmdAcceptFriendRequest,
+  "stickers-detail": cmdStickersDetail,
+  "search-stickers": cmdSearchStickers,
+  "send-sticker": cmdSendSticker,
+  "invite-to-group": cmdInviteToGroup,
   // sync-old-messages: complex (needs listener), keep using spawn-per-call via zca_api_bridge.js
 };
 

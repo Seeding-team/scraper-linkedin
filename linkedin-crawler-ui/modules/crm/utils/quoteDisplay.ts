@@ -71,12 +71,23 @@ export function isApprovedQuote(quote: Quote): boolean {
   return quote.status === 'approved' || quote.status === 'confirmed';
 }
 
-/** Trạng thái hiển thị của 1 báo giá — suy từ status thật của quote + stage
- * thật của deal liên kết, không có khái niệm "Đã xem"/"Đàm phán" (không có
- * dữ liệu nguồn cho các trạng thái đó trong hệ thống). */
-export function quoteDisplayStatus(quote: Quote, deal?: Deal): { key: QuoteStatusFilter; label: string; className: string } {
-  if (isWonDeal(deal)) return { key: 'won', label: 'Đã chốt', className: 'qc-badge-green' };
-  if (isLostDeal(deal) || quote.status === 'cancelled') return { key: 'lost', label: 'Đã huỷ', className: 'qc-badge-rose' };
+/** Trạng thái hiển thị của 1 báo giá — suy từ status/approval THẬT của
+ * CHÍNH quote đó, không có khái niệm "Đã xem"/"Đàm phán" (không có dữ liệu
+ * nguồn cho các trạng thái đó trong hệ thống).
+ *
+ * Fix (2026-11-04, "Deal Won chỉ thể hiện trạng thái cơ hội, không tự động
+ * đổi trạng thái báo giá"): TRƯỚC ĐÂY badge "Đã chốt" suy từ `isWonDeal(deal)`
+ * - khiến MỌI báo giá thuộc 1 Cơ hội đã Won đều hiện "Đã chốt" dù bản thân
+ * báo giá đó CHƯA TỪNG được duyệt (`quote.status` vẫn 'draft'). Quote KHÔNG
+ * CÓ khái niệm "won" của riêng nó trong data model (QuoteStatus chỉ có
+ * 'draft'|'confirmed'|'approved'|'cancelled', customerOutcome chỉ có 'lost'|
+ * null - xem types/index.ts) - "chốt" trước đây hoàn toàn vay mượn tín hiệu
+ * từ Deal, SAI bản chất (Deal thắng không có nghĩa MỌI báo giá cũ/nháp dưới
+ * nó đều đã chốt). Bỏ hẳn nhánh deal-won; `isLostDeal`/`isWonDeal` vẫn giữ
+ * export (còn dùng cho báo cáo KPI deal thắng/thua, KHÔNG liên quan status
+ * báo giá) nhưng KHÔNG còn gọi trong hàm này. */
+export function quoteDisplayStatus(quote: Quote, _deal?: Deal): { key: QuoteStatusFilter; label: string; className: string } {
+  if (quote.customerOutcome === 'lost' || quote.status === 'cancelled') return { key: 'lost', label: 'Đã huỷ', className: 'qc-badge-rose' };
   if (isApprovedQuote(quote)) return { key: 'sent', label: 'Đã duyệt', className: 'qc-badge-blue' };
   return { key: 'draft', label: 'Chưa duyệt', className: 'qc-badge-amber' };
 }

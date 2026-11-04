@@ -2551,6 +2551,26 @@ select.quote-compact-vat:hover {
   text-align: center;
 }
 
+/* Discount/VAT tren preview, public va PDF dung cung format "10%" lien
+ * nhau, mau do va can giua. exact print color giu mau khi Chromium xuat PDF.
+ * CHI ap dung mau do cho O GIA TRI (tbody) - bug thuc te (2026-11-04)
+ * "GIẢM GIÁ"/"THUẾ VAT" o HANG TIEU DE (thead) cung bi an mau do theo vi
+ * dung chung 1 class voi <td>, trong khi nhan cot phai giu mau den binh
+ * thuong nhu cac cot khac. */
+.sheet-items-table tbody .quote-percent-cell--red {
+  color: #dc2626;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.sheet-items-table thead .quote-percent-cell--red {
+  text-align: center;
+  white-space: nowrap;
+}
+
 /* Header duoc phep xuong dong khi cot hep (nhieu cot dang hien cung luc) -
  * truoc day "nowrap" ep header luon 1 dong, buoc bang phai phinh rong hon can
  * thiet, la 1 phan nguyen nhan gay tran ngang khong dang co. Van chi ngat o
@@ -2828,11 +2848,11 @@ select.quote-compact-vat:hover {
   display: block;
 }
 
-/* "sheet-signature-line" (2026-10-23, yeu cau sep): khoang trong + 1 duong ke
- * ngang phia tren ten dai dien, de co cho KY TAY THAT khi in giay - truoc day
- * chi co margin-top don thuan giua nhan va ten, khong ro la "cho de ky".
- * Khoang cach doc TRUOC do giu nguyen (margin-top 1.8rem chuyen sang day), ten
- * phia duoi chi can khoang cach nho voi duong ke. */
+/* "sheet-signature-line" (2026-10-23, yeu cau sep: bo duong ke ngang, chi giu
+ * KHOANG TRONG de ky tay that khi in giay). Sep phan hoi lan 2: khoang cach
+ * 1.8rem truoc do nhin van sat/khong ro la "co khoang trong de ky" -> tang
+ * len 3.2rem (van duoi muc 20mm/~7.5rem tung gay bug day ca cum sang trang
+ * moi khi in, xem lich su .sheet-signatures o duoi). */
 .sheet-signatures span.sheet-signature-line {
   margin: 8.5rem auto 0.4rem;
   width: 65%;
@@ -3478,9 +3498,10 @@ select.quote-compact-vat:hover {
     min-height: 10mm !important;
   }
 
-  /* "sheet-signature-line" khi in (2026-10-23) - cung 1 ly do voi ban man
-   * hinh: duong ke la cho KY TAY THAT, KHONG dung margin-top lon tren chinh
-   * <span> ten (se day ca cum xuong, dung nguy co lan 2 da canh bao o tren). */
+  /* "sheet-signature-line" khi in (2026-10-23, bo duong ke - xem comment ban
+   * man hinh) - van chi la spacer rong tao khoang trong de ky tay, KHONG dung
+   * margin-top lon tren chinh <span> ten (se day ca cum xuong, dung nguy co
+   * lan 2 da canh bao o tren). */
   .sheet-signatures span.sheet-signature-line {
     margin: 20mm auto 1mm !important;
     width: 65% !important;
@@ -4097,4 +4118,188 @@ select.quote-compact-vat:hover {
   gap: 6px;
   font-size: 12px;
   color: #64748b;
+}
+
+/* Inline editing for sheet-parties in preview */
+.sheet-party-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  position: relative;
+  margin-bottom: 0.7rem;
+}
+
+.sheet-party-header h3 {
+  margin: 0 !important;
+}
+
+.sheet-party-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  flex-shrink: 0;
+}
+
+.sheet-party-edit-btn:hover {
+  background: #f8fafc;
+  color: #0f172a;
+  border-color: #94a3b8;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.sheet-party-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: transparent;
+}
+
+.sheet-party-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1001;
+  width: 290px;
+  max-width: 90vw;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.15), 0 8px 10px -6px rgba(15, 23, 42, 0.1);
+  padding: 12px;
+  font-family: inherit;
+  text-align: left;
+}
+
+.sheet-party-popover--right {
+  left: auto;
+  right: 0;
+}
+
+.sheet-party-popover-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.sheet-party-popover-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 3px;
+  line-height: 1;
+}
+
+.sheet-party-popover-close:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.sheet-party-popover-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.sheet-party-popover-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sheet-party-popover-field span {
+  font-size: 11px;
+  font-weight: 500;
+  color: #475569;
+}
+
+.sheet-party-popover-field input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 12px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sheet-party-popover-field input:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+}
+
+.sheet-party-popover-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.sheet-party-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 5px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.sheet-party-btn-cancel {
+  background: #f8fafc;
+  color: #64748b;
+  border-color: #e2e8f0;
+}
+
+.sheet-party-btn-cancel:hover {
+  background: #f1f5f9;
+  color: #334155;
+}
+
+.sheet-party-btn-save {
+  background: #b91c1c;
+  color: #ffffff;
+}
+
+.sheet-party-btn-save:hover {
+  background: #991b1b;
+}
+
+.sheet-party-empty-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+  margin: 4px 0 0 !important;
 }

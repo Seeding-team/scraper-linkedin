@@ -3014,6 +3014,39 @@
 }
 .qc-cell-qty .qc-cell-input-money { text-align: center; }
 
+/* Giam gia va VAT la hai ty le thuong mai: hien "10%" lien nhau, cung canh
+ * giua/font voi Margin, mau do o ca che do sua va chi doc. Nut VND/% ben
+ * canh van la nut DOI CHE DO, khong bi xoa. */
+.qc-cell-discount,
+.qc-cell-vat {
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+}
+.qc-cell-discount-wrapper,
+.qc-percent-input {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.qc-percent-input { gap: 1px; white-space: nowrap; }
+.qc-percent-input .qc-cell-input {
+  width: 46px;
+  min-width: 0;
+  padding: 2px 1px;
+  color: #dc2626;
+  font: inherit;
+  font-weight: 700;
+  text-align: right;
+}
+.qc-percent-input-suffix {
+  color: #dc2626;
+  font: inherit;
+  font-weight: 700;
+  line-height: 1;
+}
+
 /* "Ban tom tat bao gia" (view read-only cho quote da khoa - review/approved/
  * published/sent) - grid gon, khong bao moi field vao 1 box lon rieng, tranh
  * lap lai kieu "khoang trang" da bi bao loi khi form edit gan nhu rong. */
@@ -3216,7 +3249,7 @@
  * gach ngang khi rong. */
 .qc-workspace-recipient-preview {
   display: grid;
-  grid-template-columns: repeat(3, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
 }
 .qc-workspace-recipient-preview-item {
@@ -3261,7 +3294,7 @@
   background: #fff;
   box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
   display: grid;
-  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -3272,6 +3305,23 @@
 }
 @media (max-width: 767px) {
   .qc-workspace-recipient-popover { grid-template-columns: 1fr; }
+}
+/* Bien the "compact" (2026-11-04) - nut sua gon + popover NOI (float) dung
+ * trong header "Bản xem trước cho khách hàng" (khong co khong gian cho card
+ * preview day du nhu trong Buoc 2) - popover vi tri absolute neo ngay duoi
+ * nut, z-index du cao de khong bi QuoteDocumentRenderer ben duoi che mat. */
+.qc-workspace-recipient-card--compact { position: relative; display: inline-flex; }
+.qc-workspace-recipient-popover--floating {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+@media (max-width: 767px) {
+  .qc-workspace-recipient-popover--floating { grid-template-columns: 1fr; right: -8px; }
 }
 
 .qc-cell-input {
@@ -3761,6 +3811,7 @@
 .qc-access-picker-input-row { display: flex; gap: 6px; }
 .qc-access-picker-input { flex: 1; border: 1px solid #dbe1ea; border-radius: 8px; padding: 6px 8px; font-size: 12px; font-family: inherit; }
 .qc-access-picker-dropdown { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin-top: 2px; background: #fff; border: 1px solid #dbe1ea; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.08); max-height: 220px; overflow-y: auto; }
+.qc-access-picker-dropdown--upward { top: auto !important; bottom: 100% !important; margin-top: 0 !important; margin-bottom: 4px !important; box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.1) !important; }
 /* BUG DA GAP ("bị che" - text goi y dai bi .qc-workspace-body overflow-x:hidden
  * cat vo hinh, xem giai thich dong ~2105 phia tren): flex item mac dinh
  * min-width:auto (= theo noi dung, KHONG phai 0) nen hang dai tran ra ngoai

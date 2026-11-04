@@ -40,7 +40,6 @@ import {
   formatMoney,
   initialsOf,
   isApprovedQuote,
-  isLostDeal,
   isWonDeal,
   quoteDisplayStatus,
   relativeTime,
@@ -140,9 +139,14 @@ const PROJECT_STATUS_LABELS: Record<string, string> = {
  * 'Đã chốt'/'Đã huỷ'/'Đã duyệt · Chờ phát hành' la override theo KET QUA
  * DEAL (won/lost) hoac trang thai du lieu cu, KHONG phai 1 trong 5 tab -
  * giu rieng success/danger, khong can phan biet voi 5 mau tab o tren. */
-function phaseCellLabel(quote: Quote, deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' | 'rose' } {
-  if (isWonDeal(deal)) return { label: 'Đã chốt', tone: 'success' };
-  if (isLostDeal(deal) || quote.status === 'cancelled') return { label: 'Đã huỷ', tone: 'danger' };
+/** Fix (2026-11-04, "Deal Won chỉ thể hiện trạng thái cơ hội, không tự động
+ * đổi trạng thái báo giá"): BO han isWonDeal(deal)/isLostDeal(deal) - Quote
+ * KHONG CO khai niem "won" cua rieng no (xem comment chi tiet trong
+ * quoteDisplayStatus(), quoteDisplay.ts), chi con quote.customerOutcome/
+ * quote.status la tin hieu THAT cua chinh quote. `deal` param giu lai (con
+ * duoc goi voi deal o nhieu noi) nhung khong con dung trong ham nay nua. */
+function phaseCellLabel(quote: Quote, _deal?: Deal): { label: string; tone: 'neutral' | 'success' | 'warning' | 'danger' | 'blue' | 'amber' | 'purple' | 'teal' | 'rose' } {
+  if (quote.customerOutcome === 'lost' || quote.status === 'cancelled') return { label: 'Đã huỷ', tone: 'danger' };
   if (quote.sentAt) return { label: 'Đã gửi khách', tone: 'success' };
   if (quote.publishedAt || quote.processingStage === 'published') return { label: 'Sẵn sàng gửi', tone: 'teal' };
   if (quote.status === 'approved' || quote.approvedAt) return { label: 'Đã duyệt · Chờ phát hành', tone: 'success' };
@@ -776,8 +780,11 @@ export function QuoteCenterPage() {
     }
   }
 
-  function isApprovedLike(quote: Quote, deal?: Deal): boolean {
-    return quote.status === 'approved' || quote.status === 'confirmed' || Boolean(quote.approvedAt) || isWonDeal(deal);
+  // Fix (2026-11-04): bo isWonDeal(deal) - quote "approved-like" phai dua
+  // tren tin hieu THAT cua chinh quote, Deal Won khong tu dong lam quote
+  // (co the van dang draft) duoc coi la "da duyet".
+  function isApprovedLike(quote: Quote, _deal?: Deal): boolean {
+    return quote.status === 'approved' || quote.status === 'confirmed' || Boolean(quote.approvedAt);
   }
 
   /** Sau khi xoa: bo id khoi lua chon, nap lai bang + cac nhom version dang mo. */

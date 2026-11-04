@@ -16,6 +16,7 @@ interface TemplateItem {
 }
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { toast } from "sonner";
+import { extractPostNeed } from "@/services/aiExtractService";
 
 interface ZaloContactModalProps {
   open: boolean;
@@ -53,6 +54,8 @@ export function ZaloContactModal({
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [defaultTemplateId, setDefaultTemplateId] = useState<string | null>(null);
+  const [extractedNeed, setExtractedNeed] = useState<string | null>(null);
+  const [isExtractingNeed, setIsExtractingNeed] = useState(false);
 
   const userEmail = user?.email || "default_user";
   const defaultStorageKey = `zalo_default_greeting_id_${userEmail}`;
@@ -91,6 +94,27 @@ export function ZaloContactModal({
     }).catch(() => {});
   }, [open]);
 
+  const handleReExtractNeed = async () => {
+    if (!postContent && !postUrl) return;
+    setIsExtractingNeed(true);
+    try {
+      const res = await extractPostNeed({
+        content: postContent || "",
+        group_name: groupName,
+        post_url: postUrl,
+      });
+      if (res) {
+        setExtractedNeed(res.need);
+        setMessage(res.zalo_message);
+        toast.success("AI đã tối ưu lại tin nhắn theo nhu cầu bài viết!");
+      }
+    } catch {
+      toast.error("Không thể phân tích nội dung lúc này");
+    } finally {
+      setIsExtractingNeed(false);
+    }
+  };
+
   // Chuẩn bị tin nhắn chào hỏi mẫu thông minh và áp dụng mẫu mặc định của cá nhân
   useEffect(() => {
     if (open) {
@@ -100,27 +124,56 @@ export function ZaloContactModal({
       const savedDefaultId = typeof window !== "undefined" ? localStorage.getItem(defaultStorageKey) : null;
       setDefaultTemplateId(savedDefaultId);
 
-      const gName = groupName ? ` trong nhóm "${groupName}"` : "";
-      const fallbackMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
-
-      if (savedDefaultId && templates.length > 0) {
-        const found = templates.find((t) => t.id === savedDefaultId);
-        if (found) {
-          setSelectedTemplateId(found.id);
-          const formatted = found.content.replace(/\{group_name\}/g, groupName || "nhóm");
-          setMessage(formatted);
-          return;
+      // Tự động phân tích nhu cầu bằng AI và nhập link bài viết nếu có bài viết từ Post Feed
+      if (postContent || postUrl) {
+        setIsExtractingNeed(true);
+        extractPostNeed({
+          content: postContent || "",
+          group_name: groupName,
+          post_url: postUrl,
+        })
+          .then((res) => {
+            if (res) {
+              setExtractedNeed(res.need);
+              // Nếu người dùng chưa chọn mẫu tùy chỉnh, tự động điền tin nhắn do AI soạn kèm nhu cầu và link bài viết
+              if (!savedDefaultId) {
+                setMessage(res.zalo_message);
+              } else {
+                const found = templates.find((t) => t.id === savedDefaultId);
+                if (found) {
+                  let formatted = found.content.replace(/\{group_name\}/g, groupName || "nhóm");
+                  formatted = formatted.replace(/\{need\}/g, res.need);
+                  if (postUrl && !formatted.includes(postUrl)) {
+                    formatted = `${formatted}\nLink bài viết: ${postUrl}`;
+                  }
+                  setMessage(formatted);
+                }
+              }
+            }
+          })
+          .catch(() => {})
+          .finally(() => setIsExtractingNeed(false));
+      } else {
+        const gName = groupName ? ` trong nhóm "${groupName}"` : "";
+        let fallbackMsg = `Chào bạn, mình thấy bài viết của bạn${gName}. Mình liên hệ qua Zalo để tư vấn và hỗ trợ bạn nhé!`;
+        if (postUrl) {
+          fallbackMsg = `${fallbackMsg}\nLink bài viết: ${postUrl}`;
         }
-      }
-
-      // Nếu có mẫu Zalo đầu tiên hoặc fallback
-      if (templates.length > 0 && !selectedTemplateId) {
-        const first = templates[0];
-        setSelectedTemplateId(first.id);
-        const formatted = first.content.replace(/\{group_name\}/g, groupName || "nhóm");
-        setMessage(formatted);
-      } else if (!message) {
-        setMessage(fallbackMsg);
+        if (savedDefaultId && templates.length > 0) {
+          const found = templates.find((t) => t.id === savedDefaultId);
+          if (found) {
+            setSelectedTemplateId(found.id);
+            let formatted = found.content.replace(/\{group_name\}/g, groupName || "nhóm");
+            if (postUrl && !formatted.includes(postUrl)) {
+              formatted = `${formatted}\nLink bài viết: ${postUrl}`;
+            }
+            setMessage(formatted);
+            return;
+          }
+        }
+        if (!message) {
+          setMessage(fallbackMsg);
+        }
       }
     }
   }, [open, groupName, templates, defaultStorageKey]);
@@ -128,7 +181,13 @@ export function ZaloContactModal({
   // Chọn mẫu câu
   const handleSelectTemplate = (tpl: TemplateItem) => {
     setSelectedTemplateId(tpl.id);
-    const formatted = tpl.content.replace(/\{group_name\}/g, groupName || "nhóm");
+    let formatted = tpl.content.replace(/\{group_name\}/g, groupName || "nhóm");
+    if (extractedNeed) {
+      formatted = formatted.replace(/\{need\}/g, extractedNeed);
+    }
+    if (postUrl && !formatted.includes(postUrl)) {
+      formatted = `${formatted}\nLink bài viết: ${postUrl}`;
+    }
     setMessage(formatted);
     toast.success(`Đã chọn mẫu: "${tpl.title}"`);
   };
@@ -328,6 +387,43 @@ export function ZaloContactModal({
               </div>
             )}
           </div>
+
+          {/* Bối cảnh bài viết & Nhu cầu bóc tách bằng AI */}
+          {(postContent || postUrl || extractedNeed) && (
+            <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/70 dark:bg-purple-950/20 p-3 text-xs space-y-1.5 shadow-2xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1">
+                  <span>✨ Nhu cầu khách (AI bóc tách):</span>
+                  {isExtractingNeed && <span className="text-[10px] text-purple-600 animate-pulse">(Đang phân tích...)</span>}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleReExtractNeed}
+                  disabled={isExtractingNeed}
+                  className="text-[11px] font-semibold text-purple-700 hover:text-purple-900 dark:text-purple-300 underline cursor-pointer"
+                  title="Bấm để AI phân tích lại nhu cầu từ bài viết"
+                >
+                  Phân tích lại
+                </button>
+              </div>
+              <div className="font-semibold text-slate-800 dark:text-slate-100 bg-white dark:bg-slate-900/60 p-2 rounded-lg border border-purple-100 dark:border-purple-900/50">
+                {extractedNeed || (isExtractingNeed ? "AI đang đọc nội dung bài viết..." : "Tư vấn theo nội dung bài viết")}
+              </div>
+              {postUrl && (
+                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-0.5">
+                  <span className="truncate max-w-[280px]">🔗 {postUrl}</span>
+                  <a
+                    href={postUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-purple-700 dark:text-purple-400 font-bold hover:underline shrink-0"
+                  >
+                    Mở bài viết ↗
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Ô soạn lời chào & Danh sách mẫu câu chọn nhanh */}
           <div>

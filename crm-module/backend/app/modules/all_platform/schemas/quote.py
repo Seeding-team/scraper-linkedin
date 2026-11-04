@@ -209,6 +209,9 @@ class QuoteCreateRequest(BaseModel):
     # ty gia he thong - xem quote_exchange_rate_service).
     currency: Optional[str] = None
     exchange_rate: Optional[float] = Field(default=None, gt=0)
+    # "Gia da gom VAT" (migration 204): 'exclusive' (mac dinh, HANH VI CU) |
+    # 'inclusive'. Khong gui = 'exclusive'.
+    price_mode: Optional[str] = None
 
     _normalize_data = field_validator("data")(normalize_quote_data)
     _normalize_optional_uuid = field_validator(
@@ -217,6 +220,13 @@ class QuoteCreateRequest(BaseModel):
         "project_id",
         mode="before",
     )(optional_uuid_or_none)
+
+    @field_validator("price_mode")
+    @classmethod
+    def _validate_price_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("exclusive", "inclusive"):
+            raise ValueError("price_mode phải là 'exclusive' hoặc 'inclusive'.")
+        return value
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -246,6 +256,9 @@ class QuoteUpdateRequest(BaseModel):
     # Doi tien te cua bao gia DRAFT: phai gui kem toan bo `items` da quy doi.
     currency: Optional[str] = None
     exchange_rate: Optional[float] = Field(default=None, gt=0)
+    # "Gia da gom VAT" (migration 204) - KHONG can gui kem items (khong
+    # rescale unitPrice gi ca, chi doi cach dien giai - khac han currency).
+    price_mode: Optional[str] = None
 
     _normalize_data = field_validator("data")(normalize_quote_data)
     _normalize_optional_uuid = field_validator(
@@ -254,6 +267,13 @@ class QuoteUpdateRequest(BaseModel):
         "project_id",
         mode="before",
     )(optional_uuid_or_none)
+
+    @field_validator("price_mode")
+    @classmethod
+    def _validate_price_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("exclusive", "inclusive"):
+            raise ValueError("price_mode phải là 'exclusive' hoặc 'inclusive'.")
+        return value
 
 
 class QuoteStageUpdateRequest(BaseModel):

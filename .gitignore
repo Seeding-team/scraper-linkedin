@@ -312,3 +312,5 @@ local_mock.sql
 
 # Cloned external prototypes
 prototype-studio/
+
+nhantin.json

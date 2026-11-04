@@ -361,6 +361,9 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         # NULL voi bao gia VND/bao gia cu. Khong bao gio doc lai ty gia he thong.
         "exchangeRate": (float(row["exchange_rate"]) if row.get("exchange_rate") is not None else None),
         "currencySnapshot": row.get("currency_snapshot"),
+        # "Gia da gom VAT" (migration 204) - row.get() an toan voi DB chua
+        # chay migration (cot khong ton tai -> KeyError neu dung row["..."]).
+        "priceMode": row.get("price_mode") or "exclusive",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdById": row.get("created_by"),
@@ -678,6 +681,9 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
             float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
         ),
         "currency": row.get("currency") or "VND",
+        # "Gia da gom VAT" (migration 204) - bao gia cong khai/PDF khach PHAI
+        # biet mode nay de tinh dung tong (giong het currency ben tren).
+        "priceMode": row.get("price_mode") or "exclusive",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdAt": row.get("created_at"),
@@ -954,17 +960,29 @@ def _calculate_item(
     discount_amount: float | None = None,
     discount_type: str | None = None,
     vat_amount: float | None = None,
+    price_mode: str = "exclusive",
 ) -> tuple[float, float, float, float, float]:
     """billing_term_months (migration 189): he so nhan them vao subtotal khi
     hang muc chon "Tra nam" (thuong la 12) - dung Gia tra nam/thang (da UU
     DAI theo thang) nhung tinh tien ca nam. None/<=1 = khong nhan them, giong
-    het hanh vi cu (hang muc 1 gia, hoac bao gia tao truoc tinh nang nay)."""
+    het hanh vi cu (hang muc 1 gia, hoac bao gia tao truoc tinh nang nay).
+
+    price_mode (migration 204, 2026-11-04): 'exclusive' (mac dinh, HANH VI
+    CU) - unit_price la gia CHUA gom VAT, VAT cong them o duoi. 'inclusive' -
+    unit_price la gia DA gom VAT, tach nguoc VAT ra khoi gross truoc khi chay
+    tiep pipeline discount/vat/total y HET cu (chi 1 nhanh logic nay, cac
+    buoc sau khong doi gi ca - mirror dung Python/FE
+    quoteCalculations.ts::calculateItemSubtotal)."""
     q = _to_decimal(quantity)
     u = _to_decimal(unit_price)
     d_pct = _to_decimal(discount_percent)
     v_pct = _to_decimal(vat_rate)
     bt = _to_decimal(billing_term_months) if billing_term_months and billing_term_months > 1 else _to_decimal(1)
-    subtotal = q * u * bt
+    gross = q * u * bt
+    if price_mode == "inclusive":
+        subtotal = gross / (1 + v_pct / 100)
+    else:
+        subtotal = gross
     if discount_type == "amount":
         if discount_amount is not None and discount_amount >= 0:
             discount = min(subtotal, _to_decimal(discount_amount))
@@ -1101,7 +1119,7 @@ def _enrich_bundle_catalog_quote_items(items: list[dict], currency: str = "VND",
     return enriched
 
 
-def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tuple[list[dict], float, float, float]:
+def _flatten_computed_items(raw_items: list[dict], currency: str = "VND", price_mode: str = "exclusive") -> tuple[list[dict], float, float, float]:
     flattened: list[dict] = []
     subtotal = 0.0
     vat = 0.0
@@ -1139,6 +1157,7 @@ def _flatten_computed_items(raw_items: list[dict], currency: str = "VND") -> tup
             discount_amount=float(raw_discount_amount) if raw_discount_amount is not None else None,
             discount_type=discount_type,
             vat_amount=float(raw_vat_amount) if raw_vat_amount is not None else None,
+            price_mode=price_mode,
         )
         row = {
             **item,
@@ -2223,13 +2242,18 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
     currency = qc.normalize_currency(payload["currency"]) if payload.get("currency") else "VND"
     exchange_rate, currency_snapshot = _resolve_quote_fx(currency, payload.get("exchange_rate"))
     data["currency"] = currency
+    # "Gia da gom VAT" (migration 204) - gia tri quote-level, mac dinh
+    # 'exclusive' (hanh vi cu). CHI tin payload["price_mode"] gui RO (khong
+    # phai data.priceMode - theo dung quy uoc currency o tren: field anh
+    # huong cong thuc tinh tien phai la cot THAT, khong phai JSON tu do).
+    price_mode = payload.get("price_mode") if payload.get("price_mode") in ("exclusive", "inclusive") else "exclusive"
     raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [], currency, exchange_rate)
 
     if is_villa:
         subtotal, vat, total = _calculate_villa_totals(data.get("solutionItems") or [])
         items_to_insert: list[dict] = []
     else:
-        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency)
+        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency, price_mode)
         overall_disc = _to_decimal(0)
         if data.get("overallDiscountType") == "amount" or (data.get("overallDiscountAmount") is not None and float(data.get("overallDiscountAmount") or 0) > 0):
             overall_disc = min(_to_decimal(subtotal), _to_decimal(data.get("overallDiscountAmount") or 0))
@@ -2279,6 +2303,11 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # bao gia VND nhu cu (PostgREST bao loi neu gui cot khong ton tai).
         insert_data["exchange_rate"] = exchange_rate
         insert_data["currency_snapshot"] = currency_snapshot
+    if price_mode != "exclusive":
+        # Cung quy uoc: chi them cot price_mode khi that su 'inclusive', de
+        # DB chua chay migration 204 (chua co cot nay) van tao duoc bao gia
+        # 'exclusive' (mac dinh) nhu cu, khong bi PostgREST bao loi cot la.
+        insert_data["price_mode"] = price_mode
     logger.info(
         "tenant_write table=quotes operation=insert settings.crm_instance=%s resolved_instance=%s",
         _crm_instance(),
@@ -2477,16 +2506,24 @@ def _sync_computed_item_discounts_and_totals(
     effective_currency: str,
     quote_data: dict | None = None,
     overall_discount_pct: float | None = None,
+    price_mode: str = "exclusive",
 ) -> None:
     """RPC quote_update (SQL) tính discount_amount = ROUND(subtotal * discount_percent / 100).
     Khi người dùng nhập giảm giá bằng số tiền cố định (VNĐ/USD) hoặc có giảm giá toàn báo giá,
     discount_percent đã bị làm tròn nên phép nhân ngược trong SQL bị lệch. Hàm này ghi đè lại chính xác
     discount_amount, amount_after_discount, vat_amount, total_amount của từng dòng và subtotal_amount,
-    vat_amount, total_amount của báo giá."""
+    vat_amount, total_amount của báo giá.
+
+    price_mode (migration 204): RPC quote_update (SQL) KHONG biet "gia da gom
+    VAT" - no luon tinh subtotal = qty*unit_price (exclusive-only). Khi
+    price_mode='inclusive', ket qua RPC luon SAI nen BAT BUOC phai chay lai
+    pass Python nay de ghi de - ep has_fixed_diff=True vo dieu kien, khong
+    phu thuoc cac check discount/vat o duoi (nhung check do van giu nguyen,
+    chi la 1 nguyen nhan KHAC co the cung lam has_fixed_diff=True)."""
     if not rpc_items:
         return
-    computed_flat, calc_sub, calc_vat, calc_tot = _flatten_computed_items(rpc_items, effective_currency)
-    has_fixed_diff = False
+    computed_flat, calc_sub, calc_vat, calc_tot = _flatten_computed_items(rpc_items, effective_currency, price_mode)
+    has_fixed_diff = price_mode == "inclusive"
     for comp_row in computed_flat:
         if comp_row.get("row_type") == "section":
             continue
@@ -2574,6 +2611,14 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
     effective_currency = current_quote.get("currency") or "VND"
     effective_rate = current_quote.get("exchangeRate")
+    # "Gia da gom VAT" (migration 204) - khong can buoc "resend items" nhu
+    # currency (khong rescale unitPrice gi ca, chi doi cach dien giai), nen
+    # chi can lay gia tri hien tai/moi, KHONG can ham _apply_*_change rieng.
+    effective_price_mode = (
+        payload.get("price_mode")
+        if payload.get("price_mode") in ("exclusive", "inclusive")
+        else (current_quote.get("priceMode") or "exclusive")
+    )
     if previous_fx is not None:
         effective_currency = qc.normalize_currency(payload.get("currency"))
         effective_rate = qc.to_rate(payload.get("exchange_rate")) or qc.to_rate(default_usd_vnd_rate())
@@ -2608,6 +2653,22 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             effective_currency,
             payload.get("data"),
             payload.get("overall_discount_percent"),
+            effective_price_mode,
+        )
+    elif effective_price_mode == "inclusive":
+        # Quote THUONG (khong phai villa) o "inclusive" mode - RPC quote_update
+        # (SQL) khong biet tach VAT ngay ca khi chi luu nhap (khong approve),
+        # nen van phai chay pass Python nay o day thay vi doi toi luc duyet
+        # (khac voi standard-exclusive, von CHAP NHAN de RPC tinh tam, chi
+        # dung lai dung o luc duyet - inclusive thi SAI tu luc nhap, khong
+        # the doi, Sale se thay so sai NGAY khi luu nhap neu khong sua o day).
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+            effective_price_mode,
         )
 
     # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
@@ -2625,6 +2686,8 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
     if "overall_discount_percent" in payload:
         direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
+    if "price_mode" in payload and payload.get("price_mode") in ("exclusive", "inclusive"):
+        direct_fields["price_mode"] = payload.get("price_mode")
     # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24, "chọn Markee thì mẫu
     # báo giá auto fill mẫu thuộc đơn vị phát hành đó") - truoc gio quote_form_id
     # CHI gan duoc luc TAO (create_quote), khong co cach doi lai sau khi quote da
@@ -2884,12 +2947,18 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             if previous_fx is not None
             else (current_quote.get("currency") or "VND")
         )
+        effective_price_mode = (
+            payload.get("price_mode")
+            if payload.get("price_mode") in ("exclusive", "inclusive")
+            else (current_quote.get("priceMode") or "exclusive")
+        )
         _sync_computed_item_discounts_and_totals(
             quote_id,
             rpc_items,
             effective_currency,
             payload.get("data"),
             payload.get("overall_discount_percent"),
+            effective_price_mode,
         )
     quote = get_quote(quote_id)
     if quote.get("dealId"):

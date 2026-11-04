@@ -277,7 +277,16 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
     fallbacks = _FALLBACK_MODELS_PROXY if _use_proxy() else _FALLBACK_MODELS_LEGACY
     models_to_try = [primary_model] + [m for m in fallbacks if m != primary_model]
 
-    data: dict | None = None
+    # Fix (2026-11-04, "AI trả về dữ liệu không hợp lệ"): TRƯỚC ĐÂY chỉ retry/fallback
+    # model khi GỌI API thất bại (status >= 400 hoặc lỗi mạng) - nếu 1 model trả về
+    # HTTP 200 nhưng content không phải JSON hợp lệ (vd bị CẮT CỤT do chạm max_tokens,
+    # finish_reason=length - xem comment _max_tokens(), hoặc model bỏ qua
+    # response_format json_object), code bỏ cuộc NGAY LẬP TỨC thay vì thử model/lượt
+    # kế tiếp - dù vẫn còn fallback model chưa dùng tới. Giờ việc parse JSON nằm
+    # TRONG vòng lặp retry, 1 lượt JSON-hỏng được coi như 1 lượt thất bại (giống lỗi
+    # API), tự động rơi qua model/lượt tiếp theo - chỉ báo lỗi cho người dùng khi
+    # TẤT CẢ model + lượt đều hỏng.
+    result: dict | None = None
     last_error_text = ""
     async with httpx.AsyncClient(timeout=180.0) as client:
         for model in models_to_try:
@@ -301,20 +310,26 @@ async def _call_chat_json(system_prompt: str, user_content: str) -> dict:
                         logger.warning(f"AI model call failed, will retry/fallback: {last_error_text}")
                         continue
                     data = resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                    finish_reason = (data["choices"][0] or {}).get("finish_reason")
+                    try:
+                        result = _parse_json_lenient(content)
+                    except json.JSONDecodeError:
+                        last_error_text = (
+                            f"[{model}] invalid JSON (finish_reason={finish_reason}): {content[:300]!r}"
+                        )
+                        logger.warning(f"AI model returned non-JSON content, will retry/fallback: {last_error_text}")
+                        continue
                     break
-                except (httpx.HTTPError, ValueError) as exc:
+                except (httpx.HTTPError, ValueError, KeyError, IndexError) as exc:
                     last_error_text = f"[{model}] {exc}"
                     logger.warning(f"AI model call errored, will retry/fallback: {last_error_text}")
-            if data is not None:
+            if result is not None:
                 break
-    if data is None:
-        raise RuntimeError(f"Tất cả model AI đều không khả dụng lúc này (provider chập chờn). Lỗi gần nhất: {last_error_text}")
-    content = data["choices"][0]["message"]["content"]
-    try:
-        return _parse_json_lenient(content)
-    except json.JSONDecodeError as exc:
-        logger.error(f"AI contract response is not valid JSON: {content[:500]!r}")
-        raise RuntimeError("AI trả về dữ liệu không hợp lệ, vui lòng thử lại.") from exc
+    if result is None:
+        logger.error(f"AI contract response never parsed as valid JSON: {last_error_text}")
+        raise RuntimeError("AI trả về dữ liệu không hợp lệ, vui lòng thử lại.")
+    return result
 
 
 _BLANK = "………………………"

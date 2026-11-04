@@ -12,6 +12,9 @@ import { ZaloAccountsModal } from "../chat/ZaloAccountsModal";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
 import { SalesAssetPickerModal } from "@/components/all-platform/sales-assets/SalesAssetPickerModal";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { allPlatformQuickInboxService } from "@/services/all-platform.service";
+import type { QuickInboxTemplate } from "@/types/unified.types";
 import { resolveZaloConversationAccount } from "@/services/zaloCrawlerService";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
 import { MaterialIcon } from "@/components/ui";
@@ -79,6 +82,7 @@ import {
   Inbox as InboxIcon,
   CheckCircle2,
   Zap,
+  Settings,
 } from "lucide-react";
 
 // ─── Constants & Templates ──────────────────────────────────────────────────
@@ -761,7 +765,38 @@ export function ZaloInboxAdminShell() {
   }, []);
 
   const [panelTab, setPanelTab] = useState<PanelTab>("templates");
-  const [templateGroupId, setTemplateGroupId] = useState(QUICK_REPLY_GROUPS[0].id);
+  const [templateGroupId, setTemplateGroupId] = useState("greeting");
+  const [inboxTemplates, setInboxTemplates] = useState<QuickInboxTemplate[]>([]);
+
+  useEffect(() => {
+    allPlatformQuickInboxService
+      .getAll()
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setInboxTemplates(res.data);
+        }
+      })
+      .catch((err) => console.debug("Load quick inbox templates error:", err));
+  }, []);
+
+  const replyGroups = useMemo(() => {
+    if (!inboxTemplates || inboxTemplates.length === 0) {
+      return QUICK_REPLY_GROUPS;
+    }
+    const map: Record<string, { id: string; label: string; items: string[] }> = {};
+    inboxTemplates.forEach((t) => {
+      const label = (t.label || "Chào hỏi").trim();
+      const id = label.toLowerCase().replace(/\s+/g, "_");
+      if (!map[id]) {
+        map[id] = { id, label, items: [] };
+      }
+      if (t.content) {
+        map[id].items.push(t.content);
+      }
+    });
+    const list = Object.values(map);
+    return list.length > 0 ? list : QUICK_REPLY_GROUPS;
+  }, [inboxTemplates]);
   const [noteDraftState, setNoteDraftState] = useState({ convId: "", value: "" });
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
@@ -1513,7 +1548,7 @@ export function ZaloInboxAdminShell() {
   const selectedPreview = inbox.archiveReading ? selectedArchive?.preview : selectedConv?.preview;
   const selectedNote = inbox.openConv ? (inbox.customerNotes[inbox.openConv] ?? selectedArchive?.note ?? "") : "";
 
-  const activeTemplateGroup = QUICK_REPLY_GROUPS.find((g) => g.id === templateGroupId) || QUICK_REPLY_GROUPS[0];
+  const activeTemplateGroup = replyGroups.find((g) => g.id === templateGroupId) || replyGroups[0] || QUICK_REPLY_GROUPS[0];
   const noteDraft = noteDraftState.convId === inbox.openConv ? noteDraftState.value : selectedNote;
   const setNoteDraft = (value: string) => setNoteDraftState({ convId: inbox.openConv, value });
   const noteChanged = noteDraft.trim() !== selectedNote.trim();
@@ -2715,7 +2750,7 @@ export function ZaloInboxAdminShell() {
                                         <MaterialIcon name="delete" className="text-[11px]" />
                                       </button>
                                     )}
-                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhan da thu hoi</span>}
+                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>}
                                     {reactionPickerFor === msgKey && (
                                       <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
                                         <ZaloReactionQuickPicker
@@ -2752,8 +2787,8 @@ export function ZaloInboxAdminShell() {
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center p-6 text-slate-400">
                 <MessageCircle size={32} className="mb-2 opacity-40 text-slate-400" />
-                <p className="text-xs font-semibold text-slate-600">Chua co tin nhan</p>
-                <p className="text-[11px] text-slate-400 mt-1">Bat dau tro chuyen bang cach nhap noi dung phia duoi.</p>
+                <p className="text-xs font-semibold text-slate-600">Chưa có tin nhắn</p>
+                <p className="text-[11px] text-slate-400 mt-1">Bắt đầu trò chuyện bằng cách nhập nội dung phía dưới.</p>
               </div>
             )}
           </div>
@@ -2775,6 +2810,15 @@ export function ZaloInboxAdminShell() {
                   </button>
                 ))}
               </div>
+              <Link
+                href="/all-platform/quick-comments?tab=inbox"
+                target="_blank"
+                className="shrink-0 ml-auto inline-flex items-center gap-1 text-[10.5px] font-bold text-slate-500 hover:text-[#E3000F] px-1.5 py-0.5 rounded transition"
+                title="Tùy chỉnh mẫu câu trong Thư viện mẫu inbox"
+              >
+                <Settings size={11} />
+                <span>Tùy chỉnh</span>
+              </Link>
             </div>
           )}
 
@@ -2826,7 +2870,7 @@ export function ZaloInboxAdminShell() {
                     onClick={() => setSelectedFiles([])}
                     className="rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-white hover:text-[#E3000F]"
                   >
-                    Xoa tat ca ({selectedFiles.length})
+                    Xóa tất cả ({selectedFiles.length})
                   </button>
                 )}
               </div>
@@ -2838,7 +2882,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!inbox.openConv || inbox.archiveReading}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-                title="Dinh kem file"
+                title="Đính kèm file"
               >
                 <Paperclip size={13} /> File
               </button>
@@ -2850,7 +2894,7 @@ export function ZaloInboxAdminShell() {
                 disabled={!inbox.openConv || inbox.archiveReading}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
               >
-                <ImageIcon size={13} /> Anh
+                <ImageIcon size={13} /> Ảnh
               </button>
 
               <button
@@ -2866,7 +2910,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setPanelTab("templates")}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#d81b60]/40 bg-[#fce4ec]/60 px-2.5 py-1 text-[11px] font-bold text-[#d81b60]"
               >
-                <Star size={13} /> Mau nhanh
+                <Star size={13} /> Mẫu nhanh
               </button>
 
               <button
@@ -2874,7 +2918,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowDealModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
-                <Briefcase size={13} /> Tao co hoi
+                <Briefcase size={13} /> Tạo cơ hội
               </button>
 
               <button
@@ -2882,7 +2926,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowQuoteModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#E3000F]/40 bg-[#E3000F]/10 px-2.5 py-1 text-[11px] font-bold text-[#E3000F] hover:bg-[#E3000F]/20"
               >
-                <FileSpreadsheet size={13} /> Bao gia CRM
+                <FileSpreadsheet size={13} /> Báo giá CRM
               </button>
             </div>
 
@@ -2918,9 +2962,9 @@ export function ZaloInboxAdminShell() {
               {showMentionPicker && (
                 <div className="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
                   {!inbox.groupMembers ? (
-                    <div className="px-3 py-2 text-[11px] text-slate-400">Dang lay thanh vien nhom tu ZCA...</div>
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Đang lấy thành viên nhóm từ ZCA...</div>
                   ) : filteredMentionCandidates.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-slate-400">Khong tim thay thanh vien.</div>
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Không tìm thấy thành viên.</div>
                   ) : (
                     filteredMentionCandidates.slice(0, 20).map((member) => (
                       <button
@@ -3059,8 +3103,23 @@ export function ZaloInboxAdminShell() {
 
                 {panelTab === "templates" && (
                   <div className="space-y-3">
+                    {/* Header with Direct Link to Customize Templates in Library */}
+                    <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Mẫu tin nhanh</span>
+                      <Link
+                        href="/all-platform/quick-comments?tab=inbox"
+                        target="_blank"
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-[#E3000F] hover:underline bg-red-50 hover:bg-red-100 px-2 py-0.5 rounded-md border border-red-200 transition"
+                        title="Mở Thư viện mẫu inbox Zalo để thêm mới, sửa hoặc xóa câu chào hỏi & tư vấn"
+                      >
+                        <Settings size={12} />
+                        <span>Tùy chỉnh mẫu</span>
+                        <ExternalLink size={10} />
+                      </Link>
+                    </div>
+
                     <div className="flex flex-wrap gap-1">
-                      {QUICK_REPLY_GROUPS.map((group) => (
+                      {replyGroups.map((group) => (
                         <button
                           key={group.id}
                           onClick={() => setTemplateGroupId(group.id)}
@@ -3068,21 +3127,21 @@ export function ZaloInboxAdminShell() {
                             "rounded-full px-2.5 py-1 text-[10px] font-bold transition",
                             templateGroupId === group.id
                               ? "bg-[#E3000F] text-white"
-                              : "bg-slate-100 text-slate-600"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                           )}
                         >
-                          {group.label}
+                          {group.label} ({group.items.length})
                         </button>
                       ))}
                     </div>
 
-                    <div className="space-y-2">
-                      {activeTemplateGroup.items.map((item) => (
-                        <div key={item} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200/80 bg-white p-2.5">
-                          <span className="text-xs text-slate-700 truncate">{item}</span>
+                    <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                      {activeTemplateGroup.items.map((item, idx) => (
+                        <div key={`${item}-${idx}`} className="flex items-start justify-between gap-2 rounded-xl border border-slate-200/80 bg-white p-2.5 hover:border-slate-300 transition shadow-2xs">
+                          <span className="text-xs text-slate-700 whitespace-pre-wrap leading-relaxed line-clamp-3">{item}</span>
                           <button
                             onClick={() => appendTemplate(item)}
-                            className="rounded-full bg-[#fce4ec] px-2.5 py-0.5 text-[10px] font-bold text-[#d81b60] shrink-0"
+                            className="rounded-full bg-[#fce4ec] hover:bg-[#f8bbd0] px-2.5 py-1 text-[10px] font-bold text-[#d81b60] shrink-0 transition cursor-pointer"
                           >
                             Chèn
                           </button>

@@ -244,6 +244,24 @@ def leads_save_classification_rules(payload: dict[str, Any], user: dict[str, Any
         return _error(exc)
 
 
+@router.post("/ai-extract-need")
+async def leads_ai_extract_need(
+    payload: dict[str, Any],
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    """Tự động bóc tách Nhu cầu và sinh câu chào Zalo từ nội dung bài viết bằng AI."""
+    del user
+    try:
+        from app.modules.all_platform.services.lead_ai_extractor_service import extract_need_and_draft_zalo_message
+        content = str(payload.get("content") or "").strip()
+        group_name = payload.get("group_name")
+        post_url = payload.get("post_url")
+        data = await extract_need_and_draft_zalo_message(content, group_name=group_name, post_url=post_url)
+        return BaseResponse(success=True, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.get("/{lead_id}/overview")
 def leads_overview(lead_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     """Lead 360 - tong quan xu ly Lead (read-only), xem lead_overview_service."""

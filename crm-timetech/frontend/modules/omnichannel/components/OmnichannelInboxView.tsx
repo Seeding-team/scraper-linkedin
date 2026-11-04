@@ -715,6 +715,21 @@ export function OmnichannelInboxView() {
     };
   }, [currentConversations]);
 
+  const accountsWithComputedCount = useMemo(() => {
+    return currentAccounts.map((acc) => {
+      if (acc.channel === "email") {
+        const convCount = currentConversations.filter(
+          (c) => c.channel === "email" && (c.accountId === acc.id || c.accountLabel === acc.email || c.accountLabel === acc.name)
+        ).length;
+        return {
+          ...acc,
+          count: convCount > 0 ? convCount : (acc.totalThreads ?? acc.count ?? 0),
+        };
+      }
+      return acc;
+    });
+  }, [currentAccounts, currentConversations]);
+
   // Periodic background check for new incoming emails with notification toast
   useEffect(() => {
     if (isPreviewMode) return;
@@ -773,7 +788,7 @@ export function OmnichannelInboxView() {
           }}
           selectedAccount={selectedAccount}
           onSelectAccount={(acc) => setSelectedAccount(acc)}
-          accounts={currentAccounts}
+          accounts={accountsWithComputedCount}
           channelCounts={channelCounts}
           isCollapsed={isPane1Collapsed}
           onToggleCollapse={() => setIsPane1Collapsed((v) => !v)}
@@ -1326,11 +1341,11 @@ export function OmnichannelInboxView() {
         }}
       />
 
-      {/* "+ Tạo mới" o card "Chưa liên kết khách hàng" - truoc day mo thang CustomerAddDrawer
-          (tao Customer tran trui, khong qua Lead). Yeu cau Lead-first (mentor, 2026-10-31):
-          phai tao Lead TRUOC, Customer chi sinh ra khi convert Lead luc "+ Tạo cơ hội" (xem
-          QuickCreateOpportunityFromInbox.tsx) - KHONG tu danh dau crmData.matched=true o day,
-          vi Lead vua tao CHUA phai Customer that. */}
+      {/* CHI con dung o PREVIEW MODE (isCreateCustomerOpen/isFindCustomerOpen chi duoc set
+          true khi isPreviewMode - xem onOpenCreateCustomer/onOpenFindCustomer truyen vao
+          Crm360Panel o tren). Real mode da chuyen sang QuickCreateOpportunityFromInbox
+          mode="find-customer" (Lead-first that, dung chung voi "+ Tạo cơ hội"/"+ Tạo báo giá"
+          - chot mentor 2026-11-01), khong con dung 2 modal rieng nay nua. */}
       <LeadFormDrawer
         open={isCreateCustomerOpen}
         currentUser={user}
