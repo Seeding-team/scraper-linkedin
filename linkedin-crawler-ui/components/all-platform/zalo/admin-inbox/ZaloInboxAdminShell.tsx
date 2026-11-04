@@ -950,36 +950,6 @@ export function ZaloInboxAdminShell() {
   const [editingPhoneConvId, setEditingPhoneConvId] = useState<string | null>(null);
   const [inputPhoneDraft, setInputPhoneDraft] = useState<string>("");
   const [isSavingPhone, setIsSavingPhone] = useState<boolean>(false);
-  const [isSearchingZcaPhone, setIsSearchingZcaPhone] = useState<boolean>(false);
-
-  const handleManualSearchZcaPhone = async () => {
-    const convId = inbox.openConv;
-    if (!convId) return;
-    setIsSearchingZcaPhone(true);
-    try {
-      const res = await fetch(
-        `/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone?name=${encodeURIComponent(
-          selectedName || ""
-        )}&account_id=${encodeURIComponent(inbox.selectedAccountId || "")}`
-      );
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.success && data?.phone) {
-          const formatted = formatZaloPhoneDisplay(data.phone);
-          setConvPhoneMap((prev) => ({ ...prev, [convId]: formatted }));
-          inbox.showToast(`Đã tìm thấy số điện thoại của khách: ${formatted}`, true);
-        } else {
-          inbox.showToast("Khách hàng đang cài đặt ẩn số điện thoại trên Zalo hoặc chưa liên kết", false);
-        }
-      } else {
-        inbox.showToast("Chưa thể quét số điện thoại từ Zalo lúc này", false);
-      }
-    } catch {
-      inbox.showToast("Lỗi kết nối khi quét số điện thoại Zalo", false);
-    } finally {
-      setIsSearchingZcaPhone(false);
-    }
-  };
 
   const handleSavePhone = async () => {
     const convId = inbox.openConv;
@@ -2387,32 +2357,18 @@ export function ZaloInboxAdminShell() {
                           </a>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setInputPhoneDraft("");
-                              setEditingPhoneConvId(inbox.openConv);
-                            }}
-                            title="Bấm để thêm số điện thoại cho khách hàng này"
-                            className="inline-flex items-center gap-1 shrink-0 font-medium text-slate-500 hover:text-rose-700 bg-slate-50 hover:bg-rose-50 border border-dashed border-slate-300 hover:border-rose-300 px-2 py-0.5 rounded-lg text-xs transition cursor-pointer"
-                          >
-                            <Plus className="h-3 w-3 text-slate-400" />
-                            <span>Thêm SĐT</span>
-                          </button>
-
-                          {/* Nút bấm chủ động truy ngược SĐT từ ZCA UID nếu khách chưa có SĐT */}
-                          <button
-                            type="button"
-                            disabled={isSearchingZcaPhone}
-                            onClick={handleManualSearchZcaPhone}
-                            title="Tra cứu ngược số điện thoại từ tài khoản Zalo của khách hàng"
-                            className="inline-flex items-center gap-1 shrink-0 font-medium text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100/80 border border-blue-200/80 px-2 py-0.5 rounded-lg text-xs transition cursor-pointer disabled:opacity-50"
-                          >
-                            <Search className={cn("h-3 w-3", isSearchingZcaPhone && "animate-spin")} />
-                            <span>{isSearchingZcaPhone ? "Đang quét..." : "Quét SĐT Zalo"}</span>
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInputPhoneDraft("");
+                            setEditingPhoneConvId(inbox.openConv);
+                          }}
+                          title="Bấm để thêm hoặc cập nhật số điện thoại cho khách hàng"
+                          className="inline-flex items-center gap-1 shrink-0 font-medium text-slate-500 hover:text-rose-700 bg-slate-50 hover:bg-rose-50 border border-dashed border-slate-300 hover:border-rose-300 px-2 py-0.5 rounded-lg text-xs transition cursor-pointer"
+                        >
+                          <Plus className="h-3 w-3 text-slate-400" />
+                          <span>Thêm SĐT</span>
+                        </button>
                       )
                     )}
                   </div>
