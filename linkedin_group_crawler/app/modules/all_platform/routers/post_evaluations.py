@@ -96,3 +96,36 @@ def save_post_evaluation(payload: SavePostEvaluationRequest) -> BaseResponse:
     except Exception as e:
         logger.error(f"Failed to save post evaluation: {e}")
         return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/cleanup-feed", response_model=BaseResponse)
+def cleanup_feed() -> BaseResponse:
+    """Quét và xóa sạch các bài viết trùng lặp nội dung và bài viết đối thủ chào hàng
+    hiện có trong Database (Facebook, Threads, LinkedIn)."""
+    try:
+        from app.core.supabase_client import get_supabase_client
+        from app.modules.all_platform.services.post_deduplication_service import (
+            cleanup_duplicate_posts_in_table,
+            cleanup_competitor_posts_in_table,
+        )
+        supabase = get_supabase_client()
+        res_fb_dup = cleanup_duplicate_posts_in_table(supabase, "facebook_posts")
+        res_fb_comp = cleanup_competitor_posts_in_table(supabase, "facebook_posts")
+
+        res_th_dup = cleanup_duplicate_posts_in_table(supabase, "threads_posts")
+        res_th_comp = cleanup_competitor_posts_in_table(supabase, "threads_posts")
+
+        res_li_dup = cleanup_duplicate_posts_in_table(supabase, "linkedin_posts")
+        res_li_comp = cleanup_competitor_posts_in_table(supabase, "linkedin_posts")
+
+        summary = {
+            "facebook": {"deleted_duplicates": res_fb_dup, "deleted_competitors": res_fb_comp},
+            "threads": {"deleted_duplicates": res_th_dup, "deleted_competitors": res_th_comp},
+            "linkedin": {"deleted_duplicates": res_li_dup, "deleted_competitors": res_li_comp},
+            "total_deleted": (res_fb_dup + res_fb_comp + res_th_dup + res_th_comp + res_li_dup + res_li_comp),
+        }
+        logger.info(f"[CLEANUP-FEED] Hoàn thành dọn dẹp feed: {summary}")
+        return BaseResponse(success=True, message=f"Đã xoá {summary['total_deleted']} bài rác/trùng/đối thủ!", data=summary)
+    except Exception as e:
+        logger.error(f"[CLEANUP-FEED] Lỗi dọn dẹp feed: {e}")
+        return BaseResponse(success=False, message=str(e))

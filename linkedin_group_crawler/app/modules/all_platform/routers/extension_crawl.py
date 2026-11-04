@@ -416,6 +416,13 @@ def sync_process_and_save_posts_db(payload: ExtensionCrawlRequest, legacy: bool)
 
         logger.info(f"[SAVE] Sẽ lưu {len(posts_to_insert)} bài (top 3 hôm nay) vào DB")
 
+    # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết (Content Deduplication)
+    # So khớp content trong Database và trong chính đợt cào, không phụ thuộc link!
+    from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+    posts_to_insert, skipped_content_dups = filter_posts_by_unique_content(supabase, 'facebook_posts', posts_to_insert)
+    if skipped_content_dups > 0:
+        logger.info(f'[DEDUPE-FB] Đã loại bỏ {skipped_content_dups} bài viết do trùng nội dung content!')
+
     inserted_count = 0
     inserted_post_urls = []
     inserted_rows = []

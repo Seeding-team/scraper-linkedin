@@ -174,7 +174,19 @@ export interface ZaloCrawlerFlowValue {
     }
   ) => Promise<void>;
   deleteAccount: (accountId: string, deleteAuth?: boolean) => Promise<void>;
-  updateAccount: (accountId: string, label: string, phone?: string) => Promise<void>;
+  updateAccount: (
+    accountId: string,
+    label: string,
+    phone?: string,
+    extra?: {
+      owner_name?: string;
+      id_member?: string;
+      sim_location?: string;
+      sim_location_detail?: string;
+      domain_ids?: string[];
+      group_ids?: string[];
+    }
+  ) => Promise<void>;
   startSession: () => Promise<void>;
   openManualScreen: () => Promise<void>;
   resumeManualLogin: () => Promise<void>;

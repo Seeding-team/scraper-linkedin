@@ -306,6 +306,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   const [quickViewPost, setQuickViewPost] = useState<UnifiedPost | null>(null);
   const [isReviewMode, setIsReviewMode] = useState(false);
+  const [isCleaningFeed, setIsCleaningFeed] = useState(false);
   const [reviewedPostIds, setReviewedPostIds] = useState<Set<string>>(new Set());
   const [showBulkCommentModal, setShowBulkCommentModal] = useState(false);
 
@@ -313,6 +314,33 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [verifyModalPost, setVerifyModalPost] = useState<UnifiedPost | null>(null);
   // YouTube: modal gõ comment -> extension mở video + điền sẵn, tính KPI khi nhân viên bấm Bình luận.
   const [youtubeCommentPost, setYoutubeCommentPost] = useState<UnifiedPost | null>(null);
+
+  const handleCleanFeed = async () => {
+    setIsCleaningFeed(true);
+    try {
+      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.success) {
+        const total = data.data?.total_deleted || 0;
+        toast.success(
+          total > 0
+            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
+            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
+        );
+        fetchPosts();
+      } else {
+        toast.error(data.message || "Không thể dọn dẹp bài viết");
+      }
+    } catch (e: any) {
+      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
+    } finally {
+      setIsCleaningFeed(false);
+    }
+  };
   const [panelFocus, setPanelFocus] = useState<{ tab: PanelTab; nonce: number } | null>(null);
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
@@ -1416,6 +1444,19 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCleanFeed}
+                disabled={isCleaningFeed}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-sm cursor-pointer border border-border"
+                title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
+              >
+                <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
+                  {isCleaningFeed ? "sync" : "mop"}
+                </span>
+                {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
+              </button>
+
               <button
                 type="button"
                 onClick={() => setIsReviewMode(!isReviewMode)}

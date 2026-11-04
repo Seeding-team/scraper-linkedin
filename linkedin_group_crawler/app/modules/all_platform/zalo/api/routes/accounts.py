@@ -119,6 +119,11 @@ class ZaloAccountUpdate(BaseModel):
     status: Optional[str] = None
     email: Optional[str] = None  # dùng để auto-resolve id_member nếu không truyền
     is_shared_with_all: Optional[bool] = None  # admin-only, xem _require_admin_only bên dưới
+    owner_name: Optional[str] = None
+    sim_location: Optional[str] = None
+    sim_location_detail: Optional[str] = None
+    domain_ids: Optional[List[str]] = None
+    group_ids: Optional[List[str]] = None
 
 
 @router.get("")
@@ -356,6 +361,11 @@ async def update_account(
             phone=body.phone if body.phone is not None else existing.get("phone"),
             status=body.status if body.status is not None else existing.get("status") or "unknown",
             is_shared_with_all=is_shared_with_all,
+            owner_name=body.owner_name if body.owner_name is not None else existing.get("owner_name"),
+            sim_location=body.sim_location if body.sim_location is not None else existing.get("sim_location"),
+            sim_location_detail=body.sim_location_detail if body.sim_location_detail is not None else existing.get("sim_location_detail"),
+            assigned_domains=body.domain_ids if body.domain_ids is not None else existing.get("assigned_domains"),
+            assigned_groups=body.group_ids if body.group_ids is not None else existing.get("assigned_groups"),
         )
         await upsert_zalo_user(
             safe_account_id,
@@ -364,6 +374,7 @@ async def update_account(
         )
     except SupabaseNotConfigured:
         pass
+    invalidate_zalo_accounts_cache()
     return {"account_id": safe_account_id, "updated": True}
 
 

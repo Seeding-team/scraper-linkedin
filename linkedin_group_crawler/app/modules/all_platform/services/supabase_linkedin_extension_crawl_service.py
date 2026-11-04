@@ -223,6 +223,12 @@ def save_extension_crawl_batch(
                     "likers": p.get("likers") or [],
                 }
             )
+        # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết LinkedIn (Content Deduplication)
+        from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+        records, skipped_content_dups = filter_posts_by_unique_content(supabase, 'linkedin_posts', records)
+        if skipped_content_dups > 0:
+            logger.info(f'[DEDUPE-LI] Đã loại bỏ {skipped_content_dups} bài viết LinkedIn do trùng nội dung content!')
+
         try:
             # upsert + ignore_duplicates: existing_urls o tren la snapshot luc DAU request
             # (TOCTOU race neu 2 lan cao gan nhu dong thoi cung tim ra 1 bai) - UNIQUE(post_url)

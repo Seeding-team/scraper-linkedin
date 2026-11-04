@@ -213,6 +213,12 @@ def save_threads_crawl_batch(
     fresh.sort(key=_engagement_score, reverse=True)
     selected = fresh[:limit]
 
+    # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết Threads (Content Deduplication)
+    from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
+    selected, skipped_content_dups = filter_posts_by_unique_content(supabase, TABLE, selected)
+    if skipped_content_dups > 0:
+        logger.info(f'[DEDUPE-THREADS] Đã loại bỏ {skipped_content_dups} bài viết Threads do trùng nội dung content!')
+
     inserted_urls: list[str] = []
     if selected:
         # ignore_duplicates: 2 lần cào song song cùng tìm ra 1 bài -> lần sau bỏ qua

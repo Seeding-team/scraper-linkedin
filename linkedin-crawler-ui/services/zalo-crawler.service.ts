@@ -126,8 +126,14 @@ export function updateZaloAccount(
   accountId: string,
   payload: {
     owner_id?: string;
+    id_member?: string;
     label?: string;
     phone?: string;
+    owner_name?: string;
+    sim_location?: string;
+    sim_location_detail?: string;
+    domain_ids?: string[];
+    group_ids?: string[];
     status?: string;
   }
 ) {
