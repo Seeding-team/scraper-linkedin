@@ -11,6 +11,8 @@ import { SeedingExtensionPanel } from "@/components/all-platform/components/seed
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
+import { QuickReviewToolbar } from "@/components/all-platform/posts/QuickReviewToolbar";
+import { PendingKeywordsPanel } from "@/components/all-platform/crawl-keywords/PendingKeywordsPanel";
 import { toast } from "sonner";
 import { allPlatformPostsDeleteService } from "@/services/all-platform-posts-delete.service";
 
@@ -224,6 +226,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const CURRENT_USER_EMAIL = user?.email || "";
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
+  const [isQuickReviewActive, setIsQuickReviewActive] = useState(false);
+  const [showKeywordsPanel, setShowKeywordsPanel] = useState(false);
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
   // 4 tab phụ theo mockup "Seeding bên ngoài" (markee_seeding_optimized_user_leader_split_v4):
   // Hoạt động seeding (danh sách bài viết, mặc định) / Dashboard leader (chỉ admin+leader,
@@ -924,6 +928,52 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               </button>
             ))}
           </div>
+
+          {/* Quản lý từ khóa loại trừ & Review Nhanh */}
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <QuickReviewToolbar
+              posts={visiblePosts}
+              isQuickReviewActive={isQuickReviewActive}
+              onToggleQuickReview={() => setIsQuickReviewActive((prev) => !prev)}
+              onBatchRejectSuccess={(affectedIds) => {
+                setPosts((prev) =>
+                  prev.map((p) =>
+                    affectedIds.includes(p.id)
+                      ? { ...p, evaluation_code: "khong-phu-hop" }
+                      : p
+                  )
+                );
+              }}
+              onUndoSuccess={() => {
+                void fetchPosts();
+              }}
+            />
+
+            {(user?.role === "admin" || user?.role === "leader") && (
+              <button
+                type="button"
+                onClick={() => setShowKeywordsPanel((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
+                  showKeywordsPanel
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "bg-card hover:bg-muted text-foreground border-border"
+                }`}
+                title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+              >
+                <span className="material-symbols-outlined text-[16px]">filter_alt</span>
+                <span>Từ khóa loại trừ</span>
+              </button>
+            )}
+          </div>
+
+          {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
+            <PendingKeywordsPanel
+              onClose={() => setShowKeywordsPanel(false)}
+              onKeywordUpdated={() => {
+                void fetchPosts();
+              }}
+            />
+          )}
 
           <FilterBar
             intents={intents}

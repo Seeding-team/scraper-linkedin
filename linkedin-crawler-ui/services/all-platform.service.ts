@@ -2855,3 +2855,109 @@ export const customerLeadsService = {
 };
 
 export type { QuickCommentTemplate } from "@/types/unified.types";
+
+
+// ── Post Evaluation & Crawl Exclude Keywords Services ──────────────────────────
+
+export const postEvaluationService = {
+  getEvaluation: (postId: string, platform: string = "facebook"): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/evaluation?platform=${encodeURIComponent(platform)}`);
+  },
+
+  updateEvaluation: (
+    postId: string,
+    payload: {
+      evaluation_code: string;
+      platform?: string;
+      reason?: string;
+      summary?: string;
+      exclude_keyword_exempt?: boolean;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/evaluation`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  batchReject: (payload: {
+    post_ids: string[];
+    platform?: string;
+    reason?: string;
+  }): Promise<ApiResponse<{ undo_token: string; affected_count: number }>> => {
+    return requestJson(`${BASE}/posts/evaluation/batch-reject`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  undoBatchReject: (undoToken: string): Promise<ApiResponse<{ restored_count: number; message: string }>> => {
+    return requestJson(`${BASE}/posts/evaluation/undo`, {
+      method: "POST",
+      body: JSON.stringify({ undo_token: undoToken }),
+    });
+  },
+};
+
+export const crawlKeywordsService = {
+  listExcludeKeywords: (platform?: string, status: string = "active"): Promise<ApiResponse<any[]>> => {
+    const params = new URLSearchParams();
+    if (platform) params.set("platform", platform);
+    if (status) params.set("status", status);
+    const qs = params.toString();
+    return requestJson(`${BASE}/crawl-keywords/exclude${qs ? `?${qs}` : ""}`);
+  },
+
+  createExcludeKeyword: (payload: {
+    keyword: string;
+    platform?: string | null;
+    status?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/exclude`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteExcludeKeyword: (id: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crawl-keywords/exclude/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  createProposal: (payload: {
+    keyword: string;
+    reason?: string;
+    source_post_id?: string;
+    platform?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listProposals: (status: string = "pending"): Promise<ApiResponse<any[]>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals?status=${encodeURIComponent(status)}`);
+  },
+
+  approveProposal: (id: string): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+    });
+  },
+
+  rejectProposal: (id: string, reason?: string): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  bulkApproveProposals: (proposalIds: string[]): Promise<ApiResponse<{ approved_count: number; failed_count: number }>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/bulk-approve`, {
+      method: "POST",
+      body: JSON.stringify({ proposal_ids: proposalIds }),
+    });
+  },
+};

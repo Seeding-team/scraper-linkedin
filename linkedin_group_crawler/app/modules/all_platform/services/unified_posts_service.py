@@ -936,6 +936,34 @@ def get_unified_posts(
         except Exception as e:
             print("Error fetching seeding info:", e)
 
+    # Enrich post evaluation and exclude keywords
+    try:
+        if all_posts:
+            post_ids_str = [str(p["id"]) for p in all_posts if p.get("id")]
+            from app.modules.all_platform.services.post_evaluation_service import get_reviews_by_post_ids
+            from app.modules.all_platform.services.crawl_exclude_service import compute_excluded_flag, list_exclude_keywords
+
+            reviews_map = get_reviews_by_post_ids(post_ids_str)
+            active_kws = list_exclude_keywords(status="active")
+
+            for p in all_posts:
+                pid = str(p.get("id"))
+                rev = reviews_map.get(pid)
+                if rev:
+                    p["evaluation_code"] = rev.get("evaluation_code")
+                    p["evaluation_reason"] = rev.get("reason")
+                    p["evaluation_summary"] = rev.get("summary")
+                    p["exclude_keyword_exempt"] = rev.get("exclude_keyword_exempt", False)
+                else:
+                    p["evaluation_code"] = "chua-danh-gia"
+                    p["exclude_keyword_exempt"] = False
+
+                exc_info = compute_excluded_flag(p, rev, active_kws)
+                p["is_excluded"] = exc_info["is_excluded"]
+                p["matched_keywords"] = exc_info["matched_keywords"]
+    except Exception as e:
+        print("Error enriching evaluation and exclude keywords:", e)
+
     return {
         "posts": all_posts,
         "total": total_count,

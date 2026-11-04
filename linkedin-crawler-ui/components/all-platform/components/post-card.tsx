@@ -6,6 +6,8 @@ import { FaThreads } from "react-icons/fa6";
 import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
+import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
+import { ProposeKeywordModal } from "@/components/all-platform/posts/ProposeKeywordModal";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -45,6 +47,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isProposeKeywordOpen, setIsProposeKeywordOpen] = useState(false);
   const crawledComments = (post.comments_detail || []).filter((c) => c && (c.content || c.author_name));
   const visibleCrawledComments = showAllCrawledComments ? crawledComments : crawledComments.slice(0, 2);
 
@@ -143,13 +146,16 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             )}
           </div>
 
-          <span className="text-sm text-muted-foreground shrink-0 font-medium text-right leading-tight">
-            <span className="block">
+          <div className="flex items-center gap-2 shrink-0">
+            <EvaluationDropdown post={post} />
+            <span className="text-sm text-muted-foreground font-medium text-right leading-tight">
+              <span className="block">
               {post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : ''}
               {post.posted_at ? ` • ${new Date(post.posted_at).toLocaleTimeString('vi-VN', {hour: '2-digit', minute:'2-digit'})}` : ''}
 
             </span>
-          </span>
+            </span>
+          </div>
         </div>
 
         {/* Nội dung */}
@@ -331,6 +337,14 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           onViewDetail={handleView}
           onSchedule={onSchedule}
           onDelete={(userRole === "admin" || userRole === "leader") ? onDelete : undefined}
+          onProposeKeyword={() => setIsProposeKeywordOpen(true)}
+        />
+      )}
+
+      {isProposeKeywordOpen && (
+        <ProposeKeywordModal
+          post={post}
+          onClose={() => setIsProposeKeywordOpen(false)}
         />
       )}
     </div>
@@ -553,12 +567,14 @@ function MoreActionsModal({
   onViewDetail,
   onSchedule,
   onDelete,
+  onProposeKeyword,
 }: {
   post: UnifiedPost;
   onClose: () => void;
   onViewDetail: () => void;
   onSchedule?: (post: UnifiedPost) => void;
   onDelete?: (post: UnifiedPost) => void | Promise<void>;
+  onProposeKeyword?: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
@@ -595,6 +611,18 @@ function MoreActionsModal({
               Lên lịch
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onProposeKeyword?.();
+            }}
+            className="text-left px-3 py-2.5 rounded-xl hover:bg-rose-50 flex items-center gap-2 text-sm font-semibold text-rose-600 transition cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">filter_alt</span>
+            Đề xuất từ khóa loại trừ
+          </button>
 
           {onDelete && post.id && (
             <button

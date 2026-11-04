@@ -652,3 +652,56 @@ export interface CreateScheduledCommentRequest {
   scheduled_at: string;
 }
 
+
+
+// ── Post Evaluation & Keyword Exclusion Types ─────────────────────────────────
+
+export interface UnifiedPost {
+  evaluation_code?: string;
+  evaluation_reason?: string;
+  evaluation_summary?: string;
+  exclude_keyword_exempt?: boolean;
+  is_excluded?: boolean;
+  matched_keywords?: string[];
+}
+
+export type PostEvaluationCode = "phu-hop" | "khong-phu-hop" | "can-nhac" | "chua-danh-gia";
+
+export interface PostEvaluation {
+  id?: string;
+  post_id: string;
+  platform: string;
+  evaluation_code: PostEvaluationCode;
+  reason?: string;
+  summary?: string;
+  exclude_keyword_exempt?: boolean;
+  evaluated_by?: string;
+  evaluated_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ExcludeKeyword {
+  id: string;
+  keyword: string;
+  platform?: string | null;
+  status: "active" | "inactive";
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface KeywordProposal {
+  id: string;
+  keyword: string;
+  reason?: string;
+  source_post_id?: string;
+  platform?: string;
+  status: "pending" | "approved" | "rejected";
+  proposed_by?: string;
+  proposer_name?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
