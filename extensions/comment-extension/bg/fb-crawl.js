@@ -124,12 +124,82 @@
                 }
             };
 
-            for (let i = 0; i < groups.length; i++) {
+                    // 1. Phân bổ ngân sách phiên cào (Session Budgeting) & Tách nhóm mồi (Decoy Pool)
+        const MAX_GROUPS_PER_ROUND = (config.maxGroupsPerRound && Number(config.maxGroupsPerRound) > 0)
+            ? Number(config.maxGroupsPerRound)
+            : 50;
+
+        // Xáo trộn ngẫu nhiên toàn bộ danh sách nhóm ban đầu bằng Fisher-Yates
+        const shuffledAll = [...groups];
+        for (let idx = shuffledAll.length - 1; idx > 0; idx--) {
+            const j = Math.floor(Math.random() * (idx + 1));
+            [shuffledAll[idx], shuffledAll[j]] = [shuffledAll[j], shuffledAll[idx]];
+        }
+
+        let activeGroups = [];
+        let decoyPool = [];
+
+        if (shuffledAll.length > MAX_GROUPS_PER_ROUND) {
+            // Lấy tối đa 50 nhóm bất kỳ để cào chính trong vòng này
+            activeGroups = shuffledAll.slice(0, MAX_GROUPS_PER_ROUND);
+            // Các nhóm còn lại (~70-80 nhóm) trở thành kho nhóm mồi dạo lướt né bot
+            decoyPool = shuffledAll.slice(MAX_GROUPS_PER_ROUND);
+        } else {
+            // Danh sách <= 50 nhóm: Dành 75% cào chính, 25% làm nhóm mồi (nếu có từ 4 nhóm trở lên)
+            if (shuffledAll.length >= 4) {
+                const splitIdx = Math.max(1, Math.floor(shuffledAll.length * 0.75));
+                activeGroups = shuffledAll.slice(0, splitIdx);
+                decoyPool = shuffledAll.slice(splitIdx);
+            } else {
+                activeGroups = shuffledAll;
+                decoyPool = [];
+            }
+        }
+
+        log(`🎯 Kế hoạch phân bổ an toàn: Cào chính ${activeGroups.length} nhóm (tối đa ${MAX_GROUPS_PER_ROUND}/vòng). Kho nhóm mồi né bot: ${decoyPool.length} nhóm.`);
+
+        // 2. GIAI ĐOẠN LƯỚT MỒI KHỞI ĐỘNG (WARM-UP DECOY BROWSING): Vào 2 - 10 nhóm ngẫu nhiên dạo lướt trước
+        if (decoyPool.length > 0 && !shouldStop) {
+            const minDecoys = Math.min(2, decoyPool.length);
+            const maxDecoys = Math.min(10, decoyPool.length);
+            const warmupCount = Math.floor(Math.random() * (maxDecoys - minDecoys + 1)) + minDecoys;
+
+            log(`🎭 [LƯỚT MỒI NÉ BOT] Khởi động phiên duyệt: Đang ghé thăm dạo ${warmupCount} nhóm mồi ngẫu nhiên (di chuột Bézier, cuộn nhẹ 7s-13s) để xóa dấu vết bot...`);
+
+            const warmupDecoys = decoyPool.slice(0, warmupCount);
+            for (let w = 0; w < warmupDecoys.length; w++) {
                 if (shouldStop) break;
-                const group = groups[i];
-                notifyApp({ action: "MK_FB_CRAWL_PROGRESS", groupIndex: i, totalGroups: groups.length, groupUrl: group.url });
+                const decoy = warmupDecoys[w];
+                log(`🎭 [MỒI ${w + 1}/${warmupCount}] Đang ghé thăm dạo nhóm: ${decoy.name || decoy.url}`);
+
+                await chrome.tabs.update(crawlTabId, { url: decoy.url });
+                await sleep(5000 + Math.floor(Math.random() * 2500));
+                if (shouldStop) break;
+
+                const injected = await injectCrawlScript(crawlTabId);
+                if (injected && injected[0]) {
+                    const browseMs = 7000 + Math.floor(Math.random() * 6000);
+                    try {
+                        const decoyRes = await chrome.tabs.sendMessage(crawlTabId, { action: "MK_FB_DECOY_BROWSE", durationMs: browseMs });
+                        if (decoyRes && decoyRes.circuitBreaker) {
+                            log(`🚨 [CẦU DAO KHẨN CẤP] Phát hiện checkpoint ở nhóm mồi: "${decoyRes.error}". DỪNG CÀO!`, "error");
+                            shouldStop = true;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+                await sleep(3000 + Math.floor(Math.random() * 3000));
+            }
+            log(`✅ Đã hoàn tất giai đoạn lướt mồi khởi động an toàn! Bắt đầu tiến vào danh sách nhóm cào chính...`, "success");
+        }
+
+        // 3. TIẾN TRÌNH CÀO NHÓM CHÍNH (Xen kẽ rẽ nhánh dạo nhóm mồi)
+        for (let i = 0; i < activeGroups.length; i++) {
+if (shouldStop) break;
+                const group = activeGroups[i];
+                notifyApp({ action: "MK_FB_CRAWL_PROGRESS", groupIndex: i, totalGroups: activeGroups.length, groupUrl: group.url });
                 reportProgress(i);
-                log(`[${i + 1}/${groups.length}] Đang mở nhóm: ${group.name || group.url}`);
+                log(`[${i + 1}/${activeGroups.length}] Đang mở nhóm: ${group.name || group.url}`);
 
                 await chrome.tabs.update(crawlTabId, { url: group.url });
                 await sleep(5000);
@@ -183,7 +253,21 @@
                 }
                 reportProgress(i + 1);
 
-                // Nghỉ an toàn giữa các nhóm Facebook né bot
+                // 35% xác suất rẽ nhánh ghé thăm dạo 1 nhóm mồi khác trong kho để phá vỡ chuỗi quy luật
+                if (!shouldStop && decoyPool.length > 0 && Math.random() < 0.35) {
+                    const randomDecoy = decoyPool[Math.floor(Math.random() * decoyPool.length)];
+                    log(`🎭 [LƯỚT MỒI XEN KẼ] Rẽ nhánh dạo lướt ngẫu nhiên nhóm "${randomDecoy.name || randomDecoy.url}" (7s-11s) để xóa dấu vết hành vi...`);
+                    try {
+                        await chrome.tabs.update(crawlTabId, { url: randomDecoy.url });
+                        await sleep(5000 + Math.floor(Math.random() * 2000));
+                        if (!shouldStop) {
+                            await injectCrawlScript(crawlTabId);
+                            await chrome.tabs.sendMessage(crawlTabId, { action: "MK_FB_DECOY_BROWSE", durationMs: 7000 + Math.floor(Math.random() * 4000) });
+                        }
+                    } catch (e) {}
+                }
+
+                // Nghỉ an toàn giữa các nhóm Facebook né bot (25s - 50s với Gaussian Jitter)
                 const baseRest = (config.groupRestSec != null && Number(config.groupRestSec) >= 20)
                     ? Number(config.groupRestSec)
                     : (Math.floor(Math.random() * 25) + 25);
@@ -201,9 +285,9 @@
             if (crawlWindowId != null) chrome.windows.remove(crawlWindowId).catch(() => {});
             crawlTabId = null;
             crawlWindowId = null;
-            notifyApp({ action: "MK_FB_CRAWL_DONE", totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped });
+            notifyApp({ action: "MK_FB_CRAWL_DONE", totalGroups: activeGroups.length, totalFetched, totalSaved, stopped: wasStopped });
         }
-        return { totalGroups: groups.length, totalFetched, totalSaved, stopped: wasStopped };
+        return { totalGroups: activeGroups.length, totalFetched, totalSaved, stopped: wasStopped };
     }
 
     // Cho phep bg/rotation-crawl.js goi TRUC TIEP (cung 1 global scope qua importScripts,

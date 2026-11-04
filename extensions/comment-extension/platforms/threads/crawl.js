@@ -502,7 +502,63 @@
         return { blocked: false };
     }
 
-    function humanSmoothScroll(targetDelta, durationMs = 800) {
+        function generateBezierCurve(p0, p1, p2, p3, steps = 15) {
+        const points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const u = 1 - t;
+            const tt = t * t;
+            const uu = u * u;
+            const uuu = uu * u;
+            const ttt = tt * t;
+
+            const x = Math.round(uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x);
+            const y = Math.round(uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y);
+            points.push({ x, y });
+        }
+        return points;
+    }
+
+    let lastThreadsMousePos = { x: 300, y: 250 };
+    async function humanErraticMouseMove(stepsCount = 14) {
+        const targetX = Math.floor(window.innerWidth * (0.15 + Math.random() * 0.7));
+        const targetY = Math.floor(window.innerHeight * (0.15 + Math.random() * 0.7));
+
+        const ctrl1 = {
+            x: Math.round(lastThreadsMousePos.x + (targetX - lastThreadsMousePos.x) * 0.3 + (Math.random() - 0.5) * 160),
+            y: Math.round(lastThreadsMousePos.y + (targetY - lastThreadsMousePos.y) * 0.1 + (Math.random() - 0.5) * 120)
+        };
+        const ctrl2 = {
+            x: Math.round(lastThreadsMousePos.x + (targetX - lastThreadsMousePos.x) * 0.7 + (Math.random() - 0.5) * 160),
+            y: Math.round(lastThreadsMousePos.y + (targetY - lastThreadsMousePos.y) * 0.9 + (Math.random() - 0.5) * 120)
+        };
+
+        const curve = generateBezierCurve(lastThreadsMousePos, ctrl1, ctrl2, { x: targetX, y: targetY }, stepsCount);
+        for (const pt of curve) {
+            const jitterX = Math.max(10, Math.min(window.innerWidth - 10, pt.x + Math.floor((Math.random() - 0.5) * 4)));
+            const jitterY = Math.max(10, Math.min(window.innerHeight - 10, pt.y + Math.floor((Math.random() - 0.5) * 4)));
+            lastThreadsMousePos = { x: jitterX, y: jitterY };
+
+            try {
+                const targetEl = document.elementFromPoint(jitterX, jitterY) || document.body;
+                targetEl.dispatchEvent(new MouseEvent("mousemove", {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: jitterX,
+                    clientY: jitterY,
+                    screenX: jitterX + 40,
+                    screenY: jitterY + 80
+                }));
+            } catch (e) {}
+            await new Promise((r) => setTimeout(r, 12 + Math.floor(Math.random() * 16)));
+        }
+
+        if (Math.random() < 0.2) {
+            await new Promise((r) => setTimeout(r, 400 + Math.floor(Math.random() * 600)));
+        }
+    }
+
+function humanSmoothScroll(targetDelta, durationMs = 800) {
         return new Promise((resolve) => {
             const startY = window.scrollY;
             const startTime = performance.now();
@@ -515,15 +571,8 @@
                 const currentY = startY + targetDelta * easedProgress;
                 window.scrollTo(0, currentY);
 
-                if (Math.random() < 0.2) {
-                    try {
-                        const mouseEvent = new MouseEvent("mousemove", {
-                            bubbles: true,
-                            clientX: Math.floor(window.innerWidth * (0.3 + Math.random() * 0.4)),
-                            clientY: Math.floor(window.innerHeight * (0.2 + Math.random() * 0.6)),
-                        });
-                        document.dispatchEvent(mouseEvent);
-                    } catch (e) {}
+                if (Math.random() < 0.25) {
+                    humanErraticMouseMove(5).catch(() => {});
                 }
 
                 if (progress < 1) {
@@ -539,9 +588,11 @@
     async function scrollStep() {
         const scrollDistance = Math.round(window.innerHeight * (0.65 + Math.random() * 0.35));
         await humanSmoothScroll(scrollDistance, 750 + Math.floor(Math.random() * 300));
-        if (Math.random() < 0.12) {
+        await humanErraticMouseMove(10).catch(() => {});
+        if (Math.random() < 0.15) {
             await sleep(500);
             await humanSmoothScroll(-120 - Math.floor(Math.random() * 80), 400);
+            await humanErraticMouseMove(6).catch(() => {});
         }
     }
 

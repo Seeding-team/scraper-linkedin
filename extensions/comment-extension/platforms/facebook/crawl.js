@@ -128,15 +128,8 @@
                 const currentY = startY + targetDelta * easedProgress;
                 window.scrollTo(0, currentY);
 
-                if (Math.random() < 0.25) {
-                    try {
-                        const mouseEvent = new MouseEvent("mousemove", {
-                            bubbles: true,
-                            clientX: Math.floor(window.innerWidth * (0.3 + Math.random() * 0.4)),
-                            clientY: Math.floor(window.innerHeight * (0.2 + Math.random() * 0.6)),
-                        });
-                        document.dispatchEvent(mouseEvent);
-                    } catch (e) {}
+                if (Math.random() < 0.3) {
+                    humanErraticMouseMove(6).catch(() => {});
                 }
 
                 if (progress < 1) {
@@ -147,6 +140,95 @@
             }
             requestAnimationFrame(step);
         });
+    }
+
+
+    function generateBezierCurve(p0, p1, p2, p3, steps = 15) {
+        const points = [];
+        for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const u = 1 - t;
+            const tt = t * t;
+            const uu = u * u;
+            const uuu = uu * u;
+            const ttt = tt * t;
+
+            const x = Math.round(uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x);
+            const y = Math.round(uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y);
+            points.push({ x, y });
+        }
+        return points;
+    }
+
+    let lastMousePos = { x: 350, y: 250 };
+    async function humanErraticMouseMove(stepsCount = 16) {
+        const targetX = Math.floor(window.innerWidth * (0.15 + Math.random() * 0.7));
+        const targetY = Math.floor(window.innerHeight * (0.15 + Math.random() * 0.7));
+
+        const ctrl1 = {
+            x: Math.round(lastMousePos.x + (targetX - lastMousePos.x) * 0.3 + (Math.random() - 0.5) * 180),
+            y: Math.round(lastMousePos.y + (targetY - lastMousePos.y) * 0.1 + (Math.random() - 0.5) * 140)
+        };
+        const ctrl2 = {
+            x: Math.round(lastMousePos.x + (targetX - lastMousePos.x) * 0.7 + (Math.random() - 0.5) * 180),
+            y: Math.round(lastMousePos.y + (targetY - lastMousePos.y) * 0.9 + (Math.random() - 0.5) * 140)
+        };
+
+        const curve = generateBezierCurve(lastMousePos, ctrl1, ctrl2, { x: targetX, y: targetY }, stepsCount);
+        for (const pt of curve) {
+            // Hand jitter vi rung lắc cổ tay người thật +-2 đến 4px
+            const jitterX = Math.max(10, Math.min(window.innerWidth - 10, pt.x + Math.floor((Math.random() - 0.5) * 4)));
+            const jitterY = Math.max(10, Math.min(window.innerHeight - 10, pt.y + Math.floor((Math.random() - 0.5) * 4)));
+            lastMousePos = { x: jitterX, y: jitterY };
+
+            try {
+                const targetEl = document.elementFromPoint(jitterX, jitterY) || document.body;
+                targetEl.dispatchEvent(new MouseEvent("mousemove", {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: jitterX,
+                    clientY: jitterY,
+                    screenX: jitterX + 40,
+                    screenY: jitterY + 80
+                }));
+            } catch (e) {}
+            await new Promise((r) => setTimeout(r, 12 + Math.floor(Math.random() * 18)));
+        }
+
+        // 25% xác suất dừng chuột ngắm nghía phần tử (hover) 0.5s - 1.2s như người thật đọc lướt
+        if (Math.random() < 0.25) {
+            await new Promise((r) => setTimeout(r, 500 + Math.floor(Math.random() * 700)));
+        }
+    }
+
+    async function humanBrowseDecoy(durationMs = 9000) {
+        const logs = [];
+        const addLog = (m) => logs.push(m);
+        addLog("Bắt đầu lướt dạo nhóm mồi (Zero-GraphQL Decoy Browsing)...");
+
+        const endTime = Date.now() + durationMs;
+        let rounds = 0;
+        while (Date.now() < endTime) {
+            rounds++;
+            // 1. Di chuột Bézier ngẫu nhiên khắp màn hình
+            await humanErraticMouseMove(14 + Math.floor(Math.random() * 10));
+
+            // 2. Cuộn mượt sinh học 350 - 750px
+            const scrollDist = 350 + Math.floor(Math.random() * 400);
+            await humanSmoothScroll(scrollDist, 600 + Math.floor(Math.random() * 400));
+
+            // 3. 20% khả năng đảo mắt cuộn ngược nhẹ nhìn bài trước
+            if (Math.random() < 0.2) {
+                await new Promise((r) => setTimeout(r, 500));
+                await humanSmoothScroll(-100 - Math.floor(Math.random() * 60), 400);
+            }
+
+            // 4. Dừng đọc lướt bài 2s - 3.8s
+            const pause = 2000 + Math.floor(Math.random() * 1800);
+            await new Promise((r) => setTimeout(r, pause));
+        }
+        addLog(`Hoàn tất lướt dạo nhóm mồi (${rounds} nhịp cuộn/chuột).`);
+        return { success: true, isDecoy: true, rounds, logs };
     }
 
 function nudgeFeedAndWaitForCapture(timeoutMs = 2500) {
@@ -181,6 +263,17 @@ function nudgeFeedAndWaitForCapture(timeoutMs = 2500) {
                     error: error.message, 
                     logs: error.logs || [] 
                 }));
+            return true;
+        }
+        if (request.action === "MK_FB_DECOY_BROWSE") {
+            const sec = checkSecurityInterception();
+            if (sec.blocked) {
+                sendResponse({ success: false, circuitBreaker: true, error: sec.reason });
+                return true;
+            }
+            humanBrowseDecoy(request.durationMs || 9000)
+                .then((res) => sendResponse(res))
+                .catch((err) => sendResponse({ success: false, error: err.message }));
             return true;
         }
     });
