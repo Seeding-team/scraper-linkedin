@@ -1158,13 +1158,24 @@ export function ZaloInboxAdminShell() {
       inbox.showToast("Chưa chọn tài khoản Zalo để gửi tin", false);
       return;
     }
+    const targetPhone = (targetUser as any).phone_e164 || (inbox.searchQuery || "").replace(/\D/g, "");
     setIsStartingInlineChat(true);
     try {
       const res = await createZaloUserThread(activeAccountId, {
         user_id: targetUser.user_id,
         display_name: targetUser.display_name,
         avatar_url: targetUser.avatar_url ?? null,
+        phone: targetPhone || undefined,
       });
+      if (res?.conversation_id && targetPhone) {
+        try {
+          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(res.conversation_id)}/phone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: targetPhone, name: targetUser.display_name }),
+          });
+        } catch {}
+      }
       if (res?.conversation_id) {
         inbox.setSearchQuery("");
         setInlinePhoneResult(null);

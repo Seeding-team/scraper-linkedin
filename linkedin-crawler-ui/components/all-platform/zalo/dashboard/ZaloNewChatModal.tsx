@@ -115,12 +115,23 @@ export function ZaloNewChatModal({
     }
     setCreating(true);
     setError(null);
+    const targetPhone = mode === "phone" ? query.trim() : ((found as any).phone_e164 || undefined);
     try {
       const res = await createZaloUserThread(accountId, {
         user_id: found.user_id,
         display_name: found.display_name,
         avatar_url: found.avatar_url ?? null,
+        phone: targetPhone,
       });
+      if (res?.conversation_id && targetPhone) {
+        try {
+          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(res.conversation_id)}/phone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: targetPhone, name: found.display_name }),
+          });
+        } catch {}
+      }
       if (res?.conversation_id) {
         onSuccess?.(found.display_name);
         onChatReady(res.conversation_id);
