@@ -889,8 +889,12 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
         // dùng nút "Lưu & Chấm điểm" trong drawer thì cũng chỉ đóng lại như lưu thường.
         onOpenQualification={() => setShowLeadDrawer(false)}
         initialValues={{
-          phone: post.auto_seeding_comment?.phone_number || undefined,
+          phone: post.auto_seeding_comment?.phone_number || detectedPhone || undefined,
           leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
+          postUrl: post.post_url || undefined,
+          postContent: post.content || undefined,
+          groupName: post.group_name || undefined,
+          source: post.platform === "facebook" ? "FB_Group" : post.platform === "linkedin" ? "LinkedIn" : "Manual",
           note: `Tạo từ bài seeding tự động: ${post.post_url}`,
         }}
       />

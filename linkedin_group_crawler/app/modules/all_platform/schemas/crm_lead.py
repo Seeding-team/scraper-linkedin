@@ -40,7 +40,10 @@ class CrmLeadBase(BaseModel):
     status: CrmLeadStatus = "mql"
     score: Optional[float] = None
     sdr_id: Optional[str] = None
+    team_id: Optional[str] = None
     note: Optional[str] = None
+    qualification_need: Optional[str] = None
+    post_url: Optional[str] = None
 
 
 class CrmLeadCreate(CrmLeadBase):

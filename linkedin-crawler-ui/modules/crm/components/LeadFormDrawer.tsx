@@ -14,6 +14,7 @@ import { ChevronDown, ChevronUp, Loader2, X } from './icons';
 import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
+import { extractPostNeed } from '@/services/aiExtractService';
 
 type FormState = {
   leadName: string;
@@ -33,6 +34,8 @@ type FormState = {
   /** Team Sale nhận bàn giao (crm_leads.team_id -> crm_teams). */
   teamId: string;
   note: string;
+  postUrl: string;
+  qualificationNeed: string;
 };
 
 function leadSourceDefaultStorageKey(user: AppUser | null) {
@@ -75,6 +78,8 @@ function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormS
     sdrLabel: currentUser?.name || currentUser?.email || '',
     teamId: '',
     note: '',
+    postUrl: '',
+    qualificationNeed: '',
   };
 }
 
@@ -227,7 +232,18 @@ export function LeadFormDrawer({
    * `companyName` them cho luong "+ Tao co hoi" tu Omnichannel Inbox (Lead-
    * first khi conv chua lien ket CRM) - KHONG anh huong cac nguon prefill cu
    * (optional, chua truyen van hoat dong nhu truoc). */
-  initialValues?: { phone?: string; email?: string; leadName?: string; companyName?: string; note?: string; source?: string };
+  initialValues?: {
+    phone?: string;
+    email?: string;
+    leadName?: string;
+    companyName?: string;
+    note?: string;
+    source?: string;
+    postUrl?: string;
+    qualificationNeed?: string;
+    postContent?: string;
+    groupName?: string;
+  };
   /** Nut "Tao Lead" (mode 'create') tu goi onClose() ngay sau onSaved() (xem
    * handleAction() ben duoi) - dung khi drawer nay la MAN HINH DUY NHAT. Khi
    * nhung vao 1 wizard nhieu buoc (QuickCreateOpportunityFromInbox), onSaved
@@ -252,6 +268,7 @@ export function LeadFormDrawer({
   const [extraOpen, setExtraOpen] = useState(false);
   const [companyMatches, setCompanyMatches] = useState<CompanyMatchRow[]>([]);
   const [matchedCustomerId, setMatchedCustomerId] = useState('');
+  const [isExtractingNeed, setIsExtractingNeed] = useState(false);
 
   // "+ Them tuong tac" - khong co bang interaction/activity log rieng cho
   // crm_leads (xem migration 078: "Qualification fields flat columns; no
@@ -292,14 +309,33 @@ export function LeadFormDrawer({
     const storedDefaultSource = readLeadSourceDefault(currentUser);
     setDefaultLeadSource(storedDefaultSource);
     const base = emptyForm(currentUser, initialValues?.source || storedDefaultSource);
+    const initialPostUrl = initialValues?.postUrl || base.postUrl;
+    const initialNeed = initialValues?.qualificationNeed || base.qualificationNeed;
     setForm({
       ...base,
       leadName: initialValues?.leadName || base.leadName,
       companyName: initialValues?.companyName || base.companyName,
       phone: initialValues?.phone ? normalizePhoneInput(initialValues.phone) : base.phone,
       email: initialValues?.email?.trim() || base.email,
+      postUrl: initialPostUrl,
+      qualificationNeed: initialNeed,
       note: initialValues?.note || base.note,
     });
+    if (initialValues?.postContent && !initialNeed) {
+      setIsExtractingNeed(true);
+      extractPostNeed({
+        content: initialValues.postContent,
+        group_name: initialValues.groupName,
+        post_url: initialPostUrl,
+      })
+        .then(res => {
+          if (res?.need) {
+            setForm(current => (current.qualificationNeed ? current : { ...current, qualificationNeed: res.need }));
+          }
+        })
+        .catch(() => {})
+        .finally(() => setIsExtractingNeed(false));
+    }
     setExtraOpen(false);
     setInteractionForId('');
     setInteractionNote('');
@@ -611,8 +647,35 @@ export function LeadFormDrawer({
     return null;
   }
 
+  const handleTriggerAiExtractNeed = () => {
+    const textToAnalyze = initialValues?.postContent || pasteText || form.note || form.leadName;
+    if (!textToAnalyze) return;
+    setIsExtractingNeed(true);
+    extractPostNeed({
+      content: textToAnalyze,
+      group_name: initialValues?.groupName,
+      post_url: form.postUrl,
+    })
+      .then(res => {
+        if (res?.need) {
+          setValue('qualificationNeed', res.need);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsExtractingNeed(false));
+  };
+
   function buildPayload() {
     const phone = normalizePhoneInput(form.phone);
+    const pUrl = form.postUrl.trim();
+    const qNeed = form.qualificationNeed.trim();
+    let finalNote = form.note.trim();
+    if (pUrl && !finalNote.includes(pUrl)) {
+      finalNote = `${finalNote ? finalNote + "\n" : ""}Link bài viết: ${pUrl}`;
+    }
+    if (qNeed && !finalNote.includes(qNeed)) {
+      finalNote = `${finalNote ? finalNote + "\n" : ""}Nhu cầu: ${qNeed}`;
+    }
     return {
       lead_name: form.leadName.trim(),
       company_name: form.companyName.trim() || null,
@@ -621,16 +684,16 @@ export function LeadFormDrawer({
       phone: phone || null,
       email: form.email.trim() || null,
       zalo: form.zalo.trim() || null,
-      facebook: form.facebook.trim() || null,
+      facebook: form.facebook.trim() || (pUrl && /facebook\.com|fb\.com/.test(pUrl) ? pUrl : null),
       telegram: form.telegram.trim() || null,
-      website: form.website.trim() || null,
+      website: form.website.trim() || pUrl || null,
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
       team_id: effectiveTeamId || null,
-      note: form.note.trim() || null,
-      // Backend is the final dedup gate.  This flag is only sent after the
-      // user explicitly chose the existing manual-flow override.
+      qualification_need: qNeed || null,
+      post_url: pUrl || null,
+      note: finalNote || null,
       allow_duplicate: overrideCreate,
     };
   }
@@ -1036,6 +1099,53 @@ export function LeadFormDrawer({
                   <Field label="Trạng thái">
                     <input value="Lead mới" disabled readOnly />
                   </Field>
+                  <Field label="Link bài viết trên Post Feed">
+                    <div className="crm-lead-post-link-row" style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <input
+                        value={form.postUrl}
+                        onChange={e => setValue('postUrl', e.target.value)}
+                        placeholder="VD: https://facebook.com/groups/.../posts/..."
+                        style={{ flex: 1 }}
+                      />
+                      {form.postUrl ? (
+                        <a
+                          href={form.postUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="crm-link-button"
+                          style={{ flexShrink: 0, padding: '4px 8px', fontSize: '11px', whiteSpace: 'nowrap', textDecoration: 'none' }}
+                          title="Mở bài viết gốc trong tab mới"
+                        >
+                          🔗 Mở bài ↗
+                        </a>
+                      ) : null}
+                    </div>
+                  </Field>
+                  <Field
+                    label="Nhu cầu khách hàng"
+                    hint={
+                      isExtractingNeed ? (
+                        <span style={{ color: '#7c3aed', fontWeight: 600 }}>✨ AI đang tóm tắt...</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleTriggerAiExtractNeed}
+                          className="crm-link-button"
+                          style={{ color: '#7c3aed', fontWeight: 600, cursor: 'pointer' }}
+                          title="Bấm để AI phân tích lại nhu cầu từ nội dung bài viết"
+                        >
+                          ✨ AI tóm tắt nhu cầu
+                        </button>
+                      )
+                    }
+                  >
+                    <textarea
+                      value={form.qualificationNeed}
+                      onChange={e => setValue('qualificationNeed', e.target.value)}
+                      placeholder="VD: Cần thiết kế website kinh doanh, tư vấn bảng giá SEO..."
+                      rows={2}
+                    />
+                  </Field>
                 </div>
 
                 {companyMatches.length ? (
@@ -1134,7 +1244,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: React.ReactNode;
   required?: boolean;
   full?: boolean;
   children: React.ReactNode;

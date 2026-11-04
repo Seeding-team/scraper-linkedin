@@ -466,6 +466,17 @@ def create_lead(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]
     allow_duplicate = bool(payload.pop("allow_duplicate", False))
     allow_no_contact = bool(payload.pop("allow_no_contact", False))
     data = _normalize_payload(payload, actor_id=actor_id)
+    post_url = data.pop("post_url", None)
+    if post_url:
+        p_str = str(post_url).strip()
+        if p_str:
+            if not data.get("facebook") and ("facebook.com" in p_str or "fb.com" in p_str):
+                data["facebook"] = p_str
+            if not data.get("website"):
+                data["website"] = p_str
+            curr_note = data.get("note") or ""
+            if p_str not in curr_note:
+                data["note"] = f"{curr_note}\n[Link bài viết]: {p_str}".strip()
     if not data.get("lead_name"):
         raise ValueError("Vui long nhap ten Lead.")
     if not allow_no_contact and not data.get("phone") and not data.get("email"):
