@@ -62,6 +62,7 @@ from app.modules.all_platform.routers.service_catalog import router as service_c
 from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
+from app.modules.all_platform.routers.kpi_setup import router as kpi_setup_router
 from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
 from app.modules.all_platform.routers.auto_seeding_comments import router as auto_seeding_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
@@ -209,6 +210,11 @@ all_platform_router.include_router(
     kpi_router,
     prefix="/kpi",
     tags=["All-Platform KPI"],
+)
+all_platform_router.include_router(
+    kpi_setup_router,
+    prefix="/kpi",
+    tags=["All-Platform KPI Setup"],
 )
 all_platform_router.include_router(
     kpi_reward_router,
