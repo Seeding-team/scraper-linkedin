@@ -91,7 +91,7 @@ export class OmnichannelRepository {
             name: a.name,
             channel: "email",
             status: (a.status || "online") as "online" | "offline" | "error" | "syncing" | "expired",
-            count: a.unread_count || 0,
+            count: typeof a.total_threads === "number" ? a.total_threads : (a.unread_count || 0),
             email: a.email,
             lastSyncedAt: a.last_synced_at,
             lastSyncError: a.last_sync_error,

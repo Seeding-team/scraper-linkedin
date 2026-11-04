@@ -367,6 +367,10 @@ export interface QuoteData {
   /** Truong thong tin khach hang hien cho KHACH (public/PDF/preview khach).
    * undefined = dung mac dinh: Kinh gui + Khach hang + SDT lien he + Email. */
   visibleCustomerFields?: string[];
+  /** Section cuoi tai lieu bi an theo tung bao gia. undefined/rong = hien
+   * tat ca de tuong thich nguoc voi moi bao gia cu. Chi an luc render, khong
+   * xoa paymentPlan/customBlocks/notes/chu ky khoi data. */
+  hiddenDocumentSections?: string[];
   customBlocks?: CustomBlock[];
   /** Id Don vi phat hanh da snapshot vao cac field seller* (applyIssuerCompanySnapshot). */
   issuerSnapshotCompanyId?: string;
@@ -423,6 +427,11 @@ export interface Quote {
   /** So VND cho 1 USD, DONG BANG luc tao/chuyen currency (null voi bao gia VND). */
   exchangeRate?: number | null;
   currencySnapshot?: { currency: string; exchange_rate: number | null; base_currency: string; captured_at: string } | null;
+  /** "Gia da gom VAT" toggle (migration 204, 2026-11-04) - 'exclusive' (mac
+   * dinh, HANH VI CU - unitPrice chua gom VAT, VAT cong them) | 'inclusive'
+   * (unitPrice da gom VAT, VAT tach nguoc ra). Khong truyen = 'exclusive' =
+   * bao gia cu. Xem calculateItemSubtotal trong quoteCalculations.ts. */
+  priceMode?: 'exclusive' | 'inclusive';
   issuedAt: string;
   validUntil?: string;
   createdById?: string;
@@ -659,6 +668,8 @@ export interface CreateQuoteInput {
   /** 'VND' | 'USD' + ty gia (VND/USD). Bo trong = VND. */
   currency?: string;
   exchangeRate?: number | null;
+  /** "Gia da gom VAT" (migration 204) - bo trong = 'exclusive' (HANH VI CU). */
+  priceMode?: 'exclusive' | 'inclusive';
 }
 
 export interface UpdateQuoteInput {
@@ -673,4 +684,7 @@ export interface UpdateQuoteInput {
   /** Doi tien te bao gia DRAFT - PHAI gui kem toan bo `items` da quy doi. */
   currency?: string;
   exchangeRate?: number | null;
+  /** "Gia da gom VAT" (migration 204) - KHONG can gui kem items (chi doi
+   * cach dien giai unitPrice, khong rescale gi ca - khac han currency). */
+  priceMode?: 'exclusive' | 'inclusive';
 }

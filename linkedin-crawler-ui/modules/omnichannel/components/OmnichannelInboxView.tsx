@@ -715,6 +715,21 @@ export function OmnichannelInboxView() {
     };
   }, [currentConversations]);
 
+  const accountsWithComputedCount = useMemo(() => {
+    return currentAccounts.map((acc) => {
+      if (acc.channel === "email") {
+        const convCount = currentConversations.filter(
+          (c) => c.channel === "email" && (c.accountId === acc.id || c.accountLabel === acc.email || c.accountLabel === acc.name)
+        ).length;
+        return {
+          ...acc,
+          count: convCount > 0 ? convCount : (acc.totalThreads ?? acc.count ?? 0),
+        };
+      }
+      return acc;
+    });
+  }, [currentAccounts, currentConversations]);
+
   // Periodic background check for new incoming emails with notification toast
   useEffect(() => {
     if (isPreviewMode) return;
@@ -773,7 +788,7 @@ export function OmnichannelInboxView() {
           }}
           selectedAccount={selectedAccount}
           onSelectAccount={(acc) => setSelectedAccount(acc)}
-          accounts={currentAccounts}
+          accounts={accountsWithComputedCount}
           channelCounts={channelCounts}
           isCollapsed={isPane1Collapsed}
           onToggleCollapse={() => setIsPane1Collapsed((v) => !v)}

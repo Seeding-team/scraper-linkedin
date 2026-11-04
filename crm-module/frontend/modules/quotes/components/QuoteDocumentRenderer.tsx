@@ -43,6 +43,7 @@ import {
   resolveVisibleCustomerFieldKeys,
 } from '../utils/quoteCustomerFields';
 import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
+import { isQuoteDocumentSectionVisible, quoteCustomBlockSectionKey, QUOTE_DOCUMENT_SECTION_KEYS } from '../utils/quoteDocumentSections';
 
 export interface Totals {
   subtotalAmount: number;
@@ -123,6 +124,19 @@ interface Props {
    * khong nhan ra USD thi coi la VND (bao gia cu render y nhu truoc). Moi so tien, tieu de cot
    * "(VND)" va khoi tong tien theo tien te nay - KHONG theo mau/template hard-code. */
   currency?: string | null;
+  /** Cho phép sửa trực tiếp thông tin khách hàng và người liên hệ ngay trên tài liệu */
+  editableRecipient?: boolean;
+  /** Callback lưu các trường thông tin khách hàng / người liên hệ */
+  onSaveRecipientFields?: (fields: Record<string, string>) => void;
+}
+
+function PencilIcon({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg className={className} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  );
 }
 
 function emptySchema(): QuoteSchema {
@@ -291,6 +305,15 @@ const MONEY_COLUMN_KEYS = [
  * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
 const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
 
+function quoteColumnClassName(column: QuoteField): string | undefined {
+  const classes: string[] = [];
+  if (column.type === 'currency' || MONEY_COLUMN_KEYS.includes(column.key)) classes.push('money-cell');
+  else if (column.key === 'unit') classes.push('unit-cell');
+  else if (SHORT_NUMBER_COLUMN_KEYS.includes(column.key)) classes.push('num-cell');
+  if (column.key === 'discountPercent' || column.key === 'vatRate') classes.push('quote-percent-cell', 'quote-percent-cell--red');
+  return classes.length ? classes.join(' ') : undefined;
+}
+
 function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
   const snapshot = item.bundleSnapshot as unknown;
   if (Array.isArray(snapshot)) return snapshot as BundleSnapshotComponent[];
@@ -399,6 +422,8 @@ export function QuoteDocumentRenderer({
   onColumnWidthsChange,
   contactPersonName,
   currency: currencyProp,
+  editableRecipient = false,
+  onSaveRecipientFields,
 }: Props) {
   // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
   // page couldn't load") khi backend tra ve quoteItems/solutionItems la
@@ -432,6 +457,10 @@ export function QuoteDocumentRenderer({
   // handleMouseUp chi DOC thang tu ref nay va goi onColumnWidthsChange BEN
   // NGOAI moi updater - khong con setState long nhau.
   const latestWidthsRef = useRef<Record<string, number> | null>(resizedColumnWidths);
+  const [customerEditOpen, setCustomerEditOpen] = useState(false);
+  const [sellerEditOpen, setSellerEditOpen] = useState(false);
+  const [customerDraft, setCustomerDraft] = useState<Record<string, string>>({});
+  const [sellerDraft, setSellerDraft] = useState<Record<string, string>>({});
 
   const beginColumnResize = (columnKey: string, columns: QuoteField[]) => (event: React.MouseEvent) => {
     event.preventDefault();
@@ -696,6 +725,9 @@ export function QuoteDocumentRenderer({
   const visibleSummaryKeys = new Set(
     resolveVisibleSummaryFieldKeys(schema, quoteData.visibleSummaryFields)
   );
+  const visibleCustomBlocks = Array.isArray(quoteData.customBlocks)
+    ? quoteData.customBlocks.filter((block, index) => isQuoteDocumentSectionVisible(quoteData, quoteCustomBlockSectionKey(block, index)))
+    : [];
   const notesValue = fieldValue('notes');
   const notesRows = splitLines(notesValue).map(cleanDocumentText).filter(Boolean);
   const commitments = fieldValue('commitments');
@@ -716,6 +748,44 @@ export function QuoteDocumentRenderer({
 
   const customerDisplayFields = getCustomerDisplayFields(schema);
   const visibleCustomerFieldKeys = new Set(resolveVisibleCustomerFieldKeys(schema, quoteData.visibleCustomerFields));
+  const handleOpenCustomerEdit = () => {
+    const initialDraft: Record<string, string> = {};
+    customerDisplayFields
+      .filter(field => visibleCustomerFieldKeys.has(field.key))
+      .forEach(field => {
+        let val = '';
+        if (field.key === 'customerRecipient') {
+          val = String(fieldValue('customerRecipient') || fieldValue('customerContactName') || fieldValue('customerCompanyName') || '');
+        } else {
+          val = String(fieldValue(field.key) || '');
+        }
+        initialDraft[field.key] = val;
+      });
+    setCustomerDraft(initialDraft);
+    setCustomerEditOpen(true);
+    setSellerEditOpen(false);
+  };
+
+  const handleSaveCustomer = () => {
+    onSaveRecipientFields?.(customerDraft);
+    setCustomerEditOpen(false);
+  };
+
+  const handleOpenSellerEdit = () => {
+    setSellerDraft({
+      sellerContactNameOverride: String(fieldValue('sellerContactNameOverride') || ''),
+      sellerPhone: String(fieldValue('sellerPhone') || ''),
+      sellerEmail: String(fieldValue('sellerEmail') || ''),
+    });
+    setSellerEditOpen(true);
+    setCustomerEditOpen(false);
+  };
+
+  const handleSaveSeller = () => {
+    onSaveRecipientFields?.(sellerDraft);
+    setSellerEditOpen(false);
+  };
+
   const customerRows = customerDisplayFields
     .filter(field => visibleCustomerFieldKeys.has(field.key))
     .map(field => ({
@@ -1016,7 +1086,7 @@ export function QuoteDocumentRenderer({
             </section>
           </div>
 
-          {renderCustomBlocks(quoteData?.customBlocks)}
+          {renderCustomBlocks(visibleCustomBlocks)}
 
           <section className="villa-footer">
             <div className="villa-footer-col">
@@ -1114,7 +1184,14 @@ export function QuoteDocumentRenderer({
           // "Người liên hệ" = Sale dang duoc gan (quote_owner_id), KHONG con
           // dung field tu do/default cu - chi fallback ve fieldValue khi quote
           // THAT SU chua co Sale (contactPersonName undefined/null/rong).
-          const resolvedContactName = contactPersonName || String(fieldValue('sellerContactName') || '');
+          //
+          // Fix (2026-11-04, "cho sửa bên khu vực ng liên hệ luôn"): them
+          // `sellerContactNameOverride` (quote.data, sua duoc qua popup "Sửa
+          // thông tin khách hàng" - xem QuoteWorkspaceModal) uu tien CAO NHAT
+          // khi Sale CHU DONG go gia tri khac ten Sale duoc gan - KHONG doi
+          // thu tu uu tien cu (contactPersonName/sellerContactName) khi
+          // override rong, tranh pha lai fix "quote_owner_id" o tren.
+          const resolvedContactName = String(fieldValue('sellerContactNameOverride') || '') || contactPersonName || String(fieldValue('sellerContactName') || '');
           // Rieng khoi "Người liên hệ" nay (KHONG phai header cong ty ben tren,
           // chi o day) - fallback ve admin@markee.vn khi email rong/da bi an
           // (legacy hello@markeeai.com) de khong bo trong 1 dong lien he quan
@@ -1127,23 +1204,135 @@ export function QuoteDocumentRenderer({
             { key: 'sellerPhone', label: findField('sellerPhone').label, value: String(fieldValue('sellerPhone') || '') },
             { key: 'sellerEmail', label: findField('sellerEmail').label, value: sellerContactEmail },
           ].filter(row => row.value);
-          if (!filledCustomerRows.length && !sellerContactRows.length) return null;
+          if (!filledCustomerRows.length && !sellerContactRows.length && !editableRecipient) return null;
           return (
             <section className="sheet-parties sheet-parties--standard">
-              {filledCustomerRows.length ? (
+              {filledCustomerRows.length || editableRecipient ? (
                 <div>
-                  <h3>{findSection('customer').title || 'Thông tin khách hàng'}</h3>
+                  <div className="sheet-party-header">
+                    <h3>{findSection('customer').title || 'Thông tin khách hàng'}</h3>
+                    {editableRecipient ? (
+                      <button
+                        type="button"
+                        className="sheet-party-edit-btn no-print"
+                        onClick={() => (customerEditOpen ? setCustomerEditOpen(false) : handleOpenCustomerEdit())}
+                        title="Sửa thông tin khách hàng hiển thị"
+                      >
+                        <PencilIcon />
+                      </button>
+                    ) : null}
+                    {customerEditOpen ? (
+                      <>
+                        <div className="sheet-party-popover-backdrop no-print" onClick={() => setCustomerEditOpen(false)} />
+                        <div className="sheet-party-popover no-print" onClick={e => e.stopPropagation()}>
+                          <div className="sheet-party-popover-title">
+                            <span>Sửa thông tin khách hàng</span>
+                            <button type="button" className="sheet-party-popover-close" onClick={() => setCustomerEditOpen(false)}>×</button>
+                          </div>
+                          <div className="sheet-party-popover-body">
+                            {customerDisplayFields
+                              .filter(field => visibleCustomerFieldKeys.has(field.key))
+                              .map(field => (
+                                <label key={field.key} className="sheet-party-popover-field">
+                                  <span>{field.label}</span>
+                                  <input
+                                    type="text"
+                                    value={customerDraft[field.key] ?? ''}
+                                    placeholder={field.label}
+                                    onChange={e => setCustomerDraft(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                  />
+                                </label>
+                              ))}
+                          </div>
+                          <div className="sheet-party-popover-actions">
+                            <button type="button" className="sheet-party-btn sheet-party-btn-cancel" onClick={() => setCustomerEditOpen(false)}>
+                              Huỷ
+                            </button>
+                            <button type="button" className="sheet-party-btn sheet-party-btn-save" onClick={handleSaveCustomer}>
+                              Lưu
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                   {filledCustomerRows.map(row => (
                     <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
                   ))}
+                  {!filledCustomerRows.length && editableRecipient ? (
+                    <p className="sheet-party-empty-hint no-print">(Chưa có thông tin - bấm nút sửa để nhập)</p>
+                  ) : null}
                 </div>
               ) : null}
-              {sellerContactRows.length ? (
+              {sellerContactRows.length || editableRecipient ? (
                 <div>
-                  <h3>Người liên hệ</h3>
+                  <div className="sheet-party-header">
+                    <h3>Người liên hệ</h3>
+                    {editableRecipient ? (
+                      <button
+                        type="button"
+                        className="sheet-party-edit-btn no-print"
+                        onClick={() => (sellerEditOpen ? setSellerEditOpen(false) : handleOpenSellerEdit())}
+                        title="Sửa thông tin người liên hệ hiển thị"
+                      >
+                        <PencilIcon />
+                      </button>
+                    ) : null}
+                    {sellerEditOpen ? (
+                      <>
+                        <div className="sheet-party-popover-backdrop no-print" onClick={() => setSellerEditOpen(false)} />
+                        <div className="sheet-party-popover sheet-party-popover--right no-print" onClick={e => e.stopPropagation()}>
+                          <div className="sheet-party-popover-title">
+                            <span>Sửa người liên hệ</span>
+                            <button type="button" className="sheet-party-popover-close" onClick={() => setSellerEditOpen(false)}>×</button>
+                          </div>
+                          <div className="sheet-party-popover-body">
+                            <label className="sheet-party-popover-field">
+                              <span>Người liên hệ (phụ trách)</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerContactNameOverride ?? ''}
+                                placeholder={contactPersonName || String(fieldValue('sellerContactName') || 'Tên người liên hệ')}
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerContactNameOverride: e.target.value }))}
+                              />
+                            </label>
+                            <label className="sheet-party-popover-field">
+                              <span>SĐT phụ trách</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerPhone ?? ''}
+                                placeholder="090..."
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerPhone: e.target.value }))}
+                              />
+                            </label>
+                            <label className="sheet-party-popover-field">
+                              <span>Email phụ trách</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerEmail ?? ''}
+                                placeholder="admin@markee.vn"
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerEmail: e.target.value }))}
+                              />
+                            </label>
+                          </div>
+                          <div className="sheet-party-popover-actions">
+                            <button type="button" className="sheet-party-btn sheet-party-btn-cancel" onClick={() => setSellerEditOpen(false)}>
+                              Huỷ
+                            </button>
+                            <button type="button" className="sheet-party-btn sheet-party-btn-save" onClick={handleSaveSeller}>
+                              Lưu
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
                   {sellerContactRows.map(row => (
                     <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
                   ))}
+                  {!sellerContactRows.length && editableRecipient ? (
+                    <p className="sheet-party-empty-hint no-print">(Chưa có thông tin - bấm nút sửa để nhập)</p>
+                  ) : null}
                 </div>
               ) : null}
             </section>
@@ -1204,15 +1393,7 @@ export function QuoteDocumentRenderer({
                   {finalColumns.map(column => (
                     <th
                       key={column.key}
-                      className={
-                        column.type === 'currency' || MONEY_COLUMN_KEYS.includes(column.key)
-                          ? 'money-cell'
-                          : column.key === 'unit'
-                            ? 'unit-cell'
-                            : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
-                              ? 'num-cell'
-                              : undefined
-                      }
+                      className={quoteColumnClassName(column)}
                       style={
                         allowColumnResize && resizedColumnWidths?.[column.key]
                           ? ({
@@ -1282,24 +1463,7 @@ export function QuoteDocumentRenderer({
                           <td
                             key={column.key}
                             data-label={columnLabel(column)}
-                            className={
-                              column.type === 'currency' ||
-                              // BUG THAT DA GAP ("Thành tiền chưa VAT bị rớt
-                              // chữ giữa số tiền, vd 6.500.00 / 0"): cot nay
-                              // co key "amountAfterDiscount", type "calculated"
-                              // (khong phai "currency") nen truoc day KHONG
-                              // duoc gan .money-cell (white-space:nowrap) -
-                              // roi vao rule chung overflow-wrap:anywhere, cat
-                              // giua so tien. Bo sung du cac key tien te khac
-                              // (calculated) vao danh sach.
-                              MONEY_COLUMN_KEYS.includes(column.key)
-                                ? 'money-cell'
-                                : column.key === 'unit'
-                                  ? 'unit-cell'
-                                  : SHORT_NUMBER_COLUMN_KEYS.includes(column.key)
-                                    ? 'num-cell'
-                                    : undefined
-                            }
+                            className={quoteColumnClassName(column)}
                           >
                             {column.type === 'auto-number' || column.key === 'order'
                               ? row.number
@@ -1372,7 +1536,7 @@ export function QuoteDocumentRenderer({
           ) : null}
         </section>
 
-        {schema.enableDynamicPaymentPlan && visiblePaymentPlan(quoteData.paymentPlan).length > 0 ? (
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.paymentPlan) && schema.enableDynamicPaymentPlan && visiblePaymentPlan(quoteData.paymentPlan).length > 0 ? (
           <section className="sheet-note sheet-payment-plan">
             <h3>Kế hoạch thanh toán</h3>
             <table className="quote-table">
@@ -1400,7 +1564,7 @@ export function QuoteDocumentRenderer({
           </section>
         ) : null}
 
-        {notesRows.length ? (
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.notes) && notesRows.length ? (
           <section className="sheet-note sheet-note--terms">
             <h3>Điều khoản & ghi chú</h3>
             <ul>
@@ -1411,9 +1575,9 @@ export function QuoteDocumentRenderer({
           </section>
         ) : null}
 
-        {renderCustomBlocks(quoteData?.customBlocks)}
+        {renderCustomBlocks(visibleCustomBlocks)}
 
-        <footer className="sheet-signatures">
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.signatures) ? <footer className="sheet-signatures">
           <div>
             <strong>{findField('companyRepresentative').label || 'Đại diện công ty'}</strong>
             {/* Khong con hien placeholder "[Đại diện công ty]" khi trong -
@@ -1432,7 +1596,7 @@ export function QuoteDocumentRenderer({
             <span className="sheet-signature-line" aria-hidden="true" />
             <span>{String(fieldValue('customerRepresentative') || '')}</span>
           </div>
-        </footer>
+        </footer> : null}
       </section>
     </div>
   );

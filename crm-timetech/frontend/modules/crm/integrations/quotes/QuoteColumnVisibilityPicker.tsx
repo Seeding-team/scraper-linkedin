@@ -13,6 +13,7 @@ import {
   resolveToggleableSummaryFields,
   resolveVisibleSummaryFieldKeys,
 } from '@/modules/quotes/utils/quoteSummaryFields';
+import { getQuoteDocumentSectionOptions, isQuoteDocumentSectionVisible } from '@/modules/quotes/utils/quoteDocumentSections';
 import {
   loadVisibleColumnsDraft,
   loadVisibleCustomerFieldsDraft,
@@ -37,7 +38,7 @@ export function QuoteColumnVisibilityPicker({
   readOnly?: boolean;
 }) {
   const [columnMenuOpen, setColumnMenuOpen] = useState(false);
-  const [openSection, setOpenSection] = useState<'customer' | 'columns' | 'summary' | null>('customer');
+  const [openSection, setOpenSection] = useState<'customer' | 'columns' | 'summary' | 'documentSections' | null>('customer');
   const schemaInvalid = !schema || !Array.isArray(schema.sections);
   const allColumns = useMemo(
     () => (schemaInvalid ? [] : resolveQuoteItemColumns(schema, draft.items)),
@@ -195,8 +196,23 @@ export function QuoteColumnVisibilityPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quoteFormId, schemaInvalid, readOnly, customerKeysSignature]);
 
-  const canOpenMenu = optionalTotal > 0 || summaryOptionalTotal > 0 || customerTotal > 0;
-  const toggleSection = (section: 'customer' | 'columns' | 'summary') => {
+  const documentSectionOptions = useMemo(
+    () => (schemaInvalid ? [] : getQuoteDocumentSectionOptions(schema, draft.data)),
+    [schema, schemaInvalid, draft.data]
+  );
+  const visibleDocumentSectionKeys = documentSectionOptions
+    .filter(option => isQuoteDocumentSectionVisible(draft.data, option.key))
+    .map(option => option.key);
+
+  function toggleDocumentSection(key: string) {
+    if (readOnly) return;
+    const hidden = Array.isArray(draft.data.hiddenDocumentSections) ? draft.data.hiddenDocumentSections : [];
+    const nextHidden = hidden.includes(key) ? hidden.filter(item => item !== key) : [...hidden, key];
+    onChange({ ...draft, data: { ...draft.data, hiddenDocumentSections: nextHidden } });
+  }
+
+  const canOpenMenu = optionalTotal > 0 || summaryOptionalTotal > 0 || customerTotal > 0 || documentSectionOptions.length > 0;
+  const toggleSection = (section: 'customer' | 'columns' | 'summary' | 'documentSections') => {
     setOpenSection(current => (current === section ? null : section));
   };
 
@@ -341,6 +357,33 @@ export function QuoteColumnVisibilityPicker({
                               onChange={() => toggleSummaryField(field.key)}
                             />
                             {field.label}
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                {documentSectionOptions.length > 0 ? (
+                  <section className="crm-quote-column-group crm-quote-column-group--sections">
+                    <button type="button" className="crm-quote-column-group-title" onClick={() => toggleSection('documentSections')}>
+                      <span>Section cuối báo giá</span>
+                      <span className="crm-quote-column-group-meta">
+                        <span className="crm-quote-column-count">{visibleDocumentSectionKeys.length}/{documentSectionOptions.length}</span>
+                        <span className="crm-quote-column-chevron">{openSection === 'documentSections' ? '▾' : '▸'}</span>
+                      </span>
+                    </button>
+                    {openSection === 'documentSections' ? (
+                      <div className="crm-quote-column-group-body">
+                        <div className="crm-quote-column-section-actions">
+                          <button type="button" disabled={readOnly} onClick={() => onChange({ ...draft, data: { ...draft.data, hiddenDocumentSections: [] } })}>
+                            Hiện tất cả
+                          </button>
+                        </div>
+                        {documentSectionOptions.map(option => (
+                          <label key={option.key} className="crm-quote-column-option">
+                            <input type="checkbox" checked={visibleDocumentSectionKeys.includes(option.key)} disabled={readOnly} onChange={() => toggleDocumentSection(option.key)} />
+                            {option.label}
                           </label>
                         ))}
                       </div>

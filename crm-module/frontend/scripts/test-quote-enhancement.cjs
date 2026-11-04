@@ -21,9 +21,9 @@ const totals = calculateQuoteTotals([{description:'work',quantity:1,unitPrice:10
 const before = calculateOverallDiscountSummary(totals,0).grandTotal;
 const after = calculateOverallDiscountSummary(totals,10).grandTotal;
 assert.equal(before,880000);
-assert.equal(after,792000);
+assert.equal(after,800000);
 assert.equal(paymentPlanAmount(before,30),264000);
-assert.equal(paymentPlanAmount(after,30),237600);
+assert.equal(paymentPlanAmount(after,30),240000);
 assert.equal(paymentPlanAmount(0,100),0);
 assert.ok(!rows.some(row=>'amount' in row));
 console.log('PASS: decimal 100%, warning totals, hide-empty, line/global discounts + VAT, reactive amounts, zero value, no stored amount');
@@ -46,19 +46,31 @@ console.log('PASS: percent draft sanitize strips leading zeros/negatives/junk wi
 const React = require('react');
 const {renderToStaticMarkup} = require('react-dom/server');
 const {QuoteDocumentRenderer} = load('modules/quotes/components/QuoteDocumentRenderer.tsx');
-const schema = {layoutType:'cloudgate_standard_quote',enableDynamicPaymentPlan:true,sections:[{key:'items',fields:[{key:'quoteItems',type:'repeater-table',config:{columns:[{key:'serviceDescription',label:'Item',type:'text'},{key:'description',label:'Work',type:'textarea'},{key:'total',label:'Total',type:'currency'}]}}]}]};
+const schema = {layoutType:'cloudgate_standard_quote',enableDynamicPaymentPlan:true,sections:[{key:'items',fields:[{key:'quoteItems',type:'repeater-table',config:{columns:[{key:'serviceDescription',label:'Item',type:'text'},{key:'description',label:'Work',type:'textarea'},{key:'discountPercent',label:'Giảm giá',type:'number'},{key:'vatRate',label:'VAT (%)',type:'number'},{key:'total',label:'Total',type:'currency'}]}},{key:'notes',type:'textarea'}]}]};
 const item = {serviceDescription:'E2E service',description:'E2E work',warrantyScope:'E2E item warranty',quantity:1,unitPrice:1000000,discountPercent:20,vatRate:10};
-const render = (data, items=[item], mode='public', form=schema) => renderToStaticMarkup(React.createElement(QuoteDocumentRenderer,{schemaSnapshot:form,quoteData:data,quoteItems:items,totals,overallDiscountPercent:10,mode}));
+const render = (data, items=[item], mode='public', form=schema) => renderToStaticMarkup(React.createElement(QuoteDocumentRenderer,{schemaSnapshot:form,quoteData:{visibleColumns:['discountPercent','vatRate','total'],...data},quoteItems:items,totals,overallDiscountPercent:10,mode}));
 for (const mode of ['preview','public','print','detail']) {
  const html = render({paymentPlan:[{id:'1',phase:'Phase 1',percent:30,condition:'E2E sign',note:'E2E note'}],customBlocks:[{id:'w1',kind:'warranty',title:'Project warranty',content:'E2E project warranty'}]},[item],mode);
  assert.ok(html.includes('E2E item warranty'));
  assert.ok(html.includes('E2E project warranty'));
  assert.ok(html.includes('Kế hoạch thanh toán'));
- assert.ok(html.includes('237.600'));
+ assert.ok(html.includes('240.000'));
  assert.ok(html.includes('E2E sign') && html.includes('E2E note'));
+ assert.ok(html.includes('quote-percent-cell--red'));
+ assert.ok(html.includes('20%') && html.includes('10%'));
  const blank = render({paymentPlan:[],customBlocks:[]},[{...item,warrantyScope:null}],mode);
  assert.ok(!blank.includes('Phạm vi bảo hành:'));
  assert.ok(!blank.includes('Kế hoạch thanh toán'));
 }
 assert.ok(!render({paymentPlan:rows},[], 'public',{...schema,layoutType:'villa_solution_package',enableDynamicPaymentPlan:false}).includes('Kế hoạch thanh toán'));
-console.log('PASS: shared renderer preview/public/print/detail, independent warranties, final payable, hidden-empty and Villa unchanged');
+const hiddenHtml = render({paymentPlan:[{id:'1',phase:'Phase 1',percent:100,condition:'Hidden plan',note:''}],notes:'Hidden notes',customBlocks:[{id:'pt1',kind:'payment_terms',title:'Điều khoản thanh toán',content:'Hidden terms'}],hiddenDocumentSections:['paymentPlan','notes','customBlock:pt1','signatures']});
+assert.ok(!hiddenHtml.includes('Kế hoạch thanh toán'));
+assert.ok(!hiddenHtml.includes('Hidden notes'));
+assert.ok(!hiddenHtml.includes('Hidden terms'));
+assert.ok(!hiddenHtml.includes('sheet-signatures'));
+const visibleAgainHtml = render({paymentPlan:[{id:'1',phase:'Phase 1',percent:100,condition:'Visible plan',note:''}],notes:'Visible notes',customBlocks:[{id:'pt1',kind:'payment_terms',title:'Điều khoản thanh toán',content:'Visible terms'}],hiddenDocumentSections:[]});
+assert.ok(visibleAgainHtml.includes('Visible plan'));
+assert.ok(visibleAgainHtml.includes('Visible notes'));
+assert.ok(visibleAgainHtml.includes('Visible terms'));
+assert.ok(visibleAgainHtml.includes('sheet-signatures'));
+console.log('PASS: shared renderer preview/public/print/detail, section visibility keeps data, red inline percentages, hidden-empty and Villa unchanged');

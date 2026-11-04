@@ -19,6 +19,7 @@ import smtplib
 import ssl
 import threading
 import time
+import unicodedata
 import urllib.parse
 import uuid
 from datetime import datetime, timezone
@@ -660,8 +661,21 @@ def _thread_key(subject: str | None, external_email: str) -> str:
 
 
 def _safe_filename(value: str | None) -> str:
+    """Trả ASCII THUẦN - dùng làm 1 đoạn của storage path (xem _store_attachment),
+    Supabase Storage (S3-compatible) từ chối object key chứa byte ngoài ASCII với
+    lỗi 'InvalidKey' (xác nhận thật qua lỗi đồng bộ: tên file tiếng Việt có dấu
+    như "Báo giá.pdf" làm CẢ sync IMAP fail, status='error', không đồng bộ được
+    hội thoại nào). `\\w` + re.UNICODE trước đây VẪN giữ nguyên ký tự có dấu
+    (được coi là "word character" hợp lệ trong Python) nên không lọc được - phải
+    decompose NFD + bỏ dấu (combining marks, Mn) trước khi áp regex ASCII-only."""
     name = PurePosixPath((value or "attachment").replace("\\", "/")).name
-    name = re.sub(r"[^\w.()\- ]+", "_", name, flags=re.UNICODE).strip(" .")
+    # "đ"/"Đ" la ky tu goc rieng trong Unicode (khong phai "d" + dau ket hop)
+    # nen NFD/bo combining-mark ben duoi KHONG xu ly duoc - phai map tay truoc.
+    name = name.replace("đ", "d").replace("Đ", "D")
+    name = unicodedata.normalize("NFD", name)
+    name = "".join(ch for ch in name if unicodedata.category(ch) != "Mn")
+    name = unicodedata.normalize("NFC", name)
+    name = re.sub(r"[^A-Za-z0-9.()\- ]+", "_", name).strip(" .")
     return (name or "attachment")[:180]
 
 
@@ -1237,6 +1251,26 @@ def list_email_conversations(
     if filter_tab == "unread":
         query = query.gt("unread_count", 0)
     rows = _run(query.execute).data or []
+    # Fix (2026-11-04, "k thấy ds mail" - sync OK nhưng list trống): account_id
+    # o day TRUOC DAY luon dung _account_id(email) (hash "email-<sha256>"),
+    # trong khi list_email_accounts() tra ve ID THAT (omnichannel_email_accounts.id,
+    # UUID that cua dong DB) cho tai khoan da ket noi qua multi-account vault -
+    # 2 gia tri KHAC NHAU hoan toan. FE loc hoi thoai theo
+    # `c.accountId === selectedAccount` (selectedAccount lay tu list_email_accounts)
+    # nen moi lan co chon dung 1 tai khoan la bi loc SACH, du API tra dung du
+    # lieu (xac nhan that qua DevTools Network: response co 44 item, UI van
+    # hien 0). Build cache email->id THAT (uu tien dong DB that, fallback hash
+    # cho tai khoan legacy single-config khong co dong trong bang) - dung
+    # CHINH XAC logic cua list_email_accounts() de 2 API luon dong bo ID.
+    account_id_cache: dict[str, str] = {}
+
+    def resolve_account_id(email: str) -> str:
+        key = email.strip().lower()
+        if key not in account_id_cache:
+            row = _account_row_by_email(key)
+            account_id_cache[key] = str(row["id"]) if row else _account_id(key)
+        return account_id_cache[key]
+
     output: list[EmailConversationResponse] = []
     for row in rows:
         haystack = " ".join(str(row.get(k) or "") for k in ("customer_name", "customer_email", "subject", "last_message_text"))
@@ -1246,7 +1280,7 @@ def list_email_conversations(
         if filter_tab == "crm" and not enrichment["is_crm_matched"]:
             continue
         output.append(EmailConversationResponse(
-            id=str(row["id"]), account_id=_account_id(row["account_email"]),
+            id=str(row["id"]), account_id=resolve_account_id(row["account_email"]),
             account_label=row["account_email"], customer_name=row.get("customer_name") or row["customer_email"],
             customer_avatar="", customer_email=row["customer_email"], subject=row.get("subject"),
             unread_count=int(row.get("unread_count") or 0), last_message_text=row.get("last_message_text") or "",

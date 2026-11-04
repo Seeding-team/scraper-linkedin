@@ -585,3 +585,101 @@ async def get_zca_group_members_full(
         "members": result.get("members") or [],
     }
 
+
+async def recall_zca_message(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    msg_id: str,
+    cli_msg_id: str,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    """Thu hồi tin nhắn thật (api.undo) — tin biến mất ở CẢ HAI phía, khác 'xoá ở phía tôi'.
+
+    Cần cả msg_id (real Zalo message id) lẫn cli_msg_id (id phía client lúc gửi) —
+    chỉ có ở tin do CHÍNH tài khoản này gửi.
+    """
+    return await _run_zca_command(
+        "recall-message",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"msg_id": msg_id, "cli_msg_id": cli_msg_id},
+        timeout_seconds=30,
+    )
+
+
+async def add_zca_reaction(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    msg_id: str,
+    cli_msg_id: str,
+    icon: str,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    """Thả cảm xúc (giống bấm giữ tin nhắn trên app Zalo rồi chọn icon).
+
+    `icon` là tên enum Reactions của zca-js (HEART/LIKE/HAHA/WOW/CRY/ANGRY/...),
+    map thật sang giá trị Zalo cần ở phía Node (xem cmdAddReaction). msg_id/
+    cli_msg_id là của TIN ĐANG ĐƯỢC REACT (không phải tin mới), giống recall.
+    """
+    return await _run_zca_command(
+        "add-reaction",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"msg_id": msg_id, "cli_msg_id": cli_msg_id, "icon": icon},
+        timeout_seconds=30,
+    )
+
+
+async def search_zca_stickers(auth: Dict[str, Any], keyword: str, limit: int = 24) -> List[Dict[str, Any]]:
+    """Tìm sticker thật theo từ khoá (giống thanh tìm sticker trong app Zalo) —
+    trả về sticker đã có đủ url ảnh (stickerUrl/stickerWebpUrl) để hiển thị
+    trực tiếp lên UI, không cần FE gọi thêm round-trip lấy detail."""
+    result = await _run_zca_command(
+        "search-stickers",
+        auth,
+        args=["--keyword", keyword, "--limit", str(limit)],
+        timeout_seconds=30,
+    )
+    return result.get("stickers") or []
+
+
+async def accept_zca_friend_request(auth: Dict[str, Any], uid: str) -> Dict[str, Any]:
+    return await _run_zca_command(
+        "accept-friend-request", auth, args=["--uid", uid], timeout_seconds=30,
+    )
+
+
+async def get_zca_stickers_detail(auth: Dict[str, Any], sticker_ids: List[int]) -> List[Dict[str, Any]]:
+    ids_csv = ",".join(str(int(i)) for i in sticker_ids)
+    result = await _run_zca_command(
+        "stickers-detail", auth, args=["--ids", ids_csv], timeout_seconds=30,
+    )
+    return result.get("stickers") or []
+
+
+async def invite_zca_user_to_group(auth: Dict[str, Any], uid: str, group_id: str) -> Dict[str, Any]:
+    """Thêm/mời uid vào group_id. Tự thử add thẳng trước (đã bạn bè), rồi mời (quen biết)."""
+    return await _run_zca_command(
+        "invite-to-group", auth, args=["--uid", uid, "--group-id", group_id], timeout_seconds=30,
+    )
+
+
+async def send_zca_sticker(
+    auth: Dict[str, Any],
+    thread_id: str,
+    *,
+    sticker_id: int,
+    cate_id: int,
+    sticker_type: int = 1,
+    thread_type: int = 1,
+) -> Dict[str, Any]:
+    return await _run_zca_command(
+        "send-sticker",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"id": sticker_id, "cateId": cate_id, "type": sticker_type},
+        timeout_seconds=30,
+    )
+

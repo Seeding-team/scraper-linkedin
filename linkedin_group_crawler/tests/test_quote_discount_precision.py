@@ -183,5 +183,28 @@ def test_unifarm_item_level_vat_and_overall_discount():
     assert quote["data"]["overallDiscountAmount"] == 4_971_200
 
 
+def test_quote_margin_uses_after_discount_revenue_before_vat():
+    """Margin phải dùng 324 triệu trước VAT, không dùng tổng thanh toán 356,4 triệu."""
+    summary = svc._quote_cost_summary(
+        {
+            "total_amount": 356_400_000,
+            "vat_amount": 32_400_000,
+        },
+        [
+            {
+                "row_type": "item",
+                "quantity": 1,
+                "cost_price": 144_000_000,
+                "cost_not_applicable": False,
+            }
+        ],
+    )
+
+    assert summary["netRevenue"] == 324_000_000
+    assert summary["costTotal"] == 144_000_000
+    assert summary["grossProfit"] == 180_000_000
+    assert round(summary["grossMarginPercent"], 6) == round(180_000_000 / 324_000_000 * 100, 6)
+
+
 
 

@@ -189,6 +189,7 @@ function toCreateQuotePayload(input: CreateQuoteInput) {
   if (input.slaDueAt) payload.sla_due_at = input.slaDueAt;
   if (input.currency) payload.currency = input.currency;
   if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
+  if (input.priceMode) payload.price_mode = input.priceMode;
   return payload;
 }
 
@@ -226,6 +227,7 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
   if ('quoteTypeCodes' in input) payload.quote_type_codes = input.quoteTypeCodes ?? [];
   if (input.currency) payload.currency = input.currency;
   if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
+  if ('priceMode' in input && input.priceMode) payload.price_mode = input.priceMode;
   return payload;
 }
 

@@ -1,44 +1,29 @@
-"""Main all-platform router — mounts platform-specific and shared sub-routers."""
+"""Main all-platform router — mounts platform-specific and shared sub-routers.
+
+crm-module la ban tach doc lap, CRM-only (xem commit a60c337b "tach module CRM
+doc lap") - KHONG co cac tinh nang crawl FB/LinkedIn/YouTube/extension cua app
+goc. File nay bi fix 2026-11-04: ban cu copy nguyen router.py cua app goc nen
+import hang chuc router khong co file nguon trong crm-module, khien backend
+crash ngay luc start (ImportError tu routers/__init__.py rong) - CHUA TUNG build
+thanh cong tu source ke tu luc tach module (Sept 2026). Chi giu lai dung cac
+router co file thuc te trong thu muc routers/ + zalo/telegram/email.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
 from app.modules.all_platform.routers import (
-    seeding_router,
-    kpi_router,
     categories_router,
     members_router,
-    quick_comment_router,
-    quick_inbox_router,
     users_router,
     teams_router,
     auth_router,
     social_accounts_router,
-    keywords_library_router,
-    rotation_schedules_router,
 )
 from app.modules.all_platform.routers.platforms import router as platforms_router
-from app.modules.all_platform.routers.linkedin_auth import router as linkedin_auth_router
-from app.modules.all_platform.routers.posts import facebook_posts_router
-from app.modules.all_platform.routers.posts_linkedin import linkedin_posts_router
-from app.modules.all_platform.routers.posts_unified import router as unified_posts_router
-from app.modules.all_platform.routers.groups import facebook_groups_router
-from app.modules.all_platform.routers.groups_linkedin import linkedin_groups_router
-from app.modules.all_platform.routers.crawl_linkedin import crawl_linkedin_router
-from app.modules.all_platform.routers.linkedin_legacy import router as linkedin_legacy_router
-from app.modules.all_platform.routers.crawl_facebook import crawl_facebook_router
-from app.modules.all_platform.routers.extension_crawl import router as extension_crawl_router
-from app.modules.all_platform.routers.extension_crawl_linkedin import router as extension_crawl_linkedin_router
-from app.modules.all_platform.routers.extension_crawl_threads import router as extension_crawl_threads_router
-from app.modules.all_platform.routers.extension_crawl_youtube import router as extension_crawl_youtube_router
-from app.modules.all_platform.routers.youtube_seeding import router as youtube_seeding_router
-from app.modules.all_platform.routers.crawl_queue import router as crawl_queue_router
-from app.modules.all_platform.routers.fb_account_pool import router as fb_account_pool_router
 from app.modules.all_platform.routers.fb import router as fb_automation_router
-from app.modules.all_platform.routers.websocket import router as websocket_router
 from app.modules.all_platform.routers.fb_inbox_accounts import router as fb_inbox_accounts_router
-from app.modules.all_platform.routers.crawl_fb_dashboard import router as crawl_fb_dashboard_router
 from app.modules.all_platform.routers.customer_lead import router as customer_lead_router
 from app.modules.all_platform.routers.project import router as project_router
 from app.modules.all_platform.routers.vendor_imports import router as vendor_imports_router
@@ -61,14 +46,7 @@ from app.modules.all_platform.routers.contract_template import contract_template
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
 from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
-from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
-from app.modules.all_platform.routers.scheduled_comments import router as scheduled_comments_router
-from app.modules.all_platform.routers.auto_seeding_comments import router as auto_seeding_comments_router
 from app.modules.all_platform.routers.posts_delete import router as posts_delete_router
-from app.modules.all_platform.routers.internal_engagement import router as internal_engagement_router
-from app.modules.all_platform.routers.presence import router as presence_router
-from app.modules.all_platform.phone_bridge.router import router as phone_bridge_router
-from app.modules.all_platform.mobile_proxy.router import router as mobile_proxy_router
 
 all_platform_router = APIRouter()
 
@@ -79,141 +57,12 @@ all_platform_router.include_router(
     tags=["All-Platform Posts Delete"],
 )
 
-
-
-# ── Facebook ────────────────────────────────────────────────────────────────────
-all_platform_router.include_router(
-    seeding_router,
-    prefix="/facebook",
-    tags=["All-Platform Facebook Seeding"],
-)
-all_platform_router.include_router(
-    facebook_posts_router,
-    prefix="/facebook",
-    tags=["All-Platform Facebook Posts"],
-)
-all_platform_router.include_router(
-    facebook_groups_router,
-    prefix="/facebook",
-    tags=["All-Platform Facebook Groups"],
-)
-all_platform_router.include_router(
-    crawl_facebook_router,
-    prefix="/facebook",
-    tags=["All-Platform Facebook Crawl"],
-)
-all_platform_router.include_router(
-    crawl_fb_dashboard_router,
-    prefix="/facebook",
-    tags=["All-Platform Facebook Crawl Queue Dashboard"],
-)
-all_platform_router.include_router(
-    extension_crawl_router,
-    prefix="/extension",
-    tags=["All-Platform Extension Crawl"],
-)
-all_platform_router.include_router(
-    extension_crawl_linkedin_router,
-    prefix="/extension/linkedin",
-    tags=["All-Platform Extension LinkedIn Crawl"],
-)
-all_platform_router.include_router(
-    extension_crawl_threads_router,
-    prefix="/extension/threads",
-    tags=["All-Platform Extension Threads Crawl"],
-)
-all_platform_router.include_router(
-    extension_crawl_youtube_router,
-    prefix="/extension/youtube",
-    tags=["All-Platform Extension YouTube Crawl"],
-)
-all_platform_router.include_router(
-    youtube_seeding_router,
-    prefix="/youtube",
-    tags=["All-Platform YouTube Seeding"],
-)
-all_platform_router.include_router(
-    crawl_queue_router,
-    prefix="/extension/queue",
-    tags=["All-Platform Extension Crawl Queue"],
-)
-all_platform_router.include_router(
-    fb_account_pool_router,
-    prefix="/extension/accounts",
-    tags=["All-Platform Extension FB Account Pool"],
-)
+# ── Facebook (chi phan lien ket tai khoan, KHONG co crawl - app CRM khong
+# crawl Facebook/LinkedIn/YouTube) ───────────────────────────────────────────
 all_platform_router.include_router(
     fb_automation_router,
     prefix="/fb",
     tags=["All-Platform Facebook Automation"],
-)
-from app.modules.facebook.src.modules.crawl_fb.router.vps_router import router as vps_fb_router
-all_platform_router.include_router(
-    vps_fb_router,
-    tags=["All-Platform Facebook VPS"],
-)
-
-from app.modules.facebook.src.modules.crawl_fb.router.vps import router as vps_vnc_router
-all_platform_router.include_router(
-    vps_vnc_router,
-    tags=["All-Platform Facebook VPS VNC"],
-)
-
-# ── LinkedIn ───────────────────────────────────────────────────────────────────
-all_platform_router.include_router(
-    seeding_router,
-    prefix="/linkedin",
-    tags=["All-Platform LinkedIn Seeding"],
-)
-all_platform_router.include_router(
-    linkedin_posts_router,
-    prefix="/linkedin",
-    tags=["All-Platform LinkedIn Posts"],
-)
-all_platform_router.include_router(
-    linkedin_groups_router,
-    prefix="/linkedin",
-    tags=["All-Platform LinkedIn Groups"],
-)
-all_platform_router.include_router(
-    crawl_linkedin_router,
-    prefix="/linkedin",
-    tags=["All-Platform LinkedIn Crawl"],
-)
-all_platform_router.include_router(
-    linkedin_auth_router,
-    prefix="/linkedin",
-    tags=["All-Platform LinkedIn Auth"],
-)
-all_platform_router.include_router(
-    linkedin_legacy_router,
-    prefix="/linkedin",
-)
-
-# ── Unified Posts (Tong-hop page — no cache, all filters server-side) ──────────
-all_platform_router.include_router(
-    unified_posts_router,
-    prefix="/unified",
-    tags=["All-Platform Unified Posts"],
-)
-
-# ── Presence (thoi gian online thanh vien — Dashboard leader) ─────────────────
-all_platform_router.include_router(
-    presence_router,
-    prefix="/presence",
-    tags=["All-Platform Presence"],
-)
-
-# ── KPI (platform-agnostic) ───────────────────────────────────────────────────
-all_platform_router.include_router(
-    kpi_router,
-    prefix="/kpi",
-    tags=["All-Platform KPI"],
-)
-all_platform_router.include_router(
-    kpi_reward_router,
-    prefix="/kpi-rewards",
-    tags=["All-Platform KPI Rewards"],
 )
 
 # ── Categories (platform-agnostic) ────────────────────────────────────────────
@@ -228,34 +77,6 @@ all_platform_router.include_router(
     members_router,
     prefix="/members",
     tags=["All-Platform Members"],
-)
-
-# ── Quick Comment Library (platform-agnostic) ─────────────────────────────────
-all_platform_router.include_router(
-    quick_comment_router,
-    prefix="/quick-comments",
-    tags=["All-Platform Quick Comments"],
-)
-
-# ── Quick Inbox Library (platform-agnostic) ───────────────────────────────────
-all_platform_router.include_router(
-    quick_inbox_router,
-    prefix="/quick-inbox",
-    tags=["All-Platform Quick Inbox"],
-)
-
-# ── Keywords Library (platform-agnostic) ──────────────────────────────────────
-all_platform_router.include_router(
-    keywords_library_router,
-    prefix="/keywords-library",
-    tags=["All-Platform Keywords Library"],
-)
-
-# ── Rotation Crawl Schedules (RBAC + Creator Identity) ───────────────────────
-all_platform_router.include_router(
-    rotation_schedules_router,
-    prefix="/rotation-schedules",
-    tags=["All-Platform Rotation Schedules"],
 )
 
 # ── Users & Teams ──────────────────────────────────────────────────────────────
@@ -290,52 +111,11 @@ all_platform_router.include_router(
     tags=["All-Platform FB Inbox Accounts"],
 )
 
-# ── Internal Engagement (Tương tác nội bộ — MarkeeAI FB Page posts) ────────────
-all_platform_router.include_router(
-    internal_engagement_router,
-    prefix="/internal-engagement",
-    tags=["All-Platform Internal Engagement"],
-)
-
-# ── Account Online Summary (Facebook + Zalo online/total, cross-platform) ──────
-from app.modules.all_platform.routers.account_online_summary import router as account_online_summary_router
-all_platform_router.include_router(
-    account_online_summary_router,
-    prefix="/accounts",
-    tags=["All-Platform Account Online Summary"],
-)
-
-# ── FB Post KPI ────────────────────────────────────────────────────────────────
-from app.modules.all_platform.routers.fb_post_kpi import router as fb_post_kpi_router
-all_platform_router.include_router(
-    fb_post_kpi_router,
-    prefix="/fb/post-kpi",
-    tags=["All-Platform FB Post KPI"],
-)
-
 # ── Platforms ─────────────────────────────────────────────────────────────────
 all_platform_router.include_router(
     platforms_router,
     prefix="/platforms",
     tags=["All-Platform Platforms"],
-)
-
-# ── Admin Dashboard ────────────────────────────────────────────────────────────
-from app.modules.all_platform.routers.admin_dashboard import router as admin_dashboard_router
-all_platform_router.include_router(
-    admin_dashboard_router,
-    prefix="/admin/dashboard",
-    tags=["All-Platform Admin Dashboard"],
-)
-all_platform_router.include_router(
-    phone_bridge_router,
-    prefix="/admin/phone-bridge",
-    tags=["All-Platform Admin Phone Bridge"],
-)
-all_platform_router.include_router(
-    mobile_proxy_router,
-    prefix="/admin/mobile-proxy",
-    tags=["All-Platform Admin Mobile Proxy"],
 )
 
 # ── Customer Leads ─────────────────────────────────────────────────────────────
@@ -476,13 +256,10 @@ all_platform_router.include_router(
     tags=["All-Platform Sales Assets"],
 )
 
-# ── WebSocket ────────────────────────────────────────────────────────────────
-all_platform_router.include_router(
-    websocket_router,
-    tags=["All-Platform WebSockets"]
-)
-
-# ── Zalo ───────────────────────────────────────────────────────────────────────
+# ── Zalo (2026-11-04: da them lai search_conversation_messages con thieu vao
+# zalo/services/supabase_service.py de het ImportError, mount lai nhu cu;
+# push.py/quick_replies.py van CHUA co file nguon trong crm-module nen KHONG
+# mount) ──────────────────────────────────────────────────────────────────
 from app.modules.all_platform.zalo.api.routes.auth import router as zalo_auth_router
 from app.modules.all_platform.zalo.api.routes.broadcasts import router as zalo_broadcasts_router
 from app.modules.all_platform.zalo.api.routes.maintenance import router as zalo_maintenance_router
@@ -494,12 +271,6 @@ from app.modules.all_platform.zalo.api.routes.inbox_share import router as zalo_
 from app.modules.all_platform.zalo.api.routes.forward_rules import router as zalo_forward_rules_router
 from app.modules.all_platform.zalo.api.routes.bulk_jobs import router as zalo_bulk_jobs_router
 from app.modules.all_platform.zalo.api.routes.campaigns import router as zalo_campaigns_router
-from app.modules.all_platform.zalo.api.routes.push import router as zalo_push_router
-from app.modules.all_platform.zalo.api.routes.quick_replies import router as zalo_quick_replies_router
-# Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md): crawler/groups/jobs/library/proxy
-# routers (luồng Playwright/QR/crawl-job/Google Sheet cũ) đã bỏ mount tại đây — file gốc
-# xóa hẳn ở bước dọn dẹp cuối cùng sau khi broadcasts.py được viết lại (không còn phụ
-# thuộc crawler/broadcast_sender.py Playwright).
 
 all_platform_router.include_router(zalo_auth_router, prefix="/zalo", tags=["Zalo Auth"])
 all_platform_router.include_router(zalo_broadcasts_router, prefix="/zalo", tags=["Zalo Broadcasts"])
@@ -512,8 +283,6 @@ all_platform_router.include_router(zalo_inbox_share_router, prefix="/zalo", tags
 all_platform_router.include_router(zalo_forward_rules_router, prefix="/zalo", tags=["Zalo Forward Rules"])
 all_platform_router.include_router(zalo_bulk_jobs_router, prefix="/zalo", tags=["Zalo Bulk Jobs"])
 all_platform_router.include_router(zalo_campaigns_router, prefix="/zalo", tags=["Zalo Campaigns"])
-all_platform_router.include_router(zalo_push_router, prefix="/zalo", tags=["Zalo Push"])
-all_platform_router.include_router(zalo_quick_replies_router, prefix="/zalo", tags=["Zalo Quick Replies"])
 
 # ── Telegram Chat (Telethon) ────────────────────────────────────────────────────
 from app.modules.all_platform.telegram.api.routes.auth import router as telegram_auth_router
@@ -528,20 +297,6 @@ all_platform_router.include_router(telegram_conversations_router, prefix="/teleg
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
 
-# ── Scheduled Comments ─────────────────────────────────────────────────────────
-all_platform_router.include_router(
-    scheduled_comments_router,
-    prefix="/scheduled-comments",
-    tags=["All-Platform Scheduled Comments"],
-)
-
-# ── Auto Seeding Comments (tu dong trigger khi bai Facebook diem AI cao) ────────
-all_platform_router.include_router(
-    auto_seeding_comments_router,
-    prefix="/auto-seeding-comments",
-    tags=["All-Platform Auto Seeding Comments"],
-)
-
 # ── Email Inbox (IMAP/SMTP & Google OAuth Omnichannel) ────────────────────────
 from app.modules.all_platform.email.api.routes.email_inbox import router as email_inbox_router
 
@@ -550,7 +305,6 @@ all_platform_router.include_router(
     prefix="/email-inbox",
     tags=["All-Platform Email Inbox"],
 )
-
 
 # ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role) ──
 from app.modules.all_platform.routers.post_evaluations import router as post_evaluations_router

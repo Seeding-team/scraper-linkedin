@@ -71,6 +71,7 @@ export interface ZaloConv {
   conv_id: string;
   name: string;
   preview: string;
+  latest_sender_name?: string | null;
   unread: boolean;
   time: string;
   is_customer: boolean;
@@ -1190,6 +1191,7 @@ export function useZaloAdminInbox() {
     sendReply,
     isSending,
     sendError,
+    setSendError,
 
     // Zalo tập trung: recall / mentions / friend-status / sticker / group-scan
     pendingMentions,
