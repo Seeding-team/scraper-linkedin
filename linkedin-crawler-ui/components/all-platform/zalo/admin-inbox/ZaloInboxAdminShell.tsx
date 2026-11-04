@@ -2750,7 +2750,7 @@ export function ZaloInboxAdminShell() {
                                         <MaterialIcon name="delete" className="text-[11px]" />
                                       </button>
                                     )}
-                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhan da thu hoi</span>}
+                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>}
                                     {reactionPickerFor === msgKey && (
                                       <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
                                         <ZaloReactionQuickPicker
@@ -2787,8 +2787,8 @@ export function ZaloInboxAdminShell() {
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center p-6 text-slate-400">
                 <MessageCircle size={32} className="mb-2 opacity-40 text-slate-400" />
-                <p className="text-xs font-semibold text-slate-600">Chua co tin nhan</p>
-                <p className="text-[11px] text-slate-400 mt-1">Bat dau tro chuyen bang cach nhap noi dung phia duoi.</p>
+                <p className="text-xs font-semibold text-slate-600">Chưa có tin nhắn</p>
+                <p className="text-[11px] text-slate-400 mt-1">Bắt đầu trò chuyện bằng cách nhập nội dung phía dưới.</p>
               </div>
             )}
           </div>
@@ -2870,7 +2870,7 @@ export function ZaloInboxAdminShell() {
                     onClick={() => setSelectedFiles([])}
                     className="rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-500 hover:bg-white hover:text-[#E3000F]"
                   >
-                    Xoa tat ca ({selectedFiles.length})
+                    Xóa tất cả ({selectedFiles.length})
                   </button>
                 )}
               </div>
@@ -2882,7 +2882,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!inbox.openConv || inbox.archiveReading}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-                title="Dinh kem file"
+                title="Đính kèm file"
               >
                 <Paperclip size={13} /> File
               </button>
@@ -2894,7 +2894,7 @@ export function ZaloInboxAdminShell() {
                 disabled={!inbox.openConv || inbox.archiveReading}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40"
               >
-                <ImageIcon size={13} /> Anh
+                <ImageIcon size={13} /> Ảnh
               </button>
 
               <button
@@ -2910,7 +2910,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setPanelTab("templates")}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#d81b60]/40 bg-[#fce4ec]/60 px-2.5 py-1 text-[11px] font-bold text-[#d81b60]"
               >
-                <Star size={13} /> Mau nhanh
+                <Star size={13} /> Mẫu nhanh
               </button>
 
               <button
@@ -2918,7 +2918,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowDealModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
-                <Briefcase size={13} /> Tao co hoi
+                <Briefcase size={13} /> Tạo cơ hội
               </button>
 
               <button
@@ -2926,7 +2926,7 @@ export function ZaloInboxAdminShell() {
                 onClick={() => setShowQuoteModal(true)}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#E3000F]/40 bg-[#E3000F]/10 px-2.5 py-1 text-[11px] font-bold text-[#E3000F] hover:bg-[#E3000F]/20"
               >
-                <FileSpreadsheet size={13} /> Bao gia CRM
+                <FileSpreadsheet size={13} /> Báo giá CRM
               </button>
             </div>
 
@@ -2962,9 +2962,9 @@ export function ZaloInboxAdminShell() {
               {showMentionPicker && (
                 <div className="absolute bottom-full left-0 z-20 mb-1 max-h-48 w-64 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg">
                   {!inbox.groupMembers ? (
-                    <div className="px-3 py-2 text-[11px] text-slate-400">Dang lay thanh vien nhom tu ZCA...</div>
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Đang lấy thành viên nhóm từ ZCA...</div>
                   ) : filteredMentionCandidates.length === 0 ? (
-                    <div className="px-3 py-2 text-[11px] text-slate-400">Khong tim thay thanh vien.</div>
+                    <div className="px-3 py-2 text-[11px] text-slate-400">Không tìm thấy thành viên.</div>
                   ) : (
                     filteredMentionCandidates.slice(0, 20).map((member) => (
                       <button
