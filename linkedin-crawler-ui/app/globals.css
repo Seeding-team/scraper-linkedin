@@ -206,6 +206,49 @@
     max-width: 36rem;
   }
 
+  .max-w-2xl {
+    max-width: 42rem;
+  }
+
+  .max-w-3xl {
+    max-width: 48rem;
+  }
+
+  .max-w-4xl {
+    max-width: 56rem;
+  }
+
+  .max-w-5xl {
+    max-width: 64rem;
+  }
+
+  /* Responsive overrides: Tailwind v4 tu sinh .sm:max-w-* va .md:max-w-* dua theo
+     thang --spacing-* nen cung bi cuop gia tri (vd .sm:max-w-lg ra 24px thay vi 32rem
+     lam modal co lai con 72px). Override tuong minh o breakpoint sm (40rem) va md (48rem). */
+  @media (min-width: 40rem) {
+    .sm\:max-w-xs { max-width: 20rem; }
+    .sm\:max-w-sm { max-width: 24rem; }
+    .sm\:max-w-md { max-width: 28rem; }
+    .sm\:max-w-lg { max-width: 32rem; }
+    .sm\:max-w-xl { max-width: 36rem; }
+    .sm\:max-w-2xl { max-width: 42rem; }
+    .sm\:max-w-3xl { max-width: 48rem; }
+    .sm\:max-w-4xl { max-width: 56rem; }
+    .sm\:max-w-5xl { max-width: 64rem; }
+  }
+
+  @media (min-width: 48rem) {
+    .md\:max-w-xs { max-width: 20rem; }
+    .md\:max-w-sm { max-width: 24rem; }
+    .md\:max-w-md { max-width: 28rem; }
+    .md\:max-w-lg { max-width: 32rem; }
+    .md\:max-w-xl { max-width: 36rem; }
+    .md\:max-w-2xl { max-width: 42rem; }
+    .md\:max-w-3xl { max-width: 48rem; }
+    .md\:max-w-4xl { max-width: 56rem; }
+    .md\:max-w-5xl { max-width: 64rem; }
+  }
+
   .scrollbar-none {
     -ms-overflow-style: none;
     scrollbar-width: none;

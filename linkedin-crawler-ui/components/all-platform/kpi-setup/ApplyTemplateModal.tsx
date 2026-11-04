@@ -162,7 +162,7 @@ export function ApplyTemplateModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-full max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-lg font-bold flex items-center gap-2">
             <Layers className="w-5 h-5 text-[var(--color-markee-primary)]" />

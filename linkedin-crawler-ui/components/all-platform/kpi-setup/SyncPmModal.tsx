@@ -56,7 +56,7 @@ export function SyncPmModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && !isSubmitting && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="w-full max-w-md">
         <DialogHeader>
           <DialogTitle className="text-lg font-bold flex items-center gap-2">
             <Award className="w-5 h-5 text-blue-600" />
