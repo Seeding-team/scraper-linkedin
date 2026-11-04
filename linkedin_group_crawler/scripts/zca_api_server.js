@@ -553,6 +553,13 @@ async function cmdFindUserByPhone(api, args) {
   return { ok: true, user: result };
 }
 
+async function cmdGetUserInfo(api, args) {
+  const userId = args["user-id"] || args.userId;
+  if (!userId) throw new Error("Missing --user-id");
+  const result = await api.getUserInfo(String(userId));
+  return { ok: true, info: result };
+}
+
 async function cmdFindUserByUsername(api, args) {
   const { username } = args;
   if (!username) throw new Error("Missing --username");
@@ -768,6 +775,7 @@ const COMMANDS = {
   },
   "remove-unread": cmdRemoveUnread,
   "find-user-by-phone": cmdFindUserByPhone,
+  "get-user-info": cmdGetUserInfo,
   "find-user-by-username": cmdFindUserByUsername,
   "first-time-sync": cmdFirstTimeSync,
   "recall-message": cmdRecallMessage,
