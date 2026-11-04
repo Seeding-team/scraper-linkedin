@@ -389,6 +389,22 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Tổng quan báo cáo",
       exactMatch: true,
     },
+    {
+      type: "item",
+      id: "overview-reports",
+      href: "/all-platform/overview",
+      icon: "analytics",
+      label: "Tổng quan báo cáo",
+      exactMatch: true,
+    },
+    {
+      type: "item",
+      id: "seeding-config",
+      href: "/all-platform/seeding-config",
+      icon: "tune",
+      label: "Cấu hình",
+      matchStartsWith: ["/all-platform/seeding-config"],
+    },
   ];
 
   const channelItems: NavLeafItem[] = [

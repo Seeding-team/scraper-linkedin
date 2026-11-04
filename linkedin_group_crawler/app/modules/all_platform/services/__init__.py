@@ -274,3 +274,28 @@ from app.modules.all_platform.services.supabase_project_service import (
     update_project,
     get_customer_projects_summary,
 )
+
+from app.modules.all_platform.services.keyword_match import (
+    remove_vietnamese_accents,
+    normalize_keyword_text,
+    match_keywords,
+    has_matching_keyword,
+)
+from app.modules.all_platform.services.post_evaluation_service import (
+    get_review,
+    get_reviews_by_post_ids,
+    update_evaluation,
+    batch_reject,
+    undo_batch_reject,
+)
+from app.modules.all_platform.services.crawl_exclude_service import (
+    list_exclude_keywords,
+    create_exclude_keyword,
+    delete_exclude_keyword,
+    create_proposal,
+    list_proposals,
+    approve_proposal,
+    reject_proposal,
+    bulk_approve_proposals,
+    compute_excluded_flag,
+)

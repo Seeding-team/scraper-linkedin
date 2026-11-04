@@ -8,6 +8,9 @@ import { ZaloContactModal } from "./zalo-contact-modal";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
+import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
+import { PostCallResultDropdown } from "@/components/all-platform/posts/PostCallResultDropdown";
+import { ProposeKeywordModal } from "@/components/all-platform/posts/ProposeKeywordModal";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -21,8 +24,6 @@ import {
 import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
 import type { CrmLeadRow } from "@/modules/crm/types";
 import { toast } from "sonner";
-import { PostEvaluationDropdown } from "./PostEvaluationDropdown";
-import { PostCallResultDropdown } from "./PostCallResultDropdown";
 import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
 
 interface PostCardProps {
@@ -131,6 +132,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
+  const [isProposeKeywordOpen, setIsProposeKeywordOpen] = useState(false);
   const [showLeadDrawer, setShowLeadDrawer] = useState(false);
   const [showZaloContactModal, setShowZaloContactModal] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
@@ -454,39 +456,43 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             )}
           </div>
 
-          <div className="shrink-0 text-right leading-tight">
-            {(() => {
-              const pubDt = formatPostDateTime(post.post_time || post.posted_at);
-              const crawlFormatted = post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : '';
-              
-              if (pubDt) {
-                return (
-                  <div className="flex flex-col items-end">
-                    <span
-                      className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200"
-                      title={`Thời gian đăng bài gốc: ${pubDt.full}`}
-                    >
-                      <span className="text-slate-400 font-normal">🕒</span>
-                      <span>{pubDt.full}</span>
-                    </span>
-                    {crawlFormatted && crawlFormatted !== pubDt.date && (
+          <div className="flex items-center gap-2 shrink-0">
+            <EvaluationDropdown post={post} />
+            <PostCallResultDropdown post={post} />
+            <div className="shrink-0 text-right leading-tight">
+              {(() => {
+                const pubDt = formatPostDateTime(post.post_time || post.posted_at);
+                const crawlFormatted = post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : '';
+                
+                if (pubDt) {
+                  return (
+                    <div className="flex flex-col items-end">
                       <span
-                        className="text-[11px] text-muted-foreground/75 font-normal"
-                        title={`Thời gian cào về hệ thống: ${crawlFormatted}`}
+                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200"
+                        title={`Thời gian đăng bài gốc: ${pubDt.full}`}
                       >
-                        Cào: {crawlFormatted}
+                        <span className="text-slate-400 font-normal">🕒</span>
+                        <span>{pubDt.full}</span>
                       </span>
-                    )}
-                  </div>
-                );
-              }
+                      {crawlFormatted && crawlFormatted !== pubDt.date && (
+                        <span
+                          className="text-[11px] text-muted-foreground/75 font-normal"
+                          title={`Thời gian cào về hệ thống: ${crawlFormatted}`}
+                        >
+                          Cào: {crawlFormatted}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
 
-              return (
-                <span className="text-sm text-muted-foreground font-medium">
-                  {crawlFormatted}
-                </span>
-              );
-            })()}
+                return (
+                  <span className="text-sm text-muted-foreground font-medium">
+                    {crawlFormatted}
+                  </span>
+                );
+              })()}
+            </div>
           </div>
         </div>
 
@@ -736,32 +742,6 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               );
             })()}
 
-            {/* Tình trạng bài viết (Chuẩn theo dropdown Ảnh 1) */}
-            <PostEvaluationDropdown
-              postId={post.id || post.post_url}
-              postUrl={post.post_url}
-              initialStatus={(post as any).evaluation_status || (post as any).evaluation}
-              onStatusChange={(status) => {
-                (post as any).evaluation_status = status;
-                (post as any).evaluation = status;
-              }}
-            />
-
-            {/* Kết quả liên hệ (Chuẩn theo dropdown Ảnh 2) */}
-            <PostCallResultDropdown
-              postId={post.id || post.post_url}
-              postUrl={post.post_url}
-              initialResult={(post as any).call_result || (post as any).callResult}
-              initialAttempts={(post as any).call_attempts || (post as any).callAttempts}
-              initialLastCall={(post as any).last_call || (post as any).lastCall}
-              onResultChange={(result, attempts) => {
-                (post as any).callResult = result;
-                (post as any).call_result = result;
-                (post as any).callAttempts = attempts;
-                (post as any).call_attempts = attempts;
-              }}
-            />
-
             {/* Assign người seeding */}
             <PostAssigneeDropdown
               postId={post.id || post.post_url}
@@ -872,6 +852,14 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           onViewDetail={handleView}
           onSchedule={onSchedule}
           onDelete={onDelete}
+          onProposeKeyword={() => setIsProposeKeywordOpen(true)}
+        />
+      )}
+
+      {isProposeKeywordOpen && (
+        <ProposeKeywordModal
+          post={post}
+          onClose={() => setIsProposeKeywordOpen(false)}
         />
       )}
 
@@ -1129,12 +1117,14 @@ function MoreActionsModal({
   onViewDetail,
   onSchedule,
   onDelete,
+  onProposeKeyword,
 }: {
   post: UnifiedPost;
   onClose: () => void;
   onViewDetail: () => void;
   onSchedule?: (post: UnifiedPost) => void;
   onDelete?: (post: UnifiedPost) => void | Promise<void>;
+  onProposeKeyword?: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
@@ -1171,6 +1161,18 @@ function MoreActionsModal({
               Lên lịch
             </button>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onProposeKeyword?.();
+            }}
+            className="text-left px-3 py-2.5 rounded-xl hover:bg-rose-50 flex items-center gap-2 text-sm font-semibold text-rose-600 transition cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">filter_alt</span>
+            Đề xuất từ khóa loại trừ
+          </button>
 
           {onDelete && post.id && (
             <button

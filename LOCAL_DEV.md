@@ -19,6 +19,20 @@ Cả 2 đã được sửa/bổ sung template bên dưới.
 
 ## Các bước
 
+### Test có tạo/sửa/import dữ liệu: bắt buộc dùng DB riêng
+
+Không điền credential production/dev dùng chung để test mutation. File `.env`
+được gitignore chỉ giúp không commit secret, **không** ngăn thao tác ghi vào DB thật.
+Các secret trong bước 2 phải thuộc môi trường test riêng nếu dùng để test nghiệp vụ.
+
+Môi trường Import Lead local: xem `local-test-db/README.md`. Backend yêu cầu
+`APP_ENV=test`, đúng hostname DB nội bộ và tắt toàn bộ worker; mạng Docker test
+không có outbound Internet. FE vẫn dùng `http://localhost:8080`.
+
+`linkedin_group_crawler/.env.test.example` và
+`linkedin_group_crawler/scratch/test_db_guard.py` là hướng dẫn guard cho các test
+integration khác: không fallback sang DB production, ghi marker và cleanup đúng ID.
+
 1. **Copy file cấu hình mẫu:**
 
    ```bash

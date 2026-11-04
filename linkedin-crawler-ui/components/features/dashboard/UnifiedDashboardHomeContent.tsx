@@ -14,6 +14,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
+import { QuickReviewToolbar } from "@/components/all-platform/posts/QuickReviewToolbar";
+import { PendingKeywordsPanel } from "@/components/all-platform/crawl-keywords/PendingKeywordsPanel";
 import { toast } from "sonner";
 import { allPlatformPostsDeleteService } from "@/services/all-platform-posts-delete.service";
 
@@ -235,6 +237,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const CURRENT_USER_EMAIL = user?.email || "";
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
+  const [isQuickReviewActive, setIsQuickReviewActive] = useState(false);
+  const [showKeywordsPanel, setShowKeywordsPanel] = useState(false);
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -1491,24 +1495,32 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             ))}
           </div>
 
-          {/* Toolbar Phong Cách Mua Sắm Công: Bộ lọc nhanh & Nút ⚡ Review Nhanh */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-card border border-border rounded-2xl p-4 shadow-xs">
-            <div className="flex items-center gap-2 flex-wrap text-xs">
-              <span className="font-bold text-foreground flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-[18px] text-primary">filter_alt</span>
-                Bộ lọc nhanh:
-              </span>
-              <span className="text-xs text-muted-foreground font-medium mr-1">
-                Tổng: <b className="text-foreground">{effectiveTotalCount}</b> bài viết
-              </span>
-            </div>
+          {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <QuickReviewToolbar
+              posts={visiblePosts}
+              isQuickReviewActive={isQuickReviewActive}
+              onToggleQuickReview={() => setIsQuickReviewActive((prev) => !prev)}
+              onBatchRejectSuccess={(affectedIds) => {
+                setPosts((prev) =>
+                  prev.map((p) =>
+                    affectedIds.includes(p.id)
+                      ? { ...p, evaluation_code: "khong-phu-hop" }
+                      : p
+                  )
+                );
+              }}
+              onUndoSuccess={() => {
+                void fetchPosts();
+              }}
+            />
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleCleanFeed}
                 disabled={isCleaningFeed}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-sm cursor-pointer border border-border"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
                 title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
               >
                 <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
@@ -1517,54 +1529,31 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
               </button>
 
-              <button
-                type="button"
-                onClick={() => setIsReviewMode(!isReviewMode)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer",
-                  isReviewMode
-                    ? "bg-amber-600 text-white hover:bg-amber-700 ring-2 ring-amber-300"
-                    : "bg-primary text-primary-foreground hover:opacity-95"
-                )}
-              >
-                <span className="material-symbols-outlined text-[16px]">bolt</span>
-                {isReviewMode ? "Thoát Review Nhanh" : "⚡ Review Nhanh"}
-              </button>
+              {(user?.role === "admin" || user?.role === "leader") && (
+                <button
+                  type="button"
+                  onClick={() => setShowKeywordsPanel((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
+                    showKeywordsPanel
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-card hover:bg-muted text-foreground border-border"
+                  }`}
+                  title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+                >
+                  <span className="material-symbols-outlined text-[16px]">filter_alt</span>
+                  <span>Từ khóa loại trừ</span>
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Banner Điều Khiển Chế Độ Review Nhanh (Khi bật isReviewMode) */}
-          {isReviewMode && (
-            <div className="sticky top-14 z-30 flex items-center justify-between gap-3 bg-amber-50 border-2 border-amber-300 rounded-2xl p-3.5 px-5 shadow-lg animate-in slide-in-from-top-2 duration-200">
-              <div className="flex items-center gap-2 text-xs text-amber-900 font-semibold">
-                <span className="material-symbols-outlined text-amber-600 text-[20px] animate-pulse">speed</span>
-                <span>
-                  Đang ở <b>Chế độ Review Nhanh Trang {currentPage}</b>: Đã duyệt <b>{reviewedPostIds.size}/{displayPosts.length}</b> bài trên trang này.
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    displayPosts.forEach((p) => reviewedPostIds.add(p.id));
-                    setReviewedPostIds(new Set(reviewedPostIds));
-                    toast.success(`⚡ Đã hoàn tất Review trang ${currentPage}! Chuyển sang trang ${currentPage + 1}`);
-                    handlePageChange(currentPage + 1);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  Hoàn tất trang & Sang trang sau ›
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsReviewMode(false)}
-                  className="px-3 py-2 rounded-xl border border-amber-300 bg-white hover:bg-amber-100 text-amber-900 text-xs font-bold transition cursor-pointer"
-                >
-                  Thoát
-                </button>
-              </div>
-            </div>
+          {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
+            <PendingKeywordsPanel
+              onClose={() => setShowKeywordsPanel(false)}
+              onKeywordUpdated={() => {
+                void fetchPosts();
+              }}
+            />
           )}
 
           <FilterBar

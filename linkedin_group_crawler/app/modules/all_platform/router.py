@@ -551,7 +551,27 @@ all_platform_router.include_router(
     tags=["All-Platform Email Inbox"],
 )
 
-
-# ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role) ──
+# ── Post Evaluations (Đồng bộ đánh giá bài viết dùng chung cho tất cả các role & cleanup feed) ──
 from app.modules.all_platform.routers.post_evaluations import router as post_evaluations_router
 all_platform_router.include_router(post_evaluations_router)
+
+# ── Post Evaluation (Review Nhanh Supabase) & Crawl Keywords ──────────────────
+from app.modules.all_platform.routers.post_evaluation import router as post_evaluation_router
+from app.modules.all_platform.routers.post_call_result import router as post_call_result_router
+from app.modules.all_platform.routers.crawl_keywords import router as crawl_keywords_router
+
+all_platform_router.include_router(
+    post_evaluation_router,
+    prefix="/posts",
+    tags=["All-Platform Post Evaluation"],
+)
+all_platform_router.include_router(
+    post_call_result_router,
+    prefix="/posts",
+    tags=["All-Platform Post Call Result"],
+)
+all_platform_router.include_router(
+    crawl_keywords_router,
+    prefix="/crawl-keywords",
+    tags=["All-Platform Crawl Keywords"],
+)

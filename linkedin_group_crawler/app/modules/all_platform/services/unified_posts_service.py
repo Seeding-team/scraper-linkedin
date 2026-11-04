@@ -1132,6 +1132,52 @@ def get_unified_posts(
         except Exception as e:
             print("Error fetching seeding info:", e)
 
+    # Enrich post evaluation and exclude keywords
+    try:
+        if all_posts:
+            post_ids_str = [str(p["id"]) for p in all_posts if p.get("id")]
+            from app.modules.all_platform.services.post_evaluation_service import get_reviews_by_post_ids
+            from app.modules.all_platform.services.post_call_result_service import get_call_results_by_post_ids
+            from app.modules.all_platform.services.crawl_exclude_service import compute_excluded_flag, list_exclude_keywords
+
+            reviews_map = get_reviews_by_post_ids(post_ids_str)
+            call_results_map = get_call_results_by_post_ids(post_ids_str)
+            active_kws = list_exclude_keywords(status="active")
+
+            for p in all_posts:
+                pid = str(p.get("id"))
+                rev = reviews_map.get(pid)
+                if rev:
+                    p["evaluation_code"] = rev.get("evaluation_code")
+                    p["evaluation_reason"] = rev.get("reason")
+                    p["evaluation_summary"] = rev.get("summary")
+                    p["exclude_keyword_exempt"] = rev.get("exclude_keyword_exempt", False)
+                    p["evaluated_by_user"] = rev.get("evaluated_by_user")
+                    p["evaluated_at"] = rev.get("evaluated_at")
+                else:
+                    p["evaluation_code"] = "chua-danh-gia"
+                    p["exclude_keyword_exempt"] = False
+                    p["evaluated_by_user"] = None
+                    p["evaluated_at"] = None
+
+                call_res = call_results_map.get(pid)
+                if call_res:
+                    p["call_result_code"] = call_res.get("result_code")
+                    p["call_attempts"] = call_res.get("attempts", 0)
+                    p["last_call_at"] = call_res.get("last_call_at")
+                    p["updated_by_user"] = call_res.get("updated_by_user")
+                else:
+                    p["call_result_code"] = None
+                    p["call_attempts"] = 0
+                    p["last_call_at"] = None
+                    p["updated_by_user"] = None
+
+                exc_info = compute_excluded_flag(p, rev, active_kws)
+                p["is_excluded"] = exc_info["is_excluded"]
+                p["matched_keywords"] = exc_info["matched_keywords"]
+    except Exception as e:
+        print("Error enriching evaluation and exclude keywords:", e)
+
     return {
         "posts": all_posts,
         "total": total_count,

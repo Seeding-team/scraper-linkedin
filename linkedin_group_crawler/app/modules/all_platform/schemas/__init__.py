@@ -134,3 +134,19 @@ from app.modules.all_platform.schemas.contract import (
     ContractSuggestTypeRequest,
     ContractNumberSettingsRequest,
 )
+
+from app.modules.all_platform.schemas.post_evaluation import (
+    PostEvaluationUpdate,
+    BatchRejectRequest,
+    UndoBatchRejectRequest,
+    PostEvaluationResponse,
+)
+from app.modules.all_platform.schemas.crawl_keywords import (
+    ExcludeKeywordCreate,
+    ExcludeKeywordUpdate,
+    ExcludeKeywordResponse,
+    KeywordProposalCreate,
+    KeywordProposalReject,
+    BulkApproveProposalRequest,
+    KeywordProposalResponse,
+)

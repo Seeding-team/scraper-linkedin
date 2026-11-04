@@ -15,3 +15,4 @@ __pycache__
 storage/linkedin_state.json
 data/raw
 data/output
+.env.local
