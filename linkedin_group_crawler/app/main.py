@@ -94,6 +94,13 @@ async def lifespan(_: FastAPI):
             logger.exception("Failed to start MSC product sync scheduler")
 
         try:
+            from app.modules.all_platform.jobs.kpi_snapshot_job import setup_kpi_snapshot_job
+            setup_kpi_snapshot_job()
+            logger.info("KPI weekly snapshot scheduler setup finished")
+        except Exception:
+            logger.exception("Failed to start KPI weekly snapshot scheduler")
+
+        try:
             from app.modules.all_platform.jobs.contract_drive_sync_job import (
                 setup_contract_drive_sync_worker,
             )

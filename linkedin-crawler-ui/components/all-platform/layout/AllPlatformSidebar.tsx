@@ -195,6 +195,18 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Teams",
       exactMatch: true,
     },
+    ...(isAdmin || isLeader
+      ? ([
+          {
+            type: "item",
+            id: "kpi-setup",
+            href: "/all-platform/kpi-setup",
+            icon: "tune",
+            label: "Thiết lập KPI",
+            matchStartsWith: ["/all-platform/kpi-setup"],
+          },
+        ] as NavLeafItem[])
+      : []),
     ...(isAdmin
       ? ([
           {
