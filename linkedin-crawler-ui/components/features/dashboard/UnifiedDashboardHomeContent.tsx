@@ -390,6 +390,23 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       const idKey = p.id ? String(p.id) : "";
       const urlKey = p.post_url ? String(p.post_url) : "";
 
+      // Canonical Supabase columns take highest baseline priority
+      if (p.evaluation_code) {
+        evMap[pid] = p.evaluation_code;
+        if (idKey) evMap[idKey] = p.evaluation_code;
+        if (urlKey) evMap[urlKey] = p.evaluation_code;
+      }
+      if (p.call_result_code || (typeof p.call_attempts === "number" && p.call_attempts > 0)) {
+        const cItem = {
+          result: p.call_result_code || "",
+          attempts: Number(p.call_attempts) || 0,
+          lastCall: p.last_call_at || "",
+        };
+        cMap[pid] = cItem;
+        if (idKey) cMap[idKey] = cItem;
+        if (urlKey) cMap[urlKey] = cItem;
+      }
+
       const savedEv =
         localStorage.getItem(`post_eval_${pid}`) ||
         (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
@@ -487,7 +504,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     const handleEvUpdate = (e: any) => {
       const pId = String(e.detail?.postId || "");
       const pUrl = String(e.detail?.postUrl || "");
-      const val = e.detail?.status || e.detail?.evaluation || "";
+      const val = e.detail?.evaluation_code || e.detail?.status || e.detail?.evaluation || "";
       if (val) {
         setEvaluationsMap((prev) => {
           const updated = { ...prev };
@@ -495,6 +512,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           if (pUrl) updated[pUrl] = val;
           return updated;
         });
+        setPosts((prev) =>
+          prev.map((p) => {
+            if ((pId && (String(p.id) === pId || p.post_url === pId)) || (pUrl && p.post_url === pUrl)) {
+              return { ...p, evaluation_code: val };
+            }
+            return p;
+          })
+        );
       }
     };
 
@@ -502,9 +527,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       const pId = String(e.detail?.postId || "");
       const pUrl = String(e.detail?.postUrl || "");
       const item = {
-        result: e.detail?.result || "",
-        attempts: Number(e.detail?.attempts) || 0,
-        lastCall: e.detail?.lastCall || "",
+        result: e.detail?.result || e.detail?.call_result_code || "",
+        attempts: Number(e.detail?.attempts ?? e.detail?.call_attempts) || 0,
+        lastCall: e.detail?.lastCall || e.detail?.last_call_at || "",
       };
       setCallsMap((prev) => {
         const updated = { ...prev };
@@ -512,6 +537,19 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (pUrl) updated[pUrl] = item;
         return updated;
       });
+      setPosts((prev) =>
+        prev.map((p) => {
+          if ((pId && (String(p.id) === pId || p.post_url === pId)) || (pUrl && p.post_url === pUrl)) {
+            return {
+              ...p,
+              call_result_code: item.result,
+              call_attempts: item.attempts,
+              last_call_at: item.lastCall,
+            };
+          }
+          return p;
+        })
+      );
     };
 
     window.addEventListener("seeding_post_eval_updated", handleEvUpdate);
@@ -927,10 +965,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     const idKey = p.id ? String(p.id) : "";
     const urlKey = p.post_url ? String(p.post_url) : "";
 
-    let rating =
+    const rawRating =
       evaluationsMap[pid] ||
       (idKey && evaluationsMap[idKey]) ||
       (urlKey && evaluationsMap[urlKey]) ||
+      p.evaluation_code ||
       (typeof window !== "undefined"
         ? localStorage.getItem(`post_eval_${pid}`) ||
           (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
@@ -940,14 +979,22 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       (p as any).evaluation_status ||
       (p as any).evaluation ||
       (p as any).rating ||
-      "chua_danh_gia";
+      "chua-danh-gia";
 
-    if (rating === "Cần liên hệ") rating = "can_lien_he";
-    if (rating === "Cần xem xét") rating = "can_xem_xet";
-    if (rating === "Phù hợp") rating = "phu_hop";
-    if (rating === "Không phù hợp" || rating === "Chưa phù hợp") rating = "khong_phu_hop";
-    if (rating === "chua_phu_hop") rating = "khong_phu_hop";
-    if (rating === "Chưa đánh giá") rating = "chua_danh_gia";
+    let rating = String(rawRating).trim().toLowerCase();
+    if (rating === "cần liên hệ" || rating === "can-lien-he" || rating === "can_lien_he") rating = "can_lien_he";
+    else if (rating === "cần xem xét" || rating === "can-xem-xet" || rating === "can_xem_xet") rating = "can_xem_xet";
+    else if (rating === "phù hợp" || rating === "phu-hop" || rating === "phu_hop") rating = "phu_hop";
+    else if (
+      rating === "không phù hợp" ||
+      rating === "chưa phù hợp" ||
+      rating === "khong-phu-hop" ||
+      rating === "khong_phu_hop" ||
+      rating === "chua-phu-hop" ||
+      rating === "chua_phu_hop"
+    ) rating = "khong_phu_hop";
+    else if (rating === "chưa đánh giá" || rating === "chua-danh-gia" || rating === "chua_danh_gia") rating = "chua_danh_gia";
+    else rating = "chua_danh_gia";
 
     const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
     let call = "";
@@ -971,6 +1018,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           call = rawCall;
         }
       }
+    }
+    if (!call && p.call_result_code) {
+      call = p.call_result_code;
     }
 
     return { rating, call };
@@ -1126,14 +1176,16 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
       return {
         ...p,
+        evaluation_code: p.evaluation_code || (rating === "can_lien_he" ? "can-lien-he" : rating === "khong_phu_hop" ? "khong-phu-hop" : "chua-danh-gia"),
         evaluation_status: rating,
         evaluation: rating,
+        call_result_code: p.call_result_code || call,
         call_result: call,
         callResult: call,
-        call_attempts: attempts,
-        callAttempts: attempts,
-        last_call: lastCall,
-        lastCall: lastCall,
+        call_attempts: attempts || p.call_attempts || 0,
+        callAttempts: attempts || p.call_attempts || 0,
+        last_call: lastCall || p.last_call_at || "",
+        lastCall: lastCall || p.last_call_at || "",
       };
     });
   }, [visiblePosts, isClientFiltered, clientPage, getPostRatingAndCall, callsMap]);
@@ -1502,10 +1554,17 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setPosts((prev) =>
                   prev.map((p) =>
                     affectedIds.includes(p.id)
-                      ? { ...p, evaluation_code: "khong-phu-hop" }
+                      ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
                       : p
                   )
                 );
+                setEvaluationsMap((prev) => {
+                  const updated = { ...prev };
+                  affectedIds.forEach((id) => {
+                    updated[id] = "khong-phu-hop";
+                  });
+                  return updated;
+                });
               }}
               onUndoSuccess={() => {
                 void fetchPosts();

@@ -107,12 +107,27 @@ export function invalidateTaxonomyCache(key?: string): void {
  *  - X-API-Key: backend yêu cầu (verify_zalo_api_key), đọc từ NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY
  *  - Có thể bị override bởi `init.headers` nếu caller cần custom
  */
+function getAuthTokenFromBrowser(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)crawlpro_access_token=([^;]+)/);
+  if (match) return decodeURIComponent(match[1]);
+  try {
+    return localStorage.getItem("token") || localStorage.getItem("access_token");
+  } catch {
+    return null;
+  }
+}
+
 function getDefaultHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (API_KEY) {
     headers["X-API-Key"] = API_KEY;
+  }
+  const token = getAuthTokenFromBrowser();
+  if (token && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
 }
@@ -1368,7 +1383,7 @@ export const allPlatformPostsService = {
 // ── CATEGORIES ────────────────────────────────────────────────────────────────
 
 export const allPlatformCategoriesService = {
-  getAll: (category_type?: string, options?: { activeOnly?: boolean; forceRefresh?: boolean }): Promise<ApiResponse<Category[]>> => {
+  getAll: async (category_type?: string, options?: { activeOnly?: boolean; forceRefresh?: boolean }): Promise<ApiResponse<Category[]>> => {
     const params = new URLSearchParams();
     if (category_type) params.set("category_type", category_type);
     if (options?.activeOnly) params.set("active_only", "true");
@@ -1377,11 +1392,20 @@ export const allPlatformCategoriesService = {
     // Cache the entire categories list for 30s. Categories rarely change;
     // admin can invalidateTaxonomyCache() after edits.
     const cacheKey = `categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`;
-    if (options?.forceRefresh) invalidateTaxonomyCache(cacheKey);
+    if (options?.forceRefresh) {
+      invalidateTaxonomyCache(cacheKey);
+      inflightRequests.delete(cacheKey);
+      const res = await requestJson<Category[]>(url);
+      if (res.success && Array.isArray(res.data)) {
+        taxonomyCache.set(cacheKey, { data: res, expiresAt: Date.now() + 30_000 });
+      }
+      return res;
+    }
     return cachedFetch(cacheKey, 30_000, () => requestJson<Category[]>(url));
   },
 
   add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/add`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1389,6 +1413,7 @@ export const allPlatformCategoriesService = {
   },
 
   update: (payload: { id: string; category_type?: string; code?: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/update`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1396,6 +1421,7 @@ export const allPlatformCategoriesService = {
   },
 
   delete: (id: string): Promise<ApiResponse<{ deleted: number }>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/delete?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
