@@ -719,24 +719,45 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     }
   }, [loadAccounts, switchAccount, userId]);
 
-  const updateAccount = useCallback(async (accountId: string, label: string, phone?: string) => {
-    const cleanLabel = label.trim();
-    if (!cleanLabel) {
-      setErrorMessage("Nhập tên tài khoản Zalo trước.");
-      return;
-    }
-    setAccountsError(null);
-    try {
-      const safeAccountId = normalizeZaloUserId(accountId);
-      await updateZaloAccount(safeAccountId, {
-        label: cleanLabel,
-        phone: phone?.trim() || undefined,
-      });
-      await loadAccounts();
-    } catch (error) {
-      setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
-    }
-  }, [loadAccounts]);
+  const updateAccount = useCallback(
+    async (
+      accountId: string,
+      label: string,
+      phone?: string,
+      extra?: {
+        owner_name?: string;
+        id_member?: string;
+        sim_location?: string;
+        sim_location_detail?: string;
+        domain_ids?: string[];
+        group_ids?: string[];
+      }
+    ) => {
+      const cleanLabel = label.trim();
+      if (!cleanLabel) {
+        setErrorMessage("Nhập tên tài khoản Zalo trước.");
+        return;
+      }
+      setAccountsError(null);
+      try {
+        const safeAccountId = normalizeZaloUserId(accountId);
+        await updateZaloAccount(safeAccountId, {
+          label: cleanLabel,
+          phone: phone?.trim() || undefined,
+          owner_name: extra?.owner_name,
+          id_member: extra?.id_member,
+          sim_location: extra?.sim_location,
+          sim_location_detail: extra?.sim_location_detail,
+          domain_ids: extra?.domain_ids,
+          group_ids: extra?.group_ids,
+        });
+        await loadAccounts();
+      } catch (error) {
+        setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
+      }
+    },
+    [loadAccounts]
+  );
 
   const applyAuthStatus = useCallback((statusResponse: ZaloCurrentStatusResponse) => {
     setSessionId(statusResponse.session_id);

@@ -10,6 +10,7 @@ import { ZaloAddAccountModal } from "./ZaloAddAccountModal";
 import { ZaloEditAccountModal } from "./ZaloEditAccountModal";
 import { isZaloExtensionAvailable } from "@/services/zaloExtension";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { allPlatformUsersService } from "@/services/all-platform.service";
 
 interface ZaloDashboardViewProps {
   flow: ZaloCrawlerFlowValue;
@@ -57,6 +58,49 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
 
   // Extension availability check
   const [extensionInstalled, setExtensionInstalled] = useState<boolean>(true);
+
+  // User profiles map (id -> name) for resolving human personnel names
+  const [usersMap, setUsersMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    allPlatformUsersService
+      .getAllProfiles()
+      .then((res: any) => {
+        if (res.success && Array.isArray(res.data)) {
+          const map: Record<string, string> = {};
+          res.data.forEach((u: any) => {
+            const uid = u.id || u.user_id;
+            const uname = u.name || u.full_name || u.email;
+            if (uid && uname) {
+              map[uid] = uname;
+            }
+          });
+          setUsersMap(map);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const getAssignedName = (account: any) => {
+    const rawName = account.owner_name;
+    const memberId = account.id_member || account.owner_id;
+    const isUuid = (val?: string) =>
+      Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
+
+    // 1. If owner_name exists and is a valid readable name (not uuid), return it
+    if (rawName && !isUuid(rawName)) return rawName;
+
+    // 2. If memberId exists and is in usersMap, return mapped human name
+    if (memberId && usersMap[memberId]) return usersMap[memberId];
+
+    // 3. If rawName exists and is in usersMap (in case rawName was set to uuid)
+    if (rawName && usersMap[rawName]) return usersMap[rawName];
+
+    // 4. Fallback if memberId is a readable name (not uuid, not default)
+    if (memberId && !isUuid(memberId) && memberId !== "default") return memberId;
+
+    return "Chưa gán";
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -360,10 +404,10 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                       {/* Nhân sự phụ trách & Vị trí SIM */}
                       <td className="px-3.5 py-3">
                         <div className="flex flex-col gap-1">
-                          <div className="inline-flex items-center gap-1 font-medium text-on-surface">
-                            <span className="material-symbols-outlined text-[13px] text-on-surface-variant shrink-0">person</span>
-                            <span className="truncate max-w-[140px]">
-                              {(account as any).owner_name || (account as any).id_member || "Chưa gán"}
+                          <div className="inline-flex items-center gap-1.5 font-bold text-on-surface">
+                            <span className="material-symbols-outlined text-[14px] text-primary shrink-0">person</span>
+                            <span className="truncate max-w-[160px] text-slate-800" title={getAssignedName(account)}>
+                              {getAssignedName(account)}
                             </span>
                           </div>
                           <div>

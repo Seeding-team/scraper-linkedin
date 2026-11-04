@@ -249,7 +249,7 @@ export function ZaloEditAccountModal({ open, account, onClose, onSubmit }: ZaloE
       await onSubmit({
         label: name.trim(),
         phone: phone.trim() || undefined,
-        owner_name: ownerName || undefined,
+        owner_name: ownerName || staffList.find((s) => s.id === ownerId)?.name || undefined,
         id_member: ownerId || undefined,
         sim_location: simLocation,
         sim_location_detail: simLocation === "other" ? simLocationDetail.trim() : undefined,

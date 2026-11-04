@@ -161,6 +161,28 @@ async def list_accounts(
     auth_users = set(await list_zca_auth_users())
     by_id = {str(row.get("account_id")): dict(row) for row in db_accounts if row.get("account_id")}
 
+    # Bulk auto-resolve missing owner_name from app_users
+    missing_owner_ids = [
+        str(row.get("id_member"))
+        for row in by_id.values()
+        if row.get("id_member") and not row.get("owner_name")
+    ]
+    if missing_owner_ids:
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import _rest
+            users = await _rest(
+                "GET",
+                "app_users",
+                params={"id": f"in.({','.join(set(missing_owner_ids))})", "select": "id,name,email"}
+            )
+            if users and isinstance(users, list):
+                u_map = {str(u["id"]): (u.get("name") or u.get("email")) for u in users}
+                for row in by_id.values():
+                    if row.get("id_member") and not row.get("owner_name"):
+                        row["owner_name"] = u_map.get(str(row["id_member"]))
+        except Exception as e:
+            logger.debug(f"Failed to bulk-resolve owner_name: {e}")
+
     for auth_user in auth_users:
         if auth_user in by_id:
             continue
@@ -341,6 +363,18 @@ async def update_account(
         if id_member is None:
             id_member = existing.get("id_member")
 
+    owner_name = body.owner_name
+    if not owner_name and id_member:
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import _rest
+            users = await _rest("GET", "app_users", params={"id": f"eq.{id_member}", "select": "name,email"})
+            if users and isinstance(users, list) and len(users) > 0:
+                owner_name = users[0].get("name") or users[0].get("email")
+        except Exception as e:
+            logger.debug(f"Could not auto-resolve owner_name for id_member {id_member}: {e}")
+    if owner_name is None:
+        owner_name = existing.get("owner_name")
+
     # is_shared_with_all cấp quyền xem/gửi cho TOÀN BỘ nhân viên -- chỉ admin được đổi cờ này,
     # khác với các field khác (cho phép cả leader/self qua _require_admin_leader_or_self ở trên).
     is_shared_with_all = existing.get("is_shared_with_all")
@@ -361,7 +395,7 @@ async def update_account(
             phone=body.phone if body.phone is not None else existing.get("phone"),
             status=body.status if body.status is not None else existing.get("status") or "unknown",
             is_shared_with_all=is_shared_with_all,
-            owner_name=body.owner_name if body.owner_name is not None else existing.get("owner_name"),
+            owner_name=owner_name,
             sim_location=body.sim_location if body.sim_location is not None else existing.get("sim_location"),
             sim_location_detail=body.sim_location_detail if body.sim_location_detail is not None else existing.get("sim_location_detail"),
             assigned_domains=body.domain_ids if body.domain_ids is not None else existing.get("assigned_domains"),
