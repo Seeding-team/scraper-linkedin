@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Search, Edit2, Trash2, Power, RefreshCw, Check, ArrowUpDown } from "lucide-react";
+import { Plus, Search, Edit2, Trash2, Power, RefreshCw, Check } from "lucide-react";
 import { allPlatformCategoriesService } from "@/services/all-platform.service";
 import type { Category } from "@/types/unified.types";
 import { cn } from "@/lib/utils";
@@ -61,7 +61,7 @@ export default function SeedingConfigPage() {
   const fetchItems = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await allPlatformCategoriesService.getAll(activeSection, { forceRefresh: true });
+      const res = await allPlatformCategoriesService.getAll(activeSection, { activeOnly: false, forceRefresh: true });
       if (res.success && Array.isArray(res.data)) {
         setItems(res.data);
       } else {
@@ -75,8 +75,27 @@ export default function SeedingConfigPage() {
   }, [activeSection]);
 
   useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
+    let cancelled = false;
+    void allPlatformCategoriesService
+      .getAll(activeSection, { activeOnly: false, forceRefresh: true })
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success && Array.isArray(res.data)) {
+          setItems(res.data);
+        } else {
+          setItems([]);
+        }
+        setIsLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        toast.error("Không thể tải danh mục cấu hình.");
+        setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSection]);
 
   const filteredItems = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
@@ -252,6 +271,7 @@ export default function SeedingConfigPage() {
               key={sec.key}
               type="button"
               onClick={() => {
+                setIsLoading(true);
                 setActiveSection(sec.key);
                 setSearchTerm("");
                 setStatusFilter("all");
@@ -301,7 +321,7 @@ export default function SeedingConfigPage() {
           <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">Trạng thái:</label>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as any)}
+            onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
             className="px-2.5 py-1.5 text-xs bg-muted/50 border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 cursor-pointer"
           >
             <option value="all">Tất cả ({items.length})</option>
