@@ -41,6 +41,7 @@ import {
   DollarSign,
   UserCheck,
   X,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -58,6 +59,9 @@ import { QuoteWorkspaceModal } from "@/modules/crm/components/QuoteWorkspaceModa
 import { AssignUserModal } from "@/modules/omnichannel/components/AssignUserModal";
 import { CrmQuote360Panel } from "@/components/all-platform/inbox/CrmQuote360Panel";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import Link from "next/link";
+import { allPlatformQuickInboxService } from "@/services/all-platform.service";
+import type { QuickInboxTemplate } from "@/types/unified.types";
 
 function FacebookIcon({ className, size = 20 }: { className?: string; size?: number }) {
   return (
@@ -354,7 +358,41 @@ export default function InboxModernLayout(props: Props) {
     accountOwnerEmail,
   } = props;
 
-  const [templateGroupId, setTemplateGroupId] = useState(QUICK_REPLY_GROUPS[0].id);
+  const [templateGroupId, setTemplateGroupId] = useState("greeting");
+  const [inboxTemplates, setInboxTemplates] = useState<QuickInboxTemplate[]>([]);
+
+  useEffect(() => {
+    allPlatformQuickInboxService
+      .getAll()
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          setInboxTemplates(res.data);
+        }
+      })
+      .catch((err) => console.debug("Load quick inbox templates error:", err));
+  }, []);
+
+  const replyGroups = useMemo(() => {
+    if (!inboxTemplates || inboxTemplates.length === 0) {
+      return QUICK_REPLY_GROUPS;
+    }
+    const map: Record<string, { id: string; label: string; items: { title: string; text: string }[] }> = {};
+    inboxTemplates.forEach((t) => {
+      const label = (t.label || "Chào hỏi").trim();
+      const id = label.toLowerCase().replace(/\s+/g, "_");
+      if (!map[id]) {
+        map[id] = { id, label, items: [] };
+      }
+      if (t.content) {
+        map[id].items.push({
+          title: t.title || label,
+          text: t.content,
+        });
+      }
+    });
+    const list = Object.values(map);
+    return list.length > 0 ? list : QUICK_REPLY_GROUPS;
+  }, [inboxTemplates]);
   const [kpiToast, setKpiToast] = useState<{ msg: string; ok: boolean } | null>(null);
   const [noteDraftState, setNoteDraftState] = useState({ convId: "", value: "" });
 
@@ -400,7 +438,7 @@ export default function InboxModernLayout(props: Props) {
   const selectedName = archiveReading ? selectedArchive?.name : selectedConv?.name;
   const selectedPreview = archiveReading ? selectedArchive?.preview : selectedConv?.preview;
   const selectedNote = openConv ? customerNotes[openConv] ?? selectedArchive?.note ?? "" : "";
-  const activeTemplateGroup = QUICK_REPLY_GROUPS.find(g => g.id === templateGroupId) || QUICK_REPLY_GROUPS[0];
+  const activeTemplateGroup = replyGroups.find(g => g.id === templateGroupId) || replyGroups[0] || QUICK_REPLY_GROUPS[0];
   const noteDraft = noteDraftState.convId === openConv ? noteDraftState.value : selectedNote;
   const setNoteDraft = (value: string) => setNoteDraftState({ convId: openConv, value });
 
@@ -1339,11 +1377,20 @@ export default function InboxModernLayout(props: Props) {
             <div className="space-y-2 pt-2 border-t border-slate-100">
               <div className="flex items-center justify-between text-[11px] font-bold tracking-wider text-slate-400">
                 <span>MẪU TRẢ LỜI NHANH</span>
-                <button onClick={() => setTemplateGroupId("greeting")} className="text-slate-500 hover:text-[#d81b60] font-semibold">Xem tất cả &gt;</button>
+                <Link
+                  href="/all-platform/quick-comments?tab=inbox"
+                  target="_blank"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#d81b60] hover:underline bg-[#fce4ec] px-2 py-0.5 rounded-md transition"
+                  title="Mở Thư viện mẫu inbox Zalo để thêm mới, sửa hoặc xóa câu chào hỏi & tư vấn"
+                >
+                  <Settings size={12} />
+                  <span>Tùy chỉnh mẫu</span>
+                  <ExternalLink size={10} />
+                </Link>
               </div>
 
               <div className="flex items-center gap-1 overflow-x-auto no-scrollbar">
-                {QUICK_REPLY_GROUPS.map(g => (
+                {replyGroups.map(g => (
                   <button
                     key={g.id}
                     onClick={() => setTemplateGroupId(g.id)}

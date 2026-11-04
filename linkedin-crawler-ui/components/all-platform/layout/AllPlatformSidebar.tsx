@@ -695,6 +695,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Inbox Zalo Admin",
       matchStartsWith: ["/all-platform/zalo-inbox"],
     },
+    {
+      type: "item",
+      id: "zalo-quick-inbox-templates",
+      href: "/all-platform/quick-comments?tab=inbox",
+      icon: "chat_bubble",
+      label: "Mẫu câu Inbox Zalo",
+      matchStartsWith: ["/all-platform/quick-comments"],
+    },
     // Tạm thời ẩn 5 menu Zalo nâng cao theo lệnh Master (Chuyển tiếp tự động, Gửi hàng loạt, Chiến dịch tự động, Gửi nhiều nhóm, Quét thành viên nhóm), khi cần sẽ mở lại
     // ...(isAdmin || isLeader ? zaloAdvancedItems : []),
   ];
