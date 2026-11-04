@@ -376,28 +376,17 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [evaluationsMap, setEvaluationsMap] = useState<Record<string, string>>({});
   const [callsMap, setCallsMap] = useState<Record<string, { result: string; attempts: number; lastCall?: string }>>({});
 
-  // Sync evaluations and calls from localStorage and window events
+  // Sync evaluations and calls from server (Master Requirement: all members see identical data)
   useEffect(() => {
     if (typeof window === "undefined") return;
     const evMap: Record<string, string> = {};
     const cMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
-
-    // [Master Requirement 2026-11-03]: Nạp đánh giá bài viết từ server để TẤT CẢ mọi người (Admin, Leader, Staff) đều thấy như nhau
-    void fetch("/api/all-platform/posts/evaluations")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.success && data?.data) {
-          setEvaluationsMap((prev) => ({ ...data.data, ...prev }));
-        }
-      })
-      .catch((err) => console.debug("Fetch evaluations failed:", err));
 
     posts.forEach((p) => {
       const pid = String(p.id || p.post_url || "");
       const idKey = p.id ? String(p.id) : "";
       const urlKey = p.post_url ? String(p.post_url) : "";
 
-      // Check all possible keys for evaluation
       const savedEv =
         localStorage.getItem(`post_eval_${pid}`) ||
         (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
@@ -412,7 +401,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (urlKey) evMap[urlKey] = savedEv;
       }
 
-      // Check call result
       const savedCall =
         localStorage.getItem(`post_call_${pid}`) ||
         (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
@@ -449,29 +437,78 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       }
     });
 
-    setEvaluationsMap(evMap);
-    setCallsMap(cMap);
+    // Populate local cache without wiping existing server state
+    setEvaluationsMap((prev) => ({ ...evMap, ...prev }));
+    setCallsMap((prev) => ({ ...cMap, ...prev }));
+
+    const loadServerData = () => {
+      void fetch("/api/all-platform/posts/evaluations")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.success && data?.data) {
+            const newEvMap: Record<string, string> = {};
+            const newCallsMap: Record<string, { result: string; attempts: number; lastCall?: string }> = {};
+
+            Object.entries(data.data).forEach(([key, val]) => {
+              if (typeof val === "string") {
+                newEvMap[key] = val;
+              } else if (val && typeof val === "object") {
+                const item = val as any;
+                if (item.status) {
+                  newEvMap[key] = item.status;
+                }
+                if (item.call_result !== undefined || item.call_attempts !== undefined) {
+                  newCallsMap[key] = {
+                    result: item.call_result || "",
+                    attempts: Number(item.call_attempts) || 0,
+                    lastCall: item.last_call || "",
+                  };
+                }
+              }
+            });
+
+            // Server state takes absolute precedence
+            setEvaluationsMap((prev) => ({ ...prev, ...newEvMap }));
+            setCallsMap((prev) => ({ ...prev, ...newCallsMap }));
+          }
+        })
+        .catch((err) => console.debug("Fetch evaluations failed:", err));
+    };
+
+    // Load server evaluations immediately
+    loadServerData();
+
+    // Poll server every 30s to keep all members completely in sync
+    const pollTimer = setInterval(loadServerData, 30000);
 
     const handleEvUpdate = (e: any) => {
       const pId = String(e.detail?.postId || "");
+      const pUrl = String(e.detail?.postUrl || "");
       const val = e.detail?.status || e.detail?.evaluation || "";
-      if (pId && val) {
-        setEvaluationsMap((prev) => ({ ...prev, [pId]: val }));
+      if (val) {
+        setEvaluationsMap((prev) => {
+          const updated = { ...prev };
+          if (pId) updated[pId] = val;
+          if (pUrl) updated[pUrl] = val;
+          return updated;
+        });
       }
     };
 
     const handleCallUpdate = (e: any) => {
       const pId = String(e.detail?.postId || "");
-      if (pId) {
-        setCallsMap((prev) => ({
-          ...prev,
-          [pId]: {
-            result: e.detail.result || "",
-            attempts: e.detail.attempts || 0,
-            lastCall: e.detail.lastCall || "",
-          },
-        }));
-      }
+      const pUrl = String(e.detail?.postUrl || "");
+      const item = {
+        result: e.detail?.result || "",
+        attempts: Number(e.detail?.attempts) || 0,
+        lastCall: e.detail?.lastCall || "",
+      };
+      setCallsMap((prev) => {
+        const updated = { ...prev };
+        if (pId) updated[pId] = item;
+        if (pUrl) updated[pUrl] = item;
+        return updated;
+      });
     };
 
     window.addEventListener("seeding_post_eval_updated", handleEvUpdate);
@@ -479,6 +516,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     window.addEventListener("seeding_post_call_updated", handleCallUpdate);
 
     return () => {
+      clearInterval(pollTimer);
       window.removeEventListener("seeding_post_eval_updated", handleEvUpdate);
       window.removeEventListener("seeding_post_evaluation_updated", handleEvUpdate);
       window.removeEventListener("seeding_post_call_updated", handleCallUpdate);
@@ -1070,10 +1108,32 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const currentPage = isClientFiltered ? clientPage : page;
 
   const displayPosts = useMemo(() => {
-    if (!isClientFiltered) return visiblePosts;
-    const start = (clientPage - 1) * CLIENT_PAGE_SIZE;
-    return visiblePosts.slice(start, start + CLIENT_PAGE_SIZE);
-  }, [visiblePosts, isClientFiltered, clientPage]);
+    const list = !isClientFiltered
+      ? visiblePosts
+      : visiblePosts.slice((clientPage - 1) * CLIENT_PAGE_SIZE, clientPage * CLIENT_PAGE_SIZE);
+
+    return list.map((p) => {
+      const pid = String(p.id || p.post_url || "");
+      const idKey = p.id ? String(p.id) : "";
+      const urlKey = p.post_url ? String(p.post_url) : "";
+      const { rating, call } = getPostRatingAndCall(p);
+      const callData = callsMap[pid] || (idKey && callsMap[idKey]) || (urlKey && callsMap[urlKey]);
+      const attempts = (callData && typeof callData === "object" ? callData.attempts : 0) || 0;
+      const lastCall = (callData && typeof callData === "object" ? callData.lastCall : "") || "";
+
+      return {
+        ...p,
+        evaluation_status: rating,
+        evaluation: rating,
+        call_result: call,
+        callResult: call,
+        call_attempts: attempts,
+        callAttempts: attempts,
+        last_call: lastCall,
+        lastCall: lastCall,
+      };
+    });
+  }, [visiblePosts, isClientFiltered, clientPage, getPostRatingAndCall, callsMap]);
 
   const handlePageChange = useCallback((newPage: number) => {
     if (isClientFiltered) {

@@ -5,6 +5,7 @@ import { FaFacebook, FaLinkedin, FaYoutube, FaLink, FaExternalLinkAlt, FaTimes, 
 import { FaThreads } from "react-icons/fa6";
 import type { UnifiedPost } from "@/types/unified.types";
 import { PostEvaluationDropdown } from "./PostEvaluationDropdown";
+import { PostCallResultDropdown } from "./PostCallResultDropdown";
 import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
 
 interface PostQuickViewModalProps {
@@ -167,7 +168,21 @@ export function PostQuickViewModal({ post, teamMembers, onClose, onStartSeeding 
               </div>
               <div className="flex justify-between py-1.5 border-b border-border/50 items-center">
                 <span className="text-muted-foreground">Tình trạng:</span>
-                <PostEvaluationDropdown postId={post.id || post.post_url} />
+                <PostEvaluationDropdown
+                  postId={post.id || post.post_url}
+                  postUrl={post.post_url}
+                  initialStatus={(post as any).evaluation_status || (post as any).evaluation}
+                />
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-border/50 items-center">
+                <span className="text-muted-foreground">Kết quả liên hệ:</span>
+                <PostCallResultDropdown
+                  postId={post.id || post.post_url}
+                  postUrl={post.post_url}
+                  initialResult={(post as any).call_result || (post as any).callResult}
+                  initialAttempts={(post as any).call_attempts || (post as any).callAttempts}
+                  initialLastCall={(post as any).last_call || (post as any).lastCall}
+                />
               </div>
               <div className="flex justify-between py-1.5 border-b border-border/50 items-center">
                 <span className="text-muted-foreground">Gán seeding:</span>

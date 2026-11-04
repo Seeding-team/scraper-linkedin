@@ -36,6 +36,7 @@ export function PostEvaluationDropdown({
 }: PostEvaluationDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentValue, setCurrentValue] = useState<string>(() => {
+    if (initialStatus && initialStatus !== "chua_danh_gia") return initialStatus;
     if (typeof window !== "undefined" && postId) {
       const saved = localStorage.getItem(`post_eval_${postId}`);
       if (saved) return saved;
@@ -45,31 +46,37 @@ export function PostEvaluationDropdown({
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Sync state if postId or initialStatus changes
+  // Sync state if postId or initialStatus changes (Server priority)
   useEffect(() => {
+    if (initialStatus) {
+      setCurrentValue(initialStatus);
+      return;
+    }
     if (typeof window !== "undefined" && postId) {
       const saved = localStorage.getItem(`post_eval_${postId}`);
       if (saved) {
         setCurrentValue(saved);
-        return;
       }
-    }
-    if (initialStatus) {
-      setCurrentValue(initialStatus);
     }
   }, [postId, initialStatus]);
 
   // Listen for cross-component sync event (e.g., QuickView modal to PostCard)
   useEffect(() => {
     const handleSync = (e: Event) => {
-      const customEvent = e as CustomEvent<{ postId: string; status: string }>;
-      if (customEvent.detail?.postId === postId && customEvent.detail?.status) {
-        setCurrentValue(customEvent.detail.status);
+      const customEvent = e as CustomEvent<{ postId: string; postUrl?: string; status?: string; evaluation?: string }>;
+      const d = customEvent.detail;
+      if (d && (d.postId === postId || (postUrl && d.postUrl === postUrl))) {
+        const val = d.status || d.evaluation;
+        if (val) setCurrentValue(val);
       }
     };
     window.addEventListener("seeding_post_eval_updated", handleSync);
-    return () => window.removeEventListener("seeding_post_eval_updated", handleSync);
-  }, [postId]);
+    window.addEventListener("seeding_post_evaluation_updated", handleSync);
+    return () => {
+      window.removeEventListener("seeding_post_eval_updated", handleSync);
+      window.removeEventListener("seeding_post_evaluation_updated", handleSync);
+    };
+  }, [postId, postUrl]);
 
   // Close on click outside
   useEffect(() => {
@@ -104,12 +111,12 @@ export function PostEvaluationDropdown({
       // 2. Dispatch sync event trong client
       window.dispatchEvent(
         new CustomEvent("seeding_post_eval_updated", {
-          detail: { postId, status: option.value, evaluation: option.value },
+          detail: { postId, postUrl, status: option.value, evaluation: option.value },
         })
       );
       window.dispatchEvent(
         new CustomEvent("seeding_post_evaluation_updated", {
-          detail: { postId, status: option.value, evaluation: option.value },
+          detail: { postId, postUrl, status: option.value, evaluation: option.value },
         })
       );
 
@@ -121,6 +128,14 @@ export function PostEvaluationDropdown({
           post_id: postId,
           post_url: postUrl || null,
           status: option.value,
+          user_email: (() => {
+            try {
+              const u = localStorage.getItem("current_user");
+              return u ? JSON.parse(u)?.email : "unknown";
+            } catch {
+              return "unknown";
+            }
+          })(),
         }),
       }).catch((err) => {
         console.error("Lưu đánh giá bài viết lên server thất bại:", err);

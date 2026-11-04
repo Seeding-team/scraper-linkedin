@@ -1,4 +1,4 @@
-"""Post evaluations router — Shared persistent storage for post ratings across all users."""
+"""Post evaluations router — Shared persistent storage for post ratings and contact results across all users."""
 
 from __future__ import annotations
 
@@ -44,21 +44,39 @@ def _save_evaluations(data: Dict[str, Dict[str, Any]]) -> None:
 class SavePostEvaluationRequest(BaseModel):
     post_id: str
     post_url: Optional[str] = None
-    status: str
+    status: Optional[str] = None
+    call_result: Optional[str] = None
+    call_attempts: Optional[int] = None
+    last_call: Optional[str] = None
     user_email: Optional[str] = None
 
 
 @router.get("/evaluations", response_model=BaseResponse)
 def get_all_post_evaluations() -> BaseResponse:
-    """Lấy toàn bộ map đánh giá bài viết dùng chung cho tất cả các thành viên (Admin, Leader, Staff)."""
+    """Lấy toàn bộ map đánh giá và kết quả liên hệ dùng chung cho tất cả các thành viên (Admin, Leader, Staff)."""
     try:
         stored = _load_evaluations()
-        result_map: Dict[str, str] = {}
+        result_map: Dict[str, Dict[str, Any]] = {}
         for k, v in stored.items():
-            st = v.get("status") if isinstance(v, dict) else str(v)
-            if st:
-                result_map[k] = st
-        return BaseResponse(success=True, data=result_map, message="Loaded post evaluations")
+            if isinstance(v, dict):
+                result_map[k] = {
+                    "status": v.get("status", "chua_danh_gia"),
+                    "call_result": v.get("call_result", ""),
+                    "call_attempts": v.get("call_attempts", 0),
+                    "last_call": v.get("last_call", ""),
+                    "evaluated_by": v.get("evaluated_by", ""),
+                    "updated_at": v.get("updated_at", ""),
+                }
+            elif isinstance(v, str):
+                result_map[k] = {
+                    "status": v,
+                    "call_result": "",
+                    "call_attempts": 0,
+                    "last_call": "",
+                    "evaluated_by": "",
+                    "updated_at": "",
+                }
+        return BaseResponse(success=True, data=result_map, message="Loaded post evaluations and contact results")
     except Exception as e:
         logger.error(f"Failed to get post evaluations: {e}")
         return BaseResponse(success=False, data={}, message=str(e))
@@ -66,21 +84,33 @@ def get_all_post_evaluations() -> BaseResponse:
 
 @router.post("/evaluations", response_model=BaseResponse)
 def save_post_evaluation(payload: SavePostEvaluationRequest) -> BaseResponse:
-    """Lưu đánh giá bài viết và chia sẻ đồng bộ cho toàn bộ hệ thống."""
+    """Lưu đánh giá bài viết và kết quả liên hệ, đồng bộ chung cho toàn bộ nhân sự hệ thống."""
     try:
         pid = (payload.post_id or "").strip()
         purl = (payload.post_url or "").strip()
-        status = (payload.status or "chua_danh_gia").strip()
         email = (payload.user_email or "unknown").strip()
 
         if not pid and not purl:
             raise HTTPException(status_code=400, detail="Thiếu post_id hoặc post_url")
 
         stored = _load_evaluations()
+        existing = stored.get(pid) or stored.get(purl) or {}
+        if not isinstance(existing, dict):
+            existing = {"status": str(existing)}
+
         now_str = datetime.now(timezone.utc).isoformat()
+        
+        status = payload.status.strip() if payload.status is not None else existing.get("status", "chua_danh_gia")
+        call_result = payload.call_result.strip() if payload.call_result is not None else existing.get("call_result", "")
+        call_attempts = payload.call_attempts if payload.call_attempts is not None else existing.get("call_attempts", 0)
+        last_call = payload.last_call.strip() if payload.last_call is not None else existing.get("last_call", "")
+
         item = {
             "status": status,
-            "evaluated_by": email,
+            "call_result": call_result,
+            "call_attempts": call_attempts,
+            "last_call": last_call,
+            "evaluated_by": email if email != "unknown" else existing.get("evaluated_by", "unknown"),
             "updated_at": now_str,
         }
 
@@ -90,7 +120,7 @@ def save_post_evaluation(payload: SavePostEvaluationRequest) -> BaseResponse:
             stored[purl] = item
 
         _save_evaluations(stored)
-        return BaseResponse(success=True, message=f"Đã lưu đánh giá {status}", data=item)
+        return BaseResponse(success=True, message="Đã lưu đánh giá và kết quả liên hệ đồng bộ", data=item)
     except HTTPException:
         raise
     except Exception as e:

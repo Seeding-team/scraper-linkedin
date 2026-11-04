@@ -179,6 +179,7 @@ docker-compose.override.yml
 /local-db/
 
 # ---- Root-level generated artifacts ----
+artifacts/
 __pycache__/
 scratch/
 linkedin-crawler-ui/scratch/

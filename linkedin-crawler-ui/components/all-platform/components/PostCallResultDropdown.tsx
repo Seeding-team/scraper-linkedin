@@ -25,19 +25,26 @@ export const CALL_RESULT_OPTIONS: CallResultOption[] = [
 
 interface PostCallResultDropdownProps {
   postId: string;
+  postUrl?: string;
   initialResult?: string;
+  initialAttempts?: number;
+  initialLastCall?: string;
   onResultChange?: (result: string, attempts: number) => void;
   className?: string;
 }
 
 export function PostCallResultDropdown({
   postId,
+  postUrl,
   initialResult,
+  initialAttempts,
+  initialLastCall,
   onResultChange,
   className,
 }: PostCallResultDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [currentValue, setCurrentValue] = useState<string>(() => {
+    if (initialResult !== undefined && initialResult !== "") return initialResult;
     if (typeof window !== "undefined" && postId) {
       const saved = localStorage.getItem(`post_call_${postId}`);
       if (saved) return saved;
@@ -46,6 +53,7 @@ export function PostCallResultDropdown({
   });
 
   const [attempts, setAttempts] = useState<number>(() => {
+    if (initialAttempts !== undefined && initialAttempts > 0) return initialAttempts;
     if (typeof window !== "undefined" && postId) {
       const saved = localStorage.getItem(`post_call_attempts_${postId}`);
       if (saved) return parseInt(saved, 10) || 0;
@@ -54,6 +62,7 @@ export function PostCallResultDropdown({
   });
 
   const [lastCall, setLastCall] = useState<string>(() => {
+    if (initialLastCall !== undefined && initialLastCall !== "") return initialLastCall;
     if (typeof window !== "undefined" && postId) {
       return localStorage.getItem(`post_call_last_${postId}`) || "";
     }
@@ -62,36 +71,50 @@ export function PostCallResultDropdown({
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Sync state if postId or initialResult changes
+  // Sync state if postId or initial props change (e.g. loaded from server)
   useEffect(() => {
-    if (typeof window !== "undefined" && postId) {
+    if (initialResult !== undefined) {
+      setCurrentValue(initialResult || "");
+    } else if (typeof window !== "undefined" && postId) {
       const saved = localStorage.getItem(`post_call_${postId}`);
-      if (saved) {
-        setCurrentValue(saved);
-      }
-      const savedAttempts = localStorage.getItem(`post_call_attempts_${postId}`);
-      if (savedAttempts) {
-        setAttempts(parseInt(savedAttempts, 10) || 0);
-      }
-      const savedLast = localStorage.getItem(`post_call_last_${postId}`);
-      if (savedLast) {
-        setLastCall(savedLast);
-      }
+      if (saved) setCurrentValue(saved);
     }
-  }, [postId, initialResult]);
+
+    if (initialAttempts !== undefined) {
+      setAttempts(initialAttempts || 0);
+    } else if (typeof window !== "undefined" && postId) {
+      const savedAttempts = localStorage.getItem(`post_call_attempts_${postId}`);
+      if (savedAttempts) setAttempts(parseInt(savedAttempts, 10) || 0);
+    }
+
+    if (initialLastCall !== undefined) {
+      setLastCall(initialLastCall || "");
+    } else if (typeof window !== "undefined" && postId) {
+      const savedLast = localStorage.getItem(`post_call_last_${postId}`);
+      if (savedLast) setLastCall(savedLast);
+    }
+  }, [postId, initialResult, initialAttempts, initialLastCall]);
 
   // Listen for cross-component sync event
   useEffect(() => {
     const handleSync = (e: Event) => {
-      const customEvent = e as CustomEvent<{ postId: string; result: string; attempts: number }>;
-      if (customEvent.detail?.postId === postId) {
-        if (customEvent.detail.result !== undefined) setCurrentValue(customEvent.detail.result);
-        if (customEvent.detail.attempts !== undefined) setAttempts(customEvent.detail.attempts);
+      const customEvent = e as CustomEvent<{
+        postId: string;
+        postUrl?: string;
+        result?: string;
+        attempts?: number;
+        lastCall?: string;
+      }>;
+      const d = customEvent.detail;
+      if (d && (d.postId === postId || (postUrl && d.postUrl === postUrl))) {
+        if (d.result !== undefined) setCurrentValue(d.result);
+        if (d.attempts !== undefined) setAttempts(d.attempts);
+        if (d.lastCall !== undefined) setLastCall(d.lastCall);
       }
     };
     window.addEventListener("seeding_post_call_updated", handleSync);
     return () => window.removeEventListener("seeding_post_call_updated", handleSync);
-  }, [postId]);
+  }, [postId, postUrl]);
 
   // Close on click outside
   useEffect(() => {
@@ -127,13 +150,39 @@ export function PostCallResultDropdown({
       localStorage.setItem(`post_call_${postId}`, option.value);
       localStorage.setItem(`post_call_attempts_${postId}`, String(nextAttempts));
       localStorage.setItem(`post_call_last_${postId}`, nowStr);
+      if (postUrl) {
+        localStorage.setItem(`post_call_${postUrl}`, option.value);
+        localStorage.setItem(`post_call_attempts_${postUrl}`, String(nextAttempts));
+        localStorage.setItem(`post_call_last_${postUrl}`, nowStr);
+      }
 
-      // Dispatch sync event
+      // 1. Dispatch sync event trong client
       window.dispatchEvent(
         new CustomEvent("seeding_post_call_updated", {
-          detail: { postId, result: option.value, attempts: nextAttempts },
+          detail: { postId, postUrl, result: option.value, attempts: nextAttempts, lastCall: nowStr },
         })
       );
+
+      // 2. Gọi Backend API lưu persistent vào server để TẤT CẢ mọi người đều thấy
+      void fetch("/api/all-platform/posts/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          post_id: postId,
+          post_url: postUrl || null,
+          call_result: option.value,
+          call_attempts: nextAttempts,
+          last_call: nowStr,
+          user_email: (() => {
+            try {
+              const u = localStorage.getItem("current_user");
+              return u ? JSON.parse(u)?.email : "unknown";
+            } catch {
+              return "unknown";
+            }
+          })(),
+        }),
+      }).catch((err) => console.debug("Persist post call result failed:", err));
     }
 
     if (onResultChange) {
@@ -176,7 +225,7 @@ export function PostCallResultDropdown({
         </span>
       )}
 
-      {/* Dropdown Menu (Chuẩn theo Ảnh 2 của Master) */}
+      {/* Dropdown Menu (Chuẩn theo dropdown của Master) */}
       {isOpen && (
         <div
           className="absolute left-0 bottom-full mb-1 z-50 w-52 rounded-xl border border-slate-700/80 bg-[#2d3748] py-1 text-white shadow-xl backdrop-blur-md animate-in fade-in-0 zoom-in-95 duration-100"
@@ -208,4 +257,3 @@ export function PostCallResultDropdown({
     </div>
   );
 }
-

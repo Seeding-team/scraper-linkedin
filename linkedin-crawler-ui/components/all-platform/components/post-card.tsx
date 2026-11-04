@@ -739,7 +739,8 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             {/* Tình trạng bài viết (Chuẩn theo dropdown Ảnh 1) */}
             <PostEvaluationDropdown
               postId={post.id || post.post_url}
-              initialStatus={(post as any).evaluation_status}
+              postUrl={post.post_url}
+              initialStatus={(post as any).evaluation_status || (post as any).evaluation}
               onStatusChange={(status) => {
                 (post as any).evaluation_status = status;
                 (post as any).evaluation = status;
@@ -749,8 +750,15 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             {/* Kết quả liên hệ (Chuẩn theo dropdown Ảnh 2) */}
             <PostCallResultDropdown
               postId={post.id || post.post_url}
-              onResultChange={(result) => {
+              postUrl={post.post_url}
+              initialResult={(post as any).call_result || (post as any).callResult}
+              initialAttempts={(post as any).call_attempts || (post as any).callAttempts}
+              initialLastCall={(post as any).last_call || (post as any).lastCall}
+              onResultChange={(result, attempts) => {
                 (post as any).callResult = result;
+                (post as any).call_result = result;
+                (post as any).callAttempts = attempts;
+                (post as any).call_attempts = attempts;
               }}
             />
 
