@@ -237,7 +237,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const CURRENT_USER_EMAIL = user?.email || "";
 
   const [feedPlatform, setFeedPlatform] = useState<FeedPlatform>("facebook");
-  const [isQuickReviewActive, setIsQuickReviewActive] = useState(false);
   const [showKeywordsPanel, setShowKeywordsPanel] = useState(false);
   const [serviceArea, setServiceArea] = useState<ServiceAreaKey>("all");
   const searchParams = useSearchParams();
@@ -1498,9 +1497,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
             <QuickReviewToolbar
-              posts={visiblePosts}
-              isQuickReviewActive={isQuickReviewActive}
-              onToggleQuickReview={() => setIsQuickReviewActive((prev) => !prev)}
+              posts={displayPosts}
               onBatchRejectSuccess={(affectedIds) => {
                 setPosts((prev) =>
                   prev.map((p) =>
@@ -1513,6 +1510,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               onUndoSuccess={() => {
                 void fetchPosts();
               }}
+              hasNextPage={currentPage < effectiveTotalPages}
+              onNextPage={() => handlePageChange(currentPage + 1)}
             />
 
             <div className="flex items-center gap-2">

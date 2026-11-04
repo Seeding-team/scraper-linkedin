@@ -7,18 +7,21 @@ import type { UnifiedPost } from "@/types/unified.types";
 
 interface QuickReviewToolbarProps {
   posts: UnifiedPost[];
-  isQuickReviewActive: boolean;
-  onToggleQuickReview: () => void;
   onBatchRejectSuccess?: (affectedPostIds: string[], undoToken: string) => void;
   onUndoSuccess?: () => void;
+  hasNextPage?: boolean;
+  onNextPage?: () => void;
+  // Optional for backward compatibility
+  isQuickReviewActive?: boolean;
+  onToggleQuickReview?: () => void;
 }
 
 export function QuickReviewToolbar({
   posts,
-  isQuickReviewActive,
-  onToggleQuickReview,
   onBatchRejectSuccess,
   onUndoSuccess,
+  hasNextPage = false,
+  onNextPage,
 }: QuickReviewToolbarProps) {
   const [undoToken, setUndoToken] = useState<string | null>(null);
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
@@ -27,23 +30,32 @@ export function QuickReviewToolbar({
 
   // Thống kê bài viết trên trang hiện tại
   const canLienHeCount = posts.filter(
-    (p) => p.evaluation_code === "can-lien-he"
+    (p) => p.evaluation_code === "can-lien-he" || (p as any).evaluation_status === "can_lien_he"
   ).length;
 
   const khongPhuHopCount = posts.filter(
-    (p) => p.evaluation_code === "khong-phu-hop"
+    (p) => p.evaluation_code === "khong-phu-hop" || (p as any).evaluation_status === "khong_phu_hop"
   ).length;
 
   // Lọc ra các bài chưa đánh giá (chưa có code hoặc 'chua-danh-gia')
   const unreviewedPosts = posts.filter(
-    (p) => !p.evaluation_code || p.evaluation_code === "chua-danh-gia"
+    (p) =>
+      (!p.evaluation_code || p.evaluation_code === "chua-danh-gia") &&
+      (p as any).evaluation_status !== "can_lien_he" &&
+      (p as any).evaluation_status !== "khong_phu_hop"
   );
   const unreviewedCount = unreviewedPosts.length;
 
-  const handleExecuteBatchReject = async () => {
+  const handleExecuteBatchReject = async (advanceToNextPage = false) => {
     if (unreviewedCount === 0) {
-      toast.info("Không có bài viết nào chưa đánh giá trên trang này.");
-      setIsConfirmOpen(false);
+      if (advanceToNextPage && onNextPage) {
+        setIsConfirmOpen(false);
+        onNextPage();
+        toast.info("Trang hiện tại đã được đánh giá đầy đủ. Đang chuyển sang trang tiếp theo.");
+      } else {
+        toast.info("Không có bài viết nào chưa đánh giá trên trang này.");
+        setIsConfirmOpen(false);
+      }
       return;
     }
 
@@ -68,6 +80,10 @@ export function QuickReviewToolbar({
           },
           duration: 8000,
         });
+
+        if (advanceToNextPage && onNextPage) {
+          onNextPage();
+        }
       } else {
         toast.error(res.message || "Không thể thực hiện đánh giá hàng loạt.");
       }
@@ -101,68 +117,41 @@ export function QuickReviewToolbar({
 
   return (
     <>
-      <div className="flex items-center justify-between gap-3 flex-wrap p-3 rounded-xl bg-card border border-border shadow-2xs mb-4">
-        {/* Toggle Review Nhanh */}
-        <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setIsConfirmOpen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-2xs transition cursor-pointer"
+          title="Mở Review Nhanh để hoàn tất đánh giá các bài viết trên trang"
+        >
+          <span className="material-symbols-outlined text-[16px]">bolt</span>
+          <span>Review Nhanh</span>
+        </button>
+
+        {undoToken && (
           <button
             type="button"
-            onClick={onToggleQuickReview}
-            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-2xs cursor-pointer ${
-              isQuickReviewActive
-                ? "bg-amber-500 hover:bg-amber-600 text-white shadow-amber-500/20"
-                : "bg-muted hover:bg-muted/80 text-muted-foreground border border-border"
-            }`}
+            disabled={isUndoing}
+            onClick={() => handleUndo()}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition cursor-pointer"
+            title="Khôi phục trạng thái trước khi Review Nhanh"
           >
-            <span className="material-symbols-outlined text-[18px]">bolt</span>
-            <span>{isQuickReviewActive ? "Đang bật Review Nhanh" : "Bật Review Nhanh"}</span>
+            <span className="material-symbols-outlined text-[16px]">undo</span>
+            <span>{isUndoing ? "Đang hoàn tác..." : "Hoàn tác vừa rồi"}</span>
           </button>
-
-          {isQuickReviewActive && (
-            <span className="text-xs text-muted-foreground hidden sm:inline">
-              ⚡ Xem lướt các bài phù hợp, sau đó bấm <b>Hoàn tất trang</b> để tự động loại các bài còn lại.
-            </span>
-          )}
-        </div>
-
-        {/* Các nút hành động khi bật Review Nhanh */}
-        <div className="flex items-center gap-2">
-          {undoToken && (
-            <button
-              type="button"
-              disabled={isUndoing}
-              onClick={() => handleUndo()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 transition cursor-pointer"
-              title="Khôi phục trạng thái trước khi bấm Hoàn tất trang"
-            >
-              <span className="material-symbols-outlined text-[16px]">undo</span>
-              <span>{isUndoing ? "Đang hoàn tác..." : "Hoàn tác vừa rồi"}</span>
-            </button>
-          )}
-
-          {isQuickReviewActive && (
-            <button
-              type="button"
-              onClick={() => setIsConfirmOpen(true)}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm transition cursor-pointer"
-              title="Đánh dấu tất cả các bài chưa đánh giá trên trang này là 'Không phù hợp'"
-            >
-              <span className="material-symbols-outlined text-[16px]">done_all</span>
-              <span>Hoàn tất trang &amp; loại các bài còn lại ({unreviewedCount})</span>
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Modal xác nhận Hoàn tất trang */}
+      {/* Modal xác nhận Review Nhanh */}
       {isConfirmOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
           <div className="bg-card w-full max-w-md rounded-2xl border border-border shadow-2xl p-5 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 grid place-items-center shrink-0">
-                <span className="material-symbols-outlined text-2xl">help_outline</span>
+                <span className="material-symbols-outlined text-2xl">bolt</span>
               </div>
               <div>
-                <h3 className="text-base font-bold text-foreground">Xác nhận hoàn tất Review trang này</h3>
+                <h3 className="text-base font-bold text-foreground">Xác nhận Review Nhanh</h3>
                 <p className="text-xs text-muted-foreground">Áp dụng cho các bài viết hiển thị trên trang hiện tại</p>
               </div>
             </div>
@@ -192,7 +181,7 @@ export function QuickReviewToolbar({
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-1">
+            <div className="flex items-center justify-end gap-2 pt-2 flex-wrap">
               <button
                 type="button"
                 disabled={isSubmitting}
@@ -201,14 +190,38 @@ export function QuickReviewToolbar({
               >
                 Hủy bỏ
               </button>
-              <button
-                type="button"
-                disabled={isSubmitting || unreviewedCount === 0}
-                onClick={handleExecuteBatchReject}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
-              >
-                {isSubmitting ? "Đang xử lý..." : "Xác nhận"}
-              </button>
+
+              {hasNextPage ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={isSubmitting || unreviewedCount === 0}
+                    onClick={() => handleExecuteBatchReject(false)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold border border-border bg-card hover:bg-muted text-foreground transition shadow-2xs cursor-pointer disabled:opacity-50"
+                  >
+                    {isSubmitting ? "Đang xử lý..." : "Hoàn tất Review"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => handleExecuteBatchReject(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    <span>{isSubmitting ? "Đang xử lý..." : "Xác nhận & Sang trang tiếp"}</span>
+                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  disabled={isSubmitting || unreviewedCount === 0}
+                  onClick={() => handleExecuteBatchReject(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {isSubmitting ? "Đang xử lý..." : "Xác nhận"}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -216,4 +229,3 @@ export function QuickReviewToolbar({
     </>
   );
 }
-
