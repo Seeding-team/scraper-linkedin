@@ -39,6 +39,7 @@ from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
 from app.modules.all_platform.zalo.services.zca_api_bridge import (
     ZcaAuthExpiredError,
     find_zca_user_by_phone,
+    get_zca_user_info,
     find_zca_user_by_username,
     get_zca_group_history,
     get_zca_user_history,
@@ -1847,6 +1848,7 @@ class CreateUserConversationRequest(BaseModel):
     user_id: str = Field(..., min_length=1, description="uid Zalo tìm được qua GET /users/find")
     display_name: str = Field(..., min_length=1)
     avatar_url: Optional[str] = None
+    phone: Optional[str] = None
 
 
 @router.post("/users")
@@ -1878,6 +1880,44 @@ async def create_conversation_with_user(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể tạo hội thoại: {exc}")
+
+    # Nếu có phone truyền từ card bài viết hoặc tìm kiếm, match ngay với customer_leads
+    if body.phone:
+        raw_phone = str(body.phone).strip()
+        clean_digits = re.sub(r"\D", "", raw_phone)
+        if clean_digits.startswith("84") and len(clean_digits) >= 10:
+            clean_digits = "0" + clean_digits[2:]
+        if clean_digits:
+            try:
+                existing_leads = await _rest(
+                    "GET",
+                    "customer_leads",
+                    params={"conv_id": f"eq.{target_uid}", "limit": 1},
+                )
+                if existing_leads and isinstance(existing_leads, list) and len(existing_leads) > 0:
+                    await _rest(
+                        "PATCH",
+                        "customer_leads",
+                        params={"id": f"eq.{existing_leads[0]['id']}"},
+                        payload={"phone": clean_digits, "updated_at": datetime.now(timezone.utc).isoformat()},
+                    )
+                else:
+                    await _rest(
+                        "POST",
+                        "customer_leads",
+                        payload={
+                            "customer_name": body.display_name.strip() or f"Zalo User {clean_digits[-4:]}",
+                            "phone": clean_digits,
+                            "conv_id": target_uid,
+                            "source_platform": "zalo",
+                            "status": "new",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+            except Exception as link_err:
+                logger.warning(f"Auto-link lead phone to conv_id {target_uid} failed: {link_err}")
+
     return {"ok": True, "conversation_id": target_uid, "group_name": body.display_name.strip()}
 
 
@@ -2103,8 +2143,11 @@ async def get_stickers_detail(
 async def get_conversation_phone(
     conversation_id: str,
     name: Optional[str] = Query(None),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
 ):
-    """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign."""
+    """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign,
+    kèm cơ chế ZCA reverse lookup từ UID khách hàng."""
     conv_id = (conversation_id or "").strip()
     if not conv_id:
         return {"success": False, "phone": None}
@@ -2211,6 +2254,46 @@ async def get_conversation_phone(
         digits = re.sub(r"\D", "", conv_id)
         if (len(digits) == 10 and digits.startswith("0")) or (len(digits) == 11 and digits.startswith("84")):
             phone = digits
+
+    # 7. Truy ngược số điện thoại từ ZCA bằng UID của khách nếu conv_id là UID
+    if not phone:
+        uid_digits = re.sub(r"\D", "", conv_id)
+        # UID Zalo là chuỗi số dài (thường >= 8 chữ số)
+        if len(uid_digits) >= 8:
+            try:
+                acc_id = _normalize_user_id(account_id or x_user_id)
+                auth = await load_zca_auth(acc_id)
+                if auth:
+                    info_res = await get_zca_user_info(auth, conv_id)
+                    info = (info_res or {}).get("info") or {}
+                    changed = info.get("changed_profiles") or {}
+                    profile = changed.get(conv_id) or changed.get(str(conv_id)) or info
+                    raw_phone = profile.get("phoneNumber") or profile.get("phone")
+                    if raw_phone:
+                        clean_zca = re.sub(r"\D", "", str(raw_phone))
+                        if clean_zca.startswith("84") and len(clean_zca) >= 10:
+                            clean_zca = "0" + clean_zca[2:]
+                        if len(clean_zca) >= 9:
+                            phone = clean_zca
+                            # Lưu vào customer_leads để cache vĩnh viễn
+                            try:
+                                await _rest(
+                                    "POST",
+                                    "customer_leads",
+                                    payload={
+                                        "customer_name": clean_name or f"Zalo User {clean_zca[-4:]}",
+                                        "phone": clean_zca,
+                                        "conv_id": conv_id,
+                                        "source_platform": "zalo",
+                                        "status": "new",
+                                        "created_at": datetime.now(timezone.utc).isoformat(),
+                                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                                    },
+                                )
+                            except Exception:
+                                pass
+            except Exception as zca_err:
+                logger.debug(f"reverse lookup phone via ZCA getUserInfo failed for conv_id {conv_id}: {zca_err}")
 
     # Chuẩn hóa về dạng 0...
     if phone:

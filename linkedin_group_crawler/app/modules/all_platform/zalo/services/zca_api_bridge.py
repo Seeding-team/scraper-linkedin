@@ -510,6 +510,17 @@ async def find_zca_user_by_username(auth: Dict[str, Any], username: str) -> Dict
     return result.get("user") or {}
 
 
+async def get_zca_user_info(auth: Dict[str, Any], user_id: str) -> Dict[str, Any]:
+    """Gọi zca-js getUserInfo(userId). Trả về thông tin profile/user từ UID Zalo."""
+    result = await _run_zca_command(
+        "get-user-info",
+        auth,
+        args=["--user-id", str(user_id).strip()],
+        timeout_seconds=30,
+    )
+    return result or {}
+
+
 async def first_time_sync(
     auth: Dict[str, Any],
     *,

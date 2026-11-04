@@ -1060,7 +1060,7 @@ export function ZaloInboxAdminShell() {
     // 3. Tra cứu từ backend API (customer_leads hoặc auto_seeding_comments)
     void (async () => {
       try {
-        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone?name=${encodeURIComponent(selectedName || "")}`);
+        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone?name=${encodeURIComponent(selectedName || "")}&account_id=${encodeURIComponent(inbox.selectedAccountId || "")}`);
         if (!res.ok) return;
         const data = await res.json();
         if (!cancelled && data?.success && data?.phone) {
@@ -1158,13 +1158,24 @@ export function ZaloInboxAdminShell() {
       inbox.showToast("Chưa chọn tài khoản Zalo để gửi tin", false);
       return;
     }
+    const targetPhone = (targetUser as any).phone_e164 || (inbox.searchQuery || "").replace(/\D/g, "");
     setIsStartingInlineChat(true);
     try {
       const res = await createZaloUserThread(activeAccountId, {
         user_id: targetUser.user_id,
         display_name: targetUser.display_name,
         avatar_url: targetUser.avatar_url ?? null,
+        phone: targetPhone || undefined,
       });
+      if (res?.conversation_id && targetPhone) {
+        try {
+          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(res.conversation_id)}/phone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: targetPhone, name: targetUser.display_name }),
+          });
+        } catch {}
+      }
       if (res?.conversation_id) {
         inbox.setSearchQuery("");
         setInlinePhoneResult(null);
@@ -2332,18 +2343,30 @@ export function ZaloInboxAdminShell() {
                           </button>
                         </div>
                       ) : activeConvPhone ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setInputPhoneDraft(activeConvPhone);
-                            setEditingPhoneConvId(inbox.openConv);
-                          }}
-                          title="Click để chỉnh sửa số điện thoại"
-                          className="group inline-flex items-center gap-1 shrink-0 font-bold font-mono tracking-tight text-rose-700 bg-rose-50 hover:bg-rose-100/90 border border-rose-200/80 px-2 py-0.5 rounded-lg text-xs shadow-2xs transition cursor-pointer"
-                        >
-                          <span>({activeConvPhone})</span>
-                          <Pencil className="h-2.5 w-2.5 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </button>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInputPhoneDraft(activeConvPhone);
+                              setEditingPhoneConvId(inbox.openConv);
+                            }}
+                            title="Click để chỉnh sửa số điện thoại"
+                            className="group inline-flex items-center gap-1 shrink-0 font-bold font-mono tracking-tight text-rose-700 bg-rose-50 hover:bg-rose-100/90 border border-rose-200/80 px-2 py-0.5 rounded-lg text-xs shadow-2xs transition cursor-pointer"
+                          >
+                            <span>({activeConvPhone})</span>
+                            <Pencil className="h-2.5 w-2.5 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+
+                          {/* NÚT GỌI ĐIỆN THOẠI TRỰC TIẾP (CALL) CHO ĐỒNG ĐỘI/NHÂN SỰ */}
+                          <a
+                            href={`tel:${activeConvPhone.replace(/\D/g, "")}`}
+                            title={`Bấm để gọi ngay cho khách hàng: ${activeConvPhone}`}
+                            className="inline-flex items-center gap-1 shrink-0 font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-2.5 py-0.5 rounded-lg text-xs shadow-xs transition cursor-pointer"
+                          >
+                            <Phone className="h-3 w-3 fill-white" />
+                            <span>Gọi ngay</span>
+                          </a>
+                        </div>
                       ) : (
                         <button
                           type="button"
@@ -2351,7 +2374,7 @@ export function ZaloInboxAdminShell() {
                             setInputPhoneDraft("");
                             setEditingPhoneConvId(inbox.openConv);
                           }}
-                          title="Bấm để thêm số điện thoại cho khách hàng này"
+                          title="Bấm để thêm hoặc cập nhật số điện thoại cho khách hàng"
                           className="inline-flex items-center gap-1 shrink-0 font-medium text-slate-500 hover:text-rose-700 bg-slate-50 hover:bg-rose-50 border border-dashed border-slate-300 hover:border-rose-300 px-2 py-0.5 rounded-lg text-xs transition cursor-pointer"
                         >
                           <Plus className="h-3 w-3 text-slate-400" />

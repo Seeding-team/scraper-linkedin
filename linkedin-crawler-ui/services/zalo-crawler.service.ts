@@ -929,6 +929,7 @@ export interface ZaloCreateUserThreadRequest {
   user_id: string;
   display_name: string;
   avatar_url?: string | null;
+  phone?: string;
 }
 
 export interface ZaloCreateUserThreadResponse {

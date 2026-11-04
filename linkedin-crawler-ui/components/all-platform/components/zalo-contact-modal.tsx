@@ -231,13 +231,32 @@ export function ZaloContactModal({
       const dName = found.display_name || found.zalo_name || zaloDisplayName || "Khách hàng";
       setStatusText(`Đã tìm thấy Zalo: ${dName}. Đang gửi tin nhắn...`);
 
-      // 2. Mở / tạo thread chat 1-1
+      // 2. Mở / tạo thread chat 1-1 và match số điện thoại ngay từ Post Feed
       const threadRes = await createZaloUserThread(selectedAccountId, {
         user_id: targetUid,
         display_name: dName,
         avatar_url: found.avatar_url || null,
+        phone: phoneNumber,
       });
       const convId = threadRes?.conversation_id || targetUid;
+
+      // 2.1 Match số điện thoại với cuộc trò chuyện ngay lập tức
+      try {
+        await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phone: phoneNumber, name: dName }),
+        });
+        if (targetUid && targetUid !== convId) {
+          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(targetUid)}/phone`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: phoneNumber, name: dName }),
+          });
+        }
+      } catch (phoneErr) {
+        console.warn("Could not save conversation phone:", phoneErr);
+      }
 
       // 3. Nếu người dùng có nhập tin nhắn, gửi tin nhắn đi
       if (message.trim()) {

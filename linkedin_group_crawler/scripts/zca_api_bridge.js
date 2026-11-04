@@ -927,6 +927,14 @@ async function main() {
     return;
   }
 
+  if (args.command === "get-user-info") {
+    const userId = String(args["user-id"] || args.userId || input.user_id || input.userId || "").trim();
+    if (!userId) throw new Error("Missing --user-id");
+    const info = await api.getUserInfo(userId);
+    emitAndExit({ ok: true, info: info || null }, 0);
+    return;
+  }
+
   if (args.command === "find-user-by-username") {
     const username = String(args.username || "").trim();
     if (!username) throw new Error("Missing --username");
