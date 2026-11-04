@@ -25,7 +25,16 @@ export function QuickReviewToolbar({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
 
-  // Lọc ra các bài chưa đánh giá hoặc không phải "khong-phu-hop" trong danh sách trang hiện tại
+  // Thống kê bài viết trên trang hiện tại
+  const canLienHeCount = posts.filter(
+    (p) => p.evaluation_code === "can-lien-he"
+  ).length;
+
+  const khongPhuHopCount = posts.filter(
+    (p) => p.evaluation_code === "khong-phu-hop"
+  ).length;
+
+  // Lọc ra các bài chưa đánh giá (chưa có code hoặc 'chua-danh-gia')
   const unreviewedPosts = posts.filter(
     (p) => !p.evaluation_code || p.evaluation_code === "chua-danh-gia"
   );
@@ -138,7 +147,7 @@ export function QuickReviewToolbar({
               title="Đánh dấu tất cả các bài chưa đánh giá trên trang này là 'Không phù hợp'"
             >
               <span className="material-symbols-outlined text-[16px]">done_all</span>
-              <span>Hoàn tất trang ({unreviewedCount} bài chưa xét)</span>
+              <span>Hoàn tất trang &amp; loại các bài còn lại ({unreviewedCount})</span>
             </button>
           )}
         </div>
@@ -149,23 +158,38 @@ export function QuickReviewToolbar({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
           <div className="bg-card w-full max-w-md rounded-2xl border border-border shadow-2xl p-5 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 grid place-items-center shrink-0">
+              <div className="w-10 h-10 rounded-xl bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400 grid place-items-center shrink-0">
                 <span className="material-symbols-outlined text-2xl">help_outline</span>
               </div>
               <div>
-                <h3 className="text-base font-bold text-foreground">Xác nhận Review Nhanh</h3>
-                <p className="text-xs text-muted-foreground">Áp dụng cho trang hiển thị hiện tại</p>
+                <h3 className="text-base font-bold text-foreground">Xác nhận hoàn tất Review trang này</h3>
+                <p className="text-xs text-muted-foreground">Áp dụng cho các bài viết hiển thị trên trang hiện tại</p>
               </div>
             </div>
 
-            <div className="bg-muted p-3.5 rounded-xl text-xs space-y-2 text-foreground leading-relaxed">
-              <p>
-                Bạn có chắc chắn muốn gán nhãn <b>"Không phù hợp"</b> cho{" "}
-                <span className="text-rose-600 font-bold">{unreviewedCount} bài viết</span> chưa được đánh giá trên trang này?
-              </p>
-              <p className="text-muted-foreground text-[11px]">
-                ℹ️ Các bài bạn đã chủ động chọn "Phù hợp" hoặc "Cân nhắc" sẽ được <b>giữ nguyên</b>. Bạn luôn có thể bấm <b>Hoàn tác</b> ngay sau đó.
-              </p>
+            {/* Thống kê bài viết trên trang */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200/60 dark:bg-emerald-950/20 dark:border-emerald-800/40">
+                  <span className="font-medium text-emerald-800 dark:text-emerald-300">Cần liên hệ:</span>
+                  <span className="font-bold text-emerald-700 dark:text-emerald-200 text-sm">{canLienHeCount} bài</span>
+                </div>
+                <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 dark:bg-slate-900/40 dark:border-slate-800">
+                  <span className="font-medium text-slate-700 dark:text-slate-300">Chưa phù hợp:</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">{khongPhuHopCount} bài</span>
+                </div>
+              </div>
+
+              {/* Cảnh báo nổi bật */}
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200/80 dark:bg-amber-950/30 dark:border-amber-800/50 space-y-1.5">
+                <div className="flex items-center gap-2 text-amber-900 dark:text-amber-200 font-bold text-xs">
+                  <span className="material-symbols-outlined text-[18px] text-amber-600 dark:text-amber-400">warning</span>
+                  <span>Sẽ chuyển &apos;Chưa phù hợp&apos;: <span className="text-rose-600 dark:text-rose-400 font-extrabold text-sm">{unreviewedCount}</span> bài</span>
+                </div>
+                <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 leading-relaxed pl-6.5">
+                  Tất cả bài viết chưa được đánh giá trên trang này sẽ được tự động gắn nhãn &quot;Không phù hợp&quot;. Bạn có thể hoàn tác ngay sau khi thực hiện.
+                </p>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-1">
@@ -173,7 +197,7 @@ export function QuickReviewToolbar({
                 type="button"
                 disabled={isSubmitting}
                 onClick={() => setIsConfirmOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:bg-muted transition"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:bg-muted transition cursor-pointer"
               >
                 Hủy bỏ
               </button>
@@ -181,9 +205,9 @@ export function QuickReviewToolbar({
                 type="button"
                 disabled={isSubmitting || unreviewedCount === 0}
                 onClick={handleExecuteBatchReject}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm"
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
               >
-                {isSubmitting ? "Đang xử lý..." : `Xác nhận gán (${unreviewedCount} bài)`}
+                {isSubmitting ? "Đang xử lý..." : "Xác nhận"}
               </button>
             </div>
           </div>

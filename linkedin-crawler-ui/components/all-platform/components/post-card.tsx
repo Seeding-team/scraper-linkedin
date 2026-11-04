@@ -456,10 +456,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             )}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <EvaluationDropdown post={post} />
-            <PostCallResultDropdown post={post} />
-            <div className="shrink-0 text-right leading-tight">
+          <div className="shrink-0 text-right leading-tight">
               {(() => {
                 const pubDt = formatPostDateTime(post.post_time || post.posted_at);
                 const crawlFormatted = post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : '';
@@ -493,7 +490,6 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 );
               })()}
             </div>
-          </div>
         </div>
 
         {/* Nội dung */}
@@ -720,6 +716,10 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 </span>
               </>
             )}
+
+            {/* Đánh giá và Kết quả liên hệ */}
+            <EvaluationDropdown post={post} />
+            <PostCallResultDropdown post={post} />
 
             {/* Tên người đăng bài post gốc (hoặc Ẩn danh) */}
             {(() => {
