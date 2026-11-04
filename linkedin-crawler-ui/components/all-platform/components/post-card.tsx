@@ -7,6 +7,7 @@ import { FiExternalLink } from "react-icons/fi";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
+import { PostCallResultDropdown } from "@/components/all-platform/posts/PostCallResultDropdown";
 import { ProposeKeywordModal } from "@/components/all-platform/posts/ProposeKeywordModal";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
@@ -148,6 +149,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
 
           <div className="flex items-center gap-2 shrink-0">
             <EvaluationDropdown post={post} />
+            <PostCallResultDropdown post={post} />
             <span className="text-sm text-muted-foreground font-medium text-right leading-tight">
               <span className="block">
               {post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : ''}

@@ -2899,6 +2899,25 @@ export const postEvaluationService = {
   },
 };
 
+export const postCallResultService = {
+  getCallResult: (postId: string, platform: string = "facebook"): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result?platform=${encodeURIComponent(platform)}`);
+  },
+
+  updateCallResult: (
+    postId: string,
+    payload: {
+      result_code: string;
+      platform?: string;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
 export const crawlKeywordsService = {
   listExcludeKeywords: (platform?: string, status: string = "active"): Promise<ApiResponse<any[]>> => {
     const params = new URLSearchParams();

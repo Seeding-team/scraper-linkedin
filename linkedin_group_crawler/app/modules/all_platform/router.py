@@ -481,12 +481,18 @@ all_platform_router.include_router(
 
 # ── Post Evaluation (Review Nhanh) & Crawl Keywords ───────────────────────────
 from app.modules.all_platform.routers.post_evaluation import router as post_evaluation_router
+from app.modules.all_platform.routers.post_call_result import router as post_call_result_router
 from app.modules.all_platform.routers.crawl_keywords import router as crawl_keywords_router
 
 all_platform_router.include_router(
     post_evaluation_router,
     prefix="/posts",
     tags=["All-Platform Post Evaluation"],
+)
+all_platform_router.include_router(
+    post_call_result_router,
+    prefix="/posts",
+    tags=["All-Platform Post Call Result"],
 )
 all_platform_router.include_router(
     crawl_keywords_router,

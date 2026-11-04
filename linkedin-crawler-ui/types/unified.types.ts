@@ -656,6 +656,12 @@ export interface CreateScheduledCommentRequest {
 
 // ── Post Evaluation & Keyword Exclusion Types ─────────────────────────────────
 
+export interface EvaluatorUser {
+  id?: string;
+  name?: string;
+  email?: string;
+}
+
 export interface UnifiedPost {
   evaluation_code?: string;
   evaluation_reason?: string;
@@ -663,9 +669,28 @@ export interface UnifiedPost {
   exclude_keyword_exempt?: boolean;
   is_excluded?: boolean;
   matched_keywords?: string[];
+  call_result_code?: string;
+  call_attempts?: number;
+  last_call_at?: string;
+  evaluated_by_user?: EvaluatorUser | null;
+  evaluated_at?: string | null;
+  updated_by_user?: EvaluatorUser | null;
 }
 
-export type PostEvaluationCode = "phu-hop" | "khong-phu-hop" | "can-nhac" | "chua-danh-gia";
+export type PostEvaluationCode = "chua-danh-gia" | "can-lien-he" | "khong-phu-hop" | string;
+
+export interface PostCallResult {
+  id?: string;
+  post_id: string;
+  platform: string;
+  result_code: string;
+  attempts: number;
+  last_call_at?: string;
+  updated_by?: string;
+  updated_by_user?: EvaluatorUser | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
 export interface PostEvaluation {
   id?: string;
@@ -676,6 +701,7 @@ export interface PostEvaluation {
   summary?: string;
   exclude_keyword_exempt?: boolean;
   evaluated_by?: string;
+  evaluated_by_user?: EvaluatorUser | null;
   evaluated_at?: string;
   created_at?: string;
   updated_at?: string;

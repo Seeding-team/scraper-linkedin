@@ -13,8 +13,19 @@ logger = logging.getLogger(__name__)
 
 POST_REVIEW_COLUMNS = (
     "id, post_id, platform, evaluation_code, reason, summary, "
-    "exclude_keyword_exempt, evaluated_by, evaluated_at, created_at, updated_at"
+    "exclude_keyword_exempt, evaluated_by, evaluated_at, created_at, updated_at, "
+    "evaluated_by_user:app_users!evaluated_by(id, name, email)"
 )
+
+
+def _normalize_review(row: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Chuẩn hoá object review, đảm bảo evaluated_by_user luôn nhất quán."""
+    if not row:
+        return row
+    user_obj = row.pop("app_users", None)
+    if user_obj and "evaluated_by_user" not in row:
+        row["evaluated_by_user"] = user_obj
+    return row
 
 
 def get_review(post_id: str, platform: str = "facebook") -> Optional[dict[str, Any]]:
@@ -28,7 +39,7 @@ def get_review(post_id: str, platform: str = "facebook") -> Optional[dict[str, A
         .maybe_single()
         .execute()
     )
-    return res.data if res else None
+    return _normalize_review(res.data) if res and res.data else None
 
 
 def get_reviews_by_post_ids(post_ids: list[str], platform: Optional[str] = None) -> dict[str, dict[str, Any]]:
@@ -43,7 +54,7 @@ def get_reviews_by_post_ids(post_ids: list[str], platform: Optional[str] = None)
 
     res = execute_supabase_query(lambda: query.execute())
     rows = res.data or []
-    return {str(r["post_id"]): r for r in rows}
+    return {str(r["post_id"]): _normalize_review(r) for r in rows}
 
 
 def update_evaluation(
@@ -54,7 +65,7 @@ def update_evaluation(
     """Cập nhật đánh giá cho 1 bài viết (upsert post_quick_review + append history)."""
     supabase = get_supabase_client()
     platform = payload.get("platform") or "facebook"
-    new_code = payload.get("evaluation_code") or "phu-hop"
+    new_code = payload.get("evaluation_code") or "can-lien-he"
     reason = payload.get("reason")
     summary = payload.get("summary")
     exempt = payload.get("exclude_keyword_exempt")
@@ -105,7 +116,8 @@ def update_evaluation(
         lambda: supabase.table("post_evaluation_history").insert(history_entry).execute()
     )
 
-    return saved_review
+    fresh = get_review(post_id, platform)
+    return fresh if fresh else saved_review
 
 
 def batch_reject(
