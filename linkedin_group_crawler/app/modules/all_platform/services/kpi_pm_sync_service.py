@@ -115,6 +115,7 @@ def build_payload(
             continue
 
         support_email = (m.get("support_user_email") or "").strip().lower()
+        support_name = m.get("support_user_name") or "Người hỗ trợ"
         # Supporter khong duoc trung voi assignee
         has_supporter = bool(support_email and support_email != user_email)
 
@@ -133,18 +134,32 @@ def build_payload(
             task_item: Dict[str, Any] = {
                 "externalKey": task_key,
                 "title": f"[{code}] {user_name} - {priority}",
-                "assigneeEmail": user_email,
+                "detail": f"[{code}] {user_name} - {priority}",
                 "priority": priority,
+                "status": "Done",
                 "manday": float(total_manday),
+                "startDate": week_start,
+                "assignee": {
+                    "email": user_email,
+                    "name": user_name,
+                },
+                "assigneeEmail": user_email,
             }
 
             if has_supporter:
+                task_item["support"] = {
+                    "email": support_email,
+                    "name": support_name,
+                }
                 task_item["supporterEmail"] = support_email
+                task_item["supportEmail"] = support_email
                 task_item["ratio"] = {"assign": 90, "support": 10}
 
             if eff_skill_solution_id:
+                task_item["skillSolutionId"] = eff_skill_solution_id
                 task_item["skillGroupId"] = eff_skill_solution_id
             if eff_skill_vendor_id:
+                task_item["skillVendorId"] = eff_skill_vendor_id
                 task_item["skillId"] = eff_skill_vendor_id
 
             tasks.append(task_item)
@@ -176,6 +191,7 @@ def persist_pm_sync_result(session_id: str, body: Dict[str, Any], status: str = 
 
     # 2. Cap nhat kpi_session_pm_tasks
     returned_tasks = body.get("tasks") or []
+    errors = body.get("errors") or []
     pm_group_id = (body.get("group") or {}).get("id")
 
     for t in returned_tasks:
@@ -197,6 +213,25 @@ def persist_pm_sync_result(session_id: str, body: Dict[str, Any], status: str = 
                 "pm_group_id": pm_group_id,
                 "last_synced_at": now_iso,
                 "last_error": None,
+                "updated_at": now_iso,
+            }).execute()
+
+    for err in errors:
+        ext_key = err.get("externalKey")
+        if not ext_key:
+            continue
+        parts = ext_key.split(":")
+        if len(parts) >= 5:
+            user_id = parts[3]
+            metric_code = parts[4]
+            supabase.table("kpi_session_pm_tasks").upsert({
+                "session_id": session_id,
+                "user_id": user_id,
+                "metric_code": metric_code,
+                "external_key": ext_key,
+                "pm_group_id": pm_group_id,
+                "last_synced_at": now_iso,
+                "last_error": err.get("message"),
                 "updated_at": now_iso,
             }).execute()
 
@@ -249,10 +284,33 @@ def sync_session_to_pm(session_id: str, user: Optional[Dict[str, Any]] = None) -
         return {"success": False, "message": f"PM trả về lỗi: {resp.text}"}
 
     body = resp.json()
-    persist_pm_sync_result(session_id, body, status="success")
+    errors = body.get("errors") or []
+    returned_tasks = body.get("tasks") or []
+
+    if errors and not returned_tasks:
+        first_err = errors[0].get("message") or "Lỗi từ PM"
+        persist_pm_sync_result(session_id, body, status="failed")
+        return {"success": False, "message": f"PM từ chối: {first_err}", "data": body}
+
+    persist_pm_sync_result(session_id, body, status="success" if not errors else "partial")
+
+    created_count = sum(1 for t in returned_tasks if t.get("action") == "created")
+    updated_count = sum(1 for t in returned_tasks if t.get("action") == "updated")
+    body["created_count"] = created_count
+    body["updated_count"] = updated_count
+    body["task_count"] = len(returned_tasks)
+    body["project_id"] = str(pm_project_id)
+    if (body.get("group") or {}).get("id"):
+        body["group_url"] = f"{pm_base_url}/projects/{pm_project_id}"
+
+    if errors:
+        msg = f"Đồng bộ {len(returned_tasks)} task thành công, nhưng có {len(errors)} task bị lỗi: {errors[0].get('message')}"
+    else:
+        msg = f"Đồng bộ thành công {len(returned_tasks)} tasks sang PM"
+
     return {
         "success": True,
-        "message": f"Đồng bộ thành công {len(body.get('tasks', []))} tasks sang PM",
+        "message": msg,
         "data": body,
     }
 

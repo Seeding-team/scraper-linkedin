@@ -168,17 +168,27 @@ def test_build_payload_for_pm():
 
     task_a = tasks[0]
     assert task_a["externalKey"] == "seeding-kpi:team-uuid-456:sess-uuid-123:user-uuid-1:can-lien-he"
+    assert task_a["assignee"] == {"email": "nguyenvana@markeeai.com", "name": "Nguyen Van A"}
     assert task_a["assigneeEmail"] == "nguyenvana@markeeai.com"
+    assert task_a["support"] == {"email": "nguyenvanb@markeeai.com", "name": "Người hỗ trợ"}
     assert task_a["supporterEmail"] == "nguyenvanb@markeeai.com"
+    assert task_a["supportEmail"] == "nguyenvanb@markeeai.com"
     assert task_a["priority"] == "Critical"
     assert task_a["manday"] == 3.5
     assert task_a["ratio"] == {"assign": 90, "support": 10}
+    assert task_a["skillSolutionId"] == 10
     assert task_a["skillGroupId"] == 10
+    assert task_a["skillVendorId"] == 25
     assert task_a["skillId"] == 25
+    assert task_a["detail"] == "[can-lien-he] Nguyen Van A - Critical"
+    assert task_a["status"] == "Done"
+    assert task_a["startDate"] == "2026-11-02"
 
     task_b = tasks[1]
     assert task_b["externalKey"] == "seeding-kpi:team-uuid-456:sess-uuid-123:user-uuid-2:can-lien-he"
     assert task_b["priority"] == "High"
+    assert task_b["assignee"] == {"email": "nguyenvanb@markeeai.com", "name": "Nguyen Van B"}
+    assert "support" not in task_b
     assert "supporterEmail" not in task_b
 
 
