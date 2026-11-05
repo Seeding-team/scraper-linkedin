@@ -1,5 +1,5 @@
--- Migration 218: Gom tin khách nhắn liên tiếp trước khi chuyển cho Bot Zalo.
--- Bổ sung cho 215/216/217. Idempotent: chạy lại nhiều lần không lỗi.
+-- Migration 220: Gom tin khách nhắn liên tiếp trước khi chuyển cho Bot Zalo.
+-- Bổ sung cho 217/218/219. Idempotent: chạy lại nhiều lần không lỗi.
 --
 --   batch_wait_seconds = N > 0 : khi khách nhắn, bot chờ N giây xem khách có gõ tiếp không; im lặng đủ N giây
 --                               thì gộp mọi tin chưa xử lý của hội thoại đó thành 1 câu hỏi -> 1 câu trả lời.

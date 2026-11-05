@@ -1,4 +1,4 @@
--- Migration 215: Cầu nối Zalo -> Chatwoot/n8n bot (dùng bot Markee Chat trả lời tự động).
+-- Migration 217: Cầu nối Zalo -> Chatwoot/n8n bot (dùng bot Markee Chat trả lời tự động).
 -- Engine: app/modules/all_platform/zalo/services/zalo_chatwoot_bridge.py
 -- Seeding chỉ làm "kênh": đẩy tin khách vào n8n (workflow "Seeding Zalo - Incoming"),
 -- bot (n8n + LightRAG) trả lời qua Chatwoot rồi n8n gọi lại Seeding để gửi tin ra Zalo.

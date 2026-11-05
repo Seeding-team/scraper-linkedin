@@ -259,13 +259,13 @@ def in_scope(scope_mode: str, rule: Optional[bool]) -> bool:
 
 
 SCOPE_MIGRATION_HINT = (
-    "Cơ sở dữ liệu chưa có bảng/cột phạm vi bot (migration 217_zalo_bot_scope.sql). "
+    "Cơ sở dữ liệu chưa có bảng/cột phạm vi bot (migration 219_zalo_bot_scope.sql). "
     "Chạy `python supabase/setup_test_db.py` trong thư mục linkedin_group_crawler rồi thử lại."
 )
 
 
 BATCH_MIGRATION_HINT = (
-    "Cơ sở dữ liệu chưa có cột gom tin (migration 218_zalo_bot_batch_wait.sql). "
+    "Cơ sở dữ liệu chưa có cột gom tin (migration 220_zalo_bot_batch_wait.sql). "
     "Chạy `python supabase/setup_test_db.py` trong thư mục linkedin_group_crawler rồi thử lại."
 )
 
@@ -279,14 +279,14 @@ def _raise_if_scope_table_missing(exc: Exception) -> None:
 
 
 async def get_rules(account_id: str) -> Dict[str, bool]:
-    """thread_id -> bot_on. Lỗi (vd. chưa chạy migration 217) -> {} để bot không sập."""
+    """thread_id -> bot_on. Lỗi (vd. chưa chạy migration 219) -> {} để bot không sập."""
     try:
         rows = await _rest(
             "GET", "zalo_bot_thread_rules",
             params={"select": "thread_id,bot_on", "account_id": f"eq.{account_id}", "limit": "10000"},
         ) or []
     except Exception:
-        logger.exception("[zalo-bot] đọc zalo_bot_thread_rules lỗi (đã chạy migration 217 chưa?)")
+        logger.exception("[zalo-bot] đọc zalo_bot_thread_rules lỗi (đã chạy migration 219 chưa?)")
         return {}
     return {r["thread_id"]: bool(r["bot_on"]) for r in rows}
 

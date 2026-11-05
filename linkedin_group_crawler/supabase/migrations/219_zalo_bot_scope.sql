@@ -1,5 +1,5 @@
--- Migration 217: Phạm vi bật Bot Zalo theo từng người (hội thoại 1-1).
--- Bổ sung cho 215/216. Idempotent: chạy lại nhiều lần không lỗi.
+-- Migration 219: Phạm vi bật Bot Zalo theo từng người (hội thoại 1-1).
+-- Bổ sung cho 217/218. Idempotent: chạy lại nhiều lần không lỗi.
 --
 --   scope_mode = 'all'      : bot trả lời MỌI người, trừ những hội thoại bị đặt bot_on = false ("loại trừ")
 --   scope_mode = 'selected' : bot CHỈ trả lời những hội thoại được đặt bot_on = true ("chỉ những người đã chọn")

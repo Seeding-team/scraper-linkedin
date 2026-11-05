@@ -362,7 +362,7 @@ def test_clean_search_strips_postgrest_specials():
     assert len(svc._clean_search("x" * 500)) == 80
 
 
-# ── Phạm vi bật bot theo người (migration 217) ────────────────────────────
+# ── Phạm vi bật bot theo người (migration 219) ────────────────────────────
 
 def test_in_scope_truth_table():
     # 'all': trả lời tất cả, trừ người bị tắt
@@ -404,7 +404,7 @@ def test_get_rules_survives_missing_table():
     async def boom(*a, **k):
         raise RuntimeError("relation does not exist")
     with mock.patch.object(svc, "_rest", boom):
-        assert run(svc.get_rules("acc1")) == {}          # chưa chạy migration 217: bot không sập
+        assert run(svc.get_rules("acc1")) == {}          # chưa chạy migration 219: bot không sập
         assert run(svc.get_rule("acc1", "u100")) is None
 
 
@@ -486,7 +486,7 @@ def test_missing_scope_table_gives_actionable_message(db):
             run(svc.set_rules("acc1", ["u100"], True, "a@x"))
 
 
-# ── Gom tin khách nhắn liên tiếp (migration 218) ──────────────────────────
+# ── Gom tin khách nhắn liên tiếp (migration 220) ──────────────────────────
 import time as _time
 
 
@@ -644,5 +644,5 @@ def test_missing_batch_column_gives_actionable_message(db):
             return []
         raise RuntimeError("Supabase POST zalo_bot_configs failed: 400 Could not find the 'batch_wait_seconds' column")
     with mock.patch.object(svc, "_rest", boom):
-        with pytest.raises(ValueError, match="218_zalo_bot_batch_wait"):
+        with pytest.raises(ValueError, match="220_zalo_bot_batch_wait"):
             run(svc.upsert_config("acc1", {"chatwoot_account_id": 3, "chatwoot_inbox_id": 1}, "a@x"))

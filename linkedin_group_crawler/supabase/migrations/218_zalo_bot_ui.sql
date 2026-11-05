@@ -1,5 +1,5 @@
--- Migration 216: Giao diện quản lý Bot Zalo (bật/tắt, tiếp quản hội thoại, nhật ký).
--- Bổ sung cho 215_zalo_rag_bot.sql. Idempotent: chạy lại nhiều lần không lỗi.
+-- Migration 218: Giao diện quản lý Bot Zalo (bật/tắt, tiếp quản hội thoại, nhật ký).
+-- Bổ sung cho 217_zalo_rag_bot.sql. Idempotent: chạy lại nhiều lần không lỗi.
 
 -- 1. Tuỳ chọn tự tạm dừng bot khi nhân viên nhắn tay + đồng bộ Chatwoot
 ALTER TABLE public.zalo_bot_configs
