@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
+
 import logging
 from typing import Any, Dict, List, Optional
 from app.core.supabase_client import get_supabase_client
@@ -51,11 +53,20 @@ def apply_template(payload: ApplyTemplateRequest, user_id: Optional[str] = None)
         raise ValueError("Khong tim thay template KPI goc")
 
     # 1. Upsert session
+    week_start = str(payload.week_start).strip()[:10]
+    week_end = str(payload.week_end).strip()[:10] if payload.week_end else None
+    if not week_end:
+        try:
+            ws_date = datetime.strptime(week_start, "%Y-%m-%d").date()
+            week_end = (ws_date + timedelta(days=6)).isoformat()
+        except Exception:
+            week_end = week_start
+
     session_data: Dict[str, Any] = {
         "crm_team_id": payload.crm_team_id,
         "source_template_id": payload.template_id,
-        "week_start": payload.week_start,
-        "week_end": payload.week_end,
+        "week_start": week_start,
+        "week_end": week_end,
         "created_by": user_id,
         "updated_at": "now()",
     }

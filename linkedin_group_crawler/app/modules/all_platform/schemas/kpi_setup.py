@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel, Field
 
 
@@ -48,8 +48,8 @@ class KpiTemplateUpdate(BaseModel):
 class ApplyTemplateRequest(BaseModel):
     crm_team_id: str
     template_id: str
-    week_start: str  # YYYY-MM-DD
-    week_end: str    # YYYY-MM-DD
+    week_start: Union[str, date]  # YYYY-MM-DD
+    week_end: Optional[Union[str, date]] = None  # YYYY-MM-DD, tu tinh neu khong gui
     skill_solution_id: Optional[int] = None
     skill_vendor_id: Optional[int] = None
     skill_solution_name: Optional[str] = None
