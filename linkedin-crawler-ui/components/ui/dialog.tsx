@@ -50,13 +50,16 @@ function DialogContent({
   className,
   children,
   hideCloseButton,
+  overlayClassName,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   hideCloseButton?: boolean;
+  /** Ghi đè class của lớp nền mờ (vd. nâng z-index khi app có sidebar/header z rất cao). */
+  overlayClassName?: string;
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(

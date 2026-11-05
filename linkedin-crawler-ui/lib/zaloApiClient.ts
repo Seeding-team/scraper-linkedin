@@ -240,6 +240,8 @@ export type ZaloMessage = {
    */
   cli_msg_id?: string | null;
   is_sent: boolean;
+  /** "bot" = tin do Bot AI trả lời. */
+  sent_by?: "bot" | null;
   is_deleted: boolean;
   group_id?: string | null;
   /** Tổng hợp cảm xúc đã thả vào tin này, vd {like: 2, heart: 1} — null nếu
