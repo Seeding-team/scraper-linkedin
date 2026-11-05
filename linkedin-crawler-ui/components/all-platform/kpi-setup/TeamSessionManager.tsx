@@ -20,6 +20,7 @@ import {
 } from "@/services/kpi-setup.service";
 import { ApplyTemplateModal } from "./ApplyTemplateModal";
 import { TeamKpiSessionView } from "./TeamKpiSessionView";
+import { KpiErrorBoundary } from "./KpiErrorBoundary";
 
 interface TeamSessionManagerProps {
   initialTeamId?: string;
@@ -270,10 +271,15 @@ export function TeamSessionManager({
           Đang tải dữ liệu kỳ KPI...
         </div>
       ) : sessionDetail ? (
-        <TeamKpiSessionView
-          session={sessionDetail}
-          onRefresh={() => loadDetail(selectedSessionId)}
-        />
+        <KpiErrorBoundary
+          fallbackTitle="Không thể hiển thị kỳ KPI này do lỗi dữ liệu"
+          onReset={() => loadDetail(selectedSessionId)}
+        >
+          <TeamKpiSessionView
+            session={sessionDetail}
+            onRefresh={() => loadDetail(selectedSessionId)}
+          />
+        </KpiErrorBoundary>
       ) : (
         <div className="p-16 border-2 border-dashed rounded-xl text-center space-y-3">
           <Layers className="w-12 h-12 text-muted-foreground mx-auto" />

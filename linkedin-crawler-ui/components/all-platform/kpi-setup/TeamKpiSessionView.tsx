@@ -266,6 +266,10 @@ export function TeamKpiSessionView({
                 <Badge variant="outline" className="text-amber-600 border-amber-300 gap-1 text-xs">
                   <Lock className="w-3 h-3" /> Đã chốt số
                 </Badge>
+              ) : session.status === "draft" ? (
+                <Badge variant="outline" className="text-slate-600 border-slate-300 gap-1 text-xs">
+                  Bản nháp
+                </Badge>
               ) : (
                 <Badge variant="secondary" className="gap-1 text-xs">
                   Đã đóng
@@ -543,146 +547,174 @@ export function TeamKpiSessionView({
             <div className="py-12 text-center text-xs text-muted-foreground">
               Chưa có dữ liệu xem thử.
             </div>
-          ) : (
-            <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/50 border-b text-muted-foreground font-semibold text-left">
-                    <tr>
-                      <th className="p-3 min-w-[160px]">Thành viên</th>
-                      <th className="p-3 text-center">Tỷ trọng</th>
-                      {(previewData.metrics || []).map((m) => (
-                        <th
-                          key={m.code}
-                          className="p-3 min-w-[170px] text-center"
-                        >
-                          <div>{m.name}</div>
-                          <span className="text-[10px] text-muted-foreground font-mono">
-                            ({m.code})
-                          </span>
+          ) : (() => {
+            const displayMetrics =
+              Array.isArray(previewData.metrics) && previewData.metrics.length > 0
+                ? previewData.metrics
+                : (session.levels || []).map((lvl) => ({
+                    code: lvl.metric_code,
+                    name: lvl.metric_code,
+                  }));
+
+            const totalTeamManday =
+              previewData.total_team_manday ??
+              (previewData.members || []).reduce(
+                (acc, m) => acc + (m.total_manday ?? (m as any).total_base_manday ?? 0),
+                0
+              );
+
+            return (
+              <div className="border rounded-xl overflow-hidden bg-card shadow-sm">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 border-b text-muted-foreground font-semibold text-left">
+                      <tr>
+                        <th className="p-3 min-w-[160px]">Thành viên</th>
+                        <th className="p-3 text-center">Tỷ trọng</th>
+                        {displayMetrics.map((m) => (
+                          <th
+                            key={m.code}
+                            className="p-3 min-w-[170px] text-center"
+                          >
+                            <div>{m.name}</div>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              ({m.code})
+                            </span>
+                          </th>
+                        ))}
+                        <th className="p-3 text-center min-w-[100px]">Manday cơ bản</th>
+                        <th className="p-3 text-center min-w-[100px]">Manday thưởng</th>
+                        <th className="p-3 text-center min-w-[110px] bg-[var(--color-markee-primary)]/5">
+                          Tổng Manday
                         </th>
-                      ))}
-                      <th className="p-3 text-center min-w-[100px]">Manday cơ bản</th>
-                      <th className="p-3 text-center min-w-[100px]">Manday thưởng</th>
-                      <th className="p-3 text-center min-w-[110px] bg-[var(--color-markee-primary)]/5">
-                        Tổng Manday
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {(previewData.members || []).map((mb) => {
-                      // Sum base and bonus across all metrics
-                      let memberBase = 0;
-                      let memberBonus = 0;
-                      for (const mDetail of Object.values(mb.metrics || {})) {
-                        memberBase += mDetail.base_manday;
-                        memberBonus += mDetail.bonus_manday;
-                      }
-
-                      return (
-                        <tr key={mb.user_id} className="hover:bg-muted/20">
-                          {/* Member Info */}
-                          <td className="p-3">
-                            <div className="font-semibold text-foreground">
-                              {mb.user_name}
-                            </div>
-                            <div className="text-[10px] text-muted-foreground font-mono">
-                              {mb.user_email}
-                            </div>
-                            {mb.support_user_name && (
-                              <div className="text-[10px] text-blue-600 mt-0.5">
-                                Hỗ trợ: {mb.support_user_name}
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Weight */}
-                          <td className="p-3 text-center font-medium">
-                            {mb.weight}%
-                          </td>
-
-                          {/* Metric cells */}
-                          {(previewData.metrics || []).map((m) => {
-                            const det = mb.metrics?.[m.code];
-                            if (!det) {
-                              return (
-                                <td
-                                  key={m.code}
-                                  className="p-3 text-center text-muted-foreground"
-                                >
-                                  -
-                                </td>
-                              );
-                            }
-
-                            const tierBadge =
-                              det.tier_reached === "critical" ? (
-                                <Badge className="bg-rose-500 hover:bg-rose-600 text-white text-[10px] px-1 py-0">
-                                  Critical
-                                </Badge>
-                              ) : det.tier_reached === "high" ? (
-                                <Badge className="bg-blue-500 hover:bg-blue-600 text-white text-[10px] px-1 py-0">
-                                  High
-                                </Badge>
-                              ) : det.tier_reached === "normal" ? (
-                                <Badge variant="secondary" className="text-[10px] px-1 py-0">
-                                  Normal
-                                </Badge>
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground">
-                                  Chưa đạt
-                                </span>
-                              );
-
-                            return (
-                              <td
-                                key={m.code}
-                                className="p-3 text-center align-middle"
-                              >
-                                <div className="font-mono text-sm font-bold text-foreground">
-                                  {det.actual_count} bài
-                                </div>
-                                <div className="text-[10px] text-muted-foreground mt-0.5">
-                                  Mốc: {det.effective_critical}
-                                </div>
-                                <div className="mt-1">{tierBadge}</div>
-                              </td>
-                            );
-                          })}
-
-                          {/* Base Manday */}
-                          <td className="p-3 text-center font-mono font-medium">
-                            {memberBase.toFixed(1)}
-                          </td>
-
-                          {/* Bonus Manday */}
-                          <td className="p-3 text-center font-mono font-medium text-emerald-600">
-                            {memberBonus > 0 ? `+${memberBonus.toFixed(1)}` : "0.0"}
-                          </td>
-
-                          {/* Total Manday */}
-                          <td className="p-3 text-center font-mono font-bold text-sm bg-[var(--color-markee-primary)]/5 text-[var(--color-markee-primary)]">
-                            {mb.total_manday.toFixed(1)}d
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {(previewData.members || []).length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={2 + displayMetrics.length + 3}
+                            className="p-8 text-center text-muted-foreground text-xs"
+                          >
+                            Chưa có thành viên nào trong kỳ KPI này.
                           </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                  {/* Team Totals Footer */}
-                  <tfoot className="bg-muted/50 border-t font-semibold">
-                    <tr>
-                      <td colSpan={2 + (previewData.metrics?.length || 0) + 2} className="p-3 text-right">
-                        Tổng Manday của Team:
-                      </td>
-                      <td className="p-3 text-center font-mono text-base font-extrabold text-[var(--color-markee-primary)] bg-[var(--color-markee-primary)]/10">
-                        {previewData.total_team_manday.toFixed(1)}d
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+                      ) : (
+                        (previewData.members || []).map((mb) => {
+                          // Sum base and bonus across all metrics
+                          let memberBase = 0;
+                          let memberBonus = 0;
+                          for (const mDetail of Object.values(mb.metrics || {})) {
+                            memberBase += Number((mDetail as any)?.base_manday ?? 0);
+                            memberBonus += Number((mDetail as any)?.bonus_manday ?? 0);
+                          }
+
+                          return (
+                            <tr key={mb.user_id} className="hover:bg-muted/20">
+                              {/* Member Info */}
+                              <td className="p-3">
+                                <div className="font-semibold text-foreground">
+                                  {mb.user_name}
+                                </div>
+                                <div className="text-[10px] text-muted-foreground font-mono">
+                                  {mb.user_email}
+                                </div>
+                                {mb.support_user_name && (
+                                  <div className="text-[10px] text-blue-600 mt-0.5">
+                                    Hỗ trợ: {mb.support_user_name}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Weight */}
+                              <td className="p-3 text-center font-medium">
+                                {mb.weight ?? (mb as any).weight_pct ?? 0}%
+                              </td>
+
+                              {/* Metric cells */}
+                              {displayMetrics.map((m) => {
+                                const det = mb.metrics?.[m.code];
+                                if (!det) {
+                                  return (
+                                    <td
+                                      key={m.code}
+                                      className="p-3 text-center text-muted-foreground"
+                                    >
+                                      -
+                                    </td>
+                                  );
+                                }
+
+                                const tierBadge =
+                                  det.tier_reached === "critical" ? (
+                                    <Badge className="bg-rose-500 hover:bg-rose-600 text-white text-[10px] px-1 py-0">
+                                      Critical
+                                    </Badge>
+                                  ) : det.tier_reached === "high" ? (
+                                    <Badge className="bg-blue-500 hover:bg-blue-600 text-white text-[10px] px-1 py-0">
+                                      High
+                                    </Badge>
+                                  ) : det.tier_reached === "normal" ? (
+                                    <Badge variant="secondary" className="text-[10px] px-1 py-0">
+                                      Normal
+                                    </Badge>
+                                  ) : (
+                                    <span className="text-[10px] text-muted-foreground">
+                                      Chưa đạt
+                                    </span>
+                                  );
+
+                                return (
+                                  <td
+                                    key={m.code}
+                                    className="p-3 text-center align-middle"
+                                  >
+                                    <div className="font-mono text-sm font-bold text-foreground">
+                                      {det.actual_count ?? 0} bài
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground mt-0.5">
+                                      Mốc: {det.effective_critical ?? (det as any).level_critical ?? 0}
+                                    </div>
+                                    <div className="mt-1">{tierBadge}</div>
+                                  </td>
+                                );
+                              })}
+
+                              {/* Base Manday */}
+                              <td className="p-3 text-center font-mono font-medium">
+                                {(memberBase ?? 0).toFixed(1)}
+                              </td>
+
+                              {/* Bonus Manday */}
+                              <td className="p-3 text-center font-mono font-medium text-emerald-600">
+                                {(memberBonus ?? 0) > 0 ? `+${(memberBonus ?? 0).toFixed(1)}` : "0.0"}
+                              </td>
+
+                              {/* Total Manday */}
+                              <td className="p-3 text-center font-mono font-bold text-sm bg-[var(--color-markee-primary)]/5 text-[var(--color-markee-primary)]">
+                                {((mb.total_manday ?? (memberBase + memberBonus)) || 0).toFixed(1)}d
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                    {/* Team Totals Footer */}
+                    <tfoot className="bg-muted/50 border-t font-semibold">
+                      <tr>
+                        <td colSpan={2 + displayMetrics.length + 2} className="p-3 text-right">
+                          Tổng Manday của Team:
+                        </td>
+                        <td className="p-3 text-center font-mono text-base font-extrabold text-[var(--color-markee-primary)] bg-[var(--color-markee-primary)]/10">
+                          {(totalTeamManday ?? 0).toFixed(1)}d
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

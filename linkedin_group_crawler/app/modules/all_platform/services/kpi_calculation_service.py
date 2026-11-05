@@ -236,6 +236,7 @@ def preview_session(session_id: str) -> Dict[str, Any]:
                 "level_normal": eff_normal,
                 "level_high": eff_high,
                 "level_critical": eff_critical,
+                "effective_critical": eff_critical,
                 "tier_reached": tier,
                 "base_manday": calc["base_manday"],
                 "bonus_manday": calc["bonus_manday"],
@@ -246,6 +247,7 @@ def preview_session(session_id: str) -> Dict[str, Any]:
             "user_id": uid,
             "user_name": user_info.get("name") or "",
             "user_email": user_info.get("email") or "",
+            "weight": weight_pct,
             "weight_pct": weight_pct,
             "support_user_id": alloc.get("support_user_id"),
             "support_user_name": supporter.get("name") if supporter else None,
@@ -256,6 +258,8 @@ def preview_session(session_id: str) -> Dict[str, Any]:
             "total_manday": round(total_member_base_manday + total_member_bonus_manday, 2),
         })
 
+    total_team_manday = round(sum(m["total_manday"] for m in members_preview), 2)
+
     return {
         "session_id": session_id,
         "team_id": session["crm_team_id"],
@@ -263,6 +267,8 @@ def preview_session(session_id: str) -> Dict[str, Any]:
         "week_start": week_start,
         "week_end": week_end,
         "status": session.get("status") or "draft",
+        "metrics": get_valid_metrics(),
+        "total_team_manday": total_team_manday,
         "members": members_preview,
         "summary_by_metric": summary_by_metric,
     }

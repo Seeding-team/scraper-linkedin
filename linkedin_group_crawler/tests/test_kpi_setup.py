@@ -354,3 +354,66 @@ def test_apply_template_route_auto_computes_week_end(monkeypatch):
     res_explicit = apply_kpi_template_to_team(req_explicit, user={"id": "u-1"})
     assert res_explicit.success is True
     assert captured_payload["week_end"] == "2026-11-09"
+
+
+def test_preview_session_returns_metrics_and_total_manday(monkeypatch):
+    import app.modules.all_platform.services.kpi_calculation_service as calc_svc
+    import app.modules.all_platform.services.kpi_session_service as sess_svc
+    import app.modules.all_platform.services.kpi_metric_service as metric_svc
+
+    mock_metrics = [
+        {"code": "can-lien-he", "name": "Cần liên hệ", "description": "", "sort_order": 1},
+        {"code": "khong-phu-hop", "name": "Không phù hợp", "description": "", "sort_order": 2},
+    ]
+    monkeypatch.setattr(metric_svc, "get_valid_metrics", lambda: mock_metrics)
+    monkeypatch.setattr(calc_svc, "get_valid_metrics", lambda: mock_metrics)
+    monkeypatch.setattr(calc_svc, "get_valid_metric_codes", lambda: ["can-lien-he", "khong-phu-hop"])
+
+    mock_session = {
+        "id": "sess-test-1",
+        "crm_team_id": "team-test-1",
+        "week_start": "2026-11-02",
+        "week_end": "2026-11-08",
+        "status": "draft",
+        "crm_teams": {"name": "Team Tiên Trần (TT)"},
+        "source_template_id": None,
+        "kpi_session_allocations": [
+            {
+                "user_id": "u-1",
+                "weight_pct": 100,
+                "app_users": {"name": "Lâm Seeding", "email": "lam@markeeai.com"},
+            }
+        ],
+        "kpi_session_levels": [
+            {
+                "metric_code": "can-lien-he",
+                "level_normal": 10,
+                "level_high": 20,
+                "level_critical": 30,
+                "manday_normal": 1.0,
+                "manday_high": 2.0,
+                "manday_critical": 3.0,
+            }
+        ],
+        "kpi_session_member_overrides": [],
+    }
+
+    monkeypatch.setattr(sess_svc, "get_session_detail", lambda sid: mock_session)
+    monkeypatch.setattr(calc_svc, "count_actuals_by_users", lambda ws, we, uids, codes: {"u-1": {"can-lien-he": 35, "khong-phu-hop": 0}})
+
+    preview = calc_svc.preview_session("sess-test-1")
+
+    # Verify keys required by frontend
+    assert preview["session_id"] == "sess-test-1"
+    assert preview["status"] == "draft"
+    assert preview["metrics"] == mock_metrics
+    assert preview["total_team_manday"] == 3.0
+    assert len(preview["members"]) == 1
+
+    member = preview["members"][0]
+    assert member["weight"] == 100.0
+    assert member["weight_pct"] == 100.0
+    assert member["total_manday"] == 3.0
+    assert member["metrics"]["can-lien-he"]["effective_critical"] == 30.0
+    assert member["metrics"]["can-lien-he"]["tier_reached"] == "critical"
+

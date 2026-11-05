@@ -167,7 +167,10 @@ export interface KpiAllocationPayload {
 
 export interface KpiPreviewMetricDetail {
   actual_count: number;
-  effective_critical: number;
+  effective_critical?: number;
+  level_normal?: number;
+  level_high?: number;
+  level_critical?: number;
   tier_reached: "normal" | "high" | "critical" | null;
   base_manday: number;
   bonus_manday: number;
@@ -178,21 +181,28 @@ export interface KpiPreviewMember {
   user_id: string;
   user_name: string;
   user_email: string;
-  weight: number;
+  weight?: number;
+  weight_pct?: number;
   support_user_id?: string | null;
   support_user_name?: string | null;
   support_user_email?: string | null;
   metrics: Record<string, KpiPreviewMetricDetail>;
+  total_base_manday?: number;
+  total_bonus_manday?: number;
   total_manday: number;
 }
 
 export interface KpiPreviewResponse {
   session_id: string;
+  team_id?: string;
+  team_name?: string;
   week_start: string;
   week_end: string;
-  metrics: MetricInfo[];
+  status?: string;
+  metrics?: MetricInfo[];
   members: KpiPreviewMember[];
-  total_team_manday: number;
+  total_team_manday?: number;
+  summary_by_metric?: Record<string, any>;
 }
 
 export interface PmSkillGroup {
