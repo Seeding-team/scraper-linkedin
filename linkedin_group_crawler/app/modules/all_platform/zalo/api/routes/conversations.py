@@ -2155,6 +2155,75 @@ async def get_conversation_phone(
     clean_name = (name or "").strip()
     phone: Optional[str] = None
 
+    # 0. TẦNG ĐẦU TIÊN (ƯU TIÊN TUYỆT ĐỐI THEO CHỈ ĐẠO CỦA MASTER):
+    # Kiểm tra xem có phải nhắn tin từ Card Post Feed không bằng cách bóc tách Link bài viết trong tin nhắn
+    try:
+        msgs = await _rest(
+            "GET",
+            "zalo_messages",
+            params={
+                "group_id": f"eq.{conv_id}",
+                "select": "content",
+                "order": "created_at.asc",
+                "limit": 15,
+            },
+        )
+        if msgs and isinstance(msgs, list):
+            for m in msgs:
+                content = str(m.get("content") or "")
+                # Tìm link facebook / linkedin trong tin nhắn
+                url_match = re.search(r"https?://(?:www\.)?(?:facebook\.com/[^\s]+|linkedin\.com/[^\s]+)", content)
+                if url_match:
+                    found_post_url = url_match.group(0).rstrip(".,)>\"'")
+                    # 0.1 Tra cứu trong auto_seeding_comments theo post_url
+                    seed_res = await _rest(
+                        "GET",
+                        "auto_seeding_comments",
+                        params={"post_url": f"eq.{found_post_url}", "select": "phone_number,zalo_conversation_id", "limit": 1},
+                    )
+                    if seed_res and isinstance(seed_res, list) and len(seed_res) > 0:
+                        cand_phone = seed_res[0].get("phone_number")
+                        if cand_phone:
+                            phone = cand_phone
+                            # Tự động match và lưu luôn vào customer_leads để các lần sau lấy 0ms
+                            try:
+                                clean_digits = re.sub(r"\D", "", phone)
+                                if clean_digits.startswith("84") and len(clean_digits) >= 10:
+                                    clean_digits = "0" + clean_digits[2:]
+                                await _rest("POST", "customer_leads", json={
+                                    "customer_name": clean_name or "Khách từ Post Feed",
+                                    "phone": clean_digits,
+                                    "conv_id": conv_id,
+                                    "source_platform": "zalo",
+                                    "status": "new",
+                                    "created_at": datetime.now(timezone.utc).isoformat(),
+                                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                                })
+                                # Đồng bộ luôn zalo_conversation_id vào auto_seeding_comments
+                                await _rest("PATCH", "auto_seeding_comments", params={"post_url": f"eq.{found_post_url}"}, json={"zalo_conversation_id": conv_id})
+                            except Exception as save_err:
+                                logger.debug(f"Auto sync lead from post card failed: {save_err}")
+                            break
+                    
+                    # 0.2 Nếu auto_seeding_comments chưa có phone, tra trong facebook_posts
+                    if not phone:
+                        fb_res = await _rest(
+                            "GET",
+                            "facebook_posts",
+                            params={"post_url": f"eq.{found_post_url}", "select": "phone_number,content", "limit": 1},
+                        )
+                        if fb_res and isinstance(fb_res, list) and len(fb_res) > 0:
+                            p_phone = fb_res[0].get("phone_number")
+                            if not p_phone and fb_res[0].get("content"):
+                                m_ph = re.search(r"(?:0|\+84)(?:3|5|7|8|9)\d{8}", fb_res[0]["content"])
+                                if m_ph:
+                                    p_phone = m_ph.group(0)
+                            if p_phone:
+                                phone = p_phone
+                                break
+    except Exception as card_err:
+        logger.debug(f"Check message from post feed card failed: {card_err}")
+
     # 1. Tra trong customer_leads theo conv_id
     try:
         lead_rows = await _rest(

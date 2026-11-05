@@ -79,8 +79,10 @@ def record_zalo_sent_endpoint(payload: RecordZaloSentRequest) -> BaseResponse:
         update_fields: dict[str, Any] = {
             "zalo_status": "sent",
             "zalo_sent_at": now_iso,
-            "zalo_sent_by": payload.sent_by,
         }
+        # Lưu sent_by nếu có (nếu DB chưa có cột zalo_sent_by sẽ tự động fallback an toàn)
+        if payload.sent_by:
+            update_fields["zalo_sent_by"] = payload.sent_by
         if payload.zalo_display_name:
             update_fields["zalo_display_name"] = payload.zalo_display_name
         if payload.zalo_conversation_id:
@@ -105,14 +107,28 @@ def record_zalo_sent_endpoint(payload: RecordZaloSentRequest) -> BaseResponse:
                 target_id = existing.data[0]["id"]
                 row_update = dict(update_fields)
                 row_update["phone_number"] = normalized_phone
-                res = (
-                    supabase.table("auto_seeding_comments")
-                    .update(row_update)
-                    .eq("id", target_id)
-                    .execute()
-                )
-                if res.data:
-                    updated_row = res.data[0]
+                try:
+                    res = (
+                        supabase.table("auto_seeding_comments")
+                        .update(row_update)
+                        .eq("id", target_id)
+                        .execute()
+                    )
+                    if res.data:
+                        updated_row = res.data[0]
+                except Exception as up_err:
+                    if "zalo_sent_by" in str(up_err):
+                        row_update.pop("zalo_sent_by", None)
+                        res = (
+                            supabase.table("auto_seeding_comments")
+                            .update(row_update)
+                            .eq("id", target_id)
+                            .execute()
+                        )
+                        if res.data:
+                            updated_row = res.data[0]
+                    else:
+                        raise up_err
             else:
                 # Tìm thông tin bài viết để điền post_url, group_name, lead_need_category...
                 post_url = ""
@@ -148,17 +164,45 @@ def record_zalo_sent_endpoint(payload: RecordZaloSentRequest) -> BaseResponse:
                     "status": "pending",
                     **update_fields,
                 }
-                res = supabase.table("auto_seeding_comments").insert(insert_payload).execute()
-                if res.data:
-                    updated_row = res.data[0]
+                try:
+                    res = supabase.table("auto_seeding_comments").insert(insert_payload).execute()
+                    if res.data:
+                        updated_row = res.data[0]
+                except Exception as ins_err:
+                    if "zalo_sent_by" in str(ins_err):
+                        insert_payload.pop("zalo_sent_by", None)
+                        res = supabase.table("auto_seeding_comments").insert(insert_payload).execute()
+                        if res.data:
+                            updated_row = res.data[0]
+                    else:
+                        raise ins_err
 
         # 2. Cập nhật TẤT CẢ các dòng auto_seeding_comments khác có cùng phone_number
         sync_fields = dict(update_fields)
+        sync_fields.pop("zalo_sent_by", None) # Đảm bảo không lỗi nếu chưa có cột
         for sync_phone in phones_to_sync:
             try:
                 supabase.table("auto_seeding_comments").update(sync_fields).eq("phone_number", sync_phone).execute()
             except Exception as sync_err:
                 logger.warning(f"Lỗi đồng bộ Zalo sent cho SĐT {sync_phone}: {sync_err}")
+
+        # Đồng bộ luôn vào customer_leads nếu có zalo_conversation_id
+        if payload.zalo_conversation_id:
+            try:
+                clean_dig = re.sub(r"\D", "", raw_phone)
+                if clean_dig.startswith("84") and len(clean_dig) >= 10:
+                    clean_dig = "0" + clean_dig[2:]
+                supabase.table("customer_leads").insert({
+                    "customer_name": payload.zalo_display_name or f"Zalo User {clean_dig[-4:]}",
+                    "phone": clean_dig,
+                    "conv_id": payload.zalo_conversation_id,
+                    "source_platform": "zalo",
+                    "status": "new",
+                    "created_at": now_iso,
+                    "updated_at": now_iso,
+                }).execute()
+            except Exception as c_err:
+                logger.debug(f"Sync customer_leads in record_zalo_sent: {c_err}")
 
         return BaseResponse(
             success=True,

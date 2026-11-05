@@ -641,7 +641,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 }
               >
                 <FiMessageSquare className="w-3.5 h-3.5" />
-                <span>{effectiveZaloStatus === "sent" ? "✓ Đã nhắn Zalo" : "Nhắn tin Zalo"}</span>
+                <span>{effectiveZaloStatus === "sent" ? `✓ ${effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn` : "Đã nhắn Zalo"}` : "Nhắn tin Zalo"}</span>
               </button>
 
               {post.auto_seeding_comment?.zalo_conversation_id && (
