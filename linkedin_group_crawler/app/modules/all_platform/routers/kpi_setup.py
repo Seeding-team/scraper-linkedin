@@ -78,6 +78,7 @@ def get_kpi_template(
     return BaseResponse(success=True, data=tpl)
 
 
+@router.put("/templates/{template_id}")
 @router.patch("/templates/{template_id}")
 def update_kpi_template(
     template_id: str,
@@ -135,6 +136,7 @@ def update_kpi_template_bonus_rules(
 
 # ── Sessions ──────────────────────────────────────────────────────────────────
 
+@router.post("/sessions/apply-template")
 @router.post("/sessions/apply")
 def apply_kpi_template_to_team(
     payload: ApplyTemplateRequest,
@@ -173,6 +175,7 @@ def get_kpi_session(
     return BaseResponse(success=True, data=detail)
 
 
+@router.put("/sessions/{session_id}/allocations")
 @router.patch("/sessions/{session_id}/allocations")
 def update_session_allocations(
     session_id: str,
@@ -187,6 +190,7 @@ def update_session_allocations(
         return BaseResponse(success=False, message=str(e))
 
 
+@router.put("/sessions/{session_id}/overrides")
 @router.patch("/sessions/{session_id}/overrides")
 def update_session_overrides(
     session_id: str,
@@ -201,6 +205,7 @@ def update_session_overrides(
         return BaseResponse(success=False, message=str(e))
 
 
+@router.put("/sessions/{session_id}/skills")
 @router.patch("/sessions/{session_id}/skills")
 def update_session_skills(
     session_id: str,
@@ -244,6 +249,7 @@ def preview_kpi_session(
         return BaseResponse(success=False, message=str(e))
 
 
+@router.post("/sessions/{session_id}/snapshot")
 @router.post("/sessions/{session_id}/snapshots")
 def snapshot_kpi_session(
     session_id: str,
