@@ -268,3 +268,30 @@ def test_get_pm_skills_proxy_mapping(monkeypatch):
     assert resp_exc.success is False
     assert resp_exc.data == []
     assert "Connection timed out" in resp_exc.message
+
+
+def test_kpi_setup_router_routes():
+    from app.modules.all_platform.routers.kpi_setup import router
+
+    routes_map = {}
+    for route in router.routes:
+        routes_map.setdefault(route.path, set()).update(route.methods)
+
+    # 1. apply-template and apply routes
+    assert "/sessions/apply-template" in routes_map
+    assert "POST" in routes_map["/sessions/apply-template"]
+    assert "/sessions/apply" in routes_map
+    assert "POST" in routes_map["/sessions/apply"]
+
+    # 2. allocations and overrides support both PUT and PATCH
+    assert "/sessions/{session_id}/allocations" in routes_map
+    assert {"PUT", "PATCH"}.issubset(routes_map["/sessions/{session_id}/allocations"])
+
+    assert "/sessions/{session_id}/overrides" in routes_map
+    assert {"PUT", "PATCH"}.issubset(routes_map["/sessions/{session_id}/overrides"])
+
+    # 3. snapshot singular and plural
+    assert "/sessions/{session_id}/snapshot" in routes_map
+    assert "POST" in routes_map["/sessions/{session_id}/snapshot"]
+    assert "/sessions/{session_id}/snapshots" in routes_map
+    assert "POST" in routes_map["/sessions/{session_id}/snapshots"]
