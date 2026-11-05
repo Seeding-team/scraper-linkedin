@@ -10,6 +10,13 @@ TONGQUAN.md
 tools/
 source_code_skill/
 skillstudyforalluser/
+# Zero-Leak Master Plans & Strategy Docs (Master IP)
+*PLAN*.md
+*plan*.md
+docs/*PLAN*
+docs/*plan*
+docs/PLAN_*
+docs/plan_*
 # =========================
 # Monorepo ignore (FE + BE)
 # =========================
