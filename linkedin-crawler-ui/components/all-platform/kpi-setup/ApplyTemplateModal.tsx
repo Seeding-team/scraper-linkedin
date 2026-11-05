@@ -103,9 +103,32 @@ export function ApplyTemplateModal({
       const res = await kpiSetupService.getPmSkills();
       if (!isMounted) return;
       if (res.success && res.data) {
-        setPmConfigured(res.data.configured);
-        setSkillGroups(res.data.groups || []);
-        setSkillVendors(res.data.vendors || []);
+        const raw = res.data as any;
+        const groups: PmSkillGroup[] = Array.isArray(raw)
+          ? raw
+          : Array.isArray(raw.groups)
+          ? raw.groups
+          : [];
+        setSkillGroups(groups);
+        setPmConfigured(typeof raw.configured === "boolean" ? raw.configured : groups.length > 0);
+
+        let vendors: PmSkillVendor[] = [];
+        if (Array.isArray(raw.vendors)) {
+          vendors = raw.vendors;
+        } else {
+          const map = new Map<number, PmSkillVendor>();
+          groups.forEach((g: any) => {
+            if (Array.isArray(g.skills)) {
+              g.skills.forEach((s: PmSkillVendor) => {
+                if (s && s.id && !map.has(s.id)) {
+                  map.set(s.id, s);
+                }
+              });
+            }
+          });
+          vendors = Array.from(map.values());
+        }
+        setSkillVendors(vendors);
       }
     }
 
@@ -114,6 +137,16 @@ export function ApplyTemplateModal({
       isMounted = false;
     };
   }, [isOpen]);
+
+  const displayedVendors = useMemo(() => {
+    if (selectedSkillGroupId && selectedSkillGroupId !== "none") {
+      const g = skillGroups.find((item) => String(item.id) === selectedSkillGroupId);
+      if (g && Array.isArray(g.skills) && g.skills.length > 0) {
+        return g.skills;
+      }
+    }
+    return skillVendors;
+  }, [selectedSkillGroupId, skillGroups, skillVendors]);
 
   const handleSubmit = async () => {
     if (!selectedTeamId) {
@@ -162,7 +195,7 @@ export function ApplyTemplateModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="w-full max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-lg font-bold flex items-center gap-2">
             <Layers className="w-5 h-5 text-[var(--color-markee-primary)]" />
@@ -290,7 +323,7 @@ export function ApplyTemplateModal({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">-- Không chọn --</SelectItem>
-                    {skillVendors.map((v) => (
+                    {displayedVendors.map((v) => (
                       <SelectItem key={v.id} value={String(v.id)}>
                         {v.name}
                       </SelectItem>

@@ -221,7 +221,7 @@ export function TemplateEditorModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-full max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold">
             {template ? "Chỉnh sửa Mẫu KPI" : "Tạo Mẫu KPI Mới"}
