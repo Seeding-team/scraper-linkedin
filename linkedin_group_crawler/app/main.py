@@ -57,6 +57,7 @@ async def lifespan(_: FastAPI):
     zalo_forward_task: asyncio.Task[None] | None = None
     zalo_automation_task: asyncio.Task[None] | None = None
     zalo_push_task: asyncio.Task[None] | None = None
+    zalo_bot_task: asyncio.Task[None] | None = None
     email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
@@ -213,6 +214,12 @@ async def lifespan(_: FastAPI):
         from app.modules.all_platform.zalo.services.push_notifier import run_push_tick
         zalo_push_task = asyncio.create_task(_tick_loop("zalo-push", run_push_tick, "PUSH_POLL_INTERVAL_MS", 4000))
 
+    if _os.getenv("DISABLE_ZALO_CHATWOOT_BRIDGE", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_CHATWOOT_BRIDGE enabled -> not starting Zalo -> Chatwoot bridge.")
+    else:
+        from app.modules.all_platform.zalo.services.zalo_chatwoot_bridge import run_bridge_tick
+        zalo_bot_task = asyncio.create_task(_tick_loop("zalo-chatwoot-bridge", run_bridge_tick, "ZALO_BOT_POLL_INTERVAL_MS", 3000))
+
     try:
         yield
     finally:
@@ -221,7 +228,7 @@ async def lifespan(_: FastAPI):
                 email_imap_scheduler.shutdown(wait=False)
             except Exception:
                 logger.exception("Email IMAP sync worker shutdown failed")
-        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task):
+        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task, zalo_bot_task):
             if task is not None and not task.done():
                 task.cancel()
                 try:

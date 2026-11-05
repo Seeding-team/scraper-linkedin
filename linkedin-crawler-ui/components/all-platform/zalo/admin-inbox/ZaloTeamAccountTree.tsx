@@ -5,6 +5,8 @@ import type { ZaloAccountInfo } from "@/types/zalo-api";
 import type { TeamRow } from "@/hooks/useZaloAdminInbox";
 import { MaterialIcon } from "@/components/ui";
 import { cn } from "@/lib/utils";
+import { useZaloBotConfigs } from "./bot/useZaloBotConfig";
+import { ZaloBotModeBadge, zaloBotModeOf } from "./bot/ZaloBotChip";
 
 export type AccountStatus = "online" | "connecting" | "expired" | "offline";
 
@@ -174,6 +176,7 @@ export default function ZaloTeamAccountTree({
   }, [sessions, teams, owner, accountLabel, ownerLabel, getAccountStatus]);
 
   const selected = sessions.find((s) => s.account_id === selectedAcc);
+  const botConfigs = useZaloBotConfigs(useMemo(() => sessions.map((s) => s.account_id), [sessions]));
 
   // Close picker on outside click
   useEffect(() => {
@@ -253,6 +256,9 @@ export default function ZaloTeamAccountTree({
                       <span className="block truncate font-bold">{accountLabel(session)}</span>
                       <span className="block truncate text-[10px] text-slate-400">{accountSubLabel(session)}</span>
                     </span>
+                    {botConfigs[session.account_id]?.is_enabled && (
+                      <ZaloBotModeBadge mode={zaloBotModeOf(botConfigs[session.account_id])} />
+                    )}
                   </button>
                 );
               })
