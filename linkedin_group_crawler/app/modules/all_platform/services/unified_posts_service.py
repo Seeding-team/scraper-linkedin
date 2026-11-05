@@ -403,7 +403,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 .select(
                     f"{id_column}, comment_content, status, posted_at, link_comment, need_category, "
                     "phone_number, zalo_status, zalo_message_content, zalo_sent_at, zalo_conversation_id, "
-                    "zalo_error, zalo_display_name, zalo_sent_by"
+                    "zalo_error, zalo_display_name"
                 )
                 .in_(id_column, batch_ids)
                 .execute()
@@ -430,7 +430,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 "zalo_conversation_id": row.get("zalo_conversation_id"),
                 "zalo_error": row.get("zalo_error"),
                 "zalo_display_name": row.get("zalo_display_name"),
-                "zalo_sent_by": row.get("zalo_sent_by"),
+                "zalo_sent_by": row.get("zalo_sent_by") or (str(row.get("zalo_error") or "").replace("sent_by:", "") if "sent_by:" in str(row.get("zalo_error") or "") else None),
             }
 
     # 2. Đồng bộ trạng thái đã nhắn tin Zalo theo SĐT cho toàn bộ bài viết trên feed:
@@ -454,7 +454,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
         try:
             sent_res = (
                 sb.table("auto_seeding_comments")
-                .select("phone_number, zalo_status, zalo_sent_by, zalo_sent_at, zalo_display_name")
+                .select("phone_number, zalo_status, zalo_sent_at, zalo_display_name, zalo_error")
                 .in_("phone_number", list(all_phones))
                 .eq("zalo_status", "sent")
                 .execute()
@@ -477,7 +477,8 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                             p["auto_seeding_comment"] = {}
                         p["auto_seeding_comment"]["zalo_status"] = "sent"
                         p["auto_seeding_comment"]["phone_number"] = p_norm
-                        p["auto_seeding_comment"]["zalo_sent_by"] = match_info.get("zalo_sent_by") or p["auto_seeding_comment"].get("zalo_sent_by")
+                        match_sent_by = match_info.get("zalo_sent_by") or (str(match_info.get("zalo_error") or "").replace("sent_by:", "") if "sent_by:" in str(match_info.get("zalo_error") or "") else None)
+                        p["auto_seeding_comment"]["zalo_sent_by"] = match_sent_by or p["auto_seeding_comment"].get("zalo_sent_by")
                         p["auto_seeding_comment"]["zalo_sent_at"] = match_info.get("zalo_sent_at") or p["auto_seeding_comment"].get("zalo_sent_at")
                         p["auto_seeding_comment"]["zalo_display_name"] = match_info.get("zalo_display_name") or p["auto_seeding_comment"].get("zalo_display_name")
         except Exception as e:

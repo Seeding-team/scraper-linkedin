@@ -1333,3 +1333,31 @@ export function unsubscribeZaloPush(endpoint: string): Promise<{ subscribed: boo
   });
 }
 
+
+
+export function saveConversationPhone(
+  convId: string,
+  phone: string,
+  name?: string
+): Promise<{ success: boolean; phone: string; action?: string }> {
+  return requestJson<{ success: boolean; phone: string; action?: string }>(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`,
+    {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({ phone, name }),
+    }
+  );
+}
+
+export function getConversationPhone(
+  convId: string
+): Promise<{ success: boolean; phone: string | null; customer_name?: string }> {
+  return requestJson<{ success: boolean; phone: string | null; customer_name?: string }>(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`,
+    {
+      method: "GET",
+      headers: buildHeaders(),
+    }
+  );
+}

@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { FiX, FiMessageSquare, FiExternalLink, FiPhone, FiCheck, FiAlertCircle, FiSend } from "react-icons/fi";
 import { useZaloAccountOptions } from "@/components/all-platform/zalo/centralized-shared/useZaloAccountOptions";
-import { findZaloUser, createZaloUserThread, sendZaloMessage } from "@/services/zaloCrawlerService";
+import { findZaloUser, createZaloUserThread, sendZaloMessage, saveConversationPhone } from "@/services/zaloCrawlerService";
 import { allPlatformQuickCommentService, allPlatformQuickInboxService, allPlatformPostsService } from "@/services/all-platform.service";
 import { QuickCommentTemplate, QuickInboxTemplate } from "@/types/unified.types";
 
@@ -242,17 +242,9 @@ export function ZaloContactModal({
 
       // 2.1 Match số điện thoại với cuộc trò chuyện ngay lập tức
       try {
-        await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ phone: phoneNumber, name: dName }),
-        });
+        await saveConversationPhone(convId, phoneNumber, dName);
         if (targetUid && targetUid !== convId) {
-          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(targetUid)}/phone`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phone: phoneNumber, name: dName }),
-          });
+          await saveConversationPhone(targetUid, phoneNumber, dName);
         }
       } catch (phoneErr) {
         console.warn("Could not save conversation phone:", phoneErr);
