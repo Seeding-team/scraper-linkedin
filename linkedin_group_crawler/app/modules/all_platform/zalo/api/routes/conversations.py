@@ -2182,11 +2182,12 @@ async def get_conversation_phone(
                 url_match = re.search(r"https?://(?:www\.)?(?:facebook\.com/[^\s]+|linkedin\.com/[^\s]+)", content)
                 if url_match:
                     found_post_url = url_match.group(0).rstrip(".,)>\"'")
+                    clean_post_url = found_post_url.split("?")[0].rstrip("/")
                     # 0.1 Tra cứu trong auto_seeding_comments theo post_url
                     seed_res = await _rest(
                         "GET",
                         "auto_seeding_comments",
-                        params={"post_url": f"eq.{found_post_url}", "select": "phone_number,zalo_conversation_id", "limit": 1},
+                        params={"post_url": f"ilike.*{clean_post_url}*", "select": "phone_number,zalo_conversation_id", "limit": 1},
                     )
                     if seed_res and isinstance(seed_res, list) and len(seed_res) > 0:
                         cand_phone = seed_res[0].get("phone_number")
@@ -2214,19 +2215,17 @@ async def get_conversation_phone(
                     
                     # 0.2 Nếu auto_seeding_comments chưa có phone, tra trong facebook_posts
                     if not phone:
+                        clean_url = found_post_url.split("?")[0].rstrip("/")
                         fb_res = await _rest(
                             "GET",
                             "facebook_posts",
-                            params={"post_url": f"eq.{found_post_url}", "select": "phone_number,content", "limit": 1},
+                            params={"post_url": f"ilike.*{clean_url}*", "select": "content", "limit": 1},
                         )
                         if fb_res and isinstance(fb_res, list) and len(fb_res) > 0:
-                            p_phone = fb_res[0].get("phone_number")
-                            if not p_phone and fb_res[0].get("content"):
-                                m_ph = re.search(r"(?:0|\+84)(?:3|5|7|8|9)\d{8}", fb_res[0]["content"])
-                                if m_ph:
-                                    p_phone = m_ph.group(0)
-                            if p_phone:
-                                phone = p_phone
+                            content_str = fb_res[0].get("content") or ""
+                            m_ph = re.search(r"(?:0|\+84)(?:3|5|7|8|9)\d{8}", content_str)
+                            if m_ph:
+                                phone = m_ph.group(0)
                                 break
     except Exception as card_err:
         logger.debug(f"Check message from post feed card failed: {card_err}")

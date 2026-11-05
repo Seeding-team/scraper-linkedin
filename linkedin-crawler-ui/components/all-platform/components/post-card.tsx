@@ -138,16 +138,21 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const [isContentExpanded, setIsContentExpanded] = useState(false);
 
   const [localZaloStatus, setLocalZaloStatus] = useState<string | null>(
-    post.auto_seeding_comment?.zalo_status || null
+    post.auto_seeding_comment?.zalo_status || (post as any).zalo_status || null
   );
   const [localZaloSentBy, setLocalZaloSentBy] = useState<string | null>(
-    post.auto_seeding_comment?.zalo_sent_by || null
+    post.auto_seeding_comment?.zalo_sent_by || (post as any).zalo_sent_by || null
   );
 
   useEffect(() => {
-    setLocalZaloStatus(post.auto_seeding_comment?.zalo_status || null);
-    setLocalZaloSentBy(post.auto_seeding_comment?.zalo_sent_by || null);
-  }, [post.auto_seeding_comment?.zalo_status, post.auto_seeding_comment?.zalo_sent_by]);
+    setLocalZaloStatus(post.auto_seeding_comment?.zalo_status || (post as any).zalo_status || null);
+    setLocalZaloSentBy(post.auto_seeding_comment?.zalo_sent_by || (post as any).zalo_sent_by || null);
+  }, [
+    post.auto_seeding_comment?.zalo_status,
+    post.auto_seeding_comment?.zalo_sent_by,
+    (post as any).zalo_status,
+    (post as any).zalo_sent_by,
+  ]);
 
   const effectiveZaloStatus = localZaloStatus;
   const effectiveZaloSentBy = localZaloSentBy;
@@ -600,9 +605,9 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
                 <span>{detectedPhone}</span>
               </span>
 
-              {post.auto_seeding_comment?.zalo_display_name && (
+              {(post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name) && (
                 <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 dark:text-sky-300 bg-sky-100/60 dark:bg-sky-900/40 px-2 py-0.5 rounded-md">
-                  Zalo: {post.auto_seeding_comment.zalo_display_name}
+                  Zalo: {post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name}
                 </span>
               )}
 
@@ -757,7 +762,11 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           </div>
 
           <div className="flex items-center gap-2">
-            {effectiveSeeding ? (
+            {effectiveZaloStatus === "sent" ? (
+              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300">
+                ✓ {effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn Zalo` : "Đã nhắn Zalo"}
+              </span>
+            ) : effectiveSeeding ? (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
                 ✓ Đã comment
               </span>
@@ -903,7 +912,18 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
           if (post.auto_seeding_comment) {
             post.auto_seeding_comment.zalo_status = "sent";
             post.auto_seeding_comment.zalo_sent_by = info.sentBy;
+            if (info.zaloDisplayName) post.auto_seeding_comment.zalo_display_name = info.zaloDisplayName;
+          } else {
+            (post as any).auto_seeding_comment = {
+              zalo_status: "sent",
+              zalo_sent_by: info.sentBy,
+              zalo_display_name: info.zaloDisplayName,
+              phone_number: detectedPhone,
+            };
           }
+          (post as any).zalo_status = "sent";
+          (post as any).zalo_sent_by = info.sentBy;
+          if (info.zaloDisplayName) (post as any).zalo_display_name = info.zaloDisplayName;
         }}
       />
     </div>

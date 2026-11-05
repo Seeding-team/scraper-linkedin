@@ -83,6 +83,7 @@ def record_zalo_sent_endpoint(payload: RecordZaloSentRequest) -> BaseResponse:
         # Lưu sent_by nếu có (nếu DB chưa có cột zalo_sent_by sẽ tự động fallback an toàn)
         if payload.sent_by:
             update_fields["zalo_sent_by"] = payload.sent_by
+            update_fields["zalo_error"] = f"sent_by:{payload.sent_by}"
         if payload.zalo_display_name:
             update_fields["zalo_display_name"] = payload.zalo_display_name
         if payload.zalo_conversation_id:

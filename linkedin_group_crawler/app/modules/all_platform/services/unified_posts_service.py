@@ -241,11 +241,7 @@ def _fetch_posts(
             query = query.in_("id_group", group_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if search:
-        # linkedin_posts does not have group_name column
-        if table == "facebook_posts":
-            query = query.or_(f"content.ilike.%{search}%,group_name.ilike.%{search}%")
-        else:
-            query = query.ilike("content", f"%{search}%")
+        query = query.ilike("content", f"%{search}%")
 
     # Sort
     if sort == "lead_score_high":
@@ -432,6 +428,10 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                 "zalo_display_name": row.get("zalo_display_name"),
                 "zalo_sent_by": row.get("zalo_sent_by") or (str(row.get("zalo_error") or "").replace("sent_by:", "") if "sent_by:" in str(row.get("zalo_error") or "") else None),
             }
+            if p["auto_seeding_comment"].get("zalo_status"):
+                p["zalo_status"] = p["auto_seeding_comment"]["zalo_status"]
+                p["zalo_sent_by"] = p["auto_seeding_comment"].get("zalo_sent_by")
+                p["zalo_display_name"] = p["auto_seeding_comment"].get("zalo_display_name")
 
     # 2. Đồng bộ trạng thái đã nhắn tin Zalo theo SĐT cho toàn bộ bài viết trên feed:
     # Nếu bất kỳ bài viết nào có SĐT đã từng được nhắn tin Zalo tư vấn (zalo_status = 'sent'),
@@ -481,6 +481,9 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                         p["auto_seeding_comment"]["zalo_sent_by"] = match_sent_by or p["auto_seeding_comment"].get("zalo_sent_by")
                         p["auto_seeding_comment"]["zalo_sent_at"] = match_info.get("zalo_sent_at") or p["auto_seeding_comment"].get("zalo_sent_at")
                         p["auto_seeding_comment"]["zalo_display_name"] = match_info.get("zalo_display_name") or p["auto_seeding_comment"].get("zalo_display_name")
+                        p["zalo_status"] = "sent"
+                        p["zalo_sent_by"] = p["auto_seeding_comment"].get("zalo_sent_by")
+                        p["zalo_display_name"] = p["auto_seeding_comment"].get("zalo_display_name")
         except Exception as e:
             _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi đồng bộ trạng thái Zalo sent theo SĐT: {e}")
 
