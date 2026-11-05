@@ -248,6 +248,8 @@ export interface ZaloLibraryMessage {
   // (migration 128). cli_msg_id bắt buộc để thu hồi tin (chỉ có ở tin mình gửi).
   ts?: number | null;
   cli_msg_id?: string | null;
+  /** "bot" = tin do Bot AI trả lời. */
+  sent_by?: "bot" | null;
   mentions?: ZaloMention[] | null;
   msg_kind?: string | null;
   raw_content?: Record<string, unknown> | null;

@@ -8,6 +8,13 @@ import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
 import { Avatar } from "../dashboard/Avatar";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
+import ZaloBotChip, { zaloBotModeOf } from "./bot/ZaloBotChip";
+import ZaloBotSettingsDrawer from "./bot/ZaloBotSettingsDrawer";
+import ZaloBotLogsDrawer from "./bot/ZaloBotLogsDrawer";
+import ZaloBotThreadBar, { ZaloBotMessageBadge } from "./bot/ZaloBotThreadBar";
+import { useZaloBotConfig } from "./bot/useZaloBotConfig";
+import { useZaloBotThread, useZaloBotPausedThreads } from "./bot/useZaloBotThread";
+import { isZaloGroupConversationId, zaloThreadIdFromConversationId } from "@/lib/zaloBotClient";
 import { ZaloAccountsModal } from "../chat/ZaloAccountsModal";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
 import { SalesAssetPickerModal } from "@/components/all-platform/sales-assets/SalesAssetPickerModal";
@@ -1617,6 +1624,28 @@ export function ZaloInboxAdminShell() {
     return new Map(entries);
   }, [inbox.groupMembers, inbox.openConv]);
 
+  // Bot AI: cấu hình theo tài khoản + trạng thái từng hội thoại 1-1
+  const [showBotSettings, setShowBotSettings] = useState(false);
+  const [showBotLogs, setShowBotLogs] = useState(false);
+  const botConfig = useZaloBotConfig(inbox.selectedAccountId || "");
+  // Khớp backend (direct_thread_ids): hội thoại là 1-1 nếu thread_type='user' HOẶC is_friend=true.
+  // Listener đôi khi lưu thread_type='group' cho chat 1-1 với bạn bè, nên không được chỉ nhìn thread_type.
+  const openConvIsGroup =
+    isZaloGroupConversationId(inbox.openConv || "") ||
+    (() => {
+      const conv = inbox.conversations.find((c) => c.conversation_id === inbox.openConv);
+      return conv?.thread_type === "group" && !conv.is_friend;
+    })();
+  const botThreadId = inbox.openConv && !openConvIsGroup ? zaloThreadIdFromConversationId(inbox.openConv) : "";
+  const botMayBeOn = !(botConfig.config && !botConfig.config.is_enabled);
+  const botThread = useZaloBotThread(
+    inbox.selectedAccountId || "",
+    botThreadId,
+    Boolean(botThreadId) && botMayBeOn && !inbox.archiveReading,
+    `${inbox.isSending}|${inbox.messages.length}`
+  );
+  const botPausedThreadIds = useZaloBotPausedThreads(inbox.selectedAccountId || "", Boolean(botConfig.config?.is_enabled));
+
   // Current owner/account labels for display
   const ownerName = inbox.selectedOwnerInfo?.ownerName ?? inbox.ownerNames[inbox.selectedOwnerId] ?? "";
   const ownerEmail = inbox.selectedOwnerInfo?.ownerEmail ?? inbox.ownerEmails[inbox.selectedOwnerId] ?? "";
@@ -1913,6 +1942,13 @@ export function ZaloInboxAdminShell() {
                 owner={inbox.leaderEmail}
                 onManageAccounts={() => setShowAccountsModal(true)}
               />
+              {inbox.selectedAccountId && (
+                <ZaloBotChip
+                  mode={zaloBotModeOf(botConfig.config)}
+                  onOpenSettings={() => setShowBotSettings(true)}
+                  onOpenLogs={() => setShowBotLogs(true)}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -2226,7 +2262,12 @@ export function ZaloInboxAdminShell() {
                         <span className={cn("truncate text-xs", conv.unread ? "font-bold text-slate-900" : "font-semibold text-slate-800")}>
                           {conv.name}
                         </span>
-                        <span className="shrink-0 text-[10px] text-slate-400">{conv.time}</span>
+                        <span className="flex shrink-0 items-center gap-1 text-[10px] text-slate-400">
+                          {botPausedThreadIds.has(zaloThreadIdFromConversationId(conv.conv_id)) && (
+                            <span title="Nhân viên đang tiếp quản (bot tạm dừng)">⏸</span>
+                          )}
+                          {conv.time}
+                        </span>
                       </div>
 
                       <p className={cn("truncate text-[11px]", conv.unread ? "font-bold text-slate-900" : "text-slate-500")}>
@@ -2582,6 +2623,17 @@ export function ZaloInboxAdminShell() {
             )}
           </div>
 
+          {inbox.openConv && !openConvIsGroup && (
+            <ZaloBotThreadBar
+              status={botThread.status}
+              busy={botThread.busy}
+              error={botThread.actionError}
+              onTakeover={() => void botThread.takeover()}
+              onResume={() => void botThread.resume()}
+              onSetRule={(botOn) => void botThread.setRule(botOn)}
+            />
+          )}
+
           {/* Messages Feed */}
           <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-auto bg-white p-4 space-y-4 no-scrollbar">
             {groupedMessages.length > 0 ? (
@@ -2693,6 +2745,7 @@ export function ZaloInboxAdminShell() {
                                 const canForwardMessage = canActOnMessage && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
                                 return (
                                   <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
+                                    {isSent && msg.sent_by === "bot" && <ZaloBotMessageBadge />}
                                     {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
                                     {canReact && (
                                       <button
@@ -3638,6 +3691,26 @@ export function ZaloInboxAdminShell() {
         defaultConvId={inbox.openConv || undefined}
         defaultCustomerName={selectedName || undefined}
         defaultSourcePlatform="Zalo"
+      />
+
+      <ZaloBotSettingsDrawer
+        open={showBotSettings}
+        onOpenChange={setShowBotSettings}
+        accountId={inbox.selectedAccountId || ""}
+        accountLabel={accountLabel}
+        config={botConfig.config}
+        loading={botConfig.loading}
+        loadError={botConfig.error}
+        forbidden={botConfig.forbidden}
+        onReload={() => void botConfig.reload()}
+        onSave={botConfig.save}
+      />
+      <ZaloBotLogsDrawer
+        open={showBotLogs}
+        onOpenChange={setShowBotLogs}
+        accountId={inbox.selectedAccountId || ""}
+        accountLabel={accountLabel}
+        currentThreadId={botThreadId || null}
       />
 
       <ZaloForwardModal

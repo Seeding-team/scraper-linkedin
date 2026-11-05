@@ -36,6 +36,7 @@ from app.modules.all_platform.zalo.services.supabase_service import (
     search_conversation_messages,
 )
 from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
+from app.modules.all_platform.zalo.services.zalo_bot_service import annotate_bot_messages, note_staff_reply
 from app.modules.all_platform.zalo.services.zca_api_bridge import (
     ZcaAuthExpiredError,
     find_zca_user_by_phone,
@@ -787,6 +788,8 @@ async def get_conversation_messages(
             limit=limit,
             offset=offset,
         )
+        # Nhãn "Bot": tin gửi đi do Bot AI trả lời (khớp nhật ký bot) -> sent_by="bot".
+        await annotate_bot_messages(user_id, conversation_id.strip(), rows)
         response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
@@ -987,6 +990,8 @@ async def send_message_to_conversation(
         mentions=body.mentions,
         reply_to_id=body.reply_to.message_id.strip() if body.reply_to else None,
     )
+    # Nhân viên vừa nhắn tay: tạm dừng Bot ở hội thoại này (nếu bật cấu hình tự tạm dừng).
+    await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
 
     return SendMessageResponse(
         ok=True,
@@ -1129,6 +1134,7 @@ async def send_media_to_conversation(
             image_urls=uploaded_urls,
             uploaded_assets=uploaded_assets,
         )
+        await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
 
         return SendMessageResponse(
             ok=True,
@@ -2113,6 +2119,7 @@ async def send_sticker_to_conversation(
             {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
         ),
     )
+    await note_staff_reply(user_id, conversation_id.strip(), None)
     return {"ok": True, "result": result}
 
 
