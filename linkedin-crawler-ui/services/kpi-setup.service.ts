@@ -154,6 +154,7 @@ export interface ApplyTemplatePayload {
   crm_team_id: string;
   template_id: string;
   week_start: string;
+  week_end?: string;
   skill_solution_id?: number | null;
   skill_vendor_id?: number | null;
 }

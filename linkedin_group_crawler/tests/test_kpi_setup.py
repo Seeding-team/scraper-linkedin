@@ -295,3 +295,62 @@ def test_kpi_setup_router_routes():
     assert "POST" in routes_map["/sessions/{session_id}/snapshot"]
     assert "/sessions/{session_id}/snapshots" in routes_map
     assert "POST" in routes_map["/sessions/{session_id}/snapshots"]
+
+
+def test_apply_template_request_schema_optional_week_end():
+    from app.modules.all_platform.schemas.kpi_setup import ApplyTemplateRequest
+
+    # Case 1: week_end is omitted -> should be valid (None), not 422
+    req = ApplyTemplateRequest(
+        crm_team_id="team-1",
+        template_id="tpl-1",
+        week_start="2026-11-02",
+        skill_solution_id=None,
+        skill_vendor_id=None,
+    )
+    assert req.week_start == "2026-11-02"
+    assert req.week_end is None
+
+    # Case 2: week_end is explicitly provided -> should be preserved
+    req2 = ApplyTemplateRequest(
+        crm_team_id="team-1",
+        template_id="tpl-1",
+        week_start="2026-11-02",
+        week_end="2026-11-08",
+    )
+    assert req2.week_end == "2026-11-08"
+
+
+def test_apply_template_route_auto_computes_week_end(monkeypatch):
+    from app.modules.all_platform.schemas.kpi_setup import ApplyTemplateRequest
+    from app.modules.all_platform.routers.kpi_setup import apply_kpi_template_to_team
+    import app.modules.all_platform.services.kpi_session_service as sess_svc
+
+    captured_payload = {}
+    def mock_apply(payload, user_id=None):
+        captured_payload["week_start"] = payload.week_start
+        captured_payload["week_end"] = payload.week_end
+        return {"id": "sess-mock-1", "week_end": payload.week_end}
+
+    monkeypatch.setattr(sess_svc, "apply_template", mock_apply)
+
+    # Calling without week_end -> auto computes 2026-11-02 + 6 days = 2026-11-08
+    req = ApplyTemplateRequest(
+        crm_team_id="team-1",
+        template_id="tpl-1",
+        week_start="2026-11-02",
+    )
+    res = apply_kpi_template_to_team(req, user={"id": "u-1"})
+    assert res.success is True
+    assert captured_payload["week_end"] == "2026-11-08"
+
+    # Calling with explicit week_end -> preserves explicit week_end
+    req_explicit = ApplyTemplateRequest(
+        crm_team_id="team-1",
+        template_id="tpl-1",
+        week_start="2026-11-02",
+        week_end="2026-11-09",
+    )
+    res_explicit = apply_kpi_template_to_team(req_explicit, user={"id": "u-1"})
+    assert res_explicit.success is True
+    assert captured_payload["week_end"] == "2026-11-09"

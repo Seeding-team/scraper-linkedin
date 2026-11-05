@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime, timedelta
+
 import logging
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -144,6 +146,11 @@ def apply_kpi_template_to_team(
 ) -> BaseResponse:
     """Ap mau KPI vao 1 Team CRM cho ky tuan cu the."""
     try:
+        if not payload.week_end:
+            ws_str = str(payload.week_start).strip()[:10]
+            ws_date = datetime.strptime(ws_str, "%Y-%m-%d").date()
+            payload.week_end = (ws_date + timedelta(days=6)).isoformat()
+
         user_id = user.get("id")
         session = kpi_session_service.apply_template(payload, user_id=user_id)
         return BaseResponse(success=True, data=session, message="Đã áp dụng mẫu KPI vào Team thành công")
