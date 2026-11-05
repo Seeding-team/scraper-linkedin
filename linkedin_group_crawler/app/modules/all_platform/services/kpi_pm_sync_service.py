@@ -46,12 +46,13 @@ def get_pm_skills() -> Dict[str, Any]:
     """Proxy lay danh sach Skill Solution va Skill Vendor tu PM Plane.so (kem cache 10 phut)."""
     now = time.monotonic()
     if _SKILLS_CACHE["data"] and _SKILLS_CACHE["expires_at"] > now:
-        return {"success": True, "data": _SKILLS_CACHE["data"]}
+        return {"success": True, "groups": _SKILLS_CACHE["data"], "data": _SKILLS_CACHE["data"]}
 
     if not is_pm_configured():
         return {
             "success": False,
             "message": "Chưa cấu hình kết nối PM (cần PM_BASE_URL, PM_SYNC_TOKEN, PM_PROJECT_ID)",
+            "groups": [],
             "data": [],
         }
 
@@ -68,12 +69,17 @@ def get_pm_skills() -> Dict[str, Any]:
             groups = body.get("groups") or []
             _SKILLS_CACHE["data"] = groups
             _SKILLS_CACHE["expires_at"] = now + 600.0  # 10 minutes
-            return {"success": True, "data": groups}
+            return {"success": True, "groups": groups, "data": groups}
         else:
-            return {"success": False, "message": f"PM trả về lỗi HTTP {resp.status_code}", "data": []}
+            return {
+                "success": False,
+                "message": f"PM trả về lỗi HTTP {resp.status_code}",
+                "groups": [],
+                "data": [],
+            }
     except Exception as e:
         logger.error(f"Loi khi goi PM skills: {e}")
-        return {"success": False, "message": f"Không thể kết nối PM: {e}", "data": []}
+        return {"success": False, "message": f"Không thể kết nối PM: {e}", "groups": [], "data": []}
 
 
 def build_payload(

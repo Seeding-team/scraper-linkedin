@@ -265,8 +265,23 @@ def get_pm_skills_proxy(
     user: Dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Proxy lay danh sach Skill Solution va Skill Vendor tu PM Plane.so."""
-    res = kpi_pm_sync_service.get_pm_skills()
-    return BaseResponse(success=res.get("success", False), data=res.get("data", []), message=res.get("message"))
+    try:
+        res = kpi_pm_sync_service.get_pm_skills()
+        if isinstance(res, dict) and not res.get("success", False):
+            return BaseResponse(
+                success=False,
+                message=res.get("message") or "Không thể lấy danh sách Skill từ PM Plane.so",
+                data=[],
+            )
+        groups = res.get("groups", []) if isinstance(res, dict) else []
+        return BaseResponse(success=True, data=groups, message="")
+    except Exception as e:
+        logger.error(f"Lỗi khi gọi PM Plane.so skills: {e}")
+        return BaseResponse(
+            success=False,
+            message=f"Lỗi kết nối PM Plane.so: {str(e)}",
+            data=[],
+        )
 
 
 @router.post("/sessions/{session_id}/sync-pm")

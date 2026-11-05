@@ -197,6 +197,8 @@ export interface KpiPreviewResponse {
 export interface PmSkillGroup {
   id: number;
   name: string;
+  categoryName?: string;
+  skills?: PmSkillVendor[];
 }
 
 export interface PmSkillVendor {
@@ -205,9 +207,9 @@ export interface PmSkillVendor {
 }
 
 export interface PmSkillsResponse {
-  configured: boolean;
-  groups: PmSkillGroup[];
-  vendors: PmSkillVendor[];
+  configured?: boolean;
+  groups?: PmSkillGroup[];
+  vendors?: PmSkillVendor[];
 }
 
 export interface PmSyncResult {
@@ -309,8 +311,8 @@ export const kpiSetupService = {
     }),
 
   // PM Plane.so
-  getPmSkills: (): Promise<ApiResponse<PmSkillsResponse>> =>
-    requestJson<PmSkillsResponse>(`${BASE}/kpi/pm-skills`),
+  getPmSkills: (): Promise<ApiResponse<PmSkillGroup[] | PmSkillsResponse>> =>
+    requestJson<PmSkillGroup[] | PmSkillsResponse>(`${BASE}/kpi/pm-skills`),
 
   syncPm: (sessionId: string): Promise<ApiResponse<PmSyncResult>> =>
     requestJson<PmSyncResult>(`${BASE}/kpi/sessions/${sessionId}/sync-pm`, {

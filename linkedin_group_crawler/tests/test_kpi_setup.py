@@ -10,7 +10,17 @@ root_dir = Path(__file__).resolve().parent.parent
 if str(root_dir) not in sys.path:
     sys.path.insert(0, str(root_dir))
 
-# Mock app.modules.all_platform.services package to avoid loading its bloated __init__.py
+# Mock third-party libs if running on host without all deps
+for mod in [
+    "supabase", "supabase.lib", "supabase.lib.client_options",
+    "postgrest", "postgrest.exceptions",
+    "playwright", "playwright.sync_api",
+    "loguru"
+]:
+    if mod not in sys.modules:
+        sys.modules[mod] = MagicMock()
+
+# Lightweight services package to avoid loading bloated services/__init__.py
 services_path = str(root_dir / "app" / "modules" / "all_platform" / "services")
 if "app.modules.all_platform.services" not in sys.modules:
     services_pkg = types.ModuleType("app.modules.all_platform.services")
@@ -18,27 +28,31 @@ if "app.modules.all_platform.services" not in sys.modules:
     services_pkg.__file__ = str(Path(services_path) / "__init__.py")
     sys.modules["app.modules.all_platform.services"] = services_pkg
 
-# Mock supabase / third-party libs if shadowed or running on host without deps
-if "supabase" not in sys.modules or not hasattr(sys.modules["supabase"], "create_client"):
-    mock_sb = MagicMock()
-    mock_sb.Client = MagicMock
-    mock_sb.create_client = MagicMock()
-    sys.modules["supabase"] = mock_sb
-    sys.modules["supabase.lib"] = MagicMock()
-    sys.modules["supabase.lib.client_options"] = MagicMock()
+# Lightweight routers package to avoid loading bloated routers/__init__.py
+routers_path = str(root_dir / "app" / "modules" / "all_platform" / "routers")
+if "app.modules.all_platform.routers" not in sys.modules:
+    routers_pkg = types.ModuleType("app.modules.all_platform.routers")
+    routers_pkg.__path__ = [routers_path]
+    routers_pkg.__file__ = str(Path(routers_path) / "__init__.py")
+    sys.modules["app.modules.all_platform.routers"] = routers_pkg
 
-if "loguru" not in sys.modules:
-    sys.modules["loguru"] = MagicMock()
+# Mock auth_deps if needed
+if "app.modules.all_platform.auth_deps" not in sys.modules:
+    auth_deps = types.ModuleType("app.modules.all_platform.auth_deps")
+    auth_deps.get_current_user = lambda: {"id": "test-user"}
+    sys.modules["app.modules.all_platform.auth_deps"] = auth_deps
 
 import pytest
 from app.modules.all_platform.services.kpi_calculation_service import (
     compute_manday,
     resolve_tier,
 )
+from app.modules.all_platform.services import kpi_pm_sync_service as pm_svc
 from app.modules.all_platform.services.kpi_pm_sync_service import (
     build_payload,
     is_pm_configured,
     sync_session_to_pm,
+    get_pm_skills,
 )
 
 
@@ -177,3 +191,80 @@ def test_sync_session_unconfigured_pm(monkeypatch):
     res = sync_session_to_pm("sess-dummy-id")
     assert not res["success"]
     assert "Chưa cấu hình" in res["message"]
+
+
+def test_get_pm_skills_unconfigured(monkeypatch):
+    pm_svc._SKILLS_CACHE = {"expires_at": 0.0, "data": []}
+    monkeypatch.delenv("PM_BASE_URL", raising=False)
+    monkeypatch.delenv("PM_SYNC_TOKEN", raising=False)
+    monkeypatch.delenv("PM_PROJECT_ID", raising=False)
+
+    res = pm_svc.get_pm_skills()
+    assert res["success"] is False
+    assert "Chưa cấu hình" in res["message"]
+    assert res["groups"] == []
+    assert res["data"] == []
+
+
+def test_get_pm_skills_mock_httpx(monkeypatch):
+    import httpx
+    pm_svc._SKILLS_CACHE = {"expires_at": 0.0, "data": []}
+
+    monkeypatch.setenv("PM_BASE_URL", "https://kpi.test.markeeai.com")
+    monkeypatch.setenv("PM_SYNC_TOKEN", "valid-token-123")
+    monkeypatch.setenv("PM_PROJECT_ID", "859")
+
+    mock_groups = [
+        {
+            "id": 1,
+            "name": "Skill Solution A",
+            "skills": [{"id": 101, "name": "Skill Vendor X"}],
+        }
+    ]
+
+    class MockResponse:
+        status_code = 200
+        def json(self):
+            return {"groups": mock_groups}
+
+    def mock_get(url, **kwargs):
+        assert url == "https://kpi.test.markeeai.com/api/msc-sync/skills"
+        assert kwargs.get("headers", {}).get("X-MSC-Sync-Token") == "valid-token-123"
+        return MockResponse()
+
+    monkeypatch.setattr(httpx, "get", mock_get)
+
+    res = pm_svc.get_pm_skills()
+    assert res["success"] is True
+    assert res["groups"] == mock_groups
+    assert res["data"] == mock_groups
+
+
+def test_get_pm_skills_proxy_mapping(monkeypatch):
+    from app.modules.all_platform.routers.kpi_setup import get_pm_skills_proxy
+
+    # 1. Success case: maps res["groups"] to BaseResponse.data
+    mock_groups = [{"id": 5, "name": "Solution 5", "skills": []}]
+    monkeypatch.setattr(pm_svc, "get_pm_skills", lambda: {"success": True, "groups": mock_groups, "data": mock_groups})
+
+    resp = get_pm_skills_proxy(user={"id": "usr-1"})
+    assert resp.success is True
+    assert resp.data == mock_groups
+    assert resp.message == ""
+
+    # 2. Failure case: Plane.so error (401/403/503) -> BaseResponse.success is False, data=[]
+    monkeypatch.setattr(pm_svc, "get_pm_skills", lambda: {"success": False, "message": "PM trả về lỗi HTTP 401", "groups": [], "data": []})
+    resp_err = get_pm_skills_proxy(user={"id": "usr-1"})
+    assert resp_err.success is False
+    assert resp_err.data == []
+    assert "HTTP 401" in resp_err.message
+
+    # 3. Exception case: network timeout or unhandled exception -> caught, returns success=False
+    def raise_exc():
+        raise RuntimeError("Connection timed out")
+
+    monkeypatch.setattr(pm_svc, "get_pm_skills", raise_exc)
+    resp_exc = get_pm_skills_proxy(user={"id": "usr-1"})
+    assert resp_exc.success is False
+    assert resp_exc.data == []
+    assert "Connection timed out" in resp_exc.message
