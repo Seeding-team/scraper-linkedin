@@ -100,18 +100,34 @@ def apply_template(payload: ApplyTemplateRequest, user_id: Optional[str] = None)
 
     # 2. Sao chep levels tu template sang kpi_session_levels
     supabase.table("kpi_session_levels").delete().eq("session_id", session_id).execute()
-    tpl_levels = tpl.get("kpi_template_levels") or []
+    tpl_levels = tpl.get("kpi_template_levels") or tpl.get("levels") or []
     session_levels = []
     for lvl in tpl_levels:
+        l_normal = lvl.get("level_normal")
+        if l_normal is None or l_normal == 0:
+            l_normal = lvl.get("normal_count", 0)
+
+        l_high = lvl.get("level_high")
+        if l_high is None or l_high == 0:
+            l_high = lvl.get("high_count", 0)
+
+        l_critical = lvl.get("level_critical")
+        if l_critical is None or l_critical == 0:
+            l_critical = lvl.get("critical_count", 0)
+
+        m_normal = lvl.get("manday_normal", 0)
+        m_high = lvl.get("manday_high", 0)
+        m_critical = lvl.get("manday_critical", 0)
+
         session_levels.append({
             "session_id": session_id,
-            "metric_code": lvl["metric_code"],
-            "level_normal": lvl["level_normal"],
-            "level_high": lvl["level_high"],
-            "level_critical": lvl["level_critical"],
-            "manday_normal": lvl["manday_normal"],
-            "manday_high": lvl["manday_high"],
-            "manday_critical": lvl["manday_critical"],
+            "metric_code": lvl.get("metric_code"),
+            "level_normal": float(l_normal or 0),
+            "level_high": float(l_high or 0),
+            "level_critical": float(l_critical or 0),
+            "manday_normal": float(m_normal or 0),
+            "manday_high": float(m_high or 0),
+            "manday_critical": float(m_critical or 0),
         })
     if session_levels:
         supabase.table("kpi_session_levels").insert(session_levels).execute()
@@ -219,6 +235,21 @@ def get_session_detail(session_id: str) -> Optional[Dict[str, Any]]:
             a["support_user"] = supporter_map[sid]
         else:
             a["support_user"] = None
+        a["weight"] = a.get("weight_pct", 0)
+
+    # Bo sung aliases cho frontend (levels, allocations, overrides)
+    session_levels = session.get("kpi_session_levels") or []
+    for lvl in session_levels:
+        lvl["normal_count"] = lvl.get("level_normal", 0)
+        lvl["high_count"] = lvl.get("level_high", 0)
+        lvl["critical_count"] = lvl.get("level_critical", 0)
+    session["levels"] = session_levels
+    session["allocations"] = allocs
+
+    overrides = session.get("kpi_session_member_overrides") or []
+    for o in overrides:
+        o["critical_count"] = o.get("level_critical_override", 0)
+    session["overrides"] = overrides
 
     return session
 
@@ -283,4 +314,11 @@ def activate_session(session_id: str) -> Dict[str, Any]:
     supabase = get_supabase_client()
     supabase.table("kpi_sessions").update({"status": "active", "updated_at": "now()"}).eq("id", session_id).execute()
     return get_session_detail(session_id) or {"id": session_id}
+
+
+def delete_session(session_id: str) -> bool:
+    """Xoa 1 session KPI (cascade xoa levels, allocations, overrides, snapshots)."""
+    supabase = get_supabase_client()
+    supabase.table("kpi_sessions").delete().eq("id", session_id).execute()
+    return True
 

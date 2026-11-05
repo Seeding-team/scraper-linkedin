@@ -276,6 +276,11 @@ export const kpiSetupService = {
   getSession: (id: string): Promise<ApiResponse<KpiSessionDetail>> =>
     requestJson<KpiSessionDetail>(`${BASE}/kpi/sessions/${id}`),
 
+  deleteSession: (id: string): Promise<ApiResponse<{ success: boolean; message: string }>> =>
+    requestJson<{ success: boolean; message: string }>(`${BASE}/kpi/sessions/${id}`, {
+      method: "DELETE",
+    }),
+
   applyTemplate: (payload: ApplyTemplatePayload): Promise<ApiResponse<KpiSessionDetail>> =>
     requestJson<KpiSessionDetail>(`${BASE}/kpi/sessions/apply-template`, {
       method: "POST",

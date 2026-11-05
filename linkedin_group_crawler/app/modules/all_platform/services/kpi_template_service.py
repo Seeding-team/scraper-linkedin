@@ -28,7 +28,15 @@ def list_templates(active_only: bool = False) -> List[Dict[str, Any]]:
         query = query.eq("is_active", True)
     
     resp = query.order("created_at", desc=True).execute()
-    return resp.data or []
+    templates = resp.data or []
+    for t in templates:
+        t["levels"] = t.get("kpi_template_levels") or []
+        t["bonus_rules"] = t.get("kpi_template_bonus_rules") or []
+        for l in t["levels"]:
+            l["normal_count"] = l.get("level_normal", 0)
+            l["high_count"] = l.get("level_high", 0)
+            l["critical_count"] = l.get("level_critical", 0)
+    return templates
 
 
 def get_template(template_id: str) -> Optional[Dict[str, Any]]:
@@ -46,7 +54,16 @@ def get_template(template_id: str) -> Optional[Dict[str, Any]]:
         .execute()
     )
     data = resp.data or []
-    return data[0] if data else None
+    if not data:
+        return None
+    tpl = data[0]
+    tpl["levels"] = tpl.get("kpi_template_levels") or []
+    tpl["bonus_rules"] = tpl.get("kpi_template_bonus_rules") or []
+    for l in tpl["levels"]:
+        l["normal_count"] = l.get("level_normal", 0)
+        l["high_count"] = l.get("level_high", 0)
+        l["critical_count"] = l.get("level_critical", 0)
+    return tpl
 
 
 def create_template(payload: KpiTemplateCreate, user_id: Optional[str] = None) -> Dict[str, Any]:
@@ -115,15 +132,18 @@ def upsert_template_levels(template_id: str, levels: List[KpiTemplateLevelSchema
     for lvl in levels:
         if not validate_metric_code(lvl.metric_code):
             logger.warning(f"Metric code khong hop le khi luu level: {lvl.metric_code}")
+        l_normal = lvl.level_normal if lvl.level_normal != 0 else (getattr(lvl, "normal_count", 0) or 0)
+        l_high = lvl.level_high if lvl.level_high != 0 else (getattr(lvl, "high_count", 0) or 0)
+        l_critical = lvl.level_critical if lvl.level_critical != 0 else (getattr(lvl, "critical_count", 0) or 0)
         rows.append({
             "template_id": template_id,
             "metric_code": lvl.metric_code,
-            "level_normal": lvl.level_normal,
-            "level_high": lvl.level_high,
-            "level_critical": lvl.level_critical,
-            "manday_normal": lvl.manday_normal,
-            "manday_high": lvl.manday_high,
-            "manday_critical": lvl.manday_critical,
+            "level_normal": float(l_normal),
+            "level_high": float(l_high),
+            "level_critical": float(l_critical),
+            "manday_normal": float(lvl.manday_normal or 0),
+            "manday_high": float(lvl.manday_high or 0),
+            "manday_critical": float(lvl.manday_critical or 0),
         })
 
     resp = supabase.table("kpi_template_levels").insert(rows).execute()

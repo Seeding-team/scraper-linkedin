@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class MetricItem(BaseModel):
@@ -19,9 +19,33 @@ class KpiTemplateLevelSchema(BaseModel):
     level_normal: float = 0
     level_high: float = 0
     level_critical: float = 0
+    normal_count: Optional[float] = None
+    high_count: Optional[float] = None
+    critical_count: Optional[float] = None
     manday_normal: float = 0
     manday_high: float = 0
     manday_critical: float = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Tuong thich giua cac ten field normal_count / level_normal
+            if "normal_count" in data and ("level_normal" not in data or data.get("level_normal") in (0, 0.0, None)):
+                data["level_normal"] = data["normal_count"]
+            elif "level_normal" in data and ("normal_count" not in data or data.get("normal_count") in (0, 0.0, None)):
+                data["normal_count"] = data["level_normal"]
+
+            if "high_count" in data and ("level_high" not in data or data.get("level_high") in (0, 0.0, None)):
+                data["level_high"] = data["high_count"]
+            elif "level_high" in data and ("high_count" not in data or data.get("high_count") in (0, 0.0, None)):
+                data["high_count"] = data["level_high"]
+
+            if "critical_count" in data and ("level_critical" not in data or data.get("level_critical") in (0, 0.0, None)):
+                data["level_critical"] = data["critical_count"]
+            elif "level_critical" in data and ("critical_count" not in data or data.get("critical_count") in (0, 0.0, None)):
+                data["critical_count"] = data["level_critical"]
+        return data
 
 
 class KpiTemplateBonusRuleSchema(BaseModel):

@@ -47,9 +47,9 @@ export function TeamKpiSessionView({
       string,
       { weight: number; support_user_id: string | null }
     > = {};
-    for (const a of session.allocations || []) {
+    for (const a of session.allocations || (session as any).kpi_session_allocations || []) {
       allocMap[a.user_id] = {
-        weight: a.weight ?? 100,
+        weight: a.weight ?? (a as any).weight_pct ?? 100,
         support_user_id: a.support_user_id || null,
       };
     }
@@ -58,8 +58,8 @@ export function TeamKpiSessionView({
 
   const buildInitialOverrides = () => {
     const overMap: Record<string, number> = {};
-    for (const o of session.overrides || []) {
-      overMap[`${o.user_id}:${o.metric_code}`] = o.critical_count;
+    for (const o of session.overrides || (session as any).kpi_session_member_overrides || []) {
+      overMap[`${o.user_id}:${o.metric_code}`] = o.critical_count ?? (o as any).level_critical_override ?? 0;
     }
     return overMap;
   };
@@ -246,7 +246,7 @@ export function TeamKpiSessionView({
   };
 
   // List of all members in allocations
-  const members = session.allocations || [];
+  const members = session.allocations || (session as any).kpi_session_allocations || [];
 
   return (
     <div className="space-y-6">
@@ -387,14 +387,14 @@ export function TeamKpiSessionView({
                     <th className="p-3 min-w-[180px]">Thành viên</th>
                     <th className="p-3 w-[120px]">Tỷ trọng (%)</th>
                     <th className="p-3 min-w-[180px]">Người hỗ trợ (Supporter)</th>
-                    {(session.levels || []).map((lvl) => (
+                    {(session.levels || (session as any).kpi_session_levels || []).map((lvl: any) => (
                       <th
                         key={lvl.metric_code}
                         className="p-3 min-w-[160px] text-center"
                       >
                         <div>Mốc Critical: {lvl.metric_code}</div>
                         <span className="text-[10px] text-muted-foreground font-normal">
-                          (Mặc định: {lvl.critical_count})
+                          (Mặc định: {lvl.critical_count ?? lvl.level_critical ?? 0})
                         </span>
                       </th>
                     ))}
@@ -470,7 +470,7 @@ export function TeamKpiSessionView({
                         </td>
 
                         {/* Critical Override per metric */}
-                        {(session.levels || []).map((lvl) => {
+                        {(session.levels || (session as any).kpi_session_levels || []).map((lvl: any) => {
                           const overrideKey = `${m.user_id}:${lvl.metric_code}`;
                           const overrideVal =
                             overrides[overrideKey] !== undefined
@@ -485,7 +485,7 @@ export function TeamKpiSessionView({
                               <Input
                                 type="number"
                                 min={0}
-                                placeholder={String(lvl.critical_count)}
+                                placeholder={String(lvl.critical_count ?? lvl.level_critical ?? 0)}
                                 className="h-8 text-xs text-center font-mono w-24 mx-auto"
                                 value={overrideVal}
                                 onChange={(e) =>

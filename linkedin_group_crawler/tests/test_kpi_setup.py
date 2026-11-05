@@ -417,3 +417,139 @@ def test_preview_session_returns_metrics_and_total_manday(monkeypatch):
     assert member["metrics"]["can-lien-he"]["effective_critical"] == 30.0
     assert member["metrics"]["can-lien-he"]["tier_reached"] == "critical"
 
+
+def test_kpi_template_level_schema_aliases():
+    from app.modules.all_platform.schemas.kpi_setup import KpiTemplateLevelSchema
+
+    # Case 1: Frontend sends normal_count, high_count, critical_count
+    schema_fe = KpiTemplateLevelSchema.model_validate({
+        "metric_code": "can-lien-he",
+        "normal_count": 1,
+        "high_count": 2,
+        "critical_count": 30,
+        "manday_normal": 1.0,
+        "manday_high": 2.0,
+        "manday_critical": 3.0,
+    })
+    assert schema_fe.level_normal == 1.0
+    assert schema_fe.level_high == 2.0
+    assert schema_fe.level_critical == 30.0
+    assert schema_fe.manday_normal == 1.0
+    assert schema_fe.manday_high == 2.0
+    assert schema_fe.manday_critical == 3.0
+
+    # Case 2: Backend sends level_normal, level_high, level_critical
+    schema_be = KpiTemplateLevelSchema.model_validate({
+        "metric_code": "can-lien-he",
+        "level_normal": 5.0,
+        "level_high": 10.0,
+        "level_critical": 50.0,
+        "manday_normal": 1.0,
+        "manday_high": 2.0,
+        "manday_critical": 3.0,
+    })
+    assert schema_be.level_normal == 5.0
+    assert schema_be.level_high == 10.0
+    assert schema_be.level_critical == 50.0
+
+
+def test_apply_template_copies_exact_levels_not_zeros(monkeypatch):
+    import app.modules.all_platform.services.kpi_session_service as sess_svc
+    import app.modules.all_platform.services.kpi_template_service as tpl_svc
+    from app.modules.all_platform.schemas.kpi_setup import ApplyTemplateRequest
+
+    mock_template = {
+        "id": "tpl-123",
+        "name": "Template Solution Standard",
+        "kpi_template_levels": [
+            {
+                "metric_code": "can-lien-he",
+                "level_normal": 1.0,
+                "level_high": 2.0,
+                "level_critical": 30.0,
+                "manday_normal": 1.0,
+                "manday_high": 2.0,
+                "manday_critical": 3.0,
+            },
+            {
+                "metric_code": "khong-phu-hop",
+                "normal_count": 5.0,
+                "high_count": 10.0,
+                "critical_count": 100.0,
+                "manday_normal": 1.0,
+                "manday_high": 2.0,
+                "manday_critical": 3.0,
+            }
+        ],
+    }
+
+    monkeypatch.setattr(tpl_svc, "get_template", lambda tid: mock_template)
+    monkeypatch.setattr(sess_svc, "get_team_members", lambda tid: [])
+
+    inserted_session_levels = []
+
+    class MockTable:
+        def __init__(self, name):
+            self.name = name
+        def select(self, *args, **kwargs):
+            return self
+        def eq(self, *args, **kwargs):
+            return self
+        def limit(self, *args, **kwargs):
+            return self
+        def update(self, *args, **kwargs):
+            return self
+        def delete(self, *args, **kwargs):
+            return self
+        def insert(self, rows):
+            if self.name == "kpi_session_levels":
+                inserted_session_levels.extend(rows)
+            return self
+        def execute(self):
+            m = MagicMock()
+            if self.name == "kpi_sessions":
+                m.data = [{"id": "sess-new-123"}]
+            else:
+                m.data = []
+            return m
+
+    class MockSupabase:
+        def table(self, name):
+            return MockTable(name)
+
+    monkeypatch.setattr(sess_svc, "get_supabase_client", lambda: MockSupabase())
+    monkeypatch.setattr(sess_svc, "get_session_detail", lambda sid: {
+        "id": sid,
+        "kpi_session_levels": inserted_session_levels,
+    })
+
+    req = ApplyTemplateRequest(
+        crm_team_id="team-tien-tran",
+        template_id="tpl-123",
+        week_start="2026-11-02",
+        week_end="2026-11-08",
+    )
+
+    result = sess_svc.apply_template(req, user_id="admin-user")
+
+    assert len(inserted_session_levels) == 2
+
+    # Level 1: from level_normal/high/critical
+    lvl1 = next(l for l in inserted_session_levels if l["metric_code"] == "can-lien-he")
+    assert lvl1["level_normal"] == 1.0
+    assert lvl1["level_high"] == 2.0
+    assert lvl1["level_critical"] == 30.0
+    assert lvl1["manday_normal"] == 1.0
+    assert lvl1["manday_high"] == 2.0
+    assert lvl1["manday_critical"] == 3.0
+
+    # Level 2: from normal_count/high_count/critical_count fallback
+    lvl2 = next(l for l in inserted_session_levels if l["metric_code"] == "khong-phu-hop")
+    assert lvl2["level_normal"] == 5.0
+    assert lvl2["level_high"] == 10.0
+    assert lvl2["level_critical"] == 100.0
+    assert lvl2["manday_normal"] == 1.0
+    assert lvl2["manday_high"] == 2.0
+    assert lvl2["manday_critical"] == 3.0
+
+

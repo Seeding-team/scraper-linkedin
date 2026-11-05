@@ -82,7 +82,15 @@ export function TemplateEditorModal({
         for (const m of loadedMetrics) {
           const found = template.levels?.find((l) => l.metric_code === m.code);
           if (found) {
-            lvlMap[m.code] = { ...found };
+            lvlMap[m.code] = {
+              ...found,
+              normal_count: found.normal_count ?? (found as any).level_normal ?? 0,
+              high_count: found.high_count ?? (found as any).level_high ?? 0,
+              critical_count: found.critical_count ?? (found as any).level_critical ?? 0,
+              manday_normal: found.manday_normal ?? 0,
+              manday_high: found.manday_high ?? 0,
+              manday_critical: found.manday_critical ?? 0,
+            };
           } else {
             lvlMap[m.code] = {
               metric_code: m.code,
@@ -186,7 +194,12 @@ export function TemplateEditorModal({
     setIsSubmitting(true);
     setError(null);
 
-    const levelsArray: KpiTemplateLevel[] = Object.values(levels);
+    const levelsArray: KpiTemplateLevel[] = Object.values(levels).map((lvl) => ({
+      ...lvl,
+      level_normal: lvl.normal_count,
+      level_high: lvl.high_count,
+      level_critical: lvl.critical_count,
+    }));
     const payload = {
       name: name.trim(),
       description: description.trim() || null,

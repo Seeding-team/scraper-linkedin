@@ -182,6 +182,19 @@ def get_kpi_session(
     return BaseResponse(success=True, data=detail)
 
 
+@router.delete("/sessions/{session_id}")
+def delete_kpi_session(
+    session_id: str,
+    user: Dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    """Xoa 1 ky KPI session."""
+    try:
+        kpi_session_service.delete_session(session_id)
+        return BaseResponse(success=True, message="Đã xóa kỳ KPI thành công")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.put("/sessions/{session_id}/allocations")
 @router.patch("/sessions/{session_id}/allocations")
 def update_session_allocations(
