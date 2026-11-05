@@ -34,6 +34,8 @@ import {
   createZaloAccount,
   createZaloBroadcast,
   createZaloUserThread,
+  saveConversationPhone,
+  getConversationPhone,
   findZaloUser,
   type ZaloFoundUser,
   updateZaloLibraryMessage,
@@ -967,12 +969,8 @@ export function ZaloInboxAdminShell() {
       setEditingPhoneConvId(null);
 
       // Gọi API lưu vĩnh viễn vào DB
-      const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: cleanDigits, name: selectedName || "Zalo User" }),
-      });
-      if (res.ok) {
+      const res = await saveConversationPhone(convId, cleanDigits, selectedName || "Zalo User");
+      if (res?.success) {
         inbox.showToast("Đã lưu số điện thoại cho khách hàng", true);
       }
     } catch (e) {
@@ -1060,9 +1058,7 @@ export function ZaloInboxAdminShell() {
     // 3. Tra cứu từ backend API (customer_leads hoặc auto_seeding_comments)
     void (async () => {
       try {
-        const res = await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone?name=${encodeURIComponent(selectedName || "")}&account_id=${encodeURIComponent(inbox.selectedAccountId || "")}`);
-        if (!res.ok) return;
-        const data = await res.json();
+        const data = await getConversationPhone(convId);
         if (!cancelled && data?.success && data?.phone) {
           const formatted = formatZaloPhoneDisplay(data.phone);
           if (formatted) {
@@ -1169,11 +1165,7 @@ export function ZaloInboxAdminShell() {
       });
       if (res?.conversation_id && targetPhone) {
         try {
-          await fetch(`/api/all-platform/zalo/conversations/${encodeURIComponent(res.conversation_id)}/phone`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ phone: targetPhone, name: targetUser.display_name }),
-          });
+          await saveConversationPhone(res.conversation_id, targetPhone, targetUser.display_name);
         } catch {}
       }
       if (res?.conversation_id) {

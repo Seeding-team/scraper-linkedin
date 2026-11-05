@@ -1899,13 +1899,13 @@ async def create_conversation_with_user(
                         "PATCH",
                         "customer_leads",
                         params={"id": f"eq.{existing_leads[0]['id']}"},
-                        payload={"phone": clean_digits, "updated_at": datetime.now(timezone.utc).isoformat()},
+                        json={"phone": clean_digits, "updated_at": datetime.now(timezone.utc).isoformat()},
                     )
                 else:
                     await _rest(
                         "POST",
                         "customer_leads",
-                        payload={
+                        json={
                             "customer_name": body.display_name.strip() or f"Zalo User {clean_digits[-4:]}",
                             "phone": clean_digits,
                             "conv_id": target_uid,
@@ -2189,6 +2189,24 @@ async def get_conversation_phone(
         except Exception as e:
             logger.debug(f"lookup phone in customer_leads by name failed: {e}")
 
+    # 2.5 Tra trong crm_leads theo lead_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            crm_lead_rows = await _rest(
+                "GET",
+                "crm_leads",
+                params={
+                    "lead_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if crm_lead_rows and isinstance(crm_lead_rows, list) and len(crm_lead_rows) > 0:
+                phone = crm_lead_rows[0].get("phone") or crm_lead_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in crm_leads by lead_name failed: {e}")
+
     # 3. Tra trong crm_customers theo customer_name
     if not phone and clean_name and len(clean_name) >= 2:
         try:
@@ -2344,7 +2362,7 @@ async def save_conversation_phone(
                 "PATCH",
                 "customer_leads",
                 params={"id": f"eq.{lead_id}"},
-                payload={
+                json={
                     "phone": clean_digits,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
@@ -2364,7 +2382,7 @@ async def save_conversation_phone(
             "created_at": datetime.now(timezone.utc).isoformat(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        res = await _rest("POST", "customer_leads", payload=new_lead)
+        res = await _rest("POST", "customer_leads", json=new_lead)
         return {"success": True, "phone": clean_digits, "action": "created", "lead": res}
     except Exception as e:
         logger.error(f"create customer_leads for conv_id failed: {e}")
