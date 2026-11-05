@@ -2292,13 +2292,13 @@ export function ZaloInboxAdminShell() {
           {/* Header */}
           <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 px-4 py-2.5 bg-white flex-shrink-0 min-h-[58px]">
             {/* Left: Avatar & Customer info (Strict max-width + truncate to NEVER overlap action buttons) */}
-            <div className="flex items-center gap-2.5 min-w-0 max-w-[240px] sm:max-w-[320px] md:max-w-[420px] lg:max-w-[540px] xl:max-w-[650px]">
+            <div className="flex items-center gap-2.5 min-w-0 max-w-[280px] sm:max-w-[380px] md:max-w-[480px] lg:max-w-[600px] xl:max-w-[720px]">
               <Avatar src={selectedConv?.avatar_url} name={selectedName || "Z"} className="h-9 w-9 text-xs shrink-0 ring-1 ring-slate-200/80" />
-              <div className="min-w-0 flex-1 overflow-hidden">
+              <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0">
                     <h2
-                      className="truncate text-sm font-bold text-slate-900 flex items-center gap-1.5 shrink-0"
+                      className="truncate max-w-[130px] sm:max-w-[180px] md:max-w-[220px] text-sm font-bold text-slate-900 flex items-center gap-1.5"
                       title={selectedName ? `${selectedName}${activeConvPhone ? ` (${activeConvPhone})` : ""}` : ""}
                     >
                       <span className="truncate">{selectedName || (inbox.openConv ? "Zalo User" : "Chọn hội thoại")}</span>
