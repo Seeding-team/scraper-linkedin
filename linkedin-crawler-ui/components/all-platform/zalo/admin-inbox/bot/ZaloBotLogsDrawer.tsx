@@ -28,6 +28,8 @@ type Props = {
   accountLabel: string;
   /** thread_id của hội thoại 1-1 đang mở (nếu có) — dùng cho bộ lọc "chỉ hội thoại đang mở". */
   currentThreadId: string | null;
+  /** Thống kê tổng của cả tài khoản chỉ dành cho admin/leader/chủ tài khoản; người khác chỉ xem nhật ký. */
+  canViewStats: boolean;
 };
 
 const PAGE_SIZE = 50;
@@ -190,7 +192,7 @@ function LogRow({ item }: { item: ZaloBotLogItem }) {
   );
 }
 
-export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accountLabel, currentThreadId }: Props) {
+export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accountLabel, currentThreadId, canViewStats }: Props) {
   const [days, setDays] = useState(7);
   const [direction, setDirection] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
@@ -267,7 +269,7 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
   );
 
   const loadStats = useCallback(async () => {
-    if (!accountId) return;
+    if (!accountId || !canViewStats) return;
     try {
       const res = await zaloBotApi.getStats(accountId, days);
       setStats(res);
@@ -275,7 +277,7 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
     } catch (e) {
       setStatsError(e instanceof Error ? e.message : "Không tải được thống kê");
     }
-  }, [accountId, days]);
+  }, [accountId, days, canViewStats]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -332,28 +334,36 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
         </SheetHeader>
 
         <div className="flex-1 space-y-4 px-4 pb-6">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">Thống kê</h3>
-            <div className="flex items-center gap-1">
-              {[1, 7, 30].map((d) => (
-                <Button key={d} size="sm" variant={days === d ? "default" : "outline"} className="h-7 px-2.5 text-xs" onClick={() => setDays(d)}>
-                  {d === 1 ? "Hôm nay" : `${d} ngày`}
-                </Button>
-              ))}
-            </div>
-          </div>
+          {canViewStats ? (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Thống kê</h3>
+                <div className="flex items-center gap-1">
+                  {[1, 7, 30].map((d) => (
+                    <Button key={d} size="sm" variant={days === d ? "default" : "outline"} className="h-7 px-2.5 text-xs" onClick={() => setDays(d)}>
+                      {d === 1 ? "Hôm nay" : `${d} ngày`}
+                    </Button>
+                  ))}
+                </div>
+              </div>
 
-          {statsError && <p className="text-xs text-red-600">{statsError}</p>}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <StatCard label="Tin bot đã chuyển" value={totals?.forwarded ?? "—"} />
-            <StatCard label="Đã gửi" value={totals?.sent ?? "—"} tone="text-green-600" />
-            <StatCard label="Chạy thử" value={totals?.dry_run ?? "—"} tone="text-amber-600" />
-            <StatCard label="Lỗi" value={totals?.error ?? "—"} tone="text-red-600" />
-            <StatCard label="Khách đã xử lý" value={stats?.threads_handled ?? "—"} />
-          </div>
-          {stats && <DayChart data={stats.by_day} />}
+              {statsError && <p className="text-xs text-red-600">{statsError}</p>}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <StatCard label="Tin bot đã chuyển" value={totals?.forwarded ?? "—"} />
+                <StatCard label="Đã gửi" value={totals?.sent ?? "—"} tone="text-green-600" />
+                <StatCard label="Chạy thử" value={totals?.dry_run ?? "—"} tone="text-amber-600" />
+                <StatCard label="Lỗi" value={totals?.error ?? "—"} tone="text-red-600" />
+                <StatCard label="Khách đã xử lý" value={stats?.threads_handled ?? "—"} />
+              </div>
+              {stats && <DayChart data={stats.by_day} />}
+            </>
+          ) : (
+            <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Thống kê tổng chỉ dành cho admin, leader hoặc chủ tài khoản Zalo. Bạn đang xem nhật ký của những cuộc trò chuyện bạn có quyền truy cập.
+            </p>
+          )}
 
-          <div className="flex flex-wrap items-end gap-3 border-t pt-4 border-border">
+          <div className={cn("flex flex-wrap items-end gap-3 pt-4", canViewStats && "border-t border-border")}>
             <div className="space-y-1">
               <Label className="text-[11px]">Hướng</Label>
               <Select value={direction} onValueChange={setDirection}>

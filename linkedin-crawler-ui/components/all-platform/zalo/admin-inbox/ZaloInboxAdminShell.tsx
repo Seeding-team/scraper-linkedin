@@ -3711,6 +3711,7 @@ export function ZaloInboxAdminShell() {
         accountId={inbox.selectedAccountId || ""}
         accountLabel={accountLabel}
         currentThreadId={botThreadId || null}
+        canViewStats={!botConfig.forbidden && botConfig.config?.can_manage === true}
       />
 
       <ZaloForwardModal

@@ -640,11 +640,20 @@ async def _thread_names(account_id: str, thread_ids: List[str]) -> Dict[str, str
     return {r["group_id"]: r.get("group_name") or "" for r in rows}
 
 
+LOG_SCAN_MAX_PAGES = 20  # trần số trang quét khi phải lọc theo hội thoại được chia sẻ
+
+
 async def list_logs(
     account_id: str, *, thread_id: Optional[str] = None, direction: Optional[str] = None,
     status: Optional[str] = None, q: Optional[str] = None, limit: int = 50, before_id: Optional[int] = None,
+    allowed_thread_ids: Optional[Any] = None,
 ) -> Dict[str, Any]:
+    """Nhật ký bot. `allowed_thread_ids` (tập thread_id) giới hạn chỉ các hội thoại người gọi được xem;
+    None = không giới hạn (người xem được toàn bộ hội thoại của tài khoản)."""
     limit = max(1, min(int(limit or 50), 200))
+    allowed = None if allowed_thread_ids is None else {str(t).strip() for t in allowed_thread_ids if str(t).strip()}
+    if allowed is not None and not allowed:
+        return {"items": [], "has_more": False, "next_before_id": None}
     params: Dict[str, str] = {
         "select": "id,account_id,thread_id,direction,source_msg_id,content,status,error,sent_by,created_at",
         "account_id": f"eq.{account_id}", "order": "id.desc", "limit": str(limit + 1),
@@ -668,12 +677,33 @@ async def list_logs(
         if gids:
             clause += f",thread_id.in.({','.join(gids)})"
         params["or"] = f"({clause})"
-    rows = await _rest("GET", "zalo_bot_logs", params=params) or []
-    has_more = len(rows) > limit
+    scan_cursor: Optional[int] = None  # đặt khi dừng vì chạm trần trang mà DB còn dữ liệu cũ hơn
+    if allowed is None:
+        rows = await _rest("GET", "zalo_bot_logs", params=params) or []
+    else:
+        # Danh sách hội thoại được chia sẻ có thể rất dài (không nhét vừa URL PostgREST) nên quét theo trang
+        # rồi lọc ở đây, dừng khi đủ limit+1 dòng hoặc hết dữ liệu.
+        rows = []
+        page_params = dict(params)
+        page_params["limit"] = "500"
+        for _ in range(LOG_SCAN_MAX_PAGES):
+            page = await _rest("GET", "zalo_bot_logs", params=page_params) or []
+            rows.extend(r for r in page if str(r.get("thread_id") or "").strip() in allowed)
+            if len(rows) > limit or len(page) < 500:
+                scan_cursor = None
+                break
+            scan_cursor = int(page[-1]["id"])
+            page_params["id"] = f"lt.{scan_cursor}"
+    scan_capped = scan_cursor is not None and len(rows) <= limit  # chạm trần quét mà DB còn dữ liệu cũ hơn
+    has_more = scan_capped or len(rows) > limit
     rows = rows[:limit]
     names = await _thread_names(account_id, [r["thread_id"] for r in rows])
     items = [{**r, "thread_name": names.get(r["thread_id"]) or None} for r in rows]
-    return {"items": items, "has_more": has_more, "next_before_id": rows[-1]["id"] if has_more and rows else None}
+    if scan_capped:
+        next_id: Optional[int] = scan_cursor  # "Tải thêm" tiếp tục từ chỗ đã quét tới
+    else:
+        next_id = rows[-1]["id"] if has_more and rows else None
+    return {"items": items, "has_more": has_more, "next_before_id": next_id}
 
 
 def aggregate_stats(rows: List[Dict[str, Any]], days: int, now: Optional[datetime] = None) -> Dict[str, Any]:

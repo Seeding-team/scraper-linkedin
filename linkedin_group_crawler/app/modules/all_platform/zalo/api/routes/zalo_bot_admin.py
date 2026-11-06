@@ -3,10 +3,12 @@
 Khác `zalo_bot_bridge.py` (endpoint cho n8n, bảo vệ bằng secret dùng chung), router này dành cho người
 dùng đăng nhập trong app (JWT) + `verify_zalo_api_key` như các route Zalo khác.
 
-Phân quyền:
-  * Sửa cấu hình, xem nhật ký/thống kê: admin, leader hoặc chủ tài khoản (`_require_admin_leader_or_self`).
-  * Xem trạng thái/tiếp quản/bật lại bot theo hội thoại: người có quyền truy cập hội thoại đó
-    (cùng quy tắc với gửi tin: `check_caller_conversation_access`).
+Phân quyền (hai tầng, khớp quy tắc chung của module Zalo):
+  * Quản lý bot của CẢ tài khoản — sửa cấu hình, phạm vi theo người, thống kê tổng: admin, leader hoặc
+    chủ tài khoản (`_require_manage` -> `_require_admin_leader_or_self`, như sửa/xoá tài khoản Zalo).
+  * Theo hội thoại — xem cấu hình (chỉ đọc, kèm cờ `can_manage`), trạng thái/tiếp quản/bật lại bot,
+    nhật ký: người có quyền truy cập hội thoại đó (`_require_view` -> `check_caller_conversation_access`,
+    cùng quy tắc xem/gửi tin). Nhật ký chỉ trả các hội thoại người gọi được xem.
 """
 
 from typing import Any, Dict, List, Literal, Optional
@@ -67,12 +69,36 @@ async def _account_or_404(account_id: str) -> Dict[str, Any]:
     return account
 
 
+MANAGE_DENIED_DETAIL = (
+    "Chỉ admin, leader hoặc chủ tài khoản Zalo mới được quản lý Bot AI của tài khoản này."
+)
+
+
+async def _can_manage(caller_email: Optional[str], account: Dict[str, Any]) -> bool:
+    """True nếu người gọi là admin/leader/chủ tài khoản (không ném lỗi — dùng để báo cho giao diện)."""
+    try:
+        await _require_admin_leader_or_self(caller_email, account.get("id_member") or account.get("owner_id"))
+        return True
+    except HTTPException as exc:
+        if exc.status_code in (401, 403):
+            return False
+        raise
+
+
 async def _require_manage(caller_email: Optional[str], account_id: str) -> None:
+    """Quyền quản lý bot của CẢ tài khoản (cấu hình, phạm vi, thống kê tổng): cùng quy tắc sửa tài khoản Zalo."""
     account = await _account_or_404(account_id)
-    await _require_admin_leader_or_self(caller_email, account.get("id_member") or account.get("owner_id"))
+    if not await _can_manage(caller_email, account):
+        raise HTTPException(status_code=403, detail=MANAGE_DENIED_DETAIL)
 
 
-async def _require_view(caller_email: Optional[str], account_id: str, thread_id: Optional[str] = None) -> None:
+async def _require_view(
+    caller_email: Optional[str], account_id: str, thread_id: Optional[str] = None,
+) -> Optional[set]:
+    """Quyền theo hội thoại (cùng quy tắc xem/gửi tin).
+
+    Trả về None nếu được xem toàn bộ hội thoại của tài khoản, hoặc tập thread_id được chia sẻ cho người gọi.
+    """
     _require_login(caller_email)
     await _account_or_404(account_id)
     allowed = await check_caller_conversation_access(account_id, caller_email)
@@ -81,6 +107,7 @@ async def _require_view(caller_email: Optional[str], account_id: str, thread_id:
             status_code=403,
             detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.",
         )
+    return allowed
 
 
 def _db_error(exc: Exception) -> HTTPException:
@@ -112,7 +139,10 @@ async def get_configs(
 async def get_config(account_id: str, caller_email: Optional[str] = Depends(get_authenticated_caller_email)):
     await _require_view(caller_email, account_id)
     try:
-        return await bot.build_config_view(account_id)
+        view = await bot.build_config_view(account_id)
+        # Giao diện dựa vào cờ này để khoá các ô sửa + ẩn thống kê cho người chỉ có quyền xem.
+        view["can_manage"] = await _can_manage(caller_email, await _account_or_404(account_id))
+        return view
     except HTTPException:
         raise
     except Exception as exc:
@@ -315,11 +345,13 @@ async def get_logs(
     before_id: Optional[int] = Query(None, ge=1),
     caller_email: Optional[str] = Depends(get_authenticated_caller_email),
 ):
-    await _require_manage(caller_email, account_id)
+    # Nhật ký chứa nội dung tin của khách -> theo quyền xem hội thoại, không cần quyền quản lý:
+    # người được xem toàn bộ thấy tất cả; người chỉ được chia sẻ một số hội thoại chỉ thấy các hội thoại đó.
+    allowed = await _require_view(caller_email, account_id, thread_id)
     try:
         return await bot.list_logs(
             account_id, thread_id=thread_id, direction=direction, status=status, q=q,
-            limit=limit, before_id=before_id,
+            limit=limit, before_id=before_id, allowed_thread_ids=allowed,
         )
     except Exception as exc:
         raise _db_error(exc)

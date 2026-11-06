@@ -45,6 +45,11 @@ export type ZaloBotConfig = {
   batch_wait_seconds: number;
   updated_at: string | null;
   readiness: ZaloBotReadiness;
+  /**
+   * Người gọi có quyền quản lý bot của cả tài khoản (admin/leader/chủ tài khoản) hay chỉ được xem.
+   * Chỉ có ở phản hồi GET config; false => giao diện khoá phần sửa và ẩn thống kê tổng.
+   */
+  can_manage?: boolean;
 };
 
 export type ZaloBotConfigUpdate = Partial<

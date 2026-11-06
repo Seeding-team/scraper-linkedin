@@ -137,7 +137,9 @@ export default function ZaloBotSettingsDrawer({
     }
   }
 
-  const readOnly = forbidden;
+  // Chỉ xem: server từ chối (403) hoặc báo người này không có quyền quản lý bot của tài khoản (member).
+  const viewOnly = forbidden || config?.can_manage === false;
+  const readOnly = viewOnly;
   const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }));
 
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(toForm(config)), [form, config]);
@@ -202,9 +204,10 @@ export default function ZaloBotSettingsDrawer({
           </SheetHeader>
 
           <div className="flex-1 space-y-5 px-4 pb-4">
-            {forbidden && (
+            {viewOnly && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                Bạn không có quyền chỉnh sửa Bot AI của tài khoản này. Đang ở chế độ chỉ xem.
+                Bạn đang ở chế độ chỉ xem. Chỉ admin, leader hoặc chủ tài khoản Zalo mới chỉnh sửa được cấu hình Bot AI
+                của tài khoản này. Bạn vẫn bật/tắt hoặc tiếp quản bot cho từng cuộc trò chuyện ngay trong khung chat.
               </div>
             )}
             {loadError && !config && (

@@ -84,12 +84,64 @@ def test_config_permissions_and_unknown_account(env):
     assert client.get(f"{P}/config/khong_ton_tai").status_code == 404
     state["manage_ok"] = False
     r = client.put(f"{P}/config/acc1", json={"dry_run": False})
-    assert r.status_code == 403 and "quyền" in r.json()["detail"]
-    assert client.get(f"{P}/logs", params={"account_id": "acc1"}).status_code == 403   # log chỉ cho người quản lý
+    assert r.status_code == 403 and "admin, leader hoặc chủ tài khoản" in r.json()["detail"]
+    # các thao tác quản lý cả tài khoản: chỉ admin/leader/chủ tài khoản
     assert client.get(f"{P}/stats", params={"account_id": "acc1"}).status_code == 403
-    assert client.get(f"{P}/config/acc1").status_code == 200                              # xem cấu hình thì được
+    assert client.get(f"{P}/scope/acc1").status_code == 403
+    assert client.get(f"{P}/scope/acc1/candidates").status_code == 403
+    assert client.post(f"{P}/scope/acc1/rules", json={"thread_ids": ["u100"], "bot_on": True}).status_code == 403
+    assert client.post(f"{P}/scope/acc1/clear").status_code == 403
+    # theo hội thoại: người được xem hội thoại thì xem cấu hình + nhật ký được
+    assert client.get(f"{P}/logs", params={"account_id": "acc1"}).status_code == 200
+    cfg = client.get(f"{P}/config/acc1")
+    assert cfg.status_code == 200 and cfg.json()["can_manage"] is False
+    state["manage_ok"] = True
+    assert client.get(f"{P}/config/acc1").json()["can_manage"] is True
     state["email"] = None
     assert client.get(f"{P}/config/acc1").status_code == 401
+    assert client.get(f"{P}/logs", params={"account_id": "acc1"}).status_code == 401
+
+
+def test_logs_follow_conversation_access_not_manage_role(env):
+    client, db, state = env
+    for i, thread in enumerate(["u100", "u999", "u100", "u777"], start=1):
+        db.tables["zalo_bot_logs"].append({
+            "id": i, "account_id": "acc1", "thread_id": thread, "direction": "in", "source_msg_id": None,
+            "content": f"tin {i}", "status": "forwarded", "error": None, "sent_by": None,
+            "created_at": f"2026-11-04T03:0{i}:00Z",
+        })
+    orig = db.rest
+
+    async def ordered(method, path, *, params=None, json=None, prefer=None):
+        no_limit = {k: v for k, v in (params or {}).items() if k != "limit"} if method == "GET" else params
+        rows = await orig(method, path, params=no_limit, json=json, prefer=prefer)
+        if method == "GET" and path == "zalo_bot_logs" and rows:
+            rows = sorted(rows, key=lambda r: -r["id"])
+            if params and params.get("id", "").startswith("lt."):
+                rows = [r for r in rows if r["id"] < int(params["id"][3:])]
+            rows = rows[: int((params or {}).get("limit", 1000))]
+        return rows
+
+    state["manage_ok"] = False  # member thường
+    with mock.patch.object(svc, "_rest", ordered):
+        # được xem toàn bộ hội thoại (vd. tài khoản dùng chung) -> thấy hết nhật ký
+        state["allowed"] = None
+        all_ids = [i["id"] for i in client.get(f"{P}/logs", params={"account_id": "acc1"}).json()["items"]]
+        assert all_ids == [4, 3, 2, 1]
+        # chỉ được chia sẻ u100 -> chỉ thấy dòng của u100, không lộ hội thoại riêng tư khác
+        state["allowed"] = {"u100"}
+        page = client.get(f"{P}/logs", params={"account_id": "acc1"}).json()
+        assert [i["id"] for i in page["items"]] == [3, 1] and page["has_more"] is False
+        # phân trang vẫn đúng khi bị lọc
+        p1 = client.get(f"{P}/logs", params={"account_id": "acc1", "limit": 1}).json()
+        assert [i["id"] for i in p1["items"]] == [3] and p1["has_more"] is True and p1["next_before_id"] == 3
+        p2 = client.get(f"{P}/logs", params={"account_id": "acc1", "limit": 1, "before_id": 3}).json()
+        assert [i["id"] for i in p2["items"]] == [1] and p2["has_more"] is False
+        # chỉ định thẳng hội thoại riêng tư chưa được chia sẻ -> 403
+        assert client.get(f"{P}/logs", params={"account_id": "acc1", "thread_id": "u999"}).status_code == 403
+        # không được chia sẻ hội thoại nào -> rỗng
+        state["allowed"] = set()
+        assert client.get(f"{P}/logs", params={"account_id": "acc1"}).json()["items"] == []
 
 
 def test_configs_brief_for_account_tree(env):
