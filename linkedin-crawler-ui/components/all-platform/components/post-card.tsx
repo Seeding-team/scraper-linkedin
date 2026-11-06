@@ -332,7 +332,7 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
             member_name: currentUser?.name || "Bạn",
             seeding_content: saved,
             link_comment: post.link_comment || post.post_url,
-            verify_status: "yes",
+            verify_status: "pending",
           };
         }
       }
@@ -766,17 +766,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300">
                 ✓ {effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn Zalo` : "Đã nhắn Zalo"}
               </span>
-            ) : effectiveSeeding ? (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
-                ✓ Đã comment
-              </span>
-            ) : (verifyStatus === "yes" || verifyStatus === "pending") && isRejected(post.link_comment) ? (
+            ) : isRejected(post.link_comment) ? (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-red-100 text-red-700 border-red-200">
                 X Bị từ chối
               </span>
-            ) : verifyStatus === "yes" || verifyStatus === "pending" ? (
+            ) : (effectiveSeeding && effectiveSeeding.verify_status === "yes") || (verifyStatus === "yes") ? (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
                 ✓ Đã comment
+              </span>
+            ) : (effectiveSeeding && effectiveSeeding.verify_status === "pending") || verifyStatus === "pending" ? (
+              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300">
+                ⏳ Đang làm nhiệm vụ
               </span>
             ) : (
               <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-muted text-muted-foreground border-border">
@@ -784,10 +784,17 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
               </span>
             )}
 
-            {/* Nút xem bình luận trực tiếp trên card */}
-            {(verifyStatus === "yes" || verifyStatus === "pending" || (post.all_seedings && post.all_seedings.length > 0) || post.link_comment || post.seeding_content) && (
+            {/* Nút xem bình luận trực tiếp trên card (chỉ hiện khi đã có link comment minh chứng thật) */}
+            {((effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment && effectiveSeeding.link_comment !== post.post_url) ||
+              (verifyStatus === "yes" && post.link_comment && post.link_comment !== post.post_url) ||
+              (post.all_seedings && post.all_seedings.some((s) => s.link_comment && s.link_comment !== post.post_url && s.verify_status === "yes"))) && (
               <a
-                href={post.link_comment || (post.all_seedings && post.all_seedings[0] && post.all_seedings[0].link_comment) || post.post_url}
+                href={
+                  (effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment) ||
+                  post.link_comment ||
+                  (post.all_seedings && post.all_seedings[0] && post.all_seedings[0].link_comment) ||
+                  post.post_url
+                }
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
@@ -979,6 +986,9 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
     window.open(post.author_url || post.post_url, "_blank");
   };
 
+  const [manualProofLink, setManualProofLink] = useState("");
+  const [isSubmittingManual, setIsSubmittingManual] = useState(false);
+
   const handleLaunchTask = async () => {
     onClose();
     if (commentText.trim()) {
@@ -1011,19 +1021,61 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
         member_name: user?.name || "Bạn",
         seeding_content: commentText.trim() || "Nhiệm vụ bình luận đã kích hoạt",
         link_comment: post.post_url,
-        verify_status: "yes",
+        verify_status: "pending",
       };
       localStorage.setItem(localKey, JSON.stringify(savedPayload));
     }
-    if (onCommentSuccess) {
-      setTimeout(() => onCommentSuccess(), 300);
-    }
-    toast.success(
+    toast.info(
       commentText.trim()
-        ? "🚀 Đã sao chép bình luận & kích hoạt theo dõi! Hãy dán (Ctrl+V) trên tab vừa mở, Extension sẽ tự động bắt request minh chứng."
-        : "🚀 Đã mở bài viết và kích hoạt theo dõi! Hãy bình luận trên tab vừa mở, hệ thống sẽ tự động bắt request minh chứng."
+        ? "🚀 Đã sao chép bình luận & mở bài viết! Hãy dán (Ctrl+V) và đăng bình luận trên tab vừa mở, Extension sẽ tự động bắt minh chứng để tính KPI."
+        : "🚀 Đã mở bài viết và kích hoạt theo dõi! Hãy bình luận trên tab vừa mở, hệ thống sẽ tự động bắt minh chứng để tính KPI."
     );
-    onClose();
+  };
+
+  const handleManualConfirmComment = async () => {
+    if (!manualProofLink.trim()) {
+      toast.error("Vui lòng nhập link bình luận minh chứng!");
+      return;
+    }
+    setIsSubmittingManual(true);
+    try {
+      const apiEndpoint = post.platform === "youtube"
+        ? "/api/all-platform/youtube/seeding-mark/verify"
+        : "/api/all-platform/facebook/seeding-mark/verify";
+
+      const res = await fetch(apiEndpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email_member: user?.email || "",
+          link_post: post.post_url,
+          link_comment: manualProofLink.trim(),
+          content: commentText.trim() || "Đã bình luận xác nhận thủ công",
+          id_post: post.id,
+          id_platform: post.platform === "linkedin" ? 2 : (post.platform === "threads" ? 4 : 1),
+        }),
+      });
+
+      if (typeof window !== "undefined") {
+        const localKey = `my_task_comment_${post.id || post.post_url}`;
+        localStorage.setItem(localKey, JSON.stringify({
+          member_name: user?.name || "Bạn",
+          seeding_content: commentText.trim() || "Đã bình luận xác nhận thủ công",
+          link_comment: manualProofLink.trim(),
+          verify_status: "yes",
+        }));
+      }
+
+      toast.success("🎉 Đã xác nhận bình luận thành công! KPI đã được ghi nhận (+1).");
+      if (onCommentSuccess) {
+        onCommentSuccess();
+      }
+      onClose();
+    } catch (err: any) {
+      toast.error(`Lỗi xác nhận bình luận: ${err?.message || "Không thể gửi dữ liệu"}`);
+    } finally {
+      setIsSubmittingManual(false);
+    }
   };
 
   return (
@@ -1097,6 +1149,31 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
                 <span className="material-symbols-outlined text-[18px]">open_in_new</span>
                 {commentText.trim() ? "Sao chép & Mở bài viết (Kích hoạt theo dõi)" : "Mở bài viết & Làm nhiệm vụ (Kích hoạt theo dõi)"}
               </button>
+            </div>
+
+            {/* Mục xác nhận thủ công nếu không dùng Extension */}
+            <div className="mt-2 p-3 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col gap-2">
+              <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-[16px]">verified</span>
+                <span>Xác nhận thủ công (nếu không cài hoặc không dùng Extension)</span>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={manualProofLink}
+                  onChange={(e) => setManualProofLink(e.target.value)}
+                  placeholder="Dán link bình luận minh chứng của bạn vào đây..."
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary"
+                />
+                <button
+                  type="button"
+                  disabled={isSubmittingManual || !manualProofLink.trim()}
+                  onClick={handleManualConfirmComment}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
+                >
+                  {isSubmittingManual ? "Đang lưu..." : "Xác nhận đã bình luận"}
+                </button>
+              </div>
             </div>
           </div>
 
