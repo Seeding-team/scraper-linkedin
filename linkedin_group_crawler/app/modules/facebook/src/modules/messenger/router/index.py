@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Header
+from fastapi import APIRouter, HTTPException, Query, Header, Request
+from fastapi.responses import StreamingResponse
 
 from app.core.supabase_client import get_supabase_client
 from app.modules.facebook.src.modules.messenger.schemas.messenger_schema import (
@@ -14,6 +15,10 @@ from app.modules.facebook.src.modules.messenger.schemas.messenger_schema import 
     MessengerBaseResponse,
 )
 from app.modules.facebook.src.modules.messenger.services.fb_messenger_service import FbMessengerService
+from app.modules.facebook.src.modules.messenger.services.fb_realtime_listener import (
+    FbRealtimeListener,
+    messenger_event_bus,
+)
 
 logger = logging.getLogger("fb_messenger.router")
 
@@ -146,3 +151,51 @@ async def send_messenger_message(payload: SendMessageRequest) -> MessengerBaseRe
         message=res.get("message", ""),
         data=res.get("data"),
     )
+
+
+
+@messenger_router.get("/events")
+async def stream_messenger_events(request: Request) -> StreamingResponse:
+    """Server-Sent Events (SSE) Bus cho Facebook Messenger.
+
+    Phát tin nhắn mới (chiều nhận) và tin nhắn echo (chiều gửi từ điện thoại) tức thì trong 0ms.
+    """
+    return StreamingResponse(
+        messenger_event_bus.stream(request, heartbeat_seconds=15.0),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@messenger_router.post("/webhook/sync", response_model=MessengerBaseResponse)
+async def webhook_incoming_messenger_message(payload: dict) -> MessengerBaseResponse:
+    """Webhook đồng bộ tin nhắn từ Extension Chrome hoặc thiết bị di động."""
+    account_id = payload.get("account_id")
+    sender_id = payload.get("sender_id")
+    recipient_id = payload.get("recipient_id")
+    content = payload.get("content", "")
+    is_self = payload.get("is_self", False)
+    is_echo = payload.get("is_echo", False)
+    sender_name = payload.get("sender_name")
+    recipient_name = payload.get("recipient_name")
+    attachments = payload.get("attachments")
+
+    if not account_id or not sender_id or not recipient_id:
+        raise HTTPException(status_code=400, detail="Thiếu account_id, sender_id hoặc recipient_id")
+
+    saved = await FbRealtimeListener.process_incoming_payload(
+        account_id=account_id,
+        sender_id=sender_id,
+        recipient_id=recipient_id,
+        content=content,
+        is_self=is_self,
+        is_echo=is_echo,
+        sender_name=sender_name,
+        recipient_name=recipient_name,
+        attachments=attachments,
+    )
+    return MessengerBaseResponse(success=True, message="Đã đồng bộ tin nhắn thành công", data=saved)

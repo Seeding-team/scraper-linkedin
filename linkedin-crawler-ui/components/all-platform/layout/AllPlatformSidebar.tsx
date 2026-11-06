@@ -422,6 +422,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     {
       type: "item",
+      id: "messenger-inbox",
+      href: "/all-platform/messenger-inbox",
+      icon: "chat",
+      label: "Hộp thư Messenger",
+      matchStartsWith: ["/all-platform/messenger-inbox"],
+    },
+    {
+      type: "item",
       id: "zalo-accounts",
       href: "/all-platform/tai-khoan",
       icon: "chat",
