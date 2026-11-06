@@ -1665,9 +1665,14 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
 
     # Giai đoạn 1: Lấy nhóm FB, nhóm LinkedIn, tài khoản Telegram đồng thời (Parallel Stage 1)
     with ThreadPoolExecutor(max_workers=3) as executor:
-        f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or [])
-        f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or [])
-        f_tg_a = executor.submit(lambda: sb.table("telegram_accounts").select("id_member").in_("id_member", member_ids).eq("status", "connected").execute().data or [])
+        if role == "admin":
+            f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").execute().data or [])
+            f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").execute().data or [])
+            f_tg_a = executor.submit(lambda: sb.table("telegram_accounts").select("id_member").eq("status", "connected").execute().data or [])
+        else:
+            f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or [])
+            f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or [])
+            f_tg_a = executor.submit(lambda: sb.table("telegram_accounts").select("id_member").in_("id_member", member_ids).eq("status", "connected").execute().data or [])
 
         fb_groups = f_fb_g.result()
         li_groups = f_li_g.result()
@@ -1721,38 +1726,45 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
 
     # Giai đoạn 2: Lấy bài viết FB, Threads, LinkedIn đồng thời (Parallel Stage 2)
     def _fetch_fb_posts():
-        q = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
-        if fb_group_owner_map:
-            group_ids = list(fb_group_owner_map.keys())[:100]
-            q = q.or_(f"id_member.in.({','.join(member_ids)}),group_id.in.({','.join(group_ids)})")
-        else:
-            q = q.in_("id_member", member_ids)
-        if start_iso:
-            q = q.gte("crawl_date", start_iso)
-        if end_iso:
-            q = q.lt("crawl_date", end_iso)
-        return q.order("crawl_date", desc=True).limit(5000).execute().data or []
+        try:
+            q = sb.table("facebook_posts").select("id, id_member, group_id, crawl_date, created_at, score, lead_score")
+            if role != "admin":
+                q = q.in_("id_member", member_ids)
+            if start_iso:
+                q = q.gte("crawl_date", start_iso)
+            if end_iso:
+                q = q.lt("crawl_date", end_iso)
+            return q.order("crawl_date", desc=True).limit(5000).execute().data or []
+        except Exception as err:
+            logger.warning(f"Error fetching fb_posts in overview: {err}")
+            return []
 
     def _fetch_th_posts():
-        tq = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score").in_("id_member", member_ids)
-        if start_iso:
-            tq = tq.gte("created_at", start_iso)
-        if end_iso:
-            tq = tq.lt("created_at", end_iso)
         try:
+            tq = sb.table("threads_posts").select("id, id_member, created_at, score, lead_score")
+            if role != "admin":
+                tq = tq.in_("id_member", member_ids)
+            if start_iso:
+                tq = tq.gte("created_at", start_iso)
+            if end_iso:
+                tq = tq.lt("created_at", end_iso)
             return tq.limit(2000).execute().data or []
-        except Exception:
+        except Exception as err:
+            logger.warning(f"Error fetching th_posts in overview: {err}")
             return []
 
     def _fetch_li_posts():
-        lq = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score").in_("id_member", member_ids)
-        if start_iso:
-            lq = lq.gte("crawl_date", start_iso)
-        if end_iso:
-            lq = lq.lt("crawl_date", end_iso)
         try:
+            lq = sb.table("linkedin_posts").select("id, id_member, crawl_date, created_at, score, lead_score")
+            if role != "admin":
+                lq = lq.in_("id_member", member_ids)
+            if start_iso:
+                lq = lq.gte("crawl_date", start_iso)
+            if end_iso:
+                lq = lq.lt("crawl_date", end_iso)
             return lq.limit(2000).execute().data or []
-        except Exception:
+        except Exception as err:
+            logger.warning(f"Error fetching li_posts in overview: {err}")
             return []
 
     with ThreadPoolExecutor(max_workers=3) as executor:
