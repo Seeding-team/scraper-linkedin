@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, memo } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink, FiMessageSquare } from "react-icons/fi";
@@ -126,7 +126,7 @@ function formatPostDateTime(dateStr?: string | null) {
   }
 }
 
-export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
+export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
   const { user: currentUser } = useAppAuth();
   const isYouTube = post.platform === "youtube";
   const [showAllCrawledComments, setShowAllCrawledComments] = useState(false);
@@ -233,20 +233,6 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
   const isRejected = (link?: string | null) => {
     return link && link.startsWith("Bị từ chối");
   };
-
-  const { libraryItems, fallbackItems } = useQuickInboxLibrary();
-  const inboxGroups = useMemo(() => {
-    const templates = libraryItems.length > 0 ? libraryItems : fallbackItems;
-    const groups = new Map<string, { category: string; templates: typeof templates }>();
-    templates.forEach((item) => {
-      const category = item.label || "Khác";
-      if (!groups.has(category)) {
-        groups.set(category, { category, templates: [] });
-      }
-      groups.get(category)!.templates.push(item);
-    });
-    return Array.from(groups.values());
-  }, [fallbackItems, libraryItems]);
 
   // Điểm "tiềm năng seeding" do LLM chấm (migration 159, lead_score_service.py) — người
   // đang tìm đơn vị làm website/app/landing page, để người dùng biết ngay bài nào nên
@@ -880,62 +866,65 @@ export function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onVi
       )}
 
       {/* Tạo lead ngay từ SĐT + tên Zalo bot auto-seeding đã tìm được (migration 172) —
-          không bắt gõ lại, đi đúng luồng check trùng/tạo lead đang dùng ở CRM. */}
-      <LeadFormDrawer
-        open={showLeadDrawer}
-        currentUser={currentUser}
-        onClose={() => setShowLeadDrawer(false)}
-        onSaved={(lead) => {
-          setShowLeadDrawer(false);
-          toast.success(`Đã tạo lead "${lead.leadName || lead.phone || "mới"}"`);
-        }}
-        // post-card không có khung "Chấm điểm lead" riêng như trang CRM Leads —
-        // dùng nút "Lưu & Chấm điểm" trong drawer thì cũng chỉ đóng lại như lưu thường.
-        onOpenQualification={() => setShowLeadDrawer(false)}
-        initialValues={{
-          phone: post.auto_seeding_comment?.phone_number || detectedPhone || undefined,
-          leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
-          postUrl: post.post_url || undefined,
-          postContent: post.content || undefined,
-          groupName: post.group_name || undefined,
-          source: post.platform === "facebook" ? "FB_Group" : post.platform === "linkedin" ? "LinkedIn" : "Manual",
-          note: `Tạo từ bài seeding tự động: ${post.post_url}`,
-        }}
-      />
+          chỉ mount khi người dùng bấm mở để tránh tải trước 50 form drawer ngầm */}
+      {showLeadDrawer && (
+        <LeadFormDrawer
+          open={showLeadDrawer}
+          currentUser={currentUser}
+          onClose={() => setShowLeadDrawer(false)}
+          onSaved={(lead) => {
+            setShowLeadDrawer(false);
+            toast.success(`Đã tạo lead "${lead.leadName || lead.phone || "mới"}"`);
+          }}
+          onOpenQualification={() => setShowLeadDrawer(false)}
+          initialValues={{
+            phone: post.auto_seeding_comment?.phone_number || detectedPhone || undefined,
+            leadName: post.auto_seeding_comment?.zalo_display_name || undefined,
+            postUrl: post.post_url || undefined,
+            postContent: post.content || undefined,
+            groupName: post.group_name || undefined,
+            source: post.platform === "facebook" ? "FB_Group" : post.platform === "linkedin" ? "LinkedIn" : "Manual",
+            note: `Tạo từ bài seeding tự động: ${post.post_url}`,
+          }}
+        />
+      )}
 
-      <ZaloContactModal
-        open={showZaloContactModal}
-        onClose={() => setShowZaloContactModal(false)}
-        phoneNumber={detectedPhone}
-        zaloDisplayName={post.auto_seeding_comment?.zalo_display_name || undefined}
-        postContent={post.content}
-        groupName={post.group_name}
-        postUrl={post.post_url}
-        postId={post.id}
-        platform={post.platform}
-        onSentSuccess={(info) => {
-          setLocalZaloStatus("sent");
-          if (info.sentBy) setLocalZaloSentBy(info.sentBy);
-          if (post.auto_seeding_comment) {
-            post.auto_seeding_comment.zalo_status = "sent";
-            post.auto_seeding_comment.zalo_sent_by = info.sentBy;
-            if (info.zaloDisplayName) post.auto_seeding_comment.zalo_display_name = info.zaloDisplayName;
-          } else {
-            (post as any).auto_seeding_comment = {
-              zalo_status: "sent",
-              zalo_sent_by: info.sentBy,
-              zalo_display_name: info.zaloDisplayName,
-              phone_number: detectedPhone,
-            };
-          }
-          (post as any).zalo_status = "sent";
-          (post as any).zalo_sent_by = info.sentBy;
-          if (info.zaloDisplayName) (post as any).zalo_display_name = info.zaloDisplayName;
-        }}
-      />
+      {/* Chỉ mount modal Zalo khi người dùng mở để tránh 50 request song song useZaloAccountOptions */}
+      {showZaloContactModal && (
+        <ZaloContactModal
+          open={showZaloContactModal}
+          onClose={() => setShowZaloContactModal(false)}
+          phoneNumber={detectedPhone}
+          zaloDisplayName={post.auto_seeding_comment?.zalo_display_name || undefined}
+          postContent={post.content}
+          groupName={post.group_name}
+          postUrl={post.post_url}
+          postId={post.id}
+          platform={post.platform}
+          onSentSuccess={(info) => {
+            setLocalZaloStatus("sent");
+            if (info.sentBy) setLocalZaloSentBy(info.sentBy);
+            if (post.auto_seeding_comment) {
+              post.auto_seeding_comment.zalo_status = "sent";
+              post.auto_seeding_comment.zalo_sent_by = info.sentBy;
+              if (info.zaloDisplayName) post.auto_seeding_comment.zalo_display_name = info.zaloDisplayName;
+            } else {
+              (post as any).auto_seeding_comment = {
+                zalo_status: "sent",
+                zalo_sent_by: info.sentBy,
+                zalo_display_name: info.zaloDisplayName,
+                phone_number: detectedPhone,
+              };
+            }
+            (post as any).zalo_status = "sent";
+            (post as any).zalo_sent_by = info.sentBy;
+            if (info.zaloDisplayName) (post as any).zalo_display_name = info.zaloDisplayName;
+          }}
+        />
+      )}
     </div>
   );
-}
+});
 
 function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
   const { user } = useAppAuth();

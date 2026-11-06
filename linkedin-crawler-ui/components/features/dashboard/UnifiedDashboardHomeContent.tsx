@@ -457,9 +457,27 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       }
     });
 
-    // Populate local cache without wiping existing server state
-    setEvaluationsMap((prev) => ({ ...evMap, ...prev }));
-    setCallsMap((prev) => ({ ...cMap, ...prev }));
+    // Populate local cache without wiping existing server state (chỉ cập nhật khi có thay đổi thực tế)
+    setEvaluationsMap((prev) => {
+      let changed = false;
+      for (const k in evMap) {
+        if (prev[k] !== evMap[k]) {
+          changed = true;
+          break;
+        }
+      }
+      return changed ? { ...evMap, ...prev } : prev;
+    });
+    setCallsMap((prev) => {
+      let changed = false;
+      for (const k in cMap) {
+        if (!prev[k] || prev[k].result !== cMap[k].result || prev[k].attempts !== cMap[k].attempts) {
+          changed = true;
+          break;
+        }
+      }
+      return changed ? { ...cMap, ...prev } : prev;
+    });
 
     const loadServerData = () => {
       void fetch("/api/all-platform/posts/evaluations")
@@ -487,9 +505,27 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               }
             });
 
-            // Server state takes absolute precedence
-            setEvaluationsMap((prev) => ({ ...prev, ...newEvMap }));
-            setCallsMap((prev) => ({ ...prev, ...newCallsMap }));
+            // Server state takes absolute precedence, chỉ trigger re-render khi có key mới/đổi
+            setEvaluationsMap((prev) => {
+              let changed = false;
+              for (const k in newEvMap) {
+                if (prev[k] !== newEvMap[k]) {
+                  changed = true;
+                  break;
+                }
+              }
+              return changed ? { ...prev, ...newEvMap } : prev;
+            });
+            setCallsMap((prev) => {
+              let changed = false;
+              for (const k in newCallsMap) {
+                if (!prev[k] || prev[k].result !== newCallsMap[k].result || prev[k].attempts !== newCallsMap[k].attempts) {
+                  changed = true;
+                  break;
+                }
+              }
+              return changed ? { ...prev, ...newCallsMap } : prev;
+            });
           }
         })
         .catch((err) => console.debug("Fetch evaluations failed:", err));
@@ -959,7 +995,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     setSeedingRosterData(null);
   }, []);
 
-  // Helper to get effective evaluation and call result for a post
+  // Helper to get effective evaluation and call result for a post (in-memory lookup, zero synchronous localStorage delay)
   const getPostRatingAndCall = useCallback((p: UnifiedPost) => {
     const pid = String(p.id || p.post_url || "");
     const idKey = p.id ? String(p.id) : "";
@@ -970,12 +1006,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       (idKey && evaluationsMap[idKey]) ||
       (urlKey && evaluationsMap[urlKey]) ||
       p.evaluation_code ||
-      (typeof window !== "undefined"
-        ? localStorage.getItem(`post_eval_${pid}`) ||
-          (idKey && localStorage.getItem(`post_eval_${idKey}`)) ||
-          (urlKey && localStorage.getItem(`post_eval_${urlKey}`)) ||
-          localStorage.getItem(`evaluation_${pid}`)
-        : null) ||
       (p as any).evaluation_status ||
       (p as any).evaluation ||
       (p as any).rating ||
@@ -1002,22 +1032,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       call = callData;
     } else if (callData && typeof callData === "object") {
       call = callData.result || "";
-    } else if (typeof window !== "undefined") {
-      const rawCall =
-        localStorage.getItem(`post_call_${pid}`) ||
-        (idKey && localStorage.getItem(`post_call_${idKey}`)) ||
-        (urlKey && localStorage.getItem(`post_call_${urlKey}`));
-      if (rawCall) {
-        if (rawCall.startsWith("{")) {
-          try {
-            call = JSON.parse(rawCall).result || "";
-          } catch {
-            call = rawCall;
-          }
-        } else {
-          call = rawCall;
-        }
-      }
     }
     if (!call && p.call_result_code) {
       call = p.call_result_code;

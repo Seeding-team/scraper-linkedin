@@ -69,25 +69,56 @@ export function composeQuickInboxMessage(
   return template.content;
 }
 
+let _cachedInboxItems: QuickInboxLibraryEntry[] | null = null;
+let _inboxFetchPromise: Promise<QuickInboxLibraryEntry[]> | null = null;
+
 export function useQuickInboxLibrary() {
   const { user } = useAppAuth();
-  const [items, setItems] = useState<QuickInboxLibraryEntry[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
+  const [items, setItems] = useState<QuickInboxLibraryEntry[]>(() => _cachedInboxItems || []);
+  const [isLoaded, setIsLoaded] = useState(() => _cachedInboxItems !== null);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    const res = await allPlatformQuickInboxService.getAll();
-    if (res.success) {
-      setItems((res.data || []).map(toEntry));
-      setError(null);
-    } else {
-      setError(res.message || "Không tải được thư viện mẫu inbox.");
+  const refresh = useCallback(async (force = false) => {
+    if (!force && _cachedInboxItems !== null) {
+      setItems(_cachedInboxItems);
+      setIsLoaded(true);
+      return;
     }
-    setIsLoaded(true);
+    if (_inboxFetchPromise) {
+      try {
+        const data = await _inboxFetchPromise;
+        setItems(data);
+        setIsLoaded(true);
+      } catch {}
+      return;
+    }
+    _inboxFetchPromise = (async () => {
+      const res = await allPlatformQuickInboxService.getAll();
+      if (res.success) {
+        const mapped = (res.data || []).map(toEntry);
+        _cachedInboxItems = mapped;
+        return mapped;
+      } else {
+        throw new Error(res.message || "Không tải được thư viện mẫu inbox.");
+      }
+    })();
+
+    try {
+      const data = await _inboxFetchPromise;
+      setItems(data);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || "Không tải được thư viện mẫu inbox.");
+    } finally {
+      _inboxFetchPromise = null;
+      setIsLoaded(true);
+    }
   }, []);
 
   useEffect(() => {
-    refresh();
+    if (_cachedInboxItems === null) {
+      refresh();
+    }
   }, [refresh]);
 
   const fallbackItems = useMemo(() => buildFallbackItems(), []);
@@ -105,7 +136,10 @@ export function useQuickInboxLibrary() {
       content_with_post: payload.contentWithPost?.trim() || undefined,
       id_member: user?.id,
     });
-    if (res.success) await refresh();
+    if (res.success) {
+      _cachedInboxItems = null;
+      await refresh(true);
+    }
     return res;
   };
 
@@ -125,19 +159,28 @@ export function useQuickInboxLibrary() {
       content: payload.content.trim(),
       content_with_post: payload.contentWithPost?.trim() || undefined,
     });
-    if (res.success) await refresh();
+    if (res.success) {
+      _cachedInboxItems = null;
+      await refresh(true);
+    }
     return res;
   };
 
   const deleteTemplate = async (templateId: string) => {
     const res = await allPlatformQuickInboxService.delete(templateId);
-    if (res.success) await refresh();
+    if (res.success) {
+      _cachedInboxItems = null;
+      await refresh(true);
+    }
     return res;
   };
 
   const moveTemplate = async (templateId: string, direction: "up" | "down") => {
     const res = await allPlatformQuickInboxService.reorder(templateId, direction);
-    if (res.success) await refresh();
+    if (res.success) {
+      _cachedInboxItems = null;
+      await refresh(true);
+    }
     return res;
   };
 

@@ -5,32 +5,59 @@ import { useAppAuth } from "@/contexts/AppAuthContext";
 import { getZaloAccounts, getZaloConversations } from "@/services/zaloCrawlerService";
 import type { ZaloAccountInfo, ZaloConversationSummary } from "@/types/zalo-api";
 
+let _cachedZaloAccounts: ZaloAccountInfo[] | null = null;
+let _zaloAccountsPromise: Promise<ZaloAccountInfo[]> | null = null;
+
 /** Danh sách tài khoản Zalo mà user hiện tại được phép thao tác + account đang chọn.
  * Dùng chung cho 5 trang mới (forward-rules/bulk-send/campaigns/broadcast-groups/scan-members). */
 export function useZaloAccountOptions() {
   const { user } = useAppAuth();
-  const [accounts, setAccounts] = useState<ZaloAccountInfo[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
-  const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<ZaloAccountInfo[]>(() => _cachedZaloAccounts || []);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(() => _cachedZaloAccounts?.[0]?.account_id || "");
+  const [loading, setLoading] = useState(() => _cachedZaloAccounts === null);
   const [error, setError] = useState<string | null>(null);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (force = false) => {
+    if (!force && _cachedZaloAccounts !== null) {
+      setAccounts(_cachedZaloAccounts);
+      setSelectedAccountId((prev) => (prev && _cachedZaloAccounts!.some((a) => a.account_id === prev) ? prev : _cachedZaloAccounts![0]?.account_id || ""));
+      setLoading(false);
+      return;
+    }
+    if (_zaloAccountsPromise) {
+      try {
+        const list = await _zaloAccountsPromise;
+        setAccounts(list);
+        setSelectedAccountId((prev) => (prev && list.some((a) => a.account_id === prev) ? prev : list[0]?.account_id || ""));
+      } catch {}
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
-    try {
+    _zaloAccountsPromise = (async () => {
       const res = await getZaloAccounts(user?.id || "default", user?.id, user?.email);
       const list = res.accounts.filter((a) => a.has_auth);
+      _cachedZaloAccounts = list;
+      return list;
+    })();
+
+    try {
+      const list = await _zaloAccountsPromise;
       setAccounts(list);
       setSelectedAccountId((prev) => (prev && list.some((a) => a.account_id === prev) ? prev : list[0]?.account_id || ""));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Không tải được danh sách tài khoản Zalo");
     } finally {
+      _zaloAccountsPromise = null;
       setLoading(false);
     }
   }, [user?.id, user?.email]);
 
   useEffect(() => {
-    void reload();
+    if (_cachedZaloAccounts === null) {
+      void reload();
+    }
   }, [reload]);
 
   return { accounts, selectedAccountId, setSelectedAccountId, loading, error, reload };
