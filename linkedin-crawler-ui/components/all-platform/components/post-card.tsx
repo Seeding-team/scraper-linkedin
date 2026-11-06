@@ -928,12 +928,28 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
 
 function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onClose: () => void; onCommentSuccess?: () => void }) {
   const { user } = useAppAuth();
+  const [taskType, setTaskType] = useState<"comment" | "inbox">("comment");
+
   const commentPlatform: GroupPlatform | undefined = post.platform === "facebook" || post.platform === "linkedin" ? post.platform : undefined;
   const { libraryItems: commentTemplates } = useQuickCommentLibrary(commentPlatform);
   const [commentText, setCommentText] = useState("");
+  const [inboxText, setInboxText] = useState("");
   const [copiedInboxId, setCopiedInboxId] = useState<string | null>(null);
 
-  // Mặc định tự động chọn mẫu bình luận nhanh "Thiết kế website" theo yêu cầu Master
+  // Nhận diện tác giả bài viết và kiểm tra trạng thái ẩn danh
+  const authorUrl = post.author_url || (post as any).author_post?.url_profile || "";
+  const authorName = (post.author || (post as any).author_name || (post as any).author_post?.name || "").trim();
+  const authorNameLower = authorName.toLowerCase();
+  const isAnonymous =
+    !authorUrl ||
+    authorUrl.trim() === "" ||
+    authorNameLower.includes("ẩn danh") ||
+    authorNameLower.includes("anonymous") ||
+    authorNameLower.includes("người tham gia ẩn danh") ||
+    authorNameLower.includes("thành viên ẩn danh") ||
+    (authorUrl.includes("facebook.com/groups") && !authorUrl.includes("/user/"));
+
+  // Mặc định tự động chọn mẫu bình luận nhanh "Thiết kế website" khi mở modal
   useEffect(() => {
     if (commentTemplates.length > 0 && !commentText) {
       const targetTpl = commentTemplates.find((t) => {
@@ -966,19 +982,47 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
     return Array.from(groups.values());
   }, [fallbackItems, libraryItems]);
 
-  const handleCopyInbox = async (template: QuickInboxLibraryEntry) => {
+  // Tự động nạp mẫu inbox đầu tiên vào khung soạn nếu chưa có
+  useEffect(() => {
+    if (inboxGroups.length > 0 && !inboxText) {
+      const firstTpl = inboxGroups[0]?.templates?.[0];
+      if (firstTpl) {
+        const msg = composeQuickInboxMessage(firstTpl, post.content);
+        setInboxText(msg);
+        setCopiedInboxId(firstTpl.id);
+      }
+    }
+  }, [inboxGroups, inboxText, post.content]);
+
+  // Khi chọn mẫu bình luận -> Tự động copy luôn vào clipboard + gán vào ô nội dung
+  const handleSelectCommentTemplate = async (t: { id: string; title: string; content: string }) => {
+    setCommentText(t.content);
+    try {
+      await navigator.clipboard.writeText(t.content);
+      toast.success(`✓ Đã chọn & tự động sao chép mẫu bình luận "${t.title}" vào clipboard!`);
+    } catch {
+      toast.info(`Đã chọn mẫu "${t.title}"`);
+    }
+  };
+
+  // Khi chọn mẫu inbox -> Tự động copy luôn vào clipboard + gán vào ô nội dung
+  const handleSelectInboxTemplate = async (template: QuickInboxLibraryEntry) => {
     const message = composeQuickInboxMessage(template, post.content);
+    setInboxText(message);
+    setCopiedInboxId(template.id);
     try {
       await navigator.clipboard.writeText(message);
-    } catch {}
-    setCopiedInboxId(template.id);
-    window.open(post.author_url || post.post_url, "_blank");
+      toast.success(`✓ Đã chọn & tự động sao chép mẫu inbox "${template.title}" vào clipboard!`);
+    } catch {
+      toast.info(`Đã chọn mẫu "${template.title}"`);
+    }
   };
 
   const [manualProofLink, setManualProofLink] = useState("");
   const [isSubmittingManual, setIsSubmittingManual] = useState(false);
 
-  const handleLaunchTask = async () => {
+  // Dạng 1: Làm nhiệm vụ bình luận
+  const handleLaunchCommentTask = async () => {
     onClose();
     if (commentText.trim()) {
       try {
@@ -1021,6 +1065,37 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
     );
   };
 
+  // Dạng 2: Làm nhiệm vụ nhắn tin profile tác giả
+  const handleLaunchInboxTask = async () => {
+    if (isAnonymous || !authorUrl) {
+      toast.error("⚠️ Người dùng đăng bài ẩn danh, không có thông tin profile để nhắn tin trực tiếp! Hãy dùng tab Bình luận.");
+      return;
+    }
+
+    const finalMsg = inboxText.trim() || commentText.trim();
+    if (finalMsg) {
+      try {
+        await navigator.clipboard.writeText(finalMsg);
+      } catch {}
+    }
+
+    window.open(authorUrl, "_blank");
+
+    if (typeof window !== "undefined") {
+      const localKey = `my_task_comment_${post.id || post.post_url}`;
+      const savedPayload = {
+        member_name: user?.name || "Bạn",
+        seeding_content: finalMsg || "Nhiệm vụ nhắn tin profile tác giả",
+        link_comment: authorUrl,
+        verify_status: "pending",
+      };
+      localStorage.setItem(localKey, JSON.stringify(savedPayload));
+    }
+
+    toast.success("🚀 Đã sao chép tin nhắn & mở profile tác giả! Hãy bấm Nhắn tin / Message và dán (Ctrl+V) để gửi tin.");
+    onClose();
+  };
+
   const handleManualConfirmComment = async () => {
     if (!manualProofLink.trim()) {
       toast.error("Vui lòng nhập link bình luận minh chứng!");
@@ -1039,7 +1114,7 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
           email_member: user?.email || "",
           link_post: post.post_url,
           link_comment: manualProofLink.trim(),
-          content: commentText.trim() || "Đã bình luận xác nhận thủ công",
+          content: (taskType === "comment" ? commentText : inboxText).trim() || "Đã xác nhận thủ công",
           id_post: post.id,
           id_platform: post.platform === "linkedin" ? 2 : (post.platform === "threads" ? 4 : 1),
         }),
@@ -1049,19 +1124,19 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
         const localKey = `my_task_comment_${post.id || post.post_url}`;
         localStorage.setItem(localKey, JSON.stringify({
           member_name: user?.name || "Bạn",
-          seeding_content: commentText.trim() || "Đã bình luận xác nhận thủ công",
+          seeding_content: (taskType === "comment" ? commentText : inboxText).trim() || "Đã xác nhận thủ công",
           link_comment: manualProofLink.trim(),
           verify_status: "yes",
         }));
       }
 
-      toast.success("🎉 Đã xác nhận bình luận thành công! KPI đã được ghi nhận (+1).");
+      toast.success("🎉 Đã xác nhận thành công! KPI đã được ghi nhận (+1).");
       if (onCommentSuccess) {
         onCommentSuccess();
       }
       onClose();
     } catch (err: any) {
-      toast.error(`Lỗi xác nhận bình luận: ${err?.message || "Không thể gửi dữ liệu"}`);
+      toast.error(`Lỗi xác nhận: ${err?.message || "Không thể gửi dữ liệu"}`);
     } finally {
       setIsSubmittingManual(false);
     }
@@ -1069,125 +1144,320 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
 
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-card rounded-2xl border border-border shadow-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        <div className="p-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
+      <div className="bg-card rounded-2xl border border-border shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* Header Modal */}
+        <div className="p-4 border-b border-border flex items-center justify-between bg-card shrink-0">
           <h3 className="font-bold text-base text-foreground flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">task_alt</span>
-            Nhiệm vụ của bạn với bài viết này
+            <span className="material-symbols-outlined text-primary text-[20px]">task_alt</span>
+            <span>Nhiệm vụ của bạn với bài viết này</span>
           </h3>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted cursor-pointer">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground cursor-pointer transition">
             <span className="material-symbols-outlined text-[18px]">close</span>
           </button>
         </div>
 
-        <div className="p-4 flex flex-col gap-4">
-          <div className="rounded-xl border border-border bg-muted/40 p-3">
-            <div className="text-xs font-bold text-muted-foreground mb-1">{post.group_name || "Bài viết"}</div>
-            <p className="text-sm text-foreground line-clamp-3">{post.content || "(không có nội dung văn bản)"}</p>
+        {/* Nội dung cuộn được */}
+        <div className="p-4 overflow-y-auto flex flex-col gap-4">
+          {/* Card thông tin bài viết gốc */}
+          <div className="rounded-xl border border-border bg-muted/40 p-3 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-primary flex items-center gap-1">
+                <span className="material-symbols-outlined text-[15px]">groups</span>
+                {post.group_name || "Bài viết cộng đồng"}
+              </span>
+              {isAnonymous ? (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border border-amber-200 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[12px]">visibility_off</span>
+                  {authorName || "Đăng ẩn danh"}
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 flex items-center gap-1">
+                  <span className="material-symbols-outlined text-[12px]">person</span>
+                  {authorName || "Tác giả công khai"}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-foreground line-clamp-3 leading-relaxed">{post.content || "(không có nội dung văn bản)"}</p>
           </div>
 
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed flex items-start gap-2">
-            <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">info</span>
-            <div>
-              <b>Cơ chế bắt minh chứng tự động:</b> Khi bạn bấm nút bên dưới, hệ thống sẽ mở tab bài viết sang {post.platform === "linkedin" ? "LinkedIn" : "Facebook"} và kích hoạt theo dõi request. Bạn chỉ cần đăng bình luận trên bài viết thật, Extension sẽ tự động lưu link minh chứng chuẩn vào KPI.
-            </div>
+          {/* Phân chia 2 Dạng nhiệm vụ rõ ràng bằng Segmented Tabs */}
+          <div className="flex p-1 bg-muted/70 rounded-xl border border-border gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setTaskType("comment")}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                taskType === "comment"
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">chat</span>
+              <span>Dạng 1: Bình luận bài viết</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTaskType("inbox")}
+              className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                taskType === "inbox"
+                  ? "bg-primary text-white shadow-sm"
+                  : "text-muted-foreground hover:text-foreground hover:bg-background/50"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[16px]">mark_chat_unread</span>
+              <span>Dạng 2: Nhắn tin trực tiếp (Inbox)</span>
+            </button>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-bold text-foreground">1. Mẫu bình luận nhanh (Tùy chọn)</label>
-            {commentTemplates.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {commentTemplates.slice(0, 8).map((t) => {
-                  const isSelected = commentText === t.content;
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => {
-                        setCommentText(t.content);
-                        navigator.clipboard.writeText(t.content).catch(() => {});
-                        toast.info(`Đã chọn & chép mẫu "${t.title}" vào clipboard`);
-                      }}
-                      className={`px-3 py-1 rounded-full border text-[11px] font-semibold transition-all cursor-pointer ${
-                        isSelected
-                          ? "bg-primary text-white border-primary shadow-xs ring-2 ring-primary/20 font-bold"
-                          : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground"
-                      }`}
-                    >
-                      {isSelected && <span className="mr-1">✓</span>}
-                      {t.title}
-                    </button>
-                  );
-                })}
+          {/* DẠNG 1: BÌNH LUẬN BÀI VIẾT */}
+          {taskType === "comment" && (
+            <div className="flex flex-col gap-3">
+              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs text-foreground leading-relaxed flex items-start gap-2">
+                <span className="material-symbols-outlined text-primary text-[18px] shrink-0 mt-0.5">info</span>
+                <div>
+                  <b>Cơ chế bắt minh chứng tự động:</b> Khi bạn chọn mẫu, hệ thống sẽ <b>tự động sao chép</b> nội dung. Sau đó bấm nút mở bài viết, hãy dán (Ctrl+V) bình luận trên tab vừa mở, Extension sẽ tự động bắt minh chứng và ghi nhận KPI (+1).
+                </div>
               </div>
-            )}
-            <textarea
-              rows={3}
-              value={commentText}
-              onChange={(e) => setCommentText(e.target.value)}
-              placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung bình luận (sẽ được tự động sao chép để bạn dán)..."
-              className="w-full rounded-xl border border-border bg-background p-2.5 text-sm outline-none focus:border-primary resize-y"
-            />
 
-            <div className="flex flex-col gap-1.5 pt-1">
-              <button
-                type="button"
-                onClick={handleLaunchTask}
-                className="self-start px-4 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-sm font-bold shadow-sm inline-flex items-center gap-2 cursor-pointer transition"
-              >
-                <span className="material-symbols-outlined text-[18px]">open_in_new</span>
-                {commentText.trim() ? "Sao chép & Mở bài viết (Kích hoạt theo dõi)" : "Mở bài viết & Làm nhiệm vụ (Kích hoạt theo dõi)"}
-              </button>
-            </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-foreground flex items-center gap-1">
+                    <span>Chọn mẫu bình luận nhanh (Bấm để tự động sao chép):</span>
+                  </label>
+                  <span className="text-[11px] text-muted-foreground">Tự copy vào clipboard 0ms</span>
+                </div>
 
-            {/* Mục xác nhận thủ công nếu không dùng Extension */}
-            <div className="mt-2 p-3 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col gap-2">
-              <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-[16px]">verified</span>
-                <span>Xác nhận thủ công (nếu không cài hoặc không dùng Extension)</span>
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="url"
-                  value={manualProofLink}
-                  onChange={(e) => setManualProofLink(e.target.value)}
-                  placeholder="Dán link bình luận minh chứng của bạn vào đây..."
-                  className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary"
-                />
-                <button
-                  type="button"
-                  disabled={isSubmittingManual || !manualProofLink.trim()}
-                  onClick={handleManualConfirmComment}
-                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
-                >
-                  {isSubmittingManual ? "Đang lưu..." : "Xác nhận đã bình luận"}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {post.author_url && (
-            <div className="flex flex-col gap-2 border-t border-border pt-4">
-              <label className="text-sm font-bold text-foreground">2. Nhắn tin (Inbox) cho người đăng bài</label>
-              <div className="flex flex-col gap-2 max-h-[240px] overflow-y-auto pr-1">
-                {inboxGroups.map((group, gIdx) => (
-                  <div key={gIdx} className="flex flex-col gap-1">
-                    <div className="text-[10px] font-bold text-muted-foreground uppercase">{group.category}</div>
-                    {group.templates.map((template) => (
-                      <button
-                        key={template.id}
-                        type="button"
-                        onClick={() => void handleCopyInbox(template)}
-                        className="text-left px-3 py-2 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition flex items-center justify-between text-xs cursor-pointer"
-                      >
-                        <span className="font-medium text-foreground truncate mr-2">{template.title}</span>
-                        <span className="text-[10px] text-muted-foreground shrink-0 flex items-center gap-1">
-                          {copiedInboxId === template.id ? "✓ Đã chép" : "Chép & Mở profile"}
-                        </span>
-                      </button>
-                    ))}
+                {commentTemplates.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 max-h-[140px] overflow-y-auto pr-1">
+                    {commentTemplates.map((t) => {
+                      const isSelected = commentText === t.content;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => void handleSelectCommentTemplate(t)}
+                          className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center gap-1 text-left ${
+                            isSelected
+                              ? "bg-primary text-white border-primary shadow-xs font-bold ring-2 ring-primary/20"
+                              : "border-border text-muted-foreground hover:border-primary/50 hover:text-foreground hover:bg-primary/5"
+                          }`}
+                        >
+                          {isSelected && <span>✓</span>}
+                          <span>{t.title}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                ))}
+                )}
+
+                <div className="mt-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1">Nội dung bình luận sẽ dán:</div>
+                  <textarea
+                    rows={3}
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="Chọn mẫu ở trên hoặc tự soạn bình luận..."
+                    className="w-full rounded-xl border border-border bg-background p-2.5 text-xs outline-none focus:border-primary resize-y leading-relaxed"
+                  />
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={handleLaunchCommentTask}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-sm inline-flex items-center justify-center gap-2 cursor-pointer transition"
+                  >
+                    <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                    <span>{commentText.trim() ? "Sao chép & Mở bài viết (Kích hoạt theo dõi)" : "Mở bài viết & Làm nhiệm vụ"}</span>
+                  </button>
+                </div>
+
+                {/* Hộp xác nhận thủ công nếu không dùng Extension */}
+                <div className="mt-2 p-3 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col gap-2">
+                  <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-emerald-600">verified</span>
+                    <span>Xác nhận thủ công (nếu không cài hoặc không dùng Extension)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={manualProofLink}
+                      onChange={(e) => setManualProofLink(e.target.value)}
+                      placeholder="Dán link bình luận minh chứng của bạn vào đây..."
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary"
+                    />
+                    <button
+                      type="button"
+                      disabled={isSubmittingManual || !manualProofLink.trim()}
+                      onClick={handleManualConfirmComment}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
+                    >
+                      {isSubmittingManual ? "Đang lưu..." : "Xác nhận đã bình luận"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* DẠNG 2: NHẮN TIN TRỰC TIẾP (INBOX TÁC GIẢ) */}
+          {taskType === "inbox" && (
+            <div className="flex flex-col gap-3">
+              {/* Kiểm tra trường hợp tác giả ẩn danh */}
+              {isAnonymous ? (
+                <div className="p-4 rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-3">
+                  <span className="material-symbols-outlined text-amber-600 text-[24px] shrink-0 mt-0.5">warning</span>
+                  <div className="space-y-1.5">
+                    <div className="font-bold text-sm text-amber-800 dark:text-amber-300">
+                      Người dùng đăng bài ở chế độ ẩn danh!
+                    </div>
+                    <p className="leading-relaxed">
+                      Bài viết này được đăng ẩn danh ({authorName || "Thành viên ẩn danh"}), tác giả không công khai trang cá nhân (profile). Hệ thống không có thông tin profile để nhảy qua nhắn tin trực tiếp!
+                    </p>
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setTaskType("comment")}
+                        className="px-3 py-1.5 rounded-lg bg-amber-200 dark:bg-amber-900/60 hover:bg-amber-300 text-amber-900 dark:text-amber-100 font-bold transition cursor-pointer inline-flex items-center gap-1.5"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">chat</span>
+                        <span>Chuyển sang "Dạng 1: Bình luận bài viết" để tương tác</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Trường hợp tác giả công khai */
+                <div className="p-3 rounded-xl border border-emerald-200 bg-emerald-50/70 dark:bg-emerald-950/40 dark:border-emerald-800 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs uppercase shadow-xs">
+                      {authorName ? authorName.charAt(0) : "U"}
+                    </div>
+                    <div>
+                      <div className="font-bold text-foreground flex items-center gap-1.5">
+                        <span>{authorName || "Tác giả bài viết"}</span>
+                        <span className="px-1.5 py-0.2 rounded text-[10px] bg-emerald-200 text-emerald-800 font-bold">✓ Profile công khai</span>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground truncate max-w-[280px] sm:max-w-[400px]">
+                        {authorUrl}
+                      </div>
+                    </div>
+                  </div>
+                  <a
+                    href={authorUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 rounded-lg border border-emerald-300 bg-card hover:bg-emerald-100 text-emerald-800 dark:text-emerald-200 text-[11px] font-semibold transition flex items-center gap-1 shrink-0"
+                  >
+                    <span>Xem profile</span>
+                    <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+                  </a>
+                </div>
+              )}
+
+              {/* Danh sách mẫu câu Inbox */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-foreground flex items-center gap-1">
+                    <span>Chọn mẫu câu Inbox Facebook & Giải pháp (Bấm để tự động sao chép):</span>
+                  </label>
+                  <span className="text-[11px] text-muted-foreground">Tự copy vào clipboard 0ms</span>
+                </div>
+
+                <div className="flex flex-col gap-3 max-h-[220px] overflow-y-auto pr-1 border border-border rounded-xl p-2.5 bg-muted/20">
+                  {inboxGroups.map((group, gIdx) => (
+                    <div key={gIdx} className="flex flex-col gap-1.5">
+                      <div className="text-[11px] font-bold text-primary flex items-center gap-1">
+                        <span className="material-symbols-outlined text-[14px]">folder</span>
+                        <span>{group.category}</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {group.templates.map((template) => {
+                          const isSelected = copiedInboxId === template.id;
+                          return (
+                            <button
+                              key={template.id}
+                              type="button"
+                              onClick={() => void handleSelectInboxTemplate(template)}
+                              className={`text-left p-2 rounded-xl border text-xs transition cursor-pointer flex flex-col gap-1 ${
+                                isSelected
+                                  ? "bg-primary text-white border-primary shadow-xs font-semibold ring-2 ring-primary/20"
+                                  : "border-border bg-card text-foreground hover:border-primary/50 hover:bg-primary/5"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold truncate text-[11px]">{template.title}</span>
+                                <span className={`text-[10px] shrink-0 font-semibold ${isSelected ? "text-white" : "text-primary"}`}>
+                                  {isSelected ? "✓ Đã chép" : "Chọn & Chép"}
+                                </span>
+                              </div>
+                              <p className={`text-[10px] line-clamp-2 ${isSelected ? "text-white/90" : "text-muted-foreground"}`}>
+                                {template.content}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-1">
+                  <div className="text-[11px] font-semibold text-muted-foreground mb-1">Nội dung tin nhắn inbox sẽ gửi:</div>
+                  <textarea
+                    rows={3}
+                    value={inboxText}
+                    onChange={(e) => setInboxText(e.target.value)}
+                    placeholder="Chọn mẫu ở trên hoặc tự soạn nội dung inbox..."
+                    className="w-full rounded-xl border border-border bg-background p-2.5 text-xs outline-none focus:border-primary resize-y leading-relaxed"
+                  />
+                </div>
+
+                <div className="pt-1 flex flex-wrap gap-2 items-center">
+                  {isAnonymous ? (
+                    <button
+                      type="button"
+                      onClick={() => toast.error("⚠️ Người dùng đăng ẩn danh, không có thông tin profile để nhắn tin trực tiếp! Vui lòng chuyển sang làm nhiệm vụ Bình luận.")}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-muted text-muted-foreground border border-border text-xs font-bold inline-flex items-center justify-center gap-2 cursor-not-allowed opacity-70"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">block</span>
+                      <span>Không thể nhắn tin (Tác giả đăng ẩn danh)</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleLaunchInboxTask}
+                      className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold shadow-sm inline-flex items-center justify-center gap-2 cursor-pointer transition"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">send</span>
+                      <span>🚀 Sao chép & Nhảy qua Profile tác giả để nhắn tin</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Hộp xác nhận thủ công nếu không dùng Extension */}
+                <div className="mt-2 p-3 rounded-xl border border-dashed border-border bg-muted/20 flex flex-col gap-2">
+                  <div className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[16px] text-emerald-600">verified</span>
+                    <span>Xác nhận thủ công tin nhắn đã gửi (Lưu KPI)</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={manualProofLink}
+                      onChange={(e) => setManualProofLink(e.target.value)}
+                      placeholder="Dán link ảnh chụp màn hình hoặc link profile đã nhắn..."
+                      className="flex-1 rounded-lg border border-border bg-background px-3 py-1.5 text-xs outline-none focus:border-primary"
+                    />
+                    <button
+                      type="button"
+                      disabled={isSubmittingManual || !manualProofLink.trim()}
+                      onClick={handleManualConfirmComment}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold transition cursor-pointer shrink-0"
+                    >
+                      {isSubmittingManual ? "Đang lưu..." : "Xác nhận đã nhắn"}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
