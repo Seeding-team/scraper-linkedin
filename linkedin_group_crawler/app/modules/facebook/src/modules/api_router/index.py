@@ -8,6 +8,7 @@ from fastapi import APIRouter
 # Import các file route con
 from app.modules.facebook.src.modules.crawl_fb.router.index import crawl_fb_router
 from app.modules.facebook.src.modules.crawl_fb.router.sheet_management import sheet_management_router
+from app.modules.facebook.src.modules.messenger.router.index import messenger_router
 # Ví dụ khi dự án mở rộng, bạn sẽ import thêm:
 # from src.api.routes import user_route
 # from src.api.routes import auth_route
@@ -22,6 +23,7 @@ api_router = APIRouter()
 # nhưng đặt ở file crawl_route (như hướng dẫn trước) sẽ giúp file này ngắn gọn hơn.
 api_router.include_router(crawl_fb_router)
 api_router.include_router(sheet_management_router)
+api_router.include_router(messenger_router)
 
 # Ví dụ cho tương lai:
 # api_router.include_router(user_route.router)
