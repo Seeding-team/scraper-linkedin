@@ -28,6 +28,8 @@ type Props = {
   accountLabel: string;
   /** thread_id của hội thoại 1-1 đang mở (nếu có) — dùng cho bộ lọc "chỉ hội thoại đang mở". */
   currentThreadId: string | null;
+  /** Thống kê tổng của cả tài khoản chỉ dành cho admin/leader/chủ tài khoản; người khác chỉ xem nhật ký. */
+  canViewStats: boolean;
 };
 
 const PAGE_SIZE = 50;
@@ -190,7 +192,7 @@ function LogRow({ item }: { item: ZaloBotLogItem }) {
   );
 }
 
-export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accountLabel, currentThreadId }: Props) {
+export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accountLabel, currentThreadId, canViewStats }: Props) {
   const [days, setDays] = useState(7);
   const [direction, setDirection] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
@@ -207,6 +209,9 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
 
   const [stats, setStats] = useState<ZaloBotStats | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [showChart, setShowChart] = useState(false);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const q = useDebounced(search.trim(), 400);
   const onlyCurrentActive = onlyCurrent && Boolean(currentThreadId);
@@ -267,7 +272,7 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
   );
 
   const loadStats = useCallback(async () => {
-    if (!accountId) return;
+    if (!accountId || !canViewStats) return;
     try {
       const res = await zaloBotApi.getStats(accountId, days);
       setStats(res);
@@ -275,7 +280,7 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
     } catch (e) {
       setStatsError(e instanceof Error ? e.message : "Không tải được thống kê");
     }
-  }, [accountId, days]);
+  }, [accountId, days, canViewStats]);
 
   useEffect(() => {
     if (!open || !accountId) return;
@@ -303,7 +308,7 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
     open && autoRefresh && Boolean(accountId),
   );
 
-  const loadMore = async () => {
+  const loadMore = useCallback(async () => {
     if (!hasMore || nextBeforeId == null || loadingMore) return;
     setLoadingMore(true);
     try {
@@ -319,41 +324,74 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
     } finally {
       setLoadingMore(false);
     }
-  };
+  }, [hasMore, nextBeforeId, loadingMore, baseQuery]);
+
+  // Cuộn tới cuối vùng danh sách thì tự tải trang kế tiếp (nút "Tải thêm" vẫn còn làm dự phòng).
+  useEffect(() => {
+    const root = listRef.current;
+    const target = sentinelRef.current;
+    if (!open || !root || !target || !hasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void loadMore();
+      },
+      { root, rootMargin: "120px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [open, hasMore, loadMore, items.length]);
 
   const totals = stats?.totals;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="z-[100001] w-full overflow-y-auto sm:max-w-[56rem] border-border" overlayClassName="z-[100000]">
-        <SheetHeader>
+      <SheetContent className="z-[100001] flex w-full flex-col overflow-hidden sm:max-w-[56rem] border-border" overlayClassName="z-[100000]">
+        <SheetHeader className="shrink-0">
           <SheetTitle>Nhật ký Bot AI</SheetTitle>
           <SheetDescription className="truncate">Tài khoản Zalo: {accountLabel || "—"}</SheetDescription>
         </SheetHeader>
 
-        <div className="flex-1 space-y-4 px-4 pb-6">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">Thống kê</h3>
-            <div className="flex items-center gap-1">
-              {[1, 7, 30].map((d) => (
-                <Button key={d} size="sm" variant={days === d ? "default" : "outline"} className="h-7 px-2.5 text-xs" onClick={() => setDays(d)}>
-                  {d === 1 ? "Hôm nay" : `${d} ngày`}
-                </Button>
-              ))}
-            </div>
-          </div>
+        {/* Thống kê + bộ lọc cố định ở trên; chỉ vùng danh sách bên dưới có thanh cuộn riêng. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pb-4">
+          {canViewStats ? (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold">Thống kê</h3>
+                  <button
+                    type="button"
+                    className="text-[11px] font-medium text-primary hover:underline"
+                    onClick={() => setShowChart((v) => !v)}
+                  >
+                    {showChart ? "Ẩn biểu đồ" : "Xem biểu đồ"}
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  {[1, 7, 30].map((d) => (
+                    <Button key={d} size="sm" variant={days === d ? "default" : "outline"} className="h-7 px-2.5 text-xs" onClick={() => setDays(d)}>
+                      {d === 1 ? "Hôm nay" : `${d} ngày`}
+                    </Button>
+                  ))}
+                </div>
+              </div>
 
-          {statsError && <p className="text-xs text-red-600">{statsError}</p>}
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-            <StatCard label="Tin bot đã chuyển" value={totals?.forwarded ?? "—"} />
-            <StatCard label="Đã gửi" value={totals?.sent ?? "—"} tone="text-green-600" />
-            <StatCard label="Chạy thử" value={totals?.dry_run ?? "—"} tone="text-amber-600" />
-            <StatCard label="Lỗi" value={totals?.error ?? "—"} tone="text-red-600" />
-            <StatCard label="Khách đã xử lý" value={stats?.threads_handled ?? "—"} />
-          </div>
-          {stats && <DayChart data={stats.by_day} />}
+              {statsError && <p className="text-xs text-red-600">{statsError}</p>}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                <StatCard label="Tin bot đã chuyển" value={totals?.forwarded ?? "—"} />
+                <StatCard label="Đã gửi" value={totals?.sent ?? "—"} tone="text-green-600" />
+                <StatCard label="Chạy thử" value={totals?.dry_run ?? "—"} tone="text-amber-600" />
+                <StatCard label="Lỗi" value={totals?.error ?? "—"} tone="text-red-600" />
+                <StatCard label="Khách đã xử lý" value={stats?.threads_handled ?? "—"} />
+              </div>
+              {stats && showChart && <DayChart data={stats.by_day} />}
+            </>
+          ) : (
+            <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+              Chỉ hiển thị nhật ký các cuộc trò chuyện bạn được xem. Thống kê tổng dành cho người quản lý.
+            </p>
+          )}
 
-          <div className="flex flex-wrap items-end gap-3 border-t pt-4 border-border">
+          <div className={cn("flex shrink-0 flex-wrap items-end gap-3 pt-3", canViewStats && "border-t border-border")}>
             <div className="space-y-1">
               <Label className="text-[11px]">Hướng</Label>
               <Select value={direction} onValueChange={setDirection}>
@@ -400,39 +438,48 @@ export default function ZaloBotLogsDrawer({ open, onOpenChange, accountId, accou
             </div>
           </div>
 
-          {loading && items.length === 0 ? (
-            <div className="space-y-2">
-              {[0, 1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-16 w-full" />
-              ))}
-            </div>
-          ) : error ? (
-            <div className="flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
-              <span>{error}</span>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void loadFirst(false)}>
-                Thử lại
-              </Button>
-            </div>
-          ) : items.length === 0 ? (
-            <div className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground border-border">
-              Chưa có nhật ký nào khớp bộ lọc.
-            </div>
-          ) : (
-            <>
-              <ul className="space-y-2">
-                {items.map((it) => (
-                  <LogRow key={it.id} item={it} />
+          <div ref={listRef} className="min-h-[200px] flex-1 overflow-y-auto rounded-lg border border-border bg-muted/20 p-2">
+            {loading && items.length === 0 ? (
+              <div className="space-y-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-16 w-full" />
                 ))}
-              </ul>
-              {hasMore && (
-                <div className="flex justify-center">
-                  <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
-                    {loadingMore && <Loader2 className="animate-spin" />}
-                    Tải thêm
-                  </Button>
+              </div>
+            ) : error ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+                <span>{error}</span>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void loadFirst(false)}>
+                  Thử lại
+                </Button>
+              </div>
+            ) : items.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">Chưa có nhật ký nào khớp bộ lọc.</div>
+            ) : (
+              <>
+                <ul className="space-y-2">
+                  {items.map((it) => (
+                    <LogRow key={it.id} item={it} />
+                  ))}
+                </ul>
+                {/* mốc cuối danh sách: chạm tới thì tự tải trang tiếp theo */}
+                <div ref={sentinelRef} className="flex h-10 items-center justify-center text-[11px] text-muted-foreground">
+                  {loadingMore ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : hasMore ? (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => void loadMore()}>
+                      Tải thêm
+                    </Button>
+                  ) : (
+                    "Đã hiển thị hết nhật ký"
+                  )}
                 </div>
-              )}
-            </>
+              </>
+            )}
+          </div>
+          {items.length > 0 && (
+            <p className="shrink-0 text-right text-[11px] text-muted-foreground">
+              Đang hiển thị {items.length} dòng{hasMore ? " (cuộn xuống để tải thêm)" : ""}
+            </p>
           )}
         </div>
       </SheetContent>

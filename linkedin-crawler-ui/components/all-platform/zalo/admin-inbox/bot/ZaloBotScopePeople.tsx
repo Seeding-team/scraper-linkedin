@@ -49,7 +49,8 @@ export default function ZaloBotScopePeople({ accountId, scopeMode, summary, read
   const listKey = `${accountId}\u0000${query.trim()}\u0000${tick}`;
 
   useEffect(() => {
-    if (!accountId) return;
+    // Người chỉ xem không có quyền gọi API danh sách/quy tắc theo người -> không gọi (tránh lỗi 403).
+    if (!accountId || readOnly) return;
     const ctrl = new AbortController();
     const timer = window.setTimeout(() => {
       zaloBotApi
@@ -64,7 +65,7 @@ export default function ZaloBotScopePeople({ accountId, scopeMode, summary, read
       window.clearTimeout(timer);
       ctrl.abort();
     };
-  }, [accountId, query, listKey]);
+  }, [accountId, query, listKey, readOnly]);
 
   const current = list && list.key === listKey ? list : null;
   const loading = current === null;
@@ -129,6 +130,16 @@ export default function ZaloBotScopePeople({ accountId, scopeMode, summary, read
   };
 
   const manualCount = (summary?.on_count ?? 0) + (summary?.off_count ?? 0);
+
+  if (readOnly) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Đặt tay: <b className="text-green-700 dark:text-green-400">{summary?.on_count ?? 0} bật</b>
+        {" · "}
+        <b className="text-red-700 dark:text-red-400">{summary?.off_count ?? 0} tắt</b>
+      </p>
+    );
+  }
 
   return (
     <div className="space-y-2.5">

@@ -137,7 +137,9 @@ export default function ZaloBotSettingsDrawer({
     }
   }
 
-  const readOnly = forbidden;
+  // Chỉ xem: server từ chối (403) hoặc báo người này không có quyền quản lý bot của tài khoản (member).
+  const viewOnly = forbidden || config?.can_manage === false;
+  const readOnly = viewOnly;
   const patch = (p: Partial<FormState>) => setForm((f) => ({ ...f, ...p }));
 
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(toForm(config)), [form, config]);
@@ -202,9 +204,9 @@ export default function ZaloBotSettingsDrawer({
           </SheetHeader>
 
           <div className="flex-1 space-y-5 px-4 pb-4">
-            {forbidden && (
+            {viewOnly && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                Bạn không có quyền chỉnh sửa Bot AI của tài khoản này. Đang ở chế độ chỉ xem.
+                Chỉ xem. Cần quyền admin, leader hoặc chủ tài khoản để chỉnh sửa.
               </div>
             )}
             {loadError && !config && (
@@ -298,9 +300,11 @@ export default function ZaloBotSettingsDrawer({
                       readOnly={readOnly}
                       onChanged={onReload}
                     />
-                    <p className="text-[11px] text-muted-foreground">
-                      Bật/tắt theo người có hiệu lực ngay. Riêng chế độ phạm vi cần bấm “Lưu”. Cũng có thể bật/tắt từng người ngay trong khung chat.
-                    </p>
+                    {!readOnly && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Bật/tắt theo người có hiệu lực ngay. Riêng chế độ phạm vi cần bấm “Lưu”. Cũng có thể bật/tắt từng người ngay trong khung chat.
+                      </p>
+                    )}
                   </section>
 
                   <section className="grid grid-cols-2 gap-3">
@@ -333,10 +337,10 @@ export default function ZaloBotSettingsDrawer({
                   <section className="space-y-2.5">
                     <div>
                       <h3 className="text-sm font-semibold">Gom tin nhắn liên tiếp</h3>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
+                      {/* <p className="mt-0.5 text-xs text-muted-foreground">
                         Khách hay nhắn nhiều tin ngắn liền nhau. Bot chờ khách im lặng đủ số giây dưới đây rồi gộp thành một câu hỏi và trả lời một lần,
                         thay vì trả lời từng tin. Bot sẽ trả lời chậm hơn đúng bằng thời gian chờ này (0 = tắt, trả lời từng tin).
-                      </p>
+                      </p> */}
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5">
                       {BATCH_PRESETS.map((preset) => {
