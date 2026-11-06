@@ -137,7 +137,6 @@ export default function ZaloBotScopePeople({ accountId, scopeMode, summary, read
         Đặt tay: <b className="text-green-700 dark:text-green-400">{summary?.on_count ?? 0} bật</b>
         {" · "}
         <b className="text-red-700 dark:text-red-400">{summary?.off_count ?? 0} tắt</b>
-        . Danh sách chi tiết chỉ hiển thị cho người quản lý bot.
       </p>
     );
   }
