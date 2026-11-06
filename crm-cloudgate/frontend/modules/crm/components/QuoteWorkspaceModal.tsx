@@ -1815,6 +1815,7 @@ export function QuoteWorkspaceModal({
     setDescriptionPopoverIndex(null);
   }
   const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const previewPrintRootRef = useRef<HTMLDivElement | null>(null);
   // "chỉnh xoay ngang, xoay dọc, căn chỉnh cột ở đây luôn" - toolbar Dọc/Ngang
   // + kéo độ rộng cột nằm NGAY TRONG popup "Bản xem trước cho khách hàng"
   // (khong con phai bam THEM 1 nut "Xem trước khi in" de mo 1 lop modal khac
@@ -5486,6 +5487,75 @@ export function QuoteWorkspaceModal({
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  async function printCustomerPreviewPdf() {
+    const sourceRoot = previewPrintRootRef.current;
+    if (!sourceRoot) return;
+
+    // In DUNG DOM dang xem (ke ca thay doi chua luu) trong mot iframe tam
+    // cung origin. Iframe chi chua quote-print-root, khong co CRM shell,
+    // header hay modal backdrop nen khong bi day xuong/danh them trang trang;
+    // nguoi dung van o nguyen popup hien tai, khong mo tab/trang khac.
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    Object.assign(frame.style, {
+      position: 'fixed',
+      left: '-20000px',
+      top: '0',
+      width: '1200px',
+      height: '1600px',
+      border: '0',
+      opacity: '0',
+      pointerEvents: 'none',
+    });
+    document.body.appendChild(frame);
+
+    const printDocument = frame.contentDocument;
+    const printWindow = frame.contentWindow;
+    if (!printDocument || !printWindow) {
+      frame.remove();
+      return;
+    }
+
+    printDocument.documentElement.lang = document.documentElement.lang || 'vi';
+    printDocument.title = quote?.quoteNumber ? `Bao-gia-${quote.quoteNumber}` : 'Bao-gia';
+    const base = printDocument.createElement('base');
+    base.href = document.baseURI;
+    printDocument.head.appendChild(base);
+
+    const stylesheetReady: Promise<void>[] = [];
+    document.head.querySelectorAll('link[rel="stylesheet"], style').forEach(node => {
+      const clone = node.cloneNode(true) as HTMLElement;
+      if (clone instanceof HTMLLinkElement) {
+        stylesheetReady.push(new Promise(resolve => {
+          clone.addEventListener('load', () => resolve(), { once: true });
+          clone.addEventListener('error', () => resolve(), { once: true });
+        }));
+      }
+      printDocument.head.appendChild(clone);
+    });
+    printDocument.body.appendChild(sourceRoot.cloneNode(true));
+
+    const timeout = (ms: number) => new Promise<void>(resolve => window.setTimeout(resolve, ms));
+    await Promise.race([Promise.all(stylesheetReady), timeout(3000)]);
+    const imageReady = Array.from(printDocument.images).map(image => image.complete
+      ? Promise.resolve()
+      : new Promise<void>(resolve => {
+          image.addEventListener('load', () => resolve(), { once: true });
+          image.addEventListener('error', () => resolve(), { once: true });
+        }));
+    await Promise.race([
+      Promise.all([printDocument.fonts.ready.then(() => undefined), ...imageReady]),
+      timeout(3000),
+    ]);
+
+    const cleanup = () => frame.remove();
+    printWindow.addEventListener('afterprint', cleanup, { once: true });
+    window.setTimeout(cleanup, 60000);
+    printWindow.focus();
+    printWindow.print();
+  }
+
   // "Khoá link báo giá" - yeu cau rieng "gui khach xong lam sao khoa link lai
   // duoc" (endpoint /revoke-public da co san o backend/repository tu truoc,
   // dung o menu "..." tren trang Danh sach bao gia - nhung CHUA co trong
@@ -9121,26 +9191,13 @@ export function QuoteWorkspaceModal({
                     <RotateCcw className="qc-icon" /> Đặt lại độ rộng cột
                   </button>
                 ) : null}
-                {/* Bug thuc te (2026-10-10): comment cu phia tren tung ghi "In/Tải PDF nam
-                 * TRUC TIEP trong header popup nay" nhung nut nay da bi mat luc nao khong ro -
-                 * Sale chinh do rong cot xong khong co cach xem thu ban in TAI DAY, phai roi
-                 * qua trang cong khai moi in duoc. Them lai dung window.print() (giong
-                 * PublicQuotePage.tsx) - CSS @media print da san cho view nay (xem comment
-                 * .qc-modal-backdrop/.qc-workspace-preview-modal o quotes.css). Rieng document.title:
-                 * PublicQuotePage set 1 LAN vinh vien vi do la trang doc lap; o day la popup NAM
-                 * TRONG trang CRM dang lam viec - chi doi title NGAY TRUOC khi in (de ten file
-                 * goi y khi "Luu dang PDF" la "Bao-gia-<so>" giong trang cong khai) roi tra lai
-                 * title cu ngay sau, tranh doi luon ten tab trinh duyet cua Sale. */}
+                {/* In tai cho qua iframe chi chua quote-print-root: giu nguyen
+                 * popup/DOM dang xem nhung loai CRM shell/backdrop khoi ban in. */}
                 {previewSchema ? (
                   <button
                     type="button"
                     className="qc-mini-btn"
-                    onClick={() => {
-                      const prevTitle = document.title;
-                      if (quote?.quoteNumber) document.title = `Bao-gia-${quote.quoteNumber}`;
-                      window.print();
-                      document.title = prevTitle;
-                    }}
+                    onClick={printCustomerPreviewPdf}
                   >
                     <Printer className="qc-icon" /> Xem trước / In PDF
                   </button>
@@ -9189,7 +9246,7 @@ export function QuoteWorkspaceModal({
               // that (overflow-y:auto, overflow-x:hidden), qua .qc-workspace-
               // preview-modal-body--doc (CSS da doi lai thanh flex:1 min-
               // height:0 - xem quote-center.css).
-              <div className="quote-print-root qc-workspace-preview-modal-body qc-workspace-preview-modal-body--doc">
+              <div ref={previewPrintRootRef} className="quote-print-root qc-workspace-preview-modal-body qc-workspace-preview-modal-body--doc">
                 <QuoteDocumentRenderer
                   key={printResetKey}
                   schemaSnapshot={previewSchema}
