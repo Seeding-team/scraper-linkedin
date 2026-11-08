@@ -83,17 +83,18 @@ jobs:
       # compose tu suy ra ten project (khong '-p') de khop dung label hien co.
       - name: Chan doan + rebuild stack dev (domain)
         run: |
-          echo "===== docker compose ls ====="; docker compose ls || true
-          echo "===== docker ps ====="; docker ps --format '{{.Names}} | {{.Image}} | {{.Ports}}' || true
-          echo "===== compose files ====="; ls -la docker-compose*.yml || true
-          echo "===== router server_name -> upstream ====="
-          docker exec seeding-router sh -c 'cat /etc/nginx/nginx.conf /etc/nginx/conf.d/*.conf 2>/dev/null' | grep -iE "server_name|proxy_pass|upstream|dev\.seeding" | head -60 || true
-          echo "===== rebuild container -dev neu co ====="
+          echo "===== docker ps ====="
+          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true
+          echo "===== docker compose ls ====="
+          docker compose ls || true
+          echo "===== rebuild stack dev.seeding.markeeai.com ====="
           if [ -f docker-compose.dev.yml ]; then
-            docker compose -f docker-compose.dev.yml build || true
-            docker compose -f docker-compose.dev.yml up -d || true
+            echo "Building docker-compose.dev.yml..."
+            docker compose -p seeding-dev -f docker-compose.dev.yml build || docker compose -f docker-compose.dev.yml build || true
+            echo "Recreating dev containers with --force-recreate..."
+            docker compose -p seeding-dev -f docker-compose.dev.yml up -d --force-recreate || docker compose -f docker-compose.dev.yml up -d --force-recreate || true
             docker exec seeding-router nginx -s reload 2>/dev/null || docker compose restart router || true
-            echo "da rebuild + up -d frontend-dev/backend-dev"
+            echo "da rebuild + up -d --force-recreate frontend-dev/backend-dev"
           else
             echo "KHONG thay docker-compose.dev.yml o thu muc deploy - domain co the route noi khac"
           fi
