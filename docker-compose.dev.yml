@@ -55,6 +55,7 @@ services:
 
 networks:
   seeding-net:
+    name: scraper-linkedin_seeding-net
     external: true
 
 volumes:
