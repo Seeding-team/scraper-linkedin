@@ -155,7 +155,7 @@ class FbCircuitBreaker:
             "updated_at": now.isoformat(),
         }
 
-        if error_code == FB_ERROR_TEMPORARILY_BLOCKED:
+        if error_code in (FB_ERROR_TEMPORARILY_BLOCKED, FB_ERROR_RATE_LIMIT, 368):
             # Đóng băng 24 giờ
             freeze_until = now + timedelta(hours=CIRCUIT_BREAKER_FREEZE_HOURS)
             update_payload["status"] = "frozen"

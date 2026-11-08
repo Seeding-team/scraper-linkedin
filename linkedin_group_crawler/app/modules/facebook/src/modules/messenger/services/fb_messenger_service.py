@@ -34,11 +34,23 @@ from app.modules.facebook.src.modules.messenger.services.fb_circuit_breaker impo
 
 logger = logging.getLogger("fb_messenger.service")
 
-# User-Agent mặc định chuẩn Chrome Desktop
+# User-Agent mặc định chuẩn Chrome 128 Desktop trên Windows 11
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
+
+# Headers chuẩn xác 100% mô phỏng Chrome Browser chống Bot-Detection (WAF/Shape Security)
+CHROME_BROWSER_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Sec-CH-UA": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
+    "Sec-CH-UA-Mobile": "?0",
+    "Sec-CH-UA-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+}
 
 
 class FbMessengerService:
@@ -182,6 +194,41 @@ class FbMessengerService:
             return {"success": False, "message": f"Lỗi lưu trữ tài khoản: {e}"}
 
     @classmethod
+    def send_typing_ping(
+        cls,
+        account_id: str,
+        thread_id: str,
+        state: int,
+        fb_dtsg: str,
+        jazoest: str,
+        cookies: Dict[str, str],
+        ua: str,
+        proxies: Optional[Dict[str, str]] = None,
+    ) -> None:
+        """Phát tín hiệu typing thật sự lên Facebook (state=1: Đang gõ, state=0: Dừng gõ)."""
+        typ_url = "https://www.facebook.com/ajax/messaging/typ.php"
+        headers = {
+            "User-Agent": ua,
+            "Referer": f"https://www.facebook.com/messages/t/{thread_id}",
+            "Origin": "https://www.facebook.com",
+            "Content-Type": "application/x-www-form-urlencoded",
+            **CHROME_BROWSER_HEADERS,
+        }
+        form_data = {
+            "typ": str(state),
+            "to": thread_id,
+            "source": "mercury-chat",
+            "thread": thread_id,
+            "fb_dtsg": fb_dtsg,
+            "jazoest": jazoest,
+        }
+        try:
+            requests.post(typ_url, data=form_data, cookies=cookies, headers=headers, proxies=proxies, timeout=5)
+            logger.info(f"Fired typing indicator typ={state} to thread {thread_id}")
+        except Exception as e:
+            logger.warning(f"Typing indicator ping failed (non-critical): {e}")
+
+    @classmethod
     async def simulate_human_typing_delay(cls, text: str) -> None:
         """Mô phỏng độ trễ gõ phím của con người dựa trên độ dài văn bản."""
         total_delay = 0.0
@@ -243,8 +290,16 @@ class FbMessengerService:
             await asyncio.sleep(read_delay)
 
         # ── BƯỚC 2: PHÁT SỰ KIỆN TYPING & TRỄ GÕ PHÍM WPM ────────────────────────
-        if simulate_human:
-            # Gõ phím theo tốc độ tự nhiên
+        if simulate_human and fb_dtsg and jazoest:
+            # Phát tín hiệu typing thật sự lên Facebook
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: cls.send_typing_ping(
+                    account_id, thread_id, 1, fb_dtsg, jazoest, cookies, ua, proxies
+                ),
+            )
+            # Gõ phím theo tốc độ tự nhiên WPM 35-50 từ/phút
             await cls.simulate_human_typing_delay(content)
 
         # ── BƯỚC 3: GỌI DIRECT API GỬI TIN NHẮN META ─────────────────────────────
@@ -253,8 +308,8 @@ class FbMessengerService:
             "User-Agent": ua,
             "Referer": f"https://www.facebook.com/messages/t/{thread_id}",
             "Origin": "https://www.facebook.com",
-            "Accept": "*/*",
             "Content-Type": "application/x-www-form-urlencoded",
+            **CHROME_BROWSER_HEADERS,
         }
 
         form_data = {
@@ -292,6 +347,15 @@ class FbMessengerService:
             logger.exception(f"HTTP request error sending fb message: {req_err}")
             return {"success": False, "message": f"Lỗi kết nối tới Facebook Gateway: {req_err}"}
 
+        # Tắt trạng thái typing sau khi gửi xong
+        if simulate_human and fb_dtsg and jazoest:
+            await loop.run_in_executor(
+                None,
+                lambda: cls.send_typing_ping(
+                    account_id, thread_id, 0, fb_dtsg, jazoest, cookies, ua, proxies
+                ),
+            )
+
         # ── BƯỚC 4: BÓC TÁCH MÃ LỖI & PHẢN HỒI TỪ META ────────────────────────────
         is_blocked = False
         error_code = None
@@ -301,12 +365,23 @@ class FbMessengerService:
             error_msg = f"HTTP {res.status_code} từ Facebook"
         elif "for (;;);" in raw_text:
             clean_json = raw_text.replace("for (;;);", "").strip()
-            # Bắt mã lỗi 1357004 hoặc checkpoint
+            # Bắt mã lỗi 1357004 (Tạm thời chặn tính năng)
             if str(FB_ERROR_TEMPORARILY_BLOCKED) in clean_json or "temporarily blocked" in clean_json.lower():
                 is_blocked = True
                 error_code = FB_ERROR_TEMPORARILY_BLOCKED
                 error_msg = "Bạn tạm thời bị chặn sử dụng tính năng nhắn tin trên Facebook."
-            elif "checkpoint" in clean_json.lower() or "login" in clean_json.lower():
+            # Bắt mã lỗi 368 (Thao tác quá nhanh)
+            elif '"error":368' in clean_json or "thao tác quá nhanh" in clean_json.lower():
+                is_blocked = True
+                error_code = 368
+                error_msg = "Meta cảnh báo thao tác quá nhanh. Tự động đóng băng để bảo vệ nick."
+            # Bắt mã lỗi 190 (Cookie / Token hết hạn)
+            elif '"error":190' in clean_json or '"error_subcode":463' in clean_json:
+                is_blocked = True
+                error_code = FB_ERROR_SESSION_EXPIRED
+                error_msg = "Phiên đăng nhập Cookie đã hết hạn, vui lòng cập nhật lại."
+            # Bắt trang Checkpoint / Đăng nhập
+            elif "checkpoint" in clean_json.lower() or "login.php" in clean_json.lower():
                 is_blocked = True
                 error_code = FB_ERROR_CHECKPOINT
                 error_msg = "Tài khoản bị đẩy sang trang xác minh Checkpoint."

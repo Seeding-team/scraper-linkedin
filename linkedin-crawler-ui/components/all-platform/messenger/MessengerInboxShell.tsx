@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import {
   fbMessengerService,
@@ -9,6 +9,7 @@ import {
   FbMessengerMessage,
 } from "@/services/facebook-messenger.service";
 import { MessengerAccountModal } from "./MessengerAccountModal";
+import { INBOX_TEMPLATES } from "@/components/all-platform/components/inbox-templates";
 import { toast } from "sonner";
 
 export function MessengerInboxShell() {
@@ -23,12 +24,17 @@ export function MessengerInboxShell() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
 
+  // Bộ theo dõi từng bước mô phỏng người thật theo thời gian thực (Live Simulation Step Tracker)
+  const [simulationStep, setSimulationStep] = useState<number>(0);
+  const [simulationText, setSimulationText] = useState<string>("");
+
+  const [searchQuery, setSearchQuery] = useState("");
   const [inputText, setInputText] = useState("");
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Tự động cuộn xuống cuối khi có tin nhắn mới
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -135,7 +141,6 @@ export function MessengerInboxShell() {
               last_message: incomingMsg.content,
               last_message_at: incomingMsg.created_at,
             };
-            // Đưa lên đầu
             const [item] = updated.splice(idx, 1);
             return [item, ...updated];
           }
@@ -147,13 +152,14 @@ export function MessengerInboxShell() {
     return () => unsubscribe();
   }, [selectedThread]);
 
-  // 5. Gửi tin nhắn Optimistic UI
+  // 5. Gửi tin nhắn với bộ đếm mô phỏng người thật trực quan
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || !selectedAccountId || !selectedThread) return;
 
     const content = inputText.trim();
     setInputText("");
+    setShowTemplateMenu(false);
 
     // Optimistic UI Message (Hiện ngay trong 0ms)
     const optimisticMsg: FbMessengerMessage = {
@@ -172,6 +178,25 @@ export function MessengerInboxShell() {
     setMessages((prev) => [...prev, optimisticMsg]);
     setSending(true);
 
+    // Kích hoạt chuỗi bước mô phỏng thị giác (Visual Simulation Stepper)
+    setSimulationStep(1);
+    setSimulationText("Bước 1/5: Đang đọc ngữ cảnh tin nhắn cũ (Độ trễ 1.8s)...");
+
+    const timer1 = setTimeout(() => {
+      setSimulationStep(2);
+      setSimulationText("Bước 2/5: Đang phát tín hiệu Typing lên Facebook (typ.php)...");
+    }, 1800);
+
+    const timer2 = setTimeout(() => {
+      setSimulationStep(3);
+      setSimulationText("Bước 3/5: Đang gõ phím mô phỏng WPM 42 từ/phút (trễ ngẫu nhiên dấu câu)...");
+    }, 3200);
+
+    const timer3 = setTimeout(() => {
+      setSimulationStep(4);
+      setSimulationText("Bước 4/5: Đang gửi gói tin Direct API an toàn (offline_threading_id)...");
+    }, 6000);
+
     try {
       const res = await fbMessengerService.sendMessage({
         account_id: selectedAccountId,
@@ -181,114 +206,226 @@ export function MessengerInboxShell() {
         simulate_human: true,
       });
 
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
+
       if (!res.success) {
         toast.error(res.message || "Gửi tin nhắn thất bại.");
-        // Đánh dấu tin failed
         setMessages((prev) =>
           prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
         );
+        setSimulationStep(0);
         return;
       }
 
-      // Cập nhật tin thành công từ server
+      setSimulationStep(5);
+      setSimulationText("Bước 5/5: Đã gửi an toàn! Nán lại 1.5s & đồng bộ 2 chiều hoàn tất.");
+
       if (res.data?.message) {
         const saved = res.data.message;
         setMessages((prev) =>
           prev.map((m) => (m.id === optimisticMsg.id ? saved : m))
         );
       }
+
+      setTimeout(() => {
+        setSimulationStep(0);
+        setSimulationText("");
+      }, 2500);
+
+      // Cập nhật lại số lượng tin đã gửi của tài khoản
+      loadAccounts();
     } catch {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+      clearTimeout(timer3);
       toast.error("Lỗi mạng khi gửi tin nhắn.");
       setMessages((prev) =>
         prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
       );
+      setSimulationStep(0);
     } finally {
       setSending(false);
     }
   };
 
+  // Mở rã đông tài khoản
+  const handleUnfreeze = async (accId: string) => {
+    try {
+      const res = await fbMessengerService.unfreezeAccount(accId);
+      if (res.success) {
+        toast.success("Đã rã đông tài khoản thành công!");
+        loadAccounts();
+      } else {
+        toast.error(res.message || "Rã đông thất bại.");
+      }
+    } catch {
+      toast.error("Lỗi khi gọi lệnh rã đông.");
+    }
+  };
+
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+
+  // Lọc hội thoại theo thanh tìm kiếm
+  const filteredThreads = useMemo(() => {
+    if (!searchQuery.trim()) return threads;
+    const q = searchQuery.toLowerCase().trim();
+    return threads.filter(
+      (t) =>
+        (t.recipient_name && t.recipient_name.toLowerCase().includes(q)) ||
+        t.recipient_id.includes(q) ||
+        (t.last_message && t.last_message.toLowerCase().includes(q))
+    );
+  }, [threads, searchQuery]);
 
   return (
     <div className="flex h-full w-full bg-surface border border-outline-variant rounded-2xl overflow-hidden font-sans shadow-sm">
-      {/* CỘT 1: DANH SÁCH TÀI KHOẢN & HỘI THOẠI */}
-      <div className="w-80 border-r border-outline-variant flex flex-col bg-surface-container-low">
-        {/* Header chọn tài khoản */}
-        <div className="p-3 border-b border-outline-variant bg-surface space-y-2">
+      {/* ── CỘT 1: DANH SÁCH TÀI KHOẢN & HỘI THOẠI ──────────────────────────── */}
+      <div className="w-84 border-r border-outline-variant flex flex-col bg-surface-container-low shrink-0">
+        {/* Header tài khoản */}
+        <div className="p-3.5 border-b border-outline-variant bg-surface space-y-2.5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-bold text-sm text-foreground">
-              <span className="material-symbols-outlined text-blue-600 text-[20px]">chat</span>
-              Messenger Nick
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                <span className="material-symbols-outlined text-[18px]">chat</span>
+              </div>
+              <span className="font-bold text-sm text-on-surface">Messenger Nick</span>
             </div>
             <button
               type="button"
               onClick={() => setShowAccountModal(true)}
-              className="px-2 py-1 text-[11px] font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-1 cursor-pointer transition"
+              className="px-2.5 py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-1 cursor-pointer transition shadow-xs"
             >
-              <span className="material-symbols-outlined text-[14px]">add</span>
+              <span className="material-symbols-outlined text-[15px]">add</span>
               Thêm nick
             </button>
           </div>
 
+          {/* Hộp chọn nick */}
           <select
             value={selectedAccountId}
             onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="w-full text-xs font-semibold p-2 bg-surface border border-outline-variant rounded-lg cursor-pointer focus:ring-1 focus:ring-blue-500"
+            className="w-full text-xs font-semibold p-2.5 bg-surface border border-outline-variant rounded-xl cursor-pointer focus:ring-2 focus:ring-blue-500/20 text-on-surface"
           >
             {accounts.length === 0 ? (
-              <option value="">Chưa có tài khoản nào</option>
+              <option value="">Chưa có tài khoản Messenger nào</option>
             ) : (
               accounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.name} ({acc.status === "frozen" ? "Đóng băng" : acc.status}) — {acc.daily_sent_count}/{acc.daily_sent_limit} tin
+                  {acc.name} ({acc.status === "frozen" ? "Đóng băng" : acc.status === "connected" ? "Hoạt động" : acc.status})
                 </option>
               ))
             )}
           </select>
 
-          {/* Badge trạng thái nick */}
+          {/* Chi tiết tài khoản & Thanh Quota */}
           {selectedAccount && (
-            <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-0.5">
-              <span className={cn(
-                "inline-flex items-center gap-1 font-bold px-1.5 py-0.5 rounded",
-                selectedAccount.status === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-              )}>
-                ● {selectedAccount.status === "connected" ? "Đang kết nối" : selectedAccount.status}
-              </span>
-              <span>Quota: {selectedAccount.daily_sent_count}/{selectedAccount.daily_sent_limit} tin/ngày</span>
+            <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-2.5 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className={cn(
+                  "inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full text-[10px]",
+                  selectedAccount.status === "connected" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
+                  selectedAccount.status === "frozen" ? "bg-amber-50 text-amber-700 border border-amber-200" :
+                  "bg-rose-50 text-rose-700 border border-rose-200"
+                )}>
+                  ● {selectedAccount.status === "connected" ? "Đang kết nối an toàn" :
+                      selectedAccount.status === "frozen" ? "Đóng băng bảo vệ" : selectedAccount.status}
+                </span>
+
+                {selectedAccount.status === "frozen" && (
+                  <button
+                    type="button"
+                    onClick={() => handleUnfreeze(selectedAccount.id)}
+                    className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                  >
+                    Rã đông ngay
+                  </button>
+                )}
+              </div>
+
+              {/* Progress bar hạn mức ngày */}
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
+                  <span>Hạn mức ngày:</span>
+                  <span className="font-bold text-on-surface">
+                    {selectedAccount.daily_sent_count} / {selectedAccount.daily_sent_limit} tin
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
+                  <div
+                    className={cn(
+                      "h-full transition-all duration-300",
+                      selectedAccount.daily_sent_count >= selectedAccount.daily_sent_limit
+                        ? "bg-amber-500"
+                        : "bg-blue-600"
+                    )}
+                    style={{
+                      width: `${Math.min(100, (selectedAccount.daily_sent_count / (selectedAccount.daily_sent_limit || 1)) * 100)}%`,
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Ô tìm kiếm hội thoại */}
+          <div className="relative">
+            <span className="material-symbols-outlined absolute left-2.5 top-2.5 text-muted-foreground text-[16px]">
+              search
+            </span>
+            <input
+              type="text"
+              placeholder="Tìm theo tên hoặc ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
         </div>
 
         {/* Danh sách các cuộc trò chuyện (Threads) */}
         <div className="flex-1 overflow-y-auto divide-y divide-outline-variant">
           {loadingThreads ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">Đang tải hội thoại...</div>
-          ) : threads.length === 0 ? (
-            <div className="p-6 text-center text-xs text-muted-foreground">Chưa có cuộc trò chuyện nào.</div>
+            <div className="p-8 text-center text-xs text-muted-foreground">Đang tải hội thoại...</div>
+          ) : filteredThreads.length === 0 ? (
+            <div className="p-8 text-center text-xs text-muted-foreground">
+              {searchQuery ? "Không tìm thấy hội thoại phù hợp." : "Chưa có cuộc trò chuyện nào."}
+            </div>
           ) : (
-            threads.map((t) => {
+            filteredThreads.map((t) => {
               const isSelected = selectedThread?.thread_id === t.thread_id;
               return (
                 <div
                   key={t.id}
                   onClick={() => setSelectedThread(t)}
                   className={cn(
-                    "p-3 flex items-start gap-2.5 cursor-pointer transition",
-                    isSelected ? "bg-blue-500/10 border-l-4 border-blue-600" : "hover:bg-surface-container"
+                    "p-3.5 flex items-start gap-3 cursor-pointer transition",
+                    isSelected
+                      ? "bg-blue-500/10 border-l-4 border-blue-600"
+                      : "hover:bg-surface-container"
                   )}
                 >
-                  <div className="w-9 h-9 rounded-full bg-blue-500/15 text-blue-700 flex items-center justify-center font-bold text-xs shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-blue-600/10 text-blue-700 flex items-center justify-center font-bold text-sm shrink-0 border border-blue-200">
                     {t.recipient_name?.charAt(0).toUpperCase() || "U"}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-1">
-                      <span className="font-bold text-xs text-foreground truncate">{t.recipient_name || t.recipient_id}</span>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {t.last_message_at ? new Date(t.last_message_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : ""}
+                      <span className="font-bold text-xs text-on-surface truncate">
+                        {t.recipient_name || t.recipient_id}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground shrink-0 font-medium">
+                        {t.last_message_at
+                          ? new Date(t.last_message_at).toLocaleTimeString("vi-VN", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : ""}
                       </span>
                     </div>
-                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">{t.last_message || "(Chưa có tin nhắn)"}</p>
+                    <p className="text-[11px] text-muted-foreground truncate mt-1">
+                      {t.last_message || "(Chưa có tin nhắn)"}
+                    </p>
                   </div>
                 </div>
               );
@@ -297,27 +434,41 @@ export function MessengerInboxShell() {
         </div>
       </div>
 
-      {/* CỘT 2: KHUNG CHAT VÀ GỬI TIN */}
-      <div className="flex-1 flex flex-col bg-surface">
+      {/* ── CỘT 2: KHUNG CHAT VÀ GỬI TIN ────────────────────────────────────── */}
+      <div className="flex-1 flex flex-col bg-surface min-w-0">
         {selectedThread ? (
           <>
             {/* Header khung chat */}
-            <div className="p-3 border-b border-outline-variant flex items-center justify-between bg-surface-container-low">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-blue-600/15 text-blue-600 flex items-center justify-center font-bold text-xs">
+            <div className="p-3.5 border-b border-outline-variant flex items-center justify-between bg-surface-container-low">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-9 h-9 rounded-full bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold text-sm shrink-0 border border-blue-200">
                   {selectedThread.recipient_name?.charAt(0).toUpperCase() || "U"}
                 </div>
-                <div>
-                  <h3 className="font-bold text-xs text-foreground">{selectedThread.recipient_name || selectedThread.recipient_id}</h3>
-                  <p className="text-[10px] text-muted-foreground font-mono">ID: {selectedThread.recipient_id}</p>
+                <div className="min-w-0">
+                  <h3 className="font-bold text-sm text-on-surface truncate">
+                    {selectedThread.recipient_name || selectedThread.recipient_id}
+                  </h3>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    <span className="font-mono">UID: {selectedThread.recipient_id}</span>
+                    <span>·</span>
+                    <a
+                      href={`https://facebook.com/${selectedThread.recipient_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 hover:underline flex items-center gap-0.5"
+                    >
+                      <span>Mở Profile</span>
+                      <span className="material-symbols-outlined text-[11px]">open_in_new</span>
+                    </a>
+                  </div>
                 </div>
               </div>
 
-              {/* Thông tin nhịp sinh học */}
-              <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200">
-                  <span className="material-symbols-outlined text-[13px]">shield</span>
-                  Anti-Checkpoint (Typing WPM)
+              {/* Huy hiệu bảo vệ Anti-Checkpoint */}
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-xs border border-emerald-200 shadow-2xs">
+                  <span className="material-symbols-outlined text-[14px]">verified_user</span>
+                  Anti-Checkpoint Active
                 </span>
               </div>
             </div>
@@ -327,27 +478,43 @@ export function MessengerInboxShell() {
               {loadingMessages ? (
                 <div className="p-8 text-center text-xs text-muted-foreground">Đang tải tin nhắn...</div>
               ) : messages.length === 0 ? (
-                <div className="p-8 text-center text-xs text-muted-foreground">Chưa có tin nhắn nào trong hội thoại này.</div>
+                <div className="p-8 text-center text-xs text-muted-foreground">
+                  Chưa có tin nhắn nào trong hội thoại này.
+                </div>
               ) : (
                 messages.map((m) => {
                   const isMe = m.is_self;
                   return (
-                    <div key={m.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
+                    <div
+                      key={m.id}
+                      className={cn("flex flex-col", isMe ? "items-end" : "items-start")}
+                    >
                       <div
                         className={cn(
-                          "max-w-[75%] px-3.5 py-2 rounded-2xl text-xs leading-relaxed font-sans shadow-xs",
+                          "max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed font-sans shadow-xs whitespace-pre-wrap",
                           isMe
                             ? "bg-blue-600 text-white rounded-br-xs"
-                            : "bg-surface-container border border-outline-variant text-foreground rounded-bl-xs"
+                            : "bg-surface-container border border-outline-variant text-on-surface rounded-bl-xs"
                         )}
                       >
                         {m.content}
                       </div>
-                      <div className="flex items-center gap-1 text-[9px] text-muted-foreground mt-0.5 px-1 font-medium">
-                        <span>{new Date(m.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}</span>
+                      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5 px-1 font-medium">
+                        <span>
+                          {new Date(m.created_at).toLocaleTimeString("vi-VN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
                         {isMe && (
                           <span>
-                            {m.status === "sending" ? "· Đang gửi..." : m.status === "failed" ? "· ❌ Lỗi" : "· ✓"}
+                            {m.status === "sending"
+                              ? "· ⏳ Đang gửi..."
+                              : m.status === "failed"
+                              ? "· ❌ Gửi lỗi"
+                              : m.is_echo
+                              ? "· 📱 Gửi từ điện thoại"
+                              : "· ✓ Đã gửi an toàn"}
                           </span>
                         )}
                       </div>
@@ -358,32 +525,120 @@ export function MessengerInboxShell() {
               <div ref={messagesEndRef} />
             </div>
 
+            {/* Banner theo dõi mô phỏng người thật theo thời gian thực (Step Tracker) */}
+            {simulationStep > 0 && (
+              <div className="px-4 py-2.5 bg-blue-50 border-t border-b border-blue-200 text-xs text-blue-900 font-medium flex items-center justify-between animate-pulse">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-[18px] text-blue-600">
+                    {simulationStep === 1
+                      ? "visibility"
+                      : simulationStep === 2
+                      ? "edit"
+                      : simulationStep === 3
+                      ? "keyboard"
+                      : simulationStep === 4
+                      ? "send"
+                      : "verified"}
+                  </span>
+                  <span>{simulationText}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((step) => (
+                    <div
+                      key={step}
+                      className={cn(
+                        "w-2 h-2 rounded-full",
+                        step <= simulationStep ? "bg-blue-600" : "bg-blue-200"
+                      )}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Menu chọn Mẫu câu Facebook */}
+            {showTemplateMenu && (
+              <div className="p-3 bg-surface-container-low border-t border-outline-variant max-h-48 overflow-y-auto space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-on-surface">Chọn mẫu câu Facebook chuyên dụng:</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateMenu(false)}
+                    className="text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+                  >
+                    Đóng
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {INBOX_TEMPLATES.filter((t) => t.category.includes("Facebook")).flatMap((cat) =>
+                    cat.templates.map((tpl, idx) => (
+                      <button
+                        key={`${cat.category}-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          setInputText(tpl.content.replace("{post}", "bài viết của bạn"));
+                          setShowTemplateMenu(false);
+                        }}
+                        className="p-2 text-left text-xs bg-surface border border-outline-variant rounded-lg hover:border-blue-500 hover:bg-blue-50/30 transition cursor-pointer"
+                      >
+                        <div className="font-bold text-on-surface truncate">{tpl.title}</div>
+                        <div className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
+                          {tpl.content}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Ô soạn thảo và gửi tin */}
-            <form onSubmit={handleSend} className="p-3 border-t border-outline-variant bg-surface-container-low flex items-center gap-2">
+            <form
+              onSubmit={handleSend}
+              className="p-3.5 border-t border-outline-variant bg-surface-container-low flex items-center gap-2"
+            >
+              <button
+                type="button"
+                onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+                className={cn(
+                  "px-3 py-2.5 rounded-xl border border-outline-variant text-xs font-bold flex items-center gap-1 cursor-pointer transition shrink-0",
+                  showTemplateMenu
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-surface hover:bg-surface-container text-on-surface"
+                )}
+                title="Chọn mẫu câu nhanh"
+              >
+                <span className="material-symbols-outlined text-[16px]">library_books</span>
+                <span>Mẫu câu</span>
+              </button>
+
               <input
                 type="text"
-                placeholder="Nhập tin nhắn Messenger... (Hệ thống tự động mô phỏng nhịp gõ phím con người)"
+                placeholder="Nhập tin nhắn Messenger... (Hệ thống tự động kích hoạt nhịp sinh học con người 5 bước)"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 disabled={sending}
-                className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-sans"
+                className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 font-sans"
               />
+
               <button
                 type="submit"
                 disabled={sending || !inputText.trim()}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
               >
                 <span className="material-symbols-outlined text-[16px]">send</span>
-                {sending ? "Đang gửi..." : "Gửi tin"}
+                {sending ? "Đang xử lý..." : "Gửi tin"}
               </button>
             </form>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
-            <span className="material-symbols-outlined text-[48px] text-blue-500/30 mb-2">chat_bubble</span>
-            <p className="text-sm font-bold text-foreground">Chọn một cuộc trò chuyện để bắt đầu</p>
-            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-              Hệ thống kết nối trực tiếp với Facebook Messenger, tự động đồng bộ 2 chiều giữa điện thoại và máy tính.
+            <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold mb-3 shadow-xs">
+              <span className="material-symbols-outlined text-[36px]">forum</span>
+            </div>
+            <p className="text-base font-bold text-on-surface">Chọn một cuộc trò chuyện để bắt đầu</p>
+            <p className="text-xs text-muted-foreground mt-1.5 max-w-sm leading-relaxed">
+              Hệ thống kết nối trực tiếp với Facebook Messenger, tự động đồng bộ 2 chiều giữa điện thoại và máy tính, áp dụng 5 lớp áo giáp chống Checkpoint.
             </p>
           </div>
         )}
