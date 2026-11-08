@@ -68,6 +68,19 @@ jobs:
               'postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres' \
               | psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' || true
               
+            echo 'Granting Supabase role permissions on schema public...'
+            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c "
+              GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+              GRANT ALL ON SCHEMA public TO postgres;
+              GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
+              GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
+              GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
+              NOTIFY pgrst, 'reload schema';
+            "
+              
             echo 'Verifying synced public table count on DEV:'
             psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c \"SELECT count(*) as total_tables FROM information_schema.tables WHERE table_schema = 'public';\"
           "
