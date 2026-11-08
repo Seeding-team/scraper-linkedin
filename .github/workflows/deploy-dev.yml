@@ -63,10 +63,23 @@ jobs:
             echo 'Testing connection to Dev DB...'
             psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c 'SELECT 1;'
             
-            echo 'Running pg_dump from Main and restoring to Dev...'
+            echo 'Running pg_dump from Main and restoring to Dev (EXCLUDING ALL ZALO TABLES)...'
             pg_dump --clean --if-exists --no-owner --no-privileges --schema=public \
+              --exclude-table='zalo_*' --exclude-table='v_zalo_*' \
               'postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres' \
               | psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' || true
+              
+            echo 'Safeguard: Purging any residual Zalo data on DEV DB to protect Production sessions...'
+            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c "
+              DO \$\$
+              DECLARE
+                r RECORD;
+              BEGIN
+                FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%zalo%') LOOP
+                  EXECUTE 'TRUNCATE TABLE public.' || quote_ident(r.tablename) || ' CASCADE;';
+                END LOOP;
+              END \$\$;
+            " || true
               
             echo 'Granting Supabase role permissions on schema public...'
             psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c "
