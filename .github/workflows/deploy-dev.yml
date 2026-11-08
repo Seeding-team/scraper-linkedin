@@ -26,11 +26,15 @@ jobs:
         run: |
           REF="${{ github.event.inputs.ref || github.ref_name }}"
           echo "===== Sync code on DEV host ====="
-          git checkout -- . || true
-          git fetch origin "$REF" || git fetch origin || true
-          git checkout -f "$REF" || git checkout -B "$REF" "origin/$REF" || true
-          git reset --hard "origin/$REF" || true
-          git clean -fd -e ".env*" -e "docker-compose*.yml" || true
+          # Giải phóng lock trên các file bind-mount (nginx-router/nginx.conf)
+          docker rm -f seeding-router 2>/dev/null || true
+          git merge --abort 2>/dev/null || true
+          git reset --merge 2>/dev/null || true
+          git checkout -f 2>/dev/null || true
+          git fetch origin "$REF"
+          git checkout -f "$REF" || git checkout -B "$REF" "origin/$REF"
+          git reset --hard "origin/$REF"
+          git clean -fd -e ".env*" -e "docker-compose*.yml"
           echo "===== Current commit on host ====="
           git log -n 1 --oneline
 
@@ -55,9 +59,8 @@ jobs:
 
       - name: Ap dung container moi
         run: |
-          docker compose up -d frontend backend
+          docker compose up -d frontend backend router
           sleep 5
-          docker compose restart router
           docker image prune -f
 
       - name: Kiem tra healthcheck
@@ -67,36 +70,24 @@ jobs:
           curl -sf -o /dev/null http://localhost:8080/api/all-platform/auth/me || echo "Luu y: auth/me khong phai 200 (co the do chua dang nhap, khong tinh la loi)"
 
       # dev.seeding.markeeai.com duoc phuc vu boi 2 container rieng (frontend-dev/
-      # backend-dev, docker-compose.dev.yml) - stack default o tren KHONG dung cho
-      # domain. Buoc nay chan doan topology + rebuild 2 container -dev de code moi
-      # thuc su len domain. Tat ca guard bang '|| true' de khong lam do workflow.
-      #
-      # QUAN TRONG: KHONG duoc truyen '-p seeding-dev' (hay bat ky '-p' nao khac
-      # voi ten thu muc). Tren host nay, frontend-dev/backend-dev thuc te thuoc
-      # CHUNG 1 compose project voi stack default - ten project mac dinh la
-      # basename thu muc ("scraper-linkedin"), khong phai "seeding-dev". Neu ep
-      # '-p seeding-dev', "up -d" se dung ten container (seeding-frontend-dev/
-      # seeding-backend-dev) giong het container that dang mang project-label
-      # "scraper-linkedin" -> Docker tu choi tao container trung ten -> lenh loi
-      # nhung bi '|| true' nuot -> deploy bao xanh nhung dev.seeding.markeeai.com
-      # van chay code cu (da xay ra 2 lan: 2026-08-04 va 2026-08-29). Luon de
-      # compose tu suy ra ten project (khong '-p') de khop dung label hien co.
+      # backend-dev, docker-compose.dev.yml).
       - name: Chan doan + rebuild stack dev (domain)
         run: |
           echo "===== docker ps ====="
           docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true
-          echo "===== docker compose ls ====="
-          docker compose ls || true
           echo "===== rebuild stack dev.seeding.markeeai.com ====="
           if [ -f docker-compose.dev.yml ]; then
             echo "Building docker-compose.dev.yml..."
-            docker compose -p seeding-dev -f docker-compose.dev.yml build || docker compose -f docker-compose.dev.yml build || true
-            echo "Recreating dev containers with --force-recreate..."
-            docker compose -p seeding-dev -f docker-compose.dev.yml up -d --force-recreate || docker compose -f docker-compose.dev.yml up -d --force-recreate || true
-            docker exec seeding-router nginx -s reload 2>/dev/null || docker compose restart router || true
+            docker compose -f docker-compose.dev.yml build
+            echo "Recreating dev containers..."
+            docker rm -f seeding-frontend-dev seeding-backend-dev 2>/dev/null || true
+            docker compose -f docker-compose.dev.yml up -d --force-recreate
+            sleep 5
+            docker ps --filter "name=seeding-.*-dev"
             echo "da rebuild + up -d --force-recreate frontend-dev/backend-dev"
           else
             echo "KHONG thay docker-compose.dev.yml o thu muc deploy - domain co the route noi khac"
+            exit 1
           fi
 
       # Cung 1 loai su co da gap tren host APP production (2026-09-21): docker
