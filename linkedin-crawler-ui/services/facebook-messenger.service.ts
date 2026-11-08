@@ -72,7 +72,7 @@ export interface SendMessengerMessagePayload {
   simulate_human?: boolean;
 }
 
-const BASE = `${API_BASE_URL}/facebook/api/v1/messenger`;
+const BASE = `${API_BASE_URL}/api/all-platform/messenger`;
 
 async function requestApi<T>(url: string, options: RequestInit = {}): Promise<{ success: boolean; message: string; data?: T }> {
   try {

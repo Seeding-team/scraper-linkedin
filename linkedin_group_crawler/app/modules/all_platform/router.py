@@ -160,6 +160,13 @@ all_platform_router.include_router(
     tags=["All-Platform Facebook VPS VNC"],
 )
 
+from app.modules.facebook.src.modules.messenger.router.index import router as messenger_router
+all_platform_router.include_router(
+    messenger_router,
+    prefix="/messenger",
+    tags=["Facebook Messenger Automation"],
+)
+
 # ── LinkedIn ───────────────────────────────────────────────────────────────────
 all_platform_router.include_router(
     seeding_router,
