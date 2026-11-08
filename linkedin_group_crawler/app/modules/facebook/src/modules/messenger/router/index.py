@@ -22,7 +22,7 @@ from app.modules.facebook.src.modules.messenger.services.fb_realtime_listener im
 
 logger = logging.getLogger("fb_messenger.router")
 
-messenger_router = APIRouter(prefix="/messenger", tags=["Facebook Messenger"])
+messenger_router = APIRouter(prefix="", tags=["Facebook Messenger"])
 
 
 @messenger_router.get("/accounts", response_model=MessengerBaseResponse)

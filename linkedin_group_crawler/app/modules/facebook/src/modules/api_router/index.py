@@ -23,7 +23,7 @@ api_router = APIRouter()
 # nhưng đặt ở file crawl_route (như hướng dẫn trước) sẽ giúp file này ngắn gọn hơn.
 api_router.include_router(crawl_fb_router)
 api_router.include_router(sheet_management_router)
-api_router.include_router(messenger_router)
+api_router.include_router(messenger_router, prefix="/messenger")
 
 # Ví dụ cho tương lai:
 # api_router.include_router(user_route.router)

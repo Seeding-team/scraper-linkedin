@@ -1,0 +1,62 @@
+version: '3.3'
+
+services:
+  frontend-dev:
+    build:
+      context: ./linkedin-crawler-ui
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_URL: https://dev.seeding.markeeai.com/
+        NEXT_PUBLIC_API_FACEBOOK_BASE_URL: https://dev.seeding.markeeai.com/
+        NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY: secret_api_key
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: 957838257147-3jf82as4b1i0g1js004bkrpa1lhpcvp3.apps.googleusercontent.com
+        NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID: ${NEXT_PUBLIC_GMAIL_OAUTH_CLIENT_ID:-}
+    image: scraper-linkedin-frontend-dev:latest
+    container_name: seeding-frontend-dev
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    env_file:
+      - ./linkedin-crawler-ui/.env
+    expose:
+      - "3000"
+    networks:
+      seeding-net:
+        aliases:
+          - frontend-dev
+
+  backend-dev:
+    build:
+      context: ./linkedin_group_crawler
+      dockerfile: Dockerfile
+    image: scraper-linkedin-backend-dev:latest
+    container_name: seeding-backend-dev
+    restart: unless-stopped
+    init: true
+    env_file:
+      - ./linkedin_group_crawler/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      CRM_INSTANCE: markee
+      CRM_PUBLIC_URL: https://dev.seeding.markeeai.com
+      DISABLE_ZCA_LISTENERS: "1"
+      DISABLE_SCHEDULER: "1"
+      DISABLE_ALL_PLATFORM_CRAWL_24H: "1"
+    expose:
+      - "8000"
+    volumes:
+      - backend-storage:/app/storage
+    networks:
+      seeding-net:
+        aliases:
+          - backend-dev
+
+networks:
+  seeding-net:
+    external: true
+
+volumes:
+  backend-storage:
+    external: true
