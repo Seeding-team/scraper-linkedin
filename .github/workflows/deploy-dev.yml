@@ -28,11 +28,12 @@ jobs:
           echo "===== Sync code on DEV host ====="
           # Giải phóng lock trên các file bind-mount (nginx-router/nginx.conf)
           docker rm -f seeding-router 2>/dev/null || true
-          git merge --abort 2>/dev/null || true
-          git reset --merge 2>/dev/null || true
-          git checkout -f 2>/dev/null || true
+          rm -f .git/index.lock || true
           git fetch origin "$REF"
-          git checkout -f "$REF" || git checkout -B "$REF" "origin/$REF"
+          # Xóa hoặc truncate nginx.conf để triệt tiêu lỗi unpack_trees / Cannot merge
+          rm -f nginx-router/nginx.conf 2>/dev/null || : > nginx-router/nginx.conf
+          git checkout -f -B "$REF" "origin/$REF" || git checkout -f "$REF" || true
+          rm -f nginx-router/nginx.conf 2>/dev/null || : > nginx-router/nginx.conf
           git reset --hard "origin/$REF"
           git clean -fd -e ".env*" -e "docker-compose*.yml"
           echo "===== Current commit on host ====="
