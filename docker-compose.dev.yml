@@ -44,6 +44,12 @@ services:
       DISABLE_ZCA_LISTENERS: "1"
       DISABLE_SCHEDULER: "1"
       DISABLE_ALL_PLATFORM_CRAWL_24H: "1"
+      SUPABASE_URL: "https://seeding-dev-test.db.markeeai.com"
+      SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3OTQxMzM2OTMsImV4cCI6MjEwOTQ5MzY5M30.CThsrGk6Vic2YIN46XJcryvPF4BvLN0mN7HyYuG6oqQ"
+      DATABASE_URL: "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres"
+      DIRECT_DATABASE_URL: "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres"
+      SUPABASE_DB_PASSWORD: "NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM"
+      SUPABASE_STUDIO_URL: "https://seeding-dev-test-studio.db.markeeai.com"
     expose:
       - "8000"
     volumes:
