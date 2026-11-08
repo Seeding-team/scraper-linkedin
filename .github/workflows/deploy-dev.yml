@@ -29,13 +29,14 @@ jobs:
           # Giải phóng lock trên các file bind-mount (nginx-router/nginx.conf)
           docker rm -f seeding-router 2>/dev/null || true
           rm -f .git/index.lock || true
+          rm -rf nginx-router/nginx.conf
           git fetch origin "$REF"
-          # Xóa hoặc truncate nginx.conf để triệt tiêu lỗi unpack_trees / Cannot merge
-          rm -f nginx-router/nginx.conf 2>/dev/null || : > nginx-router/nginx.conf
           git checkout -f -B "$REF" "origin/$REF" || git checkout -f "$REF" || true
-          rm -f nginx-router/nginx.conf 2>/dev/null || : > nginx-router/nginx.conf
           git reset --hard "origin/$REF"
+          rm -rf nginx-router/nginx.conf
+          git checkout -f "origin/$REF" -- nginx-router/nginx.conf
           git clean -fd -e ".env*" -e "docker-compose*.yml"
+          ls -ld nginx-router/nginx.conf
           echo "===== Current commit on host ====="
           git log -n 1 --oneline
 
@@ -60,6 +61,10 @@ jobs:
 
       - name: Ap dung container moi
         run: |
+          if [ -d nginx-router/nginx.conf ]; then
+            rm -rf nginx-router/nginx.conf
+            git checkout -f HEAD -- nginx-router/nginx.conf
+          fi
           docker compose up -d frontend backend router
           sleep 5
           docker image prune -f
