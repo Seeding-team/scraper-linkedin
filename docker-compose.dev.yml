@@ -60,4 +60,5 @@ networks:
 
 volumes:
   backend-storage:
+    name: scraper-linkedin_backend-storage
     external: true
