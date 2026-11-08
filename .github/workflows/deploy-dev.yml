@@ -25,14 +25,14 @@ jobs:
       - name: Pull code theo ref duoc chon
         run: |
           REF="${{ github.event.inputs.ref || github.ref_name }}"
-          echo "===== Ve sinh dirty workspace tren server truoc khi pull ====="
+          echo "===== Sync code on DEV host ====="
           git checkout -- . || true
-          git clean -fd || true
-          git fetch origin
-          git checkout -f "$REF" || git checkout -B "$REF" "origin/$REF"
-          git reset --hard "origin/$REF"
-          git clean -fd
-          git pull origin "$REF"
+          git fetch origin "$REF" || git fetch origin || true
+          git checkout -f "$REF" || git checkout -B "$REF" "origin/$REF" || true
+          git reset --hard "origin/$REF" || true
+          git clean -fd -e ".env*" -e "docker-compose*.yml" || true
+          echo "===== Current commit on host ====="
+          git log -n 1 --oneline
 
       # Xem giai thich chi tiet trong deploy-app.yml: build frontend chi thay
       # context ./linkedin-crawler-ui nen khong tu build lai duoc zip tu
