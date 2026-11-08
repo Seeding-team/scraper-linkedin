@@ -41,14 +41,14 @@ services:
       TZ: Asia/Ho_Chi_Minh
       CRM_INSTANCE: markee
       CRM_PUBLIC_URL: https://dev.seeding.markeeai.com
-      DISABLE_ZCA_LISTENERS: "1"
+      DISABLE_ZCA_LISTENERS: "0"
       DISABLE_SCHEDULER: "1"
       DISABLE_ALL_PLATFORM_CRAWL_24H: "1"
-      DISABLE_TELEGRAM_LISTENERS: "1"
-      DISABLE_ZALO_FORWARD_ENGINE: "1"
-      DISABLE_ZALO_AUTOMATION_WORKER: "1"
-      DISABLE_ZALO_PUSH_NOTIFIER: "1"
-      DISABLE_ZALO_CHATWOOT_BRIDGE: "1"
+      DISABLE_TELEGRAM_LISTENERS: "0"
+      DISABLE_ZALO_FORWARD_ENGINE: "0"
+      DISABLE_ZALO_AUTOMATION_WORKER: "0"
+      DISABLE_ZALO_PUSH_NOTIFIER: "0"
+      DISABLE_ZALO_CHATWOOT_BRIDGE: "0"
       SUPABASE_URL: "https://seeding-dev-test.db.markeeai.com"
       SUPABASE_SERVICE_ROLE_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3OTQxMzM2OTMsImV4cCI6MjEwOTQ5MzY5M30.CThsrGk6Vic2YIN46XJcryvPF4BvLN0mN7HyYuG6oqQ"
       DATABASE_URL: "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres"
@@ -59,6 +59,7 @@ services:
       - "8000"
     volumes:
       - backend-storage:/app/storage
+      - backend-dev-artifacts:/app/artifacts
     networks:
       seeding-net:
         aliases:
@@ -73,3 +74,5 @@ volumes:
   backend-storage:
     name: scraper-linkedin_backend-storage
     external: true
+  backend-dev-artifacts:
+    name: scraper-linkedin_backend-dev-artifacts

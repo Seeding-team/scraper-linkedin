@@ -121,6 +121,7 @@ jobs:
             docker compose -f docker-compose.dev.yml build || docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend-dev backend-dev || true
             echo "Recreating dev containers..."
             docker volume create scraper-linkedin_backend-storage 2>/dev/null || true
+            docker volume create scraper-linkedin_backend-dev-artifacts 2>/dev/null || true
             docker rm -f seeding-frontend-dev seeding-backend-dev 2>/dev/null || true
             docker compose -f docker-compose.dev.yml up -d --force-recreate
             sleep 5
