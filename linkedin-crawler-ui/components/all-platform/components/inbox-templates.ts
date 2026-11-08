@@ -26,6 +26,51 @@ export interface InboxTemplateGroup {
 
 export const INBOX_TEMPLATES: InboxTemplateGroup[] = [
   {
+    category: "Inbox Facebook - Chào hỏi & Tư vấn",
+    templates: [
+      {
+        title: "Chào hỏi tự nhiên theo bài viết",
+        content:
+          "Chào bạn, mình thấy bài viết của bạn trên nhóm. Mình cũng đang hoạt động trong lĩnh vực này và rất vui được kết nối cùng bạn để trao đổi thêm nhé!",
+        contentWithPost:
+          `Chào bạn, mình thấy bài đăng của bạn trên nhóm: "${POST_PLACEHOLDER}". Mình bên Markee AI, bên mình có giải pháp chuyên xử lý mảng này rất hiệu quả. Bạn check inbox để mình gửi giải pháp cụ thể cho bạn tham khảo nhé!`,
+      },
+      {
+        title: "Tư vấn nhu cầu chi tiết & Demo",
+        content:
+          "Dạ chào anh/chị, em thấy mình đang quan tâm đến giải pháp phát triển kinh doanh. Bên em có sẵn các bộ giải pháp và demo thực tế, em xin phép gửi anh/chị xem qua nhé!",
+        contentWithPost:
+          `Dạ chào bạn, mình thấy bạn đang cần hỗ trợ về: "${POST_PLACEHOLDER}". Bên mình có sẵn giải pháp trọn gói và demo mẫu trực quan. Không biết bạn đã tìm được đơn vị triển khai phù hợp chưa ạ? Mình gửi bạn thông tin chi tiết qua đây nhé!`,
+      },
+      {
+        title: "Gửi báo giá & Ưu đãi Messenger",
+        content:
+          "Chào bạn, bên mình đang có chương trình tư vấn 1-1 và gửi báo giá ưu đãi trọn gói cho thành viên nhóm. Mình xin phép nhắn tin để trao đổi nhanh cùng bạn nhé!",
+        contentWithPost:
+          `Chào bạn, mình thấy bạn đăng bài: "${POST_PLACEHOLDER}". Bên mình đang có bảng báo giá ưu đãi và demo phù hợp với đúng nhu cầu này của bạn. Bạn check tin nhắn chờ/tin nhắn Messenger để mình gửi chi tiết nhé!`,
+      },
+    ],
+  },
+  {
+    category: "Inbox Facebook - Kết nối & Hợp tác",
+    templates: [
+      {
+        title: "Kết nối đối tác chuyên môn",
+        content:
+          "Chào bạn, mình rất ấn tượng với chia sẻ của bạn trên nhóm. Bên mình cũng đang triển khai các dự án tương tự và rất muốn kết nối hợp tác lâu dài cùng bạn!",
+        contentWithPost:
+          `Chào bạn, mình đọc được bài chia sẻ của bạn: "${POST_PLACEHOLDER}". Bên mình cũng đang triển khai các dự án tương tự và rất muốn kết nối hợp tác, trao đổi chuyên môn cùng bạn!`,
+      },
+      {
+        title: "Hỗ trợ kỹ thuật / Triển khai nhanh",
+        content:
+          "Chào bạn, nếu bạn đang cần hỗ trợ kỹ thuật hoặc cần người triển khai nhanh giải pháp cho dự án thì cứ nhắn mình nhé. Bên mình có đội ngũ hỗ trợ 24/7.",
+        contentWithPost:
+          `Chào bạn, thấy bạn có nhu cầu: "${POST_PLACEHOLDER}". Nếu bạn cần hỗ trợ triển khai nhanh hoặc tư vấn kỹ thuật chuyên sâu thì nhắn mình nhé, bên mình luôn sẵn sàng đồng hành cùng bạn!`,
+      },
+    ],
+  },
+  {
     category: "Dịch vụ Website",
     templates: [
       {

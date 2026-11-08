@@ -911,7 +911,7 @@ async function main() {
     const normalized = (Array.isArray(friends) ? friends : []).map((f) => ({
       group_id: String(f.userId || ""),
       name: String(f.displayName || f.zaloName || ""),
-      avatar_url: String(f.avatar || f.avatarUrl || ""),
+      avatar_url: String(f.avatar || f.avatarUrl || f.avt || f.fullAvt || f.fullAvatar || ""),
       unread_count: 0,
       is_friend: true,
     }));
@@ -924,6 +924,14 @@ async function main() {
     if (!phone) throw new Error("Missing --phone");
     const user = await api.findUser(phone);
     emitAndExit({ ok: true, user: user || null }, 0);
+    return;
+  }
+
+  if (args.command === "get-user-info") {
+    const userId = String(args["user-id"] || args.userId || input.user_id || input.userId || "").trim();
+    if (!userId) throw new Error("Missing --user-id");
+    const info = await api.getUserInfo(userId);
+    emitAndExit({ ok: true, info: info || null }, 0);
     return;
   }
 
@@ -1012,7 +1020,7 @@ async function main() {
             return {
               group_id: gid,
               name: String(f.displayName || f.zaloName || ""),
-              avatar_url: String(f.avatar || f.avatarUrl || ""),
+              avatar_url: String(f.avatar || f.avatarUrl || f.avt || f.fullAvt || f.fullAvatar || ""),
               is_friend: true,
             };
           });
@@ -1112,7 +1120,26 @@ async function main() {
     const type = Number(args.type || input.type || ThreadType.Group);
     const text = args.text || input.text || input.message || "";
     if (!threadId) throw new Error("Missing --thread-id");
-    const response = await api.sendMessage({ msg: text }, String(threadId), type);
+    const messageContent = { msg: text };
+    const mentions = input.mentions;
+    if (Array.isArray(mentions) && mentions.length) {
+      messageContent.mentions = mentions;
+    }
+    const quoteIn = input.quote;
+    // Fallback spawn-per-call (dung khi worker pool loi) - giu dong bo voi
+    // cmdSendMessage trong zca_api_server.js, xem chu thich shape o do.
+    if (quoteIn && quoteIn.msgId) {
+      messageContent.quote = {
+        content: String(quoteIn.content || ""),
+        msgType: "webchat",
+        uidFrom: quoteIn.uidFrom != null ? String(quoteIn.uidFrom) : "",
+        msgId: String(quoteIn.msgId),
+        cliMsgId: quoteIn.cliMsgId != null ? String(quoteIn.cliMsgId) : "",
+        ts: quoteIn.ts != null ? String(quoteIn.ts) : "",
+        ttl: 0,
+      };
+    }
+    const response = await api.sendMessage(messageContent, String(threadId), type);
     emitAndExit({ ok: true, response }, 0);
     return;
   }

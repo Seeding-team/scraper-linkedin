@@ -105,6 +105,7 @@ export function DealCard({ deal, terminal, onClick, onCreateQuote, onDragStart }
       className={`crm-deal-card ${terminal ? 'crm-deal-card--terminal' : ''} ${
         isPaymentDueWarning(deal) ? 'crm-deal-card--payment-due' : ''
       }`}
+      data-crm-deal-row="true"
       draggable
       onDragStart={event => onDragStart?.(event, deal)}
       onClick={() => onClick(deal)}

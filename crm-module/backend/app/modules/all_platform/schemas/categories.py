@@ -13,6 +13,7 @@ class CategoryAddRequest(BaseModel):
     description: Optional[str] = None
     platform: str = "general"
     is_active: bool = True
+    sort_order: Optional[int] = None
 
 
 class CategoryUpdateRequest(BaseModel):
@@ -24,6 +25,7 @@ class CategoryUpdateRequest(BaseModel):
     # migration 079 — soft-deactivate toggle (currently only exposed in the
     # admin UI for category_type='crm_position'; see CrmCategorySections).
     is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
 
 class CategoryDeleteRequest(BaseModel):
     id: str

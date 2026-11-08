@@ -30,6 +30,15 @@ from app.modules.all_platform.schemas.categories import (
     CategoryUpdateRequest,
     CategoryDeleteRequest,
 )
+from app.modules.all_platform.schemas.crm_permission_group import (
+    CrmPermissionGroupCreateRequest,
+    CrmPermissionGroupUpdateRequest,
+)
+from app.modules.all_platform.schemas.crm_team import (
+    CrmTeamCreateRequest,
+    CrmTeamUpdateRequest,
+    CrmTeamMemberAddRequest,
+)
 from app.modules.all_platform.schemas.members import (
     MemberCreateRequest,
     MemberUpdateRequest,
@@ -60,6 +69,8 @@ from app.modules.all_platform.schemas.quote import (
     QuoteHardDeleteRequest,
     QuoteRequestChangesRequest,
     QuoteApproveRequest,
+    QuotePublicAccessRestrictionUpdateRequest,
+    QuotePrintLayoutPrefsUpdateRequest,
     IssuerCompanyCreateRequest,
     IssuerCompanyUpdateRequest,
 )
@@ -68,6 +79,11 @@ from app.modules.all_platform.schemas.service_catalog import (
     ServiceCatalogItemUpdateRequest,
     ServiceCatalogItemPricingUpsertRequest,
     ServiceCatalogReorderRequest,
+    ServiceCatalogUnitCreateRequest,
+    ServiceCatalogUnitUpdateRequest,
+    ServiceCatalogVatRateCreateRequest,
+    ServiceCatalogVatRateUpdateRequest,
+    ServiceCatalogWorkspaceAssignRequest,
     BundleComponentInput,
     BundleComponentsSetRequest,
     QuoteFormCatalogLinksSetRequest,
@@ -114,4 +130,7 @@ from app.modules.all_platform.schemas.contract import (
     ContractGenerateRequest,
     ContractReviewRequest,
     ContractRefineRequest,
+    ContractPrecheckRequest,
+    ContractSuggestTypeRequest,
+    ContractNumberSettingsRequest,
 )

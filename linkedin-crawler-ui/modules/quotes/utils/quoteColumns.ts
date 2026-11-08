@@ -1,5 +1,4 @@
 import type { QuoteField, QuoteItem, QuoteSchema } from '../types';
-import { flattenQuoteItems } from './quoteCalculations';
 
 /** Cột mặc định khi mẫu KHÔNG khai báo cột nào trong schema (repeater-table
  * quoteItems trống config.columns) — chỉ dùng làm fallback cuối cùng, KHÔNG
@@ -14,11 +13,14 @@ const FALLBACK_COLUMNS: QuoteField[] = [
   { key: 'total', label: 'Thành tiền', type: 'currency' },
 ];
 
-const CATALOG_PRICING_COLUMNS: QuoteField[] = [
-  { key: 'listPriceUsd', label: 'List price USD', type: 'text' },
-  { key: 'unitPriceUsd', label: 'Unit Price USD', type: 'text' },
-  { key: 'unitPriceVnd', label: 'Unit price VND', type: 'text' },
-];
+/** BUG THAT DA GAP ("cột hiển thị lấy sai kìa"/"cột không thuộc mẫu tuyệt đối
+ * không xuất hiện"): 3 cot nay TRUOC DAY duoc TU DONG chen vao bat ke mau
+ * bao gia co khai bao hay khong, chi vi hang muc co catalogItemId (lay tu
+ * "Sản phẩm & dịch vụ") - vi pham nguyen tac "mẫu báo giá quyết định cột
+ * nào duoc phep xuat hien". Khong co mau bao gia THAT nao trong seed data
+ * khai bao 3 cot nay ca (da xac nhan qua audit) - DA XOA HAN logic tu chen,
+ * chi con hien thi neu CHINH mau dang chon THAT SU khai bao trong
+ * config.columns cua no. */
 
 /** Tìm field bảng hạng mục THẬT của mẫu báo giá — không còn hardcode key
  * 'quoteItems'. Ưu tiên field key đúng 'quoteItems' nếu có (giữ nguyên hành vi
@@ -36,34 +38,41 @@ function findItemTableField(schema: QuoteSchema): QuoteField | undefined {
 /** Cột bảng hạng mục thật của MẪU này (đọc từ schema, không phải danh sách cố
  * định) — dùng chung cho cả QuoteDocumentRenderer (khi render) và
  * ReviewQuoteStep (khi dựng checkbox "Cột hiển thị"), để 2 nơi luôn khớp nhau.
- * quoteItems truyền vào chỉ để biết có dùng Danh mục dịch vụ hay không (chèn
- * thêm 3 cột giá USD/VND tham khảo), không đổi cột theo TỪNG dòng. */
-export function resolveQuoteItemColumns(schema: QuoteSchema, quoteItems: QuoteItem[] = []): QuoteField[] {
+ * `quoteItems` giữ lại trong chữ ký (khong xoa param, tranh doi API o moi
+ * noi goi) nhung KHONG con dung de tu chen cot nao nua - "Mẫu báo giá quyết
+ * định những cột nào được phép xuất hiện", du lieu hang muc co ton tai
+ * khong dong nghia cot phai duoc hien thi (yeu cau ro rang). */
+export function resolveQuoteItemColumns(schema: QuoteSchema, _quoteItems: QuoteItem[] = []): QuoteField[] {
   const itemField = findItemTableField(schema);
   const isQuoteItemsField = !itemField || itemField.key === 'quoteItems';
 
   if (!isQuoteItemsField) {
     // Bảng hạng mục KHÔNG phải quoteItems (vd solutionItems của villa) - cấu
     // trúc cột hoàn toàn khác (không có unitPrice/unit/vatRate/description...),
-    // nên KHÔNG áp các phép bổ sung riêng của quoteItems bên dưới (catalog
-    // pricing/description/discountPercent auto-insert) - trả đúng cột đã khai
-    // báo trong schema, filter chỉ ẩn cột visible:false rõ ràng.
+    // nên KHÔNG áp các phép bổ sung riêng của quoteItems bên dưới (mo ta/
+    // discountPercent auto-insert) - trả đúng cột đã khai báo trong schema,
+    // filter chỉ ẩn cột visible:false rõ ràng.
     const declaredColumns = itemField.config?.columns?.filter(column => column.visible !== false) || [];
     return declaredColumns.length ? declaredColumns : [...FALLBACK_COLUMNS];
   }
 
+  // BUG THAT DA GAP ("List price USD/Unit Price USD/Unit price VND xuất
+  // hiện dù mẫu không khai báo"): TRUOC DAY tu chen them CATALOG_PRICING_COLUMNS
+  // vao day chi vi hang muc co catalogItemId, BAT KE mau co khai bao 3 cot
+  // nay hay khong. DA BO HAN buoc chen nay - `baseColumns` (tu chinh
+  // config.columns cua mau) la nguon DUY NHAT, mau nao khai bao 3 cot nay
+  // that su thi chung da nam san trong baseColumns roi, khong can chen tay.
+  // BUG THAT DA GAP ("Thành tiền (chưa VAT) biến mất khỏi bảng dù mẫu khai
+  // báo rõ ràng"): dong nay TRUOC DAY con 1 buoc loc bo cung them ca 'subtotal'
+  // (KHONG chi 'vatAmount') khoi columns, BAT KE cot 'subtotal' co duoc mau
+  // khai bao visible hay khong - vi pham dung nguyen tac "mẫu báo giá quyết
+  // định cột nào được phép xuất hiện" da neu ngay phia tren. 'vatAmount' luon
+  // duoc chinh standard_schema() khai visible=False san (xem
+  // seed_quote_forms.py) nen da bi loai o dong loc "visible !== false" ngay
+  // tren roi - filter 'subtotal'/'vatAmount' o day thua/sai, XOA HAN.
   const baseColumns = itemField?.config?.columns?.filter(column => column.visible !== false) || [];
-  const hasCatalogPricing = flattenQuoteItems(quoteItems).some(item => item.catalogItemId);
-  const unitPriceIndex = baseColumns.findIndex(column => column.key === 'unitPrice');
-  const withCatalogColumns = hasCatalogPricing
-    ? unitPriceIndex >= 0
-      ? [...baseColumns.slice(0, unitPriceIndex), ...CATALOG_PRICING_COLUMNS, ...baseColumns.slice(unitPriceIndex)]
-      : [...CATALOG_PRICING_COLUMNS, ...baseColumns]
-    : baseColumns;
 
-  const columns = (withCatalogColumns.length ? [...withCatalogColumns] : [...FALLBACK_COLUMNS]).filter(
-    column => !['subtotal', 'vatAmount'].includes(column.key)
-  );
+  const columns = baseColumns.length ? [...baseColumns] : [...FALLBACK_COLUMNS];
   if (!columns.some(column => column.key === 'order' || column.type === 'auto-number')) {
     columns.unshift({ key: 'order', label: 'STT', type: 'auto-number' });
   }
@@ -116,15 +125,95 @@ export function getLockedColumnKeys(schema: QuoteSchema): string[] {
   return LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY[getItemTableFieldKey(schema)] || ['order'];
 }
 
+/** 'subtotal' luôn ẩn tuyệt đối khỏi bản khách (trùng với amountAfterDiscount/
+ * total - xem QuoteDocumentRenderer.tsx) - KHÔNG hiện trong picker dù là khoá
+ * hay toggle, khác với các cột 'calculated' khác (vatAmount/total) nay đã cho
+ * toggle bình thường (xem resolveToggleableColumns bên dưới). */
+export const ALWAYS_HIDDEN_CALCULATED_KEYS = new Set(['subtotal']);
+
 export function resolveToggleableColumns(schema: QuoteSchema, quoteItems: QuoteItem[] = []): QuoteField[] {
   const itemFieldKey = getItemTableFieldKey(schema);
   const lockedKeys = new Set(LOCKED_COLUMN_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || ['order']);
-  const hiddenKeys = new Set(HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || []);
+  const hiddenKeys = new Set([
+    ...(HIDDEN_FROM_PICKER_KEYS_BY_ITEM_FIELD_KEY[itemFieldKey] || []),
+    ...ALWAYS_HIDDEN_CALCULATED_KEYS,
+  ]);
+  // BUG THAT DA GAP ("báo giá có cột Thuế mà 'Cột hiển thị' không thấy đâu
+  // cả, chọn ẩn cũng không ẩn được"): cột kiểu 'calculated' (vatAmount/total)
+  // TRUOC DAY bị loại thẳng khỏi danh sách toggle (chỉ vì type 'calculated'),
+  // khiến QuoteDocumentRenderer coi chúng là "không thể tắt" (luôn in ra) VA
+  // picker không hề liệt kê chúng (không 🔒 cũng không checkbox) - Sale không
+  // thấy đâu, không tắt được. Bỏ dieu kien loai tru 'calculated' - cho toggle
+  // binh thuong nhu moi cot khac (tru 'subtotal' da loai o hiddenKeys tren).
   return resolveQuoteItemColumns(schema, quoteItems).filter(
     column =>
       !lockedKeys.has(column.key) &&
       !hiddenKeys.has(column.key) &&
-      column.type !== 'auto-number' &&
-      column.type !== 'calculated'
+      column.type !== 'auto-number'
   );
+}
+
+export function resolveDefaultVisibleColumnKeys(schema: QuoteSchema, quoteItems: QuoteItem[] = []): string[] {
+  return resolveToggleableColumns(schema, quoteItems)
+    .filter(column => column.key !== 'discountPercent')
+    .map(column => column.key);
+}
+
+/** Nhãn cột THẬT SẼ hiển thị trên bảng gửi khách/bản in - dùng CHUNG cho cả
+ * QuoteDocumentRenderer (lúc render) và QuoteColumnVisibilityPicker (lúc
+ * hiện checkbox "Cột hiển thị"), tránh lệch nhãn giữa 2 nơi.
+ *
+ * BUG THAT DA GAP ("2 cột 'Thành tiền trước VAT' giống hệt nhau trên bản
+ * in"): picker TRUOC DAY hiện đúng label thô trong schema ("Sau giảm giá"
+ * cho cột amountAfterDiscount), trong khi QuoteDocumentRenderer lại tự đổi
+ * tên cột này thành "Thành tiền (Chưa VAT)" lúc render — người tạo báo giá
+ * tick "Sau giảm giá" tưởng là 1 cột khác, không ngờ nó in ra thành cột
+ * "Thành tiền (Chưa VAT)" đứng sát cạnh "Thành tiền trước VAT" (cột
+ * `subtotal`), trùng giá trị hệt nhau khi dòng hàng không có % giảm giá
+ * riêng (không có cách nào đoán trước hậu quả này chỉ nhìn tên "Sau giảm
+ * giá" trong picker). Dùng chung 1 hàm nhãn ở cả 2 nơi để picker phản ánh
+ * ĐÚNG nhãn sẽ in ra, người dùng thấy rõ đang bật thêm 1 cột "trước VAT" nữa
+ * trước khi tick. */
+export function normalizeQuoteColumnLabel(column: QuoteField): string {
+  if (column.key === 'amountAfterDiscount') return 'Thành tiền (Chưa VAT)';
+  if (column.key === 'total') return 'Thành tiền (gồm VAT)';
+  return column.label;
+}
+
+/** true nếu có ÍT NHẤT 1 dòng hàng (kể cả dòng con trong nhóm/section) thực
+ * sự có % giảm giá > 0 - đệ quy qua `children` vì giảm giá có thể nằm ở dòng
+ * con (xem "hỗ trợ giảm giá theo dòng cha/con"). Component bung ra từ 1 bundle
+ * (`__bundleComponent`) LUÔN có discountPercent = 0 cứng (xem
+ * bundleComponentToDisplayItem trong QuoteDocumentRenderer.tsx) nên không cần
+ * xử lý riêng - some() vẫn duyệt qua nhưng luôn false, không ảnh hưởng kết quả. */
+function hasAnyLineItemDiscount(items: QuoteItem[]): boolean {
+  return items.some(
+    item => (item.discountPercent || 0) > 0 || (item.children ? hasAnyLineItemDiscount(item.children) : false)
+  );
+}
+
+/** Cột "Sau giảm giá" (`amountAfterDiscount`) CHỈ có ý nghĩa khi có dòng hàng
+ * thực sự bị giảm giá - nếu không, nó luôn bằng hệt cột `subtotal` ("Thành
+ * tiền trước VAT") vì subtotal - 0% = subtotal, tạo ra 2 cột "trước VAT" trùng
+ * số nhau trên bảng in dù người tạo có tick hiển thị cột này hay không.
+ *
+ * BUG THAT DA GAP ("báo giá không có giảm giá vẫn hiện 2 cột thành tiền
+ * trước VAT/chưa VAT giống hệt nhau"): TRUOC DAY viec cot nay hien hay an CHI
+ * phu thuoc "Cot hien thi" nguoi tao tick (xem quoteData.visibleColumns) -
+ * BAT KE bang hang muc co dong nao That su duoc giam gia hay khong. Ap dung
+ * o CA finalColumns (KHONG chi filter theo TOGGLEABLE_COLUMN_KEYS nhu truoc)
+ * de an cot nay o MOI mode (kha ca noi bo 'detail') khi khong co giam gia
+ * that - day la loai bo 1 cot KHONG mang thong tin gi them, khac voi
+ * "Cot hien thi" (an du lieu that theo y muon nguoi tao) nen khong can tuan
+ * theo gioi han "khong anh huong mode='detail'" cua co che do. */
+export function filterRedundantAmountAfterDiscountColumn(columns: QuoteField[], items: QuoteItem[]): QuoteField[] {
+  // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
+  // page couldn't load") vi backend tra ve `items: null` (khong phai [])
+  // cho 1 so bao gia - `items` truyen thang tu quote.items khong qua guard
+  // nao truoc khi toi day. hasAnyLineItemDiscount() goi .some() ngay tren
+  // tham so nay -> TypeError "Cannot read properties of null (reading
+  // 'some')" ngay khi render, JS crash lam ca trang trang. Chan null/undefined
+  // ngay tai day (diem duy nhat thuc su doc `items`).
+  if (hasAnyLineItemDiscount(items || [])) return columns;
+  return columns.filter(column => column.key !== 'amountAfterDiscount');
 }

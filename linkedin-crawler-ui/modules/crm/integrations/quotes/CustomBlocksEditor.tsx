@@ -12,7 +12,7 @@ const BLOCK_CATALOG: { kind: CustomBlockKind; defaultTitle: string; singleton: b
   { kind: 'timeline', defaultTitle: 'Tiến độ', singleton: true },
   { kind: 'handover', defaultTitle: 'Bàn giao', singleton: true },
   { kind: 'payment_terms', defaultTitle: 'Thanh toán', singleton: true },
-  { kind: 'warranty', defaultTitle: 'Bảo hành', singleton: true },
+  { kind: 'warranty', defaultTitle: 'Bảo hành chung dự án', singleton: true },
   { kind: 'note', defaultTitle: 'Ghi chú', singleton: true },
   { kind: 'custom_field', defaultTitle: 'Trường tuỳ chỉnh', singleton: false },
 ];

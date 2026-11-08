@@ -1,4 +1,6 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
+import { notifyDealsChanged } from '../utils/dealSync';
 import {
   CRM_PACKAGE_OPTIONS,
   getContractStatusForStage,
@@ -36,7 +38,7 @@ type ValidationErrorPayload = {
   errors?: string[];
 };
 
-type CustomerLeadRow = {
+export type CustomerLeadRow = {
   id: string;
   customer_id?: string | null;
   customer_name?: string | null;
@@ -58,6 +60,12 @@ type CustomerLeadRow = {
   team_type?: string | null;
   /** Du an that (migration 097) - null = Co hoi chua gan Du an nao. */
   project_id?: string | null;
+  /** Ten Du an MOI go tay (khong kem project_id) - backend tu tao Du an that
+   * tu ten nay (xem CreateDealInput.projectName). CHI dung o request GUI,
+   * server khong bao gio tra field nay lai. */
+  project_name?: string | null;
+  /** Nguoi lien he chinh (migration 134/135) - null = chua chon. */
+  primary_contact_id?: string | null;
   status?: 'pending' | 'closed' | 'rejected' | string | null;
   activity_status?: string | null;
   deal_stage?: DealStage | null;
@@ -104,6 +112,7 @@ type CustomerLeadRow = {
   quote_id?: string | null;
   quote_number?: string | null;
   quote_total_amount?: number | string | null;
+  quote_currency?: string | null;
   quote_public_url?: string | null;
   quote_status?: string | null;
   quote_version_number?: number | null;
@@ -121,6 +130,8 @@ type CrmCustomerRow = {
   id: string;
   customer_name?: string | null;
   company_name?: string | null;
+  short_name?: string | null;
+  customer_code?: string | null;
   position?: string | null;
   position_category_id?: string | null;
   position_label_snapshot?: string | null;
@@ -248,19 +259,34 @@ function daysInStage(row: CustomerLeadRow): number {
 }
 
 function normalizeStage(value?: string | null): DealStage {
+  const legacyMap: Record<string, DealStage> = {
+    new_lead: 'dealing',
+    contacted: 'dealing',
+    qualified: 'dealing',
+    requirement: 'requirement',
+    contract_sent: 'proposal_sent',
+    won: 'post_sale_care',
+  };
+  if (value && legacyMap[value]) return legacyMap[value];
   const stages: DealStage[] = [
-    'new_lead',
-    'contacted',
-    'qualified',
+    'dealing',
     'requirement',
     'proposal_sent',
     'negotiation',
-    'contract_sent',
+    'contract_signed',
+    'payment_1',
+    'implementation',
+    'acceptance',
+    'payment_final',
+    'post_sale_care',
     'on_hold',
-    'won',
     'lost',
   ];
-  return stages.includes(value as DealStage) ? (value as DealStage) : 'new_lead';
+  return stages.includes(value as DealStage) ? (value as DealStage) : 'dealing';
+}
+
+function isWonStage(stage: DealStage | ''): boolean {
+  return stage === 'post_sale_care' || stage === 'won';
 }
 
 function contractStatusFromRow(row: CustomerLeadRow, stage: DealStage): ContractStatus {
@@ -274,7 +300,7 @@ function contractStatusFromRow(row: CustomerLeadRow, stage: DealStage): Contract
 function paymentStatusFromRow(row: CustomerLeadRow, stage: DealStage): PaymentStatus {
   // Deal đã ở "Hoàn thành" (won) thì ngầm hiểu là đã thanh toán — không hiện lại
   // cảnh báo "Chưa thanh toán/Tới hạn thanh toán" cho deal đã chốt xong nữa.
-  if (stage === 'won') return 'da_thanh_toan';
+  if (stage === 'post_sale_care') return 'da_thanh_toan';
   const raw = asText(row.payment_status);
   const due = row.payment_due_date ? new Date(row.payment_due_date) : null;
   const overdue =
@@ -341,12 +367,12 @@ function parseOutcomeFromRow(row: CustomerLeadRow, stage: DealStage): OutcomeInf
     const parsed = row.outcome_detail as OutcomeInfo;
     return {
       ...parsed,
-      reviewType: (parsed.reviewType || (stage === 'won' || stage === 'lost' ? stage : '')) as OutcomeInfo['reviewType'],
+      reviewType: (parsed.reviewType || (isWonStage(stage) ? 'won' : stage === 'lost' ? 'lost' : '')) as OutcomeInfo['reviewType'],
       reasonText: parsed.reasonText || asText(row.reject_reason),
     };
   }
 
-  const reviewType = stage === 'won' || stage === 'lost' ? stage : '';
+  const reviewType = isWonStage(stage) ? 'won' : stage === 'lost' ? 'lost' : '';
   const legacyClosedReason = asText(row.closed_reason);
   const legacyResult = asText(row.review_result);
   return {
@@ -371,7 +397,7 @@ function activityToHistory(row: ActivityLogRow): StageHistory {
   };
 }
 
-function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
+export function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
   const stage = normalizeStage(row.deal_stage);
   const estimatedBudget = asNumber(row.estimated_budget);
   const lifetimeValue = asNumber(row.lifetime_value);
@@ -387,6 +413,7 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
     dealId: row.id,
     customerId: asText(row.customer_id),
     projectId: asText(row.project_id),
+    primaryContactId: asText(row.primary_contact_id),
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),
@@ -434,6 +461,7 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
           url: asText(row.quote_public_url) || attachmentUrl || undefined,
           number: asText(row.quote_number) || attachmentName || undefined,
           totalAmount: quoteTotal,
+          currency: asText(row.quote_currency) || undefined,
           status: (asText(row.quote_status) || undefined) as QuoteReference['status'],
           versionNumber: row.quote_version_number || undefined,
           versionChainId: asText(row.quote_version_chain_id) || undefined,
@@ -453,9 +481,9 @@ function rowToDeal(row: CustomerLeadRow, history: StageHistory[] = []): Deal {
     note: asText(row.note),
     nextStep: asText(row.next_step),
     pauseReason: asText(row.pause_reason) || (stage === 'on_hold' ? asText(row.note) : ''),
-    closedAt: asText(row.closed_at) || (stage === 'won' || stage === 'lost' ? fallbackDate(row.customer_since, row.updated_at) : ''),
+    closedAt: asText(row.closed_at) || (isWonStage(stage) || stage === 'lost' ? fallbackDate(row.customer_since, row.updated_at) : ''),
     closedReason: asText(row.closed_reason),
-    crmStatus: stage === 'won' || stage === 'lost' ? stage : 'open',
+    crmStatus: isWonStage(stage) ? 'won' : stage === 'lost' ? 'lost' : 'open',
     teamId: asText(row.team_id),
     teamName: asText(row.team_name),
     teamType: asText(row.team_type),
@@ -469,6 +497,8 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
     id: row.id,
     customerName: asText(row.customer_name),
     companyName: asText(row.company_name),
+    shortName: row.short_name || null,
+    customerCode: row.customer_code || null,
     position: asText(row.position),
     positionCategoryId: asText(row.position_category_id),
     positionLabelSnapshot: asText(row.position_label_snapshot),
@@ -486,7 +516,7 @@ function rowToCustomer(row: CrmCustomerRow): CrmCustomerSummary {
 
 function toCrmCustomerPayload(input: CreateDealInput): Partial<CrmCustomerRow> {
   return {
-    customer_name: input.customerName,
+    customer_name: input.customerProfileName ?? input.customerName,
     company_name: input.companyName,
     position_category_id: input.positionCategoryId,
     phone: input.phone,
@@ -506,6 +536,8 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   // nay chay o CA 2 truong hop tao moi VA sua - gui project_id=null RO
   // RANG khi bo gan (khong duoc IM LANG bo qua project_id nhu bug cu).
   if ('projectId' in input) payload.project_id = input.projectId || null;
+  if ('projectName' in input && !input.projectId) payload.project_name = input.projectName || null;
+  if ('primaryContactId' in input) payload.primary_contact_id = input.primaryContactId || null;
   if ('customerName' in input) payload.customer_name = input.customerName;
   if ('companyName' in input) payload.company_name = input.companyName;
   if ('phone' in input) payload.phone = input.phone;
@@ -571,7 +603,7 @@ function toCustomerPayload(input: CreateDealInput | UpdateDealInput): Partial<Cu
   }
 
   if (input.outcome) {
-    const reviewType = input.outcome.reviewType || (input.stage === 'won' || input.stage === 'lost' ? input.stage : '');
+    const reviewType = input.outcome.reviewType || (isWonStage(input.stage || '') ? 'won' : input.stage === 'lost' ? 'lost' : '');
     const normalizedOutcome: Partial<OutcomeInfo> = {
       ...input.outcome,
       reviewType,
@@ -684,6 +716,7 @@ export class SeedingCrmRepository implements CrmRepository {
     });
     const row = body.data?.deal;
     if (!row) throw new Error('Backend khong tra ve deal vua tao.');
+    notifyDealsChanged();
     return {
       ...rowToDeal(row),
       customerId: asText(body.data?.customer?.id) || asText(row.customer_id),
@@ -697,13 +730,24 @@ export class SeedingCrmRepository implements CrmRepository {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
+    notifyDealsChanged();
     return rowToDeal(row);
   }
 
-  async deleteDeal(id: string): Promise<void> {
-    await apiFetch<unknown>(`/api/all-platform/customer-leads/${encodeURIComponent(id)}`, {
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan. Lan goi dau (false) ma Deal con du lieu lien quan
+   * -> nem CascadeConfirmRequiredError (kem so dem) de UI hoi lai. */
+  async deleteDeal(id: string, confirmCascade = false): Promise<void> {
+    const query = confirmCascade ? '?confirm_cascade=true' : '';
+    const res = await fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(id)}${query}`, {
       method: 'DELETE',
+      credentials: 'include',
+      headers: getDefaultHeaders(),
     });
+    const body = (await res.json()) as ApiResponse<unknown>;
+    const summary = cascadeSummaryFromBody(body);
+    if (summary) throw new CascadeConfirmRequiredError(body.message || 'Cơ hội còn dữ liệu liên quan.', summary);
+    if (!res.ok || body.success === false) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
   }
 
   /** true nếu backend đã cấu hình AI thật (OPENAI_API_KEY) — gọi 1 lần lúc mount để quyết
@@ -731,7 +775,7 @@ export class SeedingCrmRepository implements CrmRepository {
   }
 
   async moveDeal(id: string, stage: DealStage, payload: StageTransitionInput = {}): Promise<Deal> {
-    const isOutcomeStage = stage === 'won' || stage === 'lost';
+    const isOutcomeStage = isWonStage(stage) || stage === 'lost';
     const outcome = payload.outcome
       ? ({
           ...payload.outcome,
@@ -789,8 +833,8 @@ export class SeedingCrmRepository implements CrmRepository {
       }
       return true;
     });
-    const wonDeals = deals.filter(deal => deal.stage === 'won');
-    const openDeals = deals.filter(deal => !['won', 'lost', 'on_hold'].includes(deal.stage));
+    const wonDeals = deals.filter(deal => isWonStage(deal.stage));
+    const openDeals = deals.filter(deal => !['post_sale_care', 'won', 'lost', 'on_hold'].includes(deal.stage));
     const industryRows = withPercent(groupRevenue(wonDeals, deal => deal.industry, 'Chưa rõ ngành'));
     const regionRows = withPercent(groupRevenue(wonDeals, deal => deal.city, 'Chưa rõ khu vực'));
     const categoryRows = withPercent(groupRevenue(wonDeals, deal => getServicePackageText(deal.servicePackage), 'Chưa rõ danh mục'));
@@ -842,6 +886,17 @@ export class SeedingCrmRepository implements CrmRepository {
     const qs = new URLSearchParams({ q: query, limit: String(limit) });
     const rows = await apiFetch<CrmCustomerRow[]>(`/api/all-platform/crm/customers/quick-search?${qs.toString()}`);
     return (rows || []).map(rowToCustomer);
+  }
+
+  async getCustomerProfile(id: string): Promise<CrmCustomerSummary> {
+    return rowToCustomer(await apiFetch<CrmCustomerRow>(`/api/all-platform/crm/customers/${encodeURIComponent(id)}`));
+  }
+
+  /** Danh sach Contact THUOC DUNG 1 Customer - dung cho dropdown "Người liên
+   * hệ chính" khi tao/sua Deal (phai loc dung customerId, khong duoc lo
+   * Contact cua Customer khac). */
+  async listContacts(customerId: string): Promise<Array<{ id: string; name: string; position_label_snapshot?: string | null; position?: string | null; phone?: string | null; email?: string | null; is_primary?: boolean }>> {
+    return apiFetch(`/api/all-platform/crm/customers/${encodeURIComponent(customerId)}/contacts`);
   }
 }
 

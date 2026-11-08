@@ -7,11 +7,19 @@ from datetime import datetime
 # Bảng stage hợp lệ — dùng để validate input từ client lẫn output ra view.
 # ---------------------------------------------------------------------------
 DEAL_STAGES = [
-    "new_lead", "contacted", "qualified", "requirement",
-    "proposal_sent", "negotiation", "contract_sent",
-    "on_hold", "won", "lost",
+    "dealing", "proposal_sent", "negotiation", "contract_signed",
+    "payment_1", "implementation", "acceptance", "payment_final",
+    "post_sale_care", "lost", "on_hold",
+    # Legacy values kept during migration/backfill audit.
+    "new_lead", "contacted", "qualified", "requirement", "contract_sent", "won",
 ]
-TERMINAL_STAGES = ["won", "lost"]
+TERMINAL_STAGES = ["post_sale_care", "lost"]
+
+
+class ContractLinkItem(BaseModel):
+    """1 dòng hợp đồng/báo giá (Vấn đề 2 — nhiều link mua/bán cho 1 deal)."""
+    name: Optional[str] = None
+    url: str
 
 # Trạng thái thanh toán — dùng để lọc nhanh "khách nào còn nợ tiền".
 PAYMENT_STATUSES = ["unpaid", "partial", "paid"]
@@ -38,16 +46,37 @@ def is_transition_allowed(from_stage: str, to_stage: str) -> bool:
 # Required fields theo stage — server-side enforcement, mirror với client.
 # Khi client POST transition, server check lại để chặn hack.
 STAGE_REQUIRED_FIELDS: dict[str, dict[str, list[str]]] = {
+    "dealing":        {},
+    # "attachment_url" bo khoi yeu cau bat buoc (2026-10-20) - StageModal.tsx
+    # (modal "Chuyen sang..." THAT SU dang dung tren UI) khong co o nhap
+    # file/link nao ca (STAGE_REQUIREMENTS o crmConfig.ts chi co requireNote/
+    # requireBudget/requireDecisionMaker/requireWonReason/requireRejectReason,
+    # khong co requireAttachment) - bat buoc field nay la bug khien Sale KHONG
+    # THE chuyen stage duoc, luon bao "Thieu thong tin bat buoc: attachment_url"
+    # du dien gi cung vay. Component StageTransitionModal.tsx (ban cu hon) co
+    # o dinh kem that nhung khong phai modal dang duoc dung.
+    "proposal_sent":  {},
+    "negotiation":    {"required": ["note"]},
+    "contract_signed": {},
+    "payment_1":      {"required": ["estimated_budget", "follow_up_date"]},
+    # "sdr_id" bo khoi yeu cau bat buoc (2026-10-20, cung ly do voi
+    # attachment_url o tren) - StageModal.tsx khong co o chon SDR nao ca, va
+    # validate chi doc tu payload Sale vua gui (khong doc sdr_id co san cua
+    # deal), nen bat buoc field nay khien stage "Trien khai" KHONG THE chuyen
+    # duoc tu modal nay.
+    "implementation": {"required": ["follow_up_date"]},
+    "acceptance":     {"required": ["follow_up_date"]},
+    "payment_final":  {"required": ["estimated_budget", "follow_up_date"]},
+    "post_sale_care": {},
+    "lost":           {"required": ["reject_reason_type", "note"]},
+    "on_hold":        {"required": ["follow_up_date", "note"]},
+    # Legacy rules kept until old data/UI paths are fully removed.
     "new_lead":       {},
     "contacted":      {"required": ["note"]},
     "qualified":      {"required": ["decision_maker", "estimated_budget", "note"]},
-    "requirement":    {"required": ["note", "attachment_url"]},
-    "proposal_sent":  {"required": ["attachment_url"]},
-    "negotiation":    {"required": ["note"]},
-    "contract_sent":  {"required": ["attachment_url"]},
-    "on_hold":        {"required": ["follow_up_date", "note"]},
+    "requirement":    {"required": ["note"]},
+    "contract_sent":  {},
     "won":            {},
-    "lost":           {"required": ["reject_reason_type", "note"]},
 }
 
 
@@ -59,6 +88,13 @@ class CustomerLeadCreate(BaseModel):
     customer_id: Optional[str] = None
     # Du an that (migration 097) - null = Co hoi chua gan Du an.
     project_id: Optional[str] = None
+    # Feedback 2026-09-25: "Cơ hội" khong con nhap ten rieng - lay theo ten Du
+    # an. Neu FE gui project_name (khong kem project_id) -> tao Du an moi ngay
+    # trong luong tao deal nay (xem create_customer_lead()), KHONG doi Sale
+    # phai co quyen can_manage_project() rieng cho POST /projects.
+    project_name: Optional[str] = None
+    # Nguoi lien he chinh (migration 134/135) - null = chua chon.
+    primary_contact_id: Optional[str] = None
 
     company_name: Optional[str] = None
     phone: Optional[str] = None
@@ -83,7 +119,7 @@ class CustomerLeadCreate(BaseModel):
     activity_status: str = "active"
 
     # CRM pipeline (mới)
-    deal_stage: Optional[str] = "new_lead"  # nếu None sẽ fall back về new_lead
+    deal_stage: Optional[str] = "dealing"  # nếu None sẽ fall back về dealing
     prev_stage: Optional[str] = None
     follow_up_date: Optional[datetime] = None
     decision_maker: Optional[str] = None
@@ -118,6 +154,11 @@ class CustomerLeadCreate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2),
+    # mỗi bên nhiều link — thay cho field đơn last_attachment_url cũ.
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -145,6 +186,12 @@ class CustomerLeadUpdate(BaseModel):
     # RO RANG (khong phai bo qua key) = bo gan Du an that su (xem router
     # update_customer_lead() - PHAI dung exclude_unset de phan biet 2 truong hop nay).
     project_id: Optional[str] = None
+    # Cung co che voi create (xem CustomerLeadCreate.project_name) - go ten Du
+    # an MOI luc SUA deal cung tu tao Du an that, khong bat phai co project_id
+    # san.
+    project_name: Optional[str] = None
+    # Nguoi lien he chinh (migration 134/135) - cung quy tac exclude_unset nhu project_id.
+    primary_contact_id: Optional[str] = None
     company_name: Optional[str] = None
     customer_name: Optional[str] = None
     phone: Optional[str] = None
@@ -202,6 +249,10 @@ class CustomerLeadUpdate(BaseModel):
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
 
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = None
+    sale_contract_links: Optional[List[ContractLinkItem]] = None
+
     # crm-next fields (migration 041)
     position: Optional[str] = None
     crm_package: Optional[str] = None
@@ -246,7 +297,7 @@ class CustomerLeadResponse(BaseModel):
     activity_status: str = "active"
 
     # CRM pipeline
-    deal_stage: Optional[str] = "new_lead"
+    deal_stage: Optional[str] = "dealing"
     prev_stage: Optional[str] = None
     follow_up_date: Optional[datetime] = None
     decision_maker: Optional[str] = None
@@ -256,6 +307,10 @@ class CustomerLeadResponse(BaseModel):
     last_attachment_url: Optional[str] = None
     last_attachment_name: Optional[str] = None
     closed_reason: Optional[str] = None
+
+    # Vấn đề 2 (2026-09): hợp đồng/báo giá MUA (Phase 1) / BÁN (Phase 2).
+    purchase_contract_links: Optional[List[ContractLinkItem]] = []
+    sale_contract_links: Optional[List[ContractLinkItem]] = []
 
     customer_since: Optional[datetime] = None
     service_package: Optional[str] = None

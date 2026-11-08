@@ -16,33 +16,125 @@ from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.crm_permission_service import is_sale_member
 
-_USER_PUBLIC_FIELDS = "id, email, name, role, is_active, can_approve_quotes, created_at, updated_at"
+
+def _resolve_crm_function_area(user_id: Optional[str]) -> Optional[str]:
+    """Khoi/chuyen mon (`crm_teams.function_area`, vd 'sales'/'marketing') cua
+    Team CRM ma user thuoc ve (member hoac leader) - dung de quyet dinh route
+    mac dinh sau dang nhap (xem getDashboardHrefForRole o FE). Khong duoc lam
+    fail ca request dang nhap neu lookup loi/chua co Team - luon nuot loi, tra
+    None (FE se tu fallback ve logic cu theo quote_business_role)."""
+    if not user_id:
+        return None
+    try:
+        from app.modules.all_platform.services.crm_permission_service import get_crm_team_id_for_user
+
+        team_id = get_crm_team_id_for_user(user_id)
+        if not team_id:
+            return None
+        result = execute_supabase_query(
+            lambda: get_supabase_client()
+            .table("crm_teams")
+            .select("function_area")
+            .eq("id", team_id)
+            .limit(1)
+            .execute()
+        )
+        if result.data:
+            return result.data[0].get("function_area")
+    except Exception:
+        return None
+    return None
+
+
+_USER_BASE_FIELDS = (
+    "id, email, name, role, is_active, can_approve_quotes, quote_business_role, created_at, updated_at, "
+    "home_instance, allowed_instances"
+)
+_USER_EXTENDED_FIELDS = (
+    "permission_group_id, data_scope, permission_override, permission_overrides, crm_status, crm_note"
+)
+_USER_PUBLIC_FIELDS = f"{_USER_BASE_FIELDS}, {_USER_EXTENDED_FIELDS}"
+
+_SUPPORTS_PERMISSION_FIELDS: bool | None = None
+
+
+def _get_user_select_fields(include_password: bool = False) -> str:
+    global _SUPPORTS_PERMISSION_FIELDS
+    base = _USER_BASE_FIELDS if _SUPPORTS_PERMISSION_FIELDS is False else _USER_PUBLIC_FIELDS
+    return f"{base}, password" if include_password else base
+
+
+def _execute_user_query(query_fn, include_password: bool = False):
+    """Query app_users with adaptive schema: tự động fallback về các trường cơ bản
+    nếu Database chưa áp dụng migration 154 (lỗi 42703: column permission_group_id does not exist)."""
+    global _SUPPORTS_PERMISSION_FIELDS
+    fields = _get_user_select_fields(include_password=include_password)
+    try:
+        res = execute_supabase_query(lambda: query_fn(fields).execute())
+        if _SUPPORTS_PERMISSION_FIELDS is None:
+            _SUPPORTS_PERMISSION_FIELDS = True
+        return res
+    except Exception as exc:
+        err_msg = str(exc)
+        if "permission_group_id" in err_msg or "42703" in err_msg:
+            _SUPPORTS_PERMISSION_FIELDS = False
+            fallback_fields = f"{_USER_BASE_FIELDS}, password" if include_password else _USER_BASE_FIELDS
+            return execute_supabase_query(lambda: query_fn(fallback_fields).execute())
+        raise
+
+
 _USER_CACHE_TTL_SECONDS = 30.0
 _USER_BY_ID_CACHE: dict[str, tuple[float, dict]] = {}
 _USER_BY_EMAIL_CACHE: dict[str, tuple[float, dict]] = {}
+
+# Cache du phong, song lau hon nhieu (10 phut) - CHI dung khi query Supabase
+# that su loi (network/DB chop nhoang), de tranh 1 request bat ky nao do trung
+# dung luc DB "khung" (ngoai cua so cache 30s o tren) bi fail cung ca 503 "Auth
+# service temporarily unavailable" - bug da xac nhan gay loi luu Lead ngau
+# nhien, F5 lai thi duoc (F5 xong thi cache 30s lai duoc lam moi tu /auth/me).
+_USER_FALLBACK_TTL_SECONDS = 600.0
+_USER_BY_ID_FALLBACK_CACHE: dict[str, tuple[float, dict]] = {}
+_USER_BY_EMAIL_FALLBACK_CACHE: dict[str, tuple[float, dict]] = {}
 
 
 def _copy_user(user: dict) -> dict:
     clean = dict(user)
     clean.pop("password", None)
+    clean.setdefault("home_instance", None)
+    clean.setdefault("allowed_instances", None)
+    clean.setdefault("permission_group_id", None)
+    clean.setdefault("data_scope", None)
+    clean.setdefault("permission_override", False)
+    clean.setdefault("permission_overrides", [])
+    clean.setdefault("crm_status", "active")
+    clean.setdefault("crm_note", None)
     return clean
 
 
 def _cache_user(user: dict) -> dict:
     clean = _copy_user(user)
     expires_at = time.monotonic() + _USER_CACHE_TTL_SECONDS
+    fallback_expires_at = time.monotonic() + _USER_FALLBACK_TTL_SECONDS
     user_id = str(clean.get("id") or "")
     email = str(clean.get("email") or "").lower().strip()
     if user_id:
         _USER_BY_ID_CACHE[user_id] = (expires_at, clean)
+        _USER_BY_ID_FALLBACK_CACHE[user_id] = (fallback_expires_at, clean)
     if email:
         _USER_BY_EMAIL_CACHE[email] = (expires_at, clean)
+        _USER_BY_EMAIL_FALLBACK_CACHE[email] = (fallback_expires_at, clean)
     if len(_USER_BY_ID_CACHE) > 1000:
         for key in list(_USER_BY_ID_CACHE.keys())[:-1000]:
             _USER_BY_ID_CACHE.pop(key, None)
     if len(_USER_BY_EMAIL_CACHE) > 1000:
         for key in list(_USER_BY_EMAIL_CACHE.keys())[:-1000]:
             _USER_BY_EMAIL_CACHE.pop(key, None)
+    if len(_USER_BY_ID_FALLBACK_CACHE) > 1000:
+        for key in list(_USER_BY_ID_FALLBACK_CACHE.keys())[:-1000]:
+            _USER_BY_ID_FALLBACK_CACHE.pop(key, None)
+    if len(_USER_BY_EMAIL_FALLBACK_CACHE) > 1000:
+        for key in list(_USER_BY_EMAIL_FALLBACK_CACHE.keys())[:-1000]:
+            _USER_BY_EMAIL_FALLBACK_CACHE.pop(key, None)
     return dict(clean)
 
 
@@ -57,11 +149,27 @@ def _cached_user(cache: dict[str, tuple[float, dict]], key: str) -> Optional[dic
     return dict(user)
 
 
+def _fallback_cached_user(cache: dict[str, tuple[float, dict]], key: str) -> Optional[dict]:
+    """Nhu `_cached_user` nhung doc tu cache du phong song lau hon, KHONG tu
+    xoa entry het han o day (de _cache_user tu ghi de khi co ban moi) - chi
+    dung khi query Supabase that su bi loi, khong dung cho duong di binh
+    thuong."""
+    cached = cache.get(key)
+    if not cached:
+        return None
+    expires_at, user = cached
+    if expires_at <= time.monotonic():
+        return None
+    return dict(user)
+
+
 def clear_user_cache(user_id: str | None = None, email: str | None = None) -> None:
     if user_id:
         _USER_BY_ID_CACHE.pop(str(user_id), None)
+        _USER_BY_ID_FALLBACK_CACHE.pop(str(user_id), None)
     if email:
         _USER_BY_EMAIL_CACHE.pop(str(email).lower().strip(), None)
+        _USER_BY_EMAIL_FALLBACK_CACHE.pop(str(email).lower().strip(), None)
 
 
 def _hash_password(password: str) -> str:
@@ -129,6 +237,10 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
         # (xem middleware resolve_crm_instance_middleware trong app/main.py) —
         # dung de chan/redirect neu sau nay dang nhap nham site khac.
         "home_instance": settings.crm_instance,
+        # Danh sach workspace duoc phep truy cap (migration 005) — mac dinh
+        # chi co dung site vua dang ky, admin co the mo them qua "Quan ly
+        # thanh vien" sau nay.
+        "allowed_instances": [settings.crm_instance],
     }
     result = execute_supabase_query(
         lambda: get_supabase_client().table("app_users").insert(user_data).execute()
@@ -148,40 +260,48 @@ def register_user(email: str, password: str, name: Optional[str] = None) -> dict
             "email": cached_user["email"],
             "name": cached_user.get("name"),
             "role": cached_user["role"],
+            "allowedInstances": cached_user.get("allowed_instances"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }
 
 
 def _check_home_instance_redirect(user: dict) -> Optional[dict]:
-    """Non-admin: neu tai khoan co home_instance (site da dang ky) khac voi
-    instance dang phuc vu request HIEN TAI (settings.crm_instance, suy tu Host
-    header) -> tra ve tin hieu redirect thay vi dang nhap thang. Admin luon
-    duoc bo qua (dang nhap truc tiep duoc o ca 3 site, dung switcher rieng de
-    chuyen qua lai). home_instance=None (tai khoan tao truoc tinh nang nay) ->
-    khong bi rang buoc."""
-    home_instance = user.get("home_instance")
-    if user.get("role") == "admin" or not home_instance:
+    """Non-admin: neu instance dang phuc vu request HIEN TAI (settings.crm_instance,
+    suy tu Host header) KHONG nam trong danh sach allowed_instances (danh sach
+    workspace admin cho phep truy cap, migration 005 — gan qua "Quan ly thanh
+    vien") -> tra ve tin hieu redirect ve workspace DAU TIEN duoc phep, thay vi
+    dang nhap thang. Admin luon duoc bo qua (dang nhap truc tiep duoc o moi
+    site, dung switcher rieng de chuyen qua lai). allowed_instances rong/NULL
+    -> fallback ve home_instance (tai khoan tao truoc migration 005, chua duoc
+    admin gan gi) -> van rong/NULL nua thi khong bi rang buoc gi (giu hanh vi
+    cu)."""
+    if user.get("role") == "admin":
         return None
-    if home_instance == settings.crm_instance:
+    allowed = user.get("allowed_instances")
+    if not allowed:
+        home_instance = user.get("home_instance")
+        allowed = [home_instance] if home_instance else None
+    if not allowed:
+        return None
+    if settings.crm_instance in allowed:
         return None
     return {
         "redirect_required": True,
         "user_id": user["id"],
-        "home_instance": home_instance,
+        "home_instance": allowed[0],
     }
 
 
 def login_user(email: str, password: str) -> dict:
-    """Login an existing app user. Returns user + token, or a redirect signal
-    if this account belongs to a different site (home_instance), or raises
-    ValueError."""
-    result = execute_supabase_query(
-        lambda: get_supabase_client()
+    """Login an existing app user. Returns user + token or raises ValueError."""
+    result = _execute_user_query(
+        lambda fields: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, password, home_instance")
-        .eq("email", email.lower().strip())
-        .execute()
+        .select(fields)
+        .eq("email", email.lower().strip()),
+        include_password=True,
     )
     if not result.data:
         raise ValueError("Email không tồn tại")
@@ -210,6 +330,9 @@ def login_user(email: str, password: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "allowedInstances": cached_user.get("allowed_instances"),
+            "quote_business_role": cached_user.get("quote_business_role"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }
@@ -305,12 +428,11 @@ def login_with_google(id_token_str: str) -> dict:
     if not email:
         raise ValueError("Không lấy được email từ tài khoản Google")
 
-    result = execute_supabase_query(
-        lambda: get_supabase_client()
+    result = _execute_user_query(
+        lambda fields: get_supabase_client()
         .table("app_users")
-        .select("id, email, name, role, is_active, can_approve_quotes, home_instance")
+        .select(fields)
         .eq("email", email)
-        .execute()
     )
     if not result.data:
         raise ValueError("Email chưa được cấp tài khoản trong hệ thống. Liên hệ admin để được thêm.")
@@ -336,6 +458,9 @@ def login_with_google(id_token_str: str) -> dict:
             "role": cached_user.get("role", "member"),
             "is_sale": is_sale_member(cached_user["id"]),
             "can_approve_quotes": bool(cached_user.get("can_approve_quotes")),
+            "allowedInstances": cached_user.get("allowed_instances"),
+            "quote_business_role": cached_user.get("quote_business_role"),
+            "crm_function_area": _resolve_crm_function_area(cached_user.get("id")),
         },
         "access_token": access_token,
     }
@@ -397,9 +522,15 @@ def get_user_by_id(user_id: str) -> Optional[dict]:
     cached = _cached_user(_USER_BY_ID_CACHE, user_key)
     if cached:
         return cached
-    result = execute_supabase_query(
-        lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("id", user_key).execute()
-    )
+    try:
+        result = _execute_user_query(
+            lambda fields: get_supabase_client().table("app_users").select(fields).eq("id", user_key)
+        )
+    except Exception:
+        fallback = _fallback_cached_user(_USER_BY_ID_FALLBACK_CACHE, user_key)
+        if fallback is not None:
+            return fallback
+        raise
     if result.data:
         return _cache_user(result.data[0])
     return None
@@ -411,9 +542,15 @@ def get_user_by_email(email: str) -> Optional[dict]:
     cached = _cached_user(_USER_BY_EMAIL_CACHE, email_key)
     if cached:
         return cached
-    result = execute_supabase_query(
-        lambda: get_supabase_client().table("app_users").select(_USER_PUBLIC_FIELDS).eq("email", email_key).execute()
-    )
+    try:
+        result = _execute_user_query(
+            lambda fields: get_supabase_client().table("app_users").select(fields).eq("email", email_key)
+        )
+    except Exception:
+        fallback = _fallback_cached_user(_USER_BY_EMAIL_FALLBACK_CACHE, email_key)
+        if fallback is not None:
+            return fallback
+        raise
     if result.data:
         return _cache_user(result.data[0])
     return None

@@ -8,17 +8,29 @@ import {
   getZaloConversationMessages,
   sendZaloMessage,
   sendZaloMessageWithFiles,
+  sendZaloMessageWithMentions,
   buildZaloRealtimeStreamUrl,
   markZaloConversationAsRead,
   syncZaloRecentConversations,
   syncZaloConversationMessages,
+  recallZaloMessage,
+  getZaloFriendStatus,
+  sendZaloFriendRequest,
+  acceptZaloFriendRequest,
+  getZaloGroupMembers,
+  sendZaloSticker,
+  reactToZaloMessage,
   type BuildZaloRealtimeStreamOptions,
+  type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
 import type {
   ZaloAccountInfo,
   ZaloConversationSummary,
   ZaloLibraryMessage,
+  ZaloMention,
+  ZaloFriendStatusResponse,
+  ZaloGroupMembersResponse,
 } from "@/types/zalo-api";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -59,6 +71,7 @@ export interface ZaloConv {
   conv_id: string;
   name: string;
   preview: string;
+  latest_sender_name?: string | null;
   unread: boolean;
   time: string;
   is_customer: boolean;
@@ -66,6 +79,7 @@ export interface ZaloConv {
   deleted: boolean;
   archived?: boolean;
   archived_at?: string;
+  avatar_url?: string | null;
 }
 
 export interface ZaloArchiveConv {
@@ -84,7 +98,7 @@ export interface ZaloArchiveConv {
 
 const ACCOUNTS_POLL_MS = 15_000;
 const CONVERSATIONS_POLL_MS = 5_000;
-const MESSAGES_POLL_MS = 3_000;
+const MESSAGES_POLL_MS = 7_000;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -152,6 +166,15 @@ export function useZaloAdminInbox() {
   // ── Scanning ────────────────────────────────────────────────────────────────
   const [scanning, setScanning] = useState(false);
 
+  // ── Zalo tập trung: recall / mentions / friend-status / sticker / group-scan ──
+  const [pendingMentions, setPendingMentions] = useState<ZaloMention[]>([]);
+  const [replyingTo, setReplyingTo] = useState<ZaloLibraryMessage | null>(null);
+  const [friendStatus, setFriendStatus] = useState<ZaloFriendStatusResponse | null>(null);
+  const [loadingFriendStatus, setLoadingFriendStatus] = useState(false);
+  const [friendActionLoading, setFriendActionLoading] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<ZaloGroupMembersResponse | null>(null);
+  const [loadingGroupMembers, setLoadingGroupMembers] = useState(false);
+
   // ── Error & Toast ───────────────────────────────────────────────────────────
   const [error, setError] = useState<string | null>(null);
   const [savingNoteConv, setSavingNoteConv] = useState("");
@@ -162,6 +185,8 @@ export function useZaloAdminInbox() {
   const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const accountPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const messageLoadSeqRef = useRef(0);
+  const messageSignatureRef = useRef("");
   const selectedAccountIdRef = useRef(selectedAccountId);
   const selectedConvIdRef = useRef(selectedConvId);
 
@@ -316,38 +341,67 @@ export function useZaloAdminInbox() {
   }, [teams, selectedTeamId]);
 
   const loadMemberAccounts = useCallback(async () => {
-    if (selectedTeamMembers.length === 0) {
-      setMemberAccounts([]);
-      return;
-    }
     setLoadingAccounts(true);
     try {
-      const results = await Promise.allSettled(
-        selectedTeamMembers.map(async (member) => {
-          const ownerId = member.id ?? member.email ?? "";
-          const email = member.email ?? "";
-          if (!ownerId) return null;
-          const res = await getZaloAccounts(ownerId, undefined, email);
-          const accounts = res?.accounts ?? [];
-          return {
-            ownerId,
-            ownerName: member.name ?? member.email ?? ownerId,
-            ownerEmail: email,
-            accounts: accounts as ZaloAccountInfo[],
-          } satisfies ZaloMemberAccount;
-        })
-      );
+      // 1. Fetch team member accounts
+      const memberPromises = selectedTeamMembers.map(async (member) => {
+        const ownerId = member.id ?? member.email ?? "";
+        const email = member.email ?? "";
+        if (!ownerId) return null;
+        const res = await getZaloAccounts(ownerId, undefined, email);
+        const accounts = res?.accounts ?? [];
+        return {
+          ownerId,
+          ownerName: member.name ?? member.email ?? ownerId,
+          ownerEmail: email,
+          accounts: accounts as ZaloAccountInfo[],
+        } satisfies ZaloMemberAccount;
+      });
+
+      // 2. Always fetch default platform accounts to ensure all company accounts are available
+      const platformPromise = getZaloAccounts("default").catch(() => null);
+
+      const [memberResults, platformRes] = await Promise.all([
+        Promise.allSettled(memberPromises),
+        platformPromise,
+      ]);
 
       const loaded: ZaloMemberAccount[] = [];
+      const seenAccountIds = new Set<string>();
       const onlineSet = new Set<string>();
       const expiredSet = new Set<string>();
 
-      for (const r of results) {
+      for (const r of memberResults) {
         if (r.status === "fulfilled" && r.value) {
           loaded.push(r.value);
           for (const acc of r.value.accounts) {
-            if (acc.listener?.connected) onlineSet.add(acc.account_id);
-            if (acc.listener?.auth_expired) expiredSet.add(acc.account_id);
+            seenAccountIds.add(acc.account_id);
+            if (acc.listener?.connected) {
+              onlineSet.add(acc.account_id);
+              expiredSet.delete(acc.account_id);
+            } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
+              expiredSet.add(acc.account_id);
+            }
+          }
+        }
+      }
+
+      // Add default platform accounts if any not yet seen
+      const platformAccounts = (platformRes?.accounts ?? []) as ZaloAccountInfo[];
+      const unassignedAccounts = platformAccounts.filter((a) => !seenAccountIds.has(a.account_id));
+      if (unassignedAccounts.length > 0) {
+        loaded.push({
+          ownerId: "default",
+          ownerName: "Tài khoản Zalo",
+          ownerEmail: "",
+          accounts: unassignedAccounts,
+        });
+        for (const acc of unassignedAccounts) {
+          if (acc.listener?.connected) {
+            onlineSet.add(acc.account_id);
+            expiredSet.delete(acc.account_id);
+          } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
+            expiredSet.add(acc.account_id);
           }
         }
       }
@@ -430,24 +484,44 @@ export function useZaloAdminInbox() {
   const onSelectConv = useCallback((convId: string) => {
     setSelectedConvId(convId);
     setMessages([]);
+    messageSignatureRef.current = "";
+    setGroupMembers(null);
+    setPendingMentions([]);
+    setReplyingTo(null);
+    setSendError(null);
   }, []);
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
     if (!accountId || !convId) return;
+    const requestSeq = ++messageLoadSeqRef.current;
     if (!append) setLoadingMessages(true);
     try {
-      const res = await getZaloConversationMessages(accountId, convId, 50, 0);
+      // 200 tin mới nhất — đủ rộng để lightbox ảnh trượt qua lại có nhiều ảnh
+      // để xem, nhưng vẫn chặn trên để tránh tải/ render cả nghìn tin 1 lúc.
+      const res = await getZaloConversationMessages(accountId, convId, 200, 0);
+      if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
+      if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
-        setMessages(res.messages);
+        const signature = res.messages
+          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}`)
+          .join("|");
+        if (signature !== messageSignatureRef.current) {
+          messageSignatureRef.current = signature;
+          setMessages(res.messages);
+        }
         setMessageTotal(res.total ?? res.messages.length);
       }
     } catch (e) {
       console.error("loadMessages error", e);
     } finally {
-      setLoadingMessages(false);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setLoadingMessages(false);
+      }
     }
-    // Mark as read
-    try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
+    // Chỉ mark-read khi mở hội thoại/lần tải chính, tránh poll nền làm chậm và giật UI.
+    if (!append && selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+      try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
+    }
   }, []);
 
   useEffect(() => {
@@ -485,11 +559,20 @@ export function useZaloAdminInbox() {
         void loadConversations(selectedAccountIdRef.current);
       });
 
-      es.addEventListener("auth_expired", () => {
-        setExpiredAccounts((prev) => new Set([...prev, selectedAccountId]));
+      es.addEventListener("auth_expired", (event) => {
+        let eventAccountId = selectedAccountId;
+        try {
+          const payload = JSON.parse((event as MessageEvent).data || "{}");
+          eventAccountId = String(payload.account_id || payload.user_id || payload.userId || eventAccountId);
+        } catch {
+          // Older backend events may not include JSON; keep the selected account fallback.
+        }
+        const currentAccountId = selectedAccountIdRef.current;
+        if (!eventAccountId || eventAccountId !== currentAccountId) return;
+        setExpiredAccounts((prev) => new Set([...prev, eventAccountId]));
         setOnlineAccounts((prev) => {
           const next = new Set(prev);
-          next.delete(selectedAccountId);
+          next.delete(eventAccountId);
           return next;
         });
       });
@@ -811,25 +894,208 @@ export function useZaloAdminInbox() {
     }
   }, [reply, loadMessages]);
 
+  // "Trả lời tin nhắn" — áp dụng cho CẢ tin của mình lẫn của đối phương (khác
+  // recall, chỉ cho tin mình gửi). Preview hiện phía trên ô nhập (do shell tự
+  // render dựa vào replyingTo), huỷ được, tự xoá ngay khi bắt đầu gửi (optimistic)
+  // và được phục hồi lại nếu gửi lỗi để không mất ngữ cảnh đang trả lời.
   const sendMessage = useCallback(async (text: string, files?: File[]) => {
     const accId = selectedAccountIdRef.current;
     const convId = selectedConvIdRef.current;
     if (!accId || !convId) return;
     setIsSending(true);
     setSendError(null);
+    // Chỉ áp dụng quote cho tin text đi qua /send (media dùng /send-media, BE
+    // chưa hỗ trợ quote ở đó). message_id là bắt buộc, các field còn lại bỏ
+    // qua nếu thiếu thay vì gửi null/undefined tường minh.
+    const capturedReplyingTo = replyingTo;
+    const msgIdForQuote = capturedReplyingTo?.source_message_id || capturedReplyingTo?.id;
+    const replyTo: ZaloReplyToPayload | undefined =
+      msgIdForQuote && !(files && files.length > 0)
+        ? {
+            message_id: msgIdForQuote,
+            cli_msg_id: capturedReplyingTo.cli_msg_id || undefined,
+            sender_id: capturedReplyingTo.sender_id || undefined,
+            content: capturedReplyingTo.content || undefined,
+            ts: capturedReplyingTo.ts || undefined,
+          }
+        : undefined;
+    setReplyingTo(null);
     try {
       if (files && files.length > 0) {
         await sendZaloMessageWithFiles(accId, convId, text, files);
+      } else if (pendingMentions.length > 0) {
+        // Tin có @tag/@All — dùng route riêng hỗ trợ mentions (Mục 3.3.5 guide).
+        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions, replyTo);
       } else {
-        await sendZaloMessage(accId, convId, { text });
+        await sendZaloMessage(accId, convId, { text, reply_to: replyTo });
       }
+      setPendingMentions([]);
       await loadMessages(accId, convId, true);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
+      const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
+      let userFriendlyMsg = rawMsg;
+      if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
+        userFriendlyMsg = "Phiên đăng nhập Zalo của tài khoản này đã hết hạn hoặc bị đăng xuất. Vui lòng mở Chrome Extension để đăng nhập lại!";
+      }
+      setSendError(userFriendlyMsg);
+      showToast(userFriendlyMsg, false);
+      if (replyTo) setReplyingTo(capturedReplyingTo);
     } finally {
       setIsSending(false);
     }
-  }, [loadMessages]);
+  }, [loadMessages, pendingMentions, replyingTo]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính mình gửi,
+  // yêu cầu cả message_id thật lẫn cli_msg_id (id lúc gửi) trên message row.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const recallMessage = useCallback(async (message: ZaloLibraryMessage) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    const msgId = message.source_message_id || String(message.id || "");
+    const cliMsgId = (message as unknown as { cli_msg_id?: string }).cli_msg_id;
+    if (!accId || !convId || !msgId || !cliMsgId) {
+      showToast("Tin này không thể thu hồi (thiếu cli_msg_id).", false);
+      return;
+    }
+    try {
+      await recallZaloMessage(accId, convId, { source_message_id: msgId });
+      setMessages((prev) => prev.map((m) => (m.id === message.id ? { ...m, is_deleted: true } : m)));
+      showToast("Đã thu hồi tin nhắn", true);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Thu hồi tin nhắn thất bại", false);
+    }
+  }, [showToast]);
+
+  // UID Zalo thật của account đang xem — suy từ sender_id của tin CHÍNH MÌNH
+  // đã gửi (không có API riêng trả "own id" qua REST). Dùng để tô sáng
+  // reaction của mình trong ZaloReactionBadges.
+  const myZaloUid = useMemo(
+    () => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null,
+    [messages],
+  );
+
+  // Thả cảm xúc — CHỈ gửi lên Zalo thật, KHÔNG tự ghi DB (listener xử lý khi
+  // nhận event "reaction" echo lại, xem comment route POST /react phía
+  // backend) — tự hiện tạm (optimistic) ngay bằng myZaloUid nếu đã biết.
+  const reactToMessage = useCallback(async (message: ZaloLibraryMessage, icon: string) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    const msgId = message.source_message_id || String(message.id || "");
+    const cliMsgId = (message as unknown as { cli_msg_id?: string }).cli_msg_id;
+    if (!accId || !convId || !msgId || !cliMsgId) return;
+    const reactorKey = myZaloUid || "__me__";
+    const existing = message.reactions?.[reactorKey];
+    const nextIcon = existing === icon ? "NONE" : icon;
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.id !== message.id) return m;
+        const nextReactions = { ...(m.reactions || {}) };
+        if (nextIcon === "NONE") delete nextReactions[reactorKey];
+        else nextReactions[reactorKey] = nextIcon;
+        return { ...m, reactions: nextReactions };
+      }),
+    );
+    try {
+      await reactToZaloMessage(accId, convId, { source_message_id: msgId, icon: nextIcon });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Không thể thả cảm xúc", false);
+    }
+  }, [myZaloUid, showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Trạng thái bạn bè — tự tải khi mở 1 hội thoại (best-effort: nếu convId là
+  // 1 group (không phải uid cá nhân), backend/zca-js sẽ trả lỗi và ta chỉ cần
+  // im lặng bỏ qua, không có cách nào rẻ để phân biệt group/user ở tầng FE này
+  // mà không thêm 1 round-trip riêng).
+  // ─────────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    setFriendStatus(null);
+    if (!selectedAccountId || !selectedConvId) return;
+    let cancelled = false;
+    setLoadingFriendStatus(true);
+    getZaloFriendStatus(selectedAccountId, selectedConvId)
+      .then((res) => { if (!cancelled) setFriendStatus(res); })
+      .catch(() => { if (!cancelled) setFriendStatus(null); })
+      .finally(() => { if (!cancelled) setLoadingFriendStatus(false); });
+    return () => { cancelled = true; };
+  }, [selectedAccountId, selectedConvId]);
+
+  const sendFriendRequestAction = useCallback(async (message = "") => {
+    if (!selectedAccountId || !selectedConvId) return;
+    setFriendActionLoading(true);
+    try {
+      await sendZaloFriendRequest(selectedAccountId, selectedConvId, message);
+      showToast("Đã gửi lời mời kết bạn", true);
+      const res = await getZaloFriendStatus(selectedAccountId, selectedConvId);
+      setFriendStatus(res);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Gửi lời mời kết bạn thất bại", false);
+    } finally {
+      setFriendActionLoading(false);
+    }
+  }, [selectedAccountId, selectedConvId, showToast]);
+
+  const acceptFriendRequestAction = useCallback(async () => {
+    if (!selectedAccountId || !selectedConvId) return;
+    setFriendActionLoading(true);
+    try {
+      await acceptZaloFriendRequest(selectedAccountId, selectedConvId);
+      showToast("Đã chấp nhận lời mời kết bạn", true);
+      const res = await getZaloFriendStatus(selectedAccountId, selectedConvId);
+      setFriendStatus(res);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Chấp nhận lời mời kết bạn thất bại", false);
+    } finally {
+      setFriendActionLoading(false);
+    }
+  }, [selectedAccountId, selectedConvId, showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Quét thành viên nhóm — chỉ gọi tay (nút "Quét thành viên"), dùng để tạo
+  // bulk-send job ở trang riêng (Mục 8(i) guide) — trang đó tự điều hướng sang
+  // /all-platform/zalo-bulk-send với kết quả này, không xử lý bulk-send ở đây.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const loadGroupMembers = useCallback(async () => {
+    const accountId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accountId || !convId) return;
+    setLoadingGroupMembers(true);
+    try {
+      const res = await getZaloGroupMembers(accountId, convId);
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setGroupMembers(res);
+      }
+    } catch (e) {
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        showToast(e instanceof Error ? e.message : "Quét thành viên nhóm thất bại", false);
+      }
+    } finally {
+      if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
+        setLoadingGroupMembers(false);
+      }
+    }
+  }, [showToast]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Sticker — tìm theo từ khoá thật (searchZaloStickers, giống ô tìm sticker
+  // trong app Zalo) qua <ZaloStickerPicker> (component tự quản lý state tìm
+  // kiếm riêng), hook chỉ cần expose hành động GỬI.
+  // ─────────────────────────────────────────────────────────────────────────────
+  const sendStickerAction = useCallback(async (sticker: { id: number; cateId: number }) => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accId || !convId) return;
+    setIsSending(true);
+    try {
+      await sendZaloSticker(accId, convId, { id: sticker.id, cate_id: sticker.cateId });
+      await loadMessages(accId, convId, true);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Gửi sticker thất bại", false);
+    } finally {
+      setIsSending(false);
+    }
+  }, [loadMessages, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Derived: map conversations to FB style ZaloConv
@@ -853,16 +1119,25 @@ export function useZaloAdminInbox() {
         }
       }
 
+      const rawName = (c.conversation_name || "").trim();
+      const lastSender = (c.latest_sender_name || "").trim();
+      const isBadName = !rawName || ["markee", "zalo", "user", "dm", "người dùng zalo"].includes(rawName.toLowerCase()) || rawName === c.conversation_id;
+      const finalName = (isBadName && lastSender && !["markee", "__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase()))
+        ? lastSender
+        : (rawName || lastSender || "Người dùng Zalo");
+
       return {
         conv_id: c.conversation_id,
-        name: c.conversation_name || "Người dùng Zalo",
+        name: finalName,
         preview: c.latest_content || "",
+        latest_sender_name: c.latest_sender_name ?? null,
         unread: hasUnread,
         time: timeStr,
         is_customer: isCust,
         pushed_to_zalo: true,
         deleted: isHidden,
         archived: isHidden,
+        avatar_url: c.avatar_url ?? null,
       };
     });
   }, [conversations, isCustomerSet, hiddenConvIds]);
@@ -904,8 +1179,8 @@ export function useZaloAdminInbox() {
 
   const getAccountStatus = useCallback(
     (accountId: string): ZaloAccountOnlineStatus => {
-      if (expiredAccounts.has(accountId)) return "expired";
       if (onlineAccounts.has(accountId)) return "online";
+      if (expiredAccounts.has(accountId)) return "expired";
       for (const group of memberAccounts) {
         const accInfo = group.accounts.find((a) => a.account_id === accountId);
         if (accInfo?.listener?.running) return "connecting";
@@ -942,7 +1217,7 @@ export function useZaloAdminInbox() {
     acc: selectedAccountId,
     accOnline: onlineAccounts.has(selectedAccountId),
     accPaused: false,
-    needRelogin: expiredAccounts.has(selectedAccountId),
+    needRelogin: Boolean(selectedAccountId && expiredAccounts.has(selectedAccountId) && !onlineAccounts.has(selectedAccountId)),
     connErr: false,
     extInstalled: true,
 
@@ -955,6 +1230,7 @@ export function useZaloAdminInbox() {
     setSearchQuery,
 
     // Conversations lists
+    conversations, // raw ZaloConversationSummary[] - dùng cho ZaloForwardModal (props đúng shape này)
     activeConvs,
     filtered,
     archives,
@@ -997,6 +1273,25 @@ export function useZaloAdminInbox() {
     sendReply,
     isSending,
     sendError,
+    setSendError,
+
+    // Zalo tập trung: recall / mentions / friend-status / sticker / group-scan
+    pendingMentions,
+    setPendingMentions,
+    recallMessage,
+    replyingTo,
+    setReplyingTo,
+    friendStatus,
+    loadingFriendStatus,
+    friendActionLoading,
+    sendFriendRequestAction,
+    acceptFriendRequestAction,
+    groupMembers,
+    loadingGroupMembers,
+    loadGroupMembers,
+    sendStickerAction,
+    myZaloUid,
+    reactToMessage,
 
     // Account stats
     selectedOwnerId,
@@ -1024,3 +1319,4 @@ export function useZaloAdminInbox() {
     refreshAccounts: loadMemberAccounts,
   };
 }
+

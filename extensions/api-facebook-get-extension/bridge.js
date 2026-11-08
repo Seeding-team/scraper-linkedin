@@ -93,3 +93,19 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 window.postMessage({ type: 'API_MARKEE_FB_PONG', installed: true, isRunning: false }, '*');
 window.postMessage({ type: 'API_MARKEE_FB_EXTENSION_READY' }, '*');
+
+// Lifecycle Heartbeat: Báo cho Extension biết tab Seeding Web đang mở
+let heartbeatTimer = setInterval(() => {
+    safeSendMessage({ action: 'APP_TAB_HEARTBEAT', timestamp: Date.now() });
+}, 3000);
+
+window.addEventListener('beforeunload', () => {
+    clearInterval(heartbeatTimer);
+    safeSendMessage({ action: 'APP_TAB_CLOSING', timestamp: Date.now() });
+});
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+        safeSendMessage({ action: 'APP_TAB_ACTIVE', timestamp: Date.now() });
+    }
+});

@@ -15,8 +15,12 @@ from app.modules.all_platform.services import (
     update_user_slug,
     update_user_role,
     update_user_active_status,
+    update_user_allowed_instances,
     update_user_quote_approver,
     update_user_quote_business_role,
+    admin_update_account,
+    update_user_crm_permission,
+    admin_delete_account,
     list_users_by_quote_business_role,
     get_member_options,
     get_team_members,
@@ -78,6 +82,24 @@ def users_update_role(payload: dict, _admin: dict = Depends(require_admin)) -> B
         return BaseResponse(success=False, message=str(e))
 
 
+@router.post("/update-allowed-instances")
+def users_update_allowed_instances(payload: dict, _admin: dict = Depends(require_admin)) -> BaseResponse:
+    """Admin: gán danh sách workspace (instance) 1 tài khoản non-admin được
+    PHÉP truy cập (migration 005) — thay thế "chỉ 1 site" bằng nhiều site.
+    Danh sách rỗng = không giới hạn (vào được mọi site)."""
+    try:
+        email = payload.get("email")
+        instances = payload.get("allowed_instances")
+        if not email or instances is None:
+            return BaseResponse(success=False, message="email and allowed_instances are required")
+        if not isinstance(instances, list):
+            return BaseResponse(success=False, message="allowed_instances must be a list")
+        data = update_user_allowed_instances(email, [str(i) for i in instances])
+        return BaseResponse(success=True, message="Đã cập nhật workspace", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
 @router.post("/set-active")
 def users_set_active(payload: dict, _admin: dict = Depends(require_admin_or_leader)) -> BaseResponse:
     """Admin/leader: kích hoạt/vô hiệu hóa 1 tài khoản (khoá đăng nhập ngay,
@@ -91,6 +113,26 @@ def users_set_active(payload: dict, _admin: dict = Depends(require_admin_or_lead
             return BaseResponse(success=False, message="email and is_active are required")
         data = update_user_active_status(email, bool(is_active))
         return BaseResponse(success=True, message="Đã cập nhật trạng thái", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/update-crm-permission")
+def users_update_crm_permission(payload: dict, _admin: dict = Depends(require_admin)) -> BaseResponse:
+    """Admin-only: gán Nhóm quyền/Team CRM/Phạm vi dữ liệu/override quyền
+    riêng/trạng thái CRM cho 1 tài khoản, từ drawer "Chỉnh quyền user" ở tab
+    Tài khoản CRM (`/all-platform/admin/quan-ly-thanh-vien`). Payload:
+    `email` (bắt buộc) + bất kỳ tổ hợp `permission_group_id`, `crm_team_id`,
+    `data_scope`, `permission_override`, `permission_overrides`, `crm_status`,
+    `crm_note` — field nào không có trong payload thì giữ nguyên giá trị cũ."""
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        data = update_user_crm_permission(email, payload)
+        return BaseResponse(success=True, message="Đã cập nhật quyền CRM", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -133,6 +175,52 @@ def users_update_quote_business_role(payload: dict, _caller: dict = Depends(get_
             return BaseResponse(success=False, message="quote_business_role phải là presale/sale/both hoặc null")
         data = update_user_quote_business_role(email, quote_business_role)
         return BaseResponse(success=True, message="Đã cập nhật vai trò báo giá", data=data)
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/update-profile-admin")
+def users_update_profile_admin(payload: dict, _caller: dict = Depends(get_current_user)) -> BaseResponse:
+    """CHI Admin THAT (giong pattern update-quote-business-role): sua ho so 1
+    tai khoan DA TON TAI o tab Quan ly tai khoan - doi email, ho ten, va
+    gan/go Member lien ket - giong nut "Sua" that cua pm-new
+    (accounts.py:update_account). Khong dung ten `update-profile` (da co san
+    1 endpoint khac o auth router cho nguoi dung tu sua TEN cua chinh minh)."""
+    role = str(_caller.get("role") or "").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được sửa tài khoản")
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        updates = {
+            k: payload[k] for k in ("new_email", "full_name", "member_id") if k in payload
+        }
+        data = admin_update_account(email, updates)
+        return BaseResponse(success=True, message="Đã cập nhật tài khoản", data=data)
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/delete-admin")
+def users_delete_admin(payload: dict, _caller: dict = Depends(get_current_user)) -> BaseResponse:
+    """CHI Admin THAT: xoa HAN 1 tai khoan dang nhap (Member lien ket KHONG bi
+    xoa, chi tu dong go lien ket qua ON DELETE SET NULL) - giong nut "Xoa"
+    that cua pm-new (accounts.py:delete_account, gom ca 2 guard: khong tu xoa
+    chinh minh, khong xoa admin cuoi cung)."""
+    role = str(_caller.get("role") or "").strip().lower()
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Chỉ Admin mới được xóa tài khoản")
+    try:
+        email = payload.get("email")
+        if not email:
+            return BaseResponse(success=False, message="email is required")
+        admin_delete_account(email, caller_id=_caller.get("id"))
+        return BaseResponse(success=True, message="Đã xóa tài khoản")
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -188,10 +276,18 @@ def users_get_all(user: dict = Depends(get_current_user)) -> BaseResponse:
         return BaseResponse(success=False, message=str(e))
 
 
+# Whitelist gia tri hop le cho team_type filter - hien use case CHI can
+# "sale" (picker "Nguoi phu trach du an"). Whitelist tuong minh thay vi nhan
+# bat ky chuoi nao client gui len, tranh client gui nham gia tri ma tuong da
+# loc dung.
+_ALLOWED_TEAM_TYPE_FILTERS = {"sale"}
+
+
 @router.get("/member-options")
 def users_member_options(
     active: bool = Query(True),
     include_id: str = Query(""),
+    team_type: str = Query(""),
     _user: dict = Depends(get_current_user),
 ) -> BaseResponse:
     """Danh sach nhan su cho cac picker "Người phụ trách" (vi du Nguoi phu
@@ -200,10 +296,19 @@ def users_member_options(
     endpoint quan tri). `include_id` (tuy chon, phan cach boi dau phay): ep
     tra THEM 1 vai id cu the du dang bi vo hieu hoa - dung khi mo form Sua 1
     project ma nguoi phu trach hien tai da ngung hoat dong, form van phai
-    hien ten nguoi do kem badge "Đã ngưng hoạt động"."""
+    hien ten nguoi do kem badge "Đã ngưng hoạt động". `team_type` (tuy chon):
+    loc CHI giu nguoi thuoc dung team_type nay (vd 'sale' - xem
+    is_sale_member()/teams.team_type, migration 049) - phai nam trong
+    _ALLOWED_TEAM_TYPE_FILTERS, gia tri khac bi tu choi ro rang thay vi am
+    tham bo qua."""
     try:
         include_ids = [i.strip() for i in include_id.split(",") if i.strip()] if include_id else []
-        data = get_member_options(active_only=active, include_ids=include_ids)
+        team_type_filter: str | None = None
+        if team_type:
+            if team_type not in _ALLOWED_TEAM_TYPE_FILTERS:
+                return BaseResponse(success=False, message=f"team_type không hợp lệ: {team_type!r}")
+            team_type_filter = team_type
+        data = get_member_options(active_only=active, include_ids=include_ids, team_type=team_type_filter)
         return BaseResponse(success=True, data={"items": data})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

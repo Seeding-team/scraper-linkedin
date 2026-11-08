@@ -64,6 +64,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CurrencyInput } from "@/components/CurrencyInput";
 import type { Customer } from "@/services/customer-lead.service";
 import {
   LOST_REASON_OPTIONS,
@@ -76,7 +77,7 @@ import {
 } from "@/services/customer-lead.service";
 import { getCurrentStage } from "@/services/crm-pipeline.helpers";
 import { cn } from "@/lib/utils";
-import { ThousandsInput } from "../components/thousands-input";
+import { useCrmCategoryCodeOptions } from "@/modules/crm/components/CrmCategorySelect";
 import { TerminalReviewForm } from "./TerminalReviewForm";
 
 interface Props {
@@ -140,6 +141,7 @@ export function StageTransitionModal({
   const [estBudget, setEstBudget] = useState<string>(String(customer.estimated_budget ?? ""));
   const [followUpDate, setFollowUpDate] = useState("");
   const [busy, setBusy] = useState(false);
+  const { options: lostReasonOptions } = useCrmCategoryCodeOptions("crm_lost_reason", LOST_REASON_OPTIONS);
 
   // Chỉ portal sau khi đã mount trên client — tránh hydration mismatch với React 19.
   // Server render `null`, client lần đầu render `null`, useEffect set mounted=true
@@ -343,12 +345,67 @@ export function StageTransitionModal({
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
-          <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+          <div className="crm-scroll-hidden flex-1 space-y-4 overflow-y-auto px-5 py-4">
             {/* Mô tả ngắn của stage đích */}
             <div className="flex items-start gap-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
               <FileText className="mt-0.5 size-3.5 shrink-0 text-slate-400" />
               <span>{targetMeta.description}</span>
             </div>
+
+            {/* ─────────── Tài liệu đã đính kèm ───────────
+                Vấn đề 2 (Note vấn đề CRM, 2026-09): stage này (VD "Đàm phán")
+                không bắt đính kèm mới, nhưng file/link đã gắn từ trước (Phase 1
+                mua, Phase 2 bán, hoặc file cũ upload lúc requirement/proposal)
+                vẫn còn nguyên trong DB — hiển thị lại ở đây để sale KHÔNG hiểu
+                nhầm là bị mất khi chuyển stage. */}
+            {(() => {
+              const purchaseLinks = (customer.purchase_contract_links ?? []).filter((l) => l?.url);
+              const saleLinks = (customer.sale_contract_links ?? []).filter((l) => l?.url);
+              const hasLegacy = !purchaseLinks.length && !saleLinks.length && !!customer.last_attachment_url;
+              if (!purchaseLinks.length && !saleLinks.length && !hasLegacy) return null;
+              return (
+                <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-1.5 flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                    <Paperclip className="size-3" /> Tài liệu đã đính kèm — vẫn giữ nguyên khi chuyển stage
+                  </p>
+                  <div className="space-y-1 text-xs">
+                    {purchaseLinks.map((l, i) => (
+                      <a
+                        key={`purchase-${i}`}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" /> [Mua] {l.name || l.url}
+                      </a>
+                    ))}
+                    {saleLinks.map((l, i) => (
+                      <a
+                        key={`sale-${i}`}
+                        href={l.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" /> [Bán] {l.name || l.url}
+                      </a>
+                    ))}
+                    {hasLegacy && (
+                      <a
+                        href={customer.last_attachment_url!}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center gap-1 text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="size-3 shrink-0" />{" "}
+                        {customer.last_attachment_name || customer.last_attachment_url}
+                      </a>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* ─────────── LOST: chọn lý do + ghi chú ─────────── */}
             {toStage === "lost" && (
@@ -364,7 +421,7 @@ export function StageTransitionModal({
                     className={inputCls}
                   >
                     <option value="">— Chọn lý do —</option>
-                    {LOST_REASON_OPTIONS.map((r) => (
+                    {lostReasonOptions.map((r) => (
                       <option key={r.value} value={r.value}>
                         {r.label}
                       </option>
@@ -412,11 +469,11 @@ export function StageTransitionModal({
                   <Wallet className="mr-1 inline size-3.5" /> Ngân sách dự kiến (VNĐ){" "}
                   <span className="text-red-500">*</span>
                 </label>
-                <ThousandsInput
+                <CurrencyInput
                   required
                   min={1}
-                  value={estBudget}
-                  onChange={(n) => setEstBudget(String(n))}
+                  value={estBudget ? Number(estBudget) : null}
+                  onChange={(n) => setEstBudget(n != null ? String(n) : "")}
                   className={inputCls}
                   placeholder="VD: 50.000.000"
                 />

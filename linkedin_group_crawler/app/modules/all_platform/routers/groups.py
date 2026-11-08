@@ -55,18 +55,11 @@ def fb_groups_get_all(
     """Get all Facebook groups."""
     try:
         user = _get_user_from_header(authorization, request)
-        
-        # Determine the effective id_member for filtering
-        if for_extension:
-            # Cho Extension: Leader hay Member đều chỉ cào nhóm của CHÍNH MÌNH (trừ phi admin/leader sau này muốn chọn)
-            effective_id_member = user["id"]
-        else:
-            if user.get("role") in ("admin", "leader"):
-                # Leader/Admin có thể xem all (None) hoặc lọc theo id_member cụ thể
-                effective_id_member = id_member
-            else:
-                # Member chỉ xem được của chính mình
-                effective_id_member = user["id"]
+
+        # Nhóm là tài nguyên dùng chung của cả team seeding — ai cũng xem/cào được nhóm
+        # của nhau (kể cả acc seeding hệ thống cào xoay vòng hộ nhóm người khác), chỉ lọc
+        # khi FE chủ động truyền id_member cụ thể (vd lọc theo 1 member trong bảng quản lý).
+        effective_id_member = id_member
 
         data = get_facebook_groups(
             id_intent=id_intent, 

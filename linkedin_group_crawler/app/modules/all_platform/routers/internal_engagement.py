@@ -33,6 +33,10 @@ from app.modules.all_platform.services.internal_engagement_linkedin_sync_service
     NoLinkedInAccountError,
     sync_linkedin_post_engagement_via_playwright,
 )
+from app.modules.all_platform.services.internal_engagement_threads_sync_service import (
+    NoThreadsAccountError,
+    sync_threads_post_engagement_via_playwright,
+)
 from app.modules.all_platform.services.markeeai_account_links_service import resolve_markeeai_credentials
 from app.modules.all_platform.services.supabase_internal_engagement_kpi_service import (
     add_custom_post,
@@ -41,9 +45,11 @@ from app.modules.all_platform.services.supabase_internal_engagement_kpi_service 
     delete_custom_post_db,
     delete_seeding_campaign_db,
     get_action_summary,
+    get_custom_post_platform_db,
     get_custom_posts_db,
     get_markee_overrides_db,
     get_marks_by_links,
+    get_my_comments_by_links,
     get_post_interactions,
     get_post_team_counts,
     get_seeder_leaderboard_db,
@@ -207,6 +213,7 @@ async def create_custom_post(payload: AddCustomPostRequest) -> BaseResponse:
             likes=payload.likes,
             comments=payload.comments,
             shares=payload.shares,
+            scope=payload.scope,
         )
         debug_msg = data.pop("_debug_info", None) if isinstance(data, dict) else None
         return BaseResponse(success=True, message=debug_msg or "Tạo bài viết Seeding thành công!", data=data)
@@ -247,7 +254,8 @@ def list_custom_posts(page: int = 1, page_size: int = 20) -> BaseResponse:
 
             items.append({
                 "id": str(p["id"]),
-                "platform": p.get("platform", "facebook"),
+                "platform": p.get("platform") or "facebook",
+                "scope": p.get("scope") or "internal",
                 "fanpage_id": "custom",
                 "fanpage_name": fanpage_name,
                 "page_name": fanpage_name,
@@ -294,8 +302,9 @@ def sync_post_metrics_endpoint(
     shares: Optional[int] = None,
 ) -> BaseResponse:
     """API cập nhật số lượng Like, Comment, Share của bài viết gốc.
-    Facebook: backend tự cào server-side. LinkedIn: không tự cào được (cần đăng nhập)
-    nên FE phải cào qua extension rồi gửi số liệu lên qua likes/comments/shares."""
+    Facebook: backend tự cào server-side. LinkedIn/Threads: không tự cào được (cần
+    đăng nhập) nên FE phải cào qua extension rồi gửi số liệu lên qua
+    likes/comments/shares — nhánh này platform-agnostic, không cần biết platform gì."""
     try:
         if likes is not None or comments is not None or shares is not None:
             data = sync_linkedin_post_engagement_db(
@@ -315,17 +324,25 @@ def sync_post_metrics_endpoint(
 
 @router.post("/custom-posts/{post_id}/sync-playwright", response_model=BaseResponse)
 def sync_post_metrics_playwright_endpoint(post_id: str) -> BaseResponse:
-    """Đồng bộ Like/Comment/Share bài LinkedIn hoàn toàn server-side qua Playwright
-    (dùng account LinkedIn đã đăng ký của người tạo bài) — không cần browser extension.
-    FE nên tự fallback sang luồng extension (endpoint /sync ở trên) nếu gọi API này
-    trả về error_code=NO_LINKEDIN_ACCOUNT hoặc thất bại vì lý do khác."""
+    """Đồng bộ Like/Comment/Share hoàn toàn server-side qua Playwright, không cần
+    browser extension. LinkedIn: dùng account LinkedIn đã đăng ký của người tạo bài.
+    Threads: CHƯA có hạ tầng đăng nhập server-side, luôn trả error_code=
+    NO_THREADS_AUTO_SYNC. FE nên tự fallback sang luồng extension (endpoint /sync ở
+    trên) nếu gọi API này trả về error_code=NO_LINKEDIN_ACCOUNT/NO_THREADS_AUTO_SYNC
+    hoặc thất bại vì lý do khác."""
     try:
-        data = sync_linkedin_post_engagement_via_playwright(post_id)
+        platform = get_custom_post_platform_db(post_id)
+        if platform == "threads":
+            data = sync_threads_post_engagement_via_playwright(post_id)
+        else:
+            data = sync_linkedin_post_engagement_via_playwright(post_id)
         return BaseResponse(
             success=True,
             message="Đồng bộ (tự động, không cần Extension) thành công!",
             data=data,
         )
+    except NoThreadsAccountError as e:
+        return BaseResponse(success=False, message=str(e), data={"error_code": "NO_THREADS_AUTO_SYNC"})
     except NoLinkedInAccountError as e:
         return BaseResponse(success=False, message=str(e), data={"error_code": "NO_LINKEDIN_ACCOUNT"})
     except Exception as e:
@@ -336,10 +353,12 @@ def sync_post_metrics_playwright_endpoint(post_id: str) -> BaseResponse:
 @router.post("/my-marks", response_model=BaseResponse)
 def my_marks(payload: MyMarksRequest) -> BaseResponse:
     """Bucket a list of post permalinks into need/received/completed for one employee,
-    from the dedicated internal_engagement_kpi table."""
+    from the dedicated internal_engagement_kpi table. Also returns each link's own
+    posted comment content (my_comments) to display back on the post card."""
     try:
         marks = get_marks_by_links(payload.email_member, payload.link_posts)
-        return BaseResponse(success=True, data={"marks": marks})
+        my_comments = get_my_comments_by_links(payload.email_member, payload.link_posts)
+        return BaseResponse(success=True, data={"marks": marks, "my_comments": my_comments})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

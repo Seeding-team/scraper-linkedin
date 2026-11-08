@@ -41,7 +41,27 @@ export type ActionMenuItem = {
  *
  * Dùng: <ActionMenu items={[{ key: 'edit', label: 'Sửa', onSelect: ... }]} />
  */
-export function ActionMenu({ items, label = 'Thao tác khác' }: { items: ActionMenuItem[]; label?: string }) {
+export function ActionMenu({
+  items,
+  label = 'Thao tác khác',
+  icon: Icon = MoreVertical,
+  triggerClassName,
+  iconClassName = 'crm-inline-icon',
+}: {
+  items: ActionMenuItem[];
+  label?: string;
+  /** Icon hệ thống hiện trên nút trigger thay cho "⋮" mặc định (vd icon
+   * "Điền xuống" ArrowDownToLine) - dùng khi muốn tái sử dụng cơ chế portal +
+   * position:fixed (không bị overflow:hidden của bảng cắt mất) cho 1 nút bấm
+   * khác không phải menu "Thao tác khác" thông thường. */
+  icon?: ComponentType<SVGProps<SVGSVGElement>>;
+  /** Class riêng cho nút trigger (vd nút icon nhỏ 18x18 của "Điền xuống")
+   * thay vì style mặc định "crm-icon-action" của "⋮". */
+  triggerClassName?: string;
+  /** Class riêng cho icon trigger (vd kích thước 13px của "Điền xuống" thay
+   * vì 1rem mặc định của "crm-inline-icon"). */
+  iconClassName?: string;
+}) {
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -118,7 +138,7 @@ export function ActionMenu({ items, label = 'Thao tác khác' }: { items: Action
       <button
         ref={triggerRef}
         type="button"
-        className="crm-icon-action crm-action-menu-trigger"
+        className={triggerClassName || 'crm-icon-action crm-action-menu-trigger'}
         aria-label={label}
         title={label}
         aria-haspopup="menu"
@@ -132,7 +152,7 @@ export function ActionMenu({ items, label = 'Thao tác khác' }: { items: Action
           }
         }}
       >
-        <MoreVertical className="crm-inline-icon" />
+        <Icon className={iconClassName} />
       </button>
       {open && position
         ? createPortal(

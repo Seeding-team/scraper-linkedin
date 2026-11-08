@@ -89,9 +89,20 @@ def upload_attachment(
 
         client = get_supabase_client()
         key = _build_object_key(prefix, customer_id, filename)
-        options: dict[str, Any] = {"cacheControl": "3600", "upsert": False}
+        # QUAN TRỌNG: storage3 (thư viện supabase-py dùng) đọc file_options như
+        # HTTP headers THẬT (key "content-type"/"cache-control" — xem
+        # storage3/_sync/file_api.py: `headers.pop("content-type")`), KHÔNG
+        # phải camelCase "contentType"/"cacheControl" như trước đây. Dùng sai
+        # key khiến giá trị bị bỏ qua ÂM THẦM (không lỗi), rơi về mặc định
+        # DEFAULT_FILE_OPTIONS["content-type"] = "text/plain;charset=UTF-8" —
+        # mọi file (PDF, ảnh...) upload xong đều bị phục vụ với Content-Type
+        # sai, trình duyệt không mở/hiển thị được, chỉ hiện chữ lộn xộn.
+        # (Port tu Main - loi chung cho ca 4 app, xem G:\scraper-linkedin\
+        # linkedin_group_crawler\app\modules\all_platform\services\
+        # crm_attachment_service.py cung fix nay.)
+        options: dict[str, Any] = {"cache-control": "3600", "upsert": False}
         if content_type:
-            options["contentType"] = content_type
+            options["content-type"] = content_type
 
         # supabase-py v2: storage.from_(bucket).upload(path, file, options)
         client.storage.from_(bucket).upload(

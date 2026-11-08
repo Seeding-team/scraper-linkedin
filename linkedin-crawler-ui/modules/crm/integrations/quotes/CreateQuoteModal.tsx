@@ -3,10 +3,11 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import type { IssuerCompany, QuoteForm } from '@/modules/quotes';
-import { seedingQuoteRepository, TelegramSendButton } from '@/modules/quotes';
+import { seedingQuoteRepository, TelegramSendButton, buildPublicQuoteUrl } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { buildDealPayload, dealFormFromDeal, emptyDealForm } from '../../components/DealFormFields';
 import type { DealFormState } from '../../components/DealFormFields';
@@ -23,9 +24,10 @@ import { FillQuoteStep } from './FillQuoteStep';
 import { IssuerCompanySection } from './IssuerCompanySection';
 import { ReviewQuoteStep } from './ReviewQuoteStep';
 import { SelectCustomerStep } from './SelectCustomerStep';
-import { applyIssuerCompanySnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
+import { applyIssuerCompanySnapshot, applyIssuerPaymentTermsSnapshot, emptyQuoteDraft, quoteDraftFromExistingQuote, quoteDraftFromForm } from './types';
 import type { QuoteDraft } from './types';
 import { clearVisibleColumnsDraft } from './quoteColumnsDraft';
+import { normalizeQuoteCurrency } from '@/lib/currency';
 
 type CreateQuoteStep = 1 | 2 | 3 | 4;
 
@@ -469,6 +471,8 @@ export function CreateQuoteModal({
       setQuoteDraft(current => {
         const nextData = { ...current.data };
         applyIssuerCompanySnapshot(nextData, selectedIssuerCompany);
+        // Doi issuer -> dieu khoan thanh toan cung doi theo (feedback 2026-09-23 muc 3).
+        applyIssuerPaymentTermsSnapshot(nextData, selectedIssuerCompany, issuerCompanies);
         return { ...current, data: nextData };
       });
       setStep(3);
@@ -483,12 +487,14 @@ export function CreateQuoteModal({
     }
 
     if (!initializedDraftRef.current) {
-      setQuoteDraft(quoteDraftFromForm(selectedForm, activeCustomer, selectedIssuerCompany));
+      setQuoteDraft(quoteDraftFromForm(selectedForm, activeCustomer, selectedIssuerCompany, currentUser?.name));
       initializedDraftRef.current = true;
     } else {
       setQuoteDraft(current => {
         const nextData = { ...current.data };
         applyIssuerCompanySnapshot(nextData, selectedIssuerCompany);
+        // Doi issuer -> dieu khoan thanh toan cung doi theo (feedback 2026-09-23 muc 3).
+        applyIssuerPaymentTermsSnapshot(nextData, selectedIssuerCompany, issuerCompanies);
         return { ...current, data: nextData };
       });
     }
@@ -505,9 +511,13 @@ export function CreateQuoteModal({
       block => block.title.trim() || block.content.trim()
     );
     const data = { ...quoteDraft.data, customBlocks };
+    // Tien te CAP QUOTE + ty gia da chot (xem QuoteFormFiller). Villa luon VND.
+    const currency = isVilla ? 'VND' : normalizeQuoteCurrency(quoteDraft.data.currency);
     return {
-      data: isVilla ? { ...data, solutionItems: quoteDraft.solutionItems } : data,
+      data: isVilla ? { ...data, currency, solutionItems: quoteDraft.solutionItems } : { ...data, currency },
       items: isVilla ? [] : quoteDraft.items,
+      currency,
+      exchangeRate: currency === 'USD' ? quoteDraft.exchangeRate ?? null : null,
     };
   }
 
@@ -550,7 +560,7 @@ export function CreateQuoteModal({
       if (draftEligible) clearQuoteWizardDraft();
     } catch (err) {
       if (createdQuoteId) await seedingQuoteRepository.deleteQuote(createdQuoteId).catch(() => {});
-      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId).catch(() => {});
+      if (createdDealId) await seedingCrmRepository.deleteDeal(createdDealId, true).catch(() => {});
       setSubmitError(err instanceof Error ? err.message : 'Không thể tạo báo giá.');
     } finally {
       setSubmittingAction(null);
@@ -622,8 +632,18 @@ export function CreateQuoteModal({
     }
   }
 
-  return (
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+  // BUG THAT DA GAP (modal "hoi nho" khi mo tu Deal Workspace): modal nay
+  // dung position:fixed nhung KHONG portal ra document.body - khi render
+  // long ben trong DealDetailDrawer's <aside> (co transition-transform),
+  // ancestor co `transform` tro thanh containing block cho moi phan tu con
+  // dung position:fixed (dac ta CSS chuan), khien modal bi ep vao kich thuoc
+  // cua chinh aside do (~42rem) thay vi true viewport, BAT KE gia tri
+  // width/max-width CSS khai bao la gi. Portal ra document.body de thoat
+  // hoan toan containing block bi anh huong boi transform cua drawer cha.
+  return createPortal(
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div
         className={`crm-modal crm-wizard-modal${step === 3 ? ' crm-wizard-modal--wide' : ''}`}
         onClick={event => event.stopPropagation()}
@@ -845,6 +865,7 @@ export function CreateQuoteModal({
         open={projectModalOpen}
         customerId={effectiveCustomerIdForProjects}
         customerName={activeCustomer.companyName || activeCustomer.customerName || 'Khách hàng hiện tại'}
+        currentUserId={currentUser?.id ?? null}
         onClose={() => setProjectModalOpen(false)}
         onSaved={created => {
           setProjectModalOpen(false);
@@ -897,7 +918,8 @@ export function CreateQuoteModal({
           },
         ]}
       />
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -981,15 +1003,16 @@ function QuoteSuccessPanel({
   onApproveNow: () => void;
 }) {
   const isApproved = quote.status === 'approved' && Boolean(quote.publicUrl);
-  const publicFullUrl = quote.publicUrl && typeof window !== 'undefined' ? `${window.location.origin}${quote.publicUrl}` : '';
+  const publicFullUrl = buildPublicQuoteUrl(quote.publicUrl) || '';
 
   async function copyLink() {
     if (!publicFullUrl) return;
     await navigator.clipboard.writeText(publicFullUrl);
   }
   function openPdf() {
-    if (!publicFullUrl) return;
-    window.open(`${publicFullUrl}?print=true`, '_blank', 'noopener');
+    const printUrl = buildPublicQuoteUrl(quote.publicUrl, { print: true });
+    if (!printUrl) return;
+    window.open(printUrl, '_blank', 'noopener');
   }
   const mailtoHref = publicFullUrl
     ? `mailto:${customerEmail || ''}?subject=${encodeURIComponent(`Báo giá ${quote.quoteNumber}`)}&body=${encodeURIComponent(`Kính gửi Quý khách,\n\nMời Quý khách xem báo giá tại: ${publicFullUrl}\n\nTrân trọng.`)}`

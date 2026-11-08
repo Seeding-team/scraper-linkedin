@@ -18,6 +18,7 @@ import {
 } from "@/services/all-platform.service";
 import { cn } from "@/lib/utils";
 import { getTeamTypeLabel } from "@/lib/teamTypes";
+import { CurrencyInput } from "@/components/CurrencyInput";
 
 type RuleGroup = {
   key: KpiRewardMetric;
@@ -225,14 +226,6 @@ const RULE_INPUT_TONES: Record<"plain" | "percent" | "max", string> = {
   max: "text-rose-700",
 };
 
-// Bo het ky tu khong phai so (giu dau "-" o dau neu co) - dung khi nguoi dung go
-// vao o tien te da co dau cham ngan cach hang nghin (vd "1.000.000" -> 1000000).
-function parseDigits(raw: string): number | null {
-  const cleaned = raw.replace(/[^\d]/g, "");
-  if (!cleaned) return null;
-  return Math.max(0, Number(cleaned) || 0);
-}
-
 function RuleInput({
   value,
   onChange,
@@ -259,14 +252,12 @@ function RuleInput({
       )}
     >
       {money ? (
-        <input
-          type="text"
-          inputMode="numeric"
+        <CurrencyInput
           maxLength={15}
           title={value === null || value === undefined ? undefined : formatNumber(value)}
-          value={value === null || value === undefined ? "" : formatNumber(value)}
+          value={value}
           disabled={disabled}
-          onChange={(event) => onChange(parseDigits(event.target.value))}
+          onChange={(next) => onChange(next === null ? null : Math.max(0, next))}
           className={cn(
             "min-w-0 flex-1 overflow-hidden text-ellipsis appearance-none bg-transparent text-right text-[11px] font-semibold outline-none disabled:cursor-default xl:text-[12px]",
             textClass,

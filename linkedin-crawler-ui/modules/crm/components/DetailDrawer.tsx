@@ -1,4 +1,5 @@
 'use client';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
 import { useEffect, useState } from 'react';
 import { seedingQuoteRepository } from '@/modules/quotes';
@@ -38,6 +39,8 @@ import {
 } from '../constants/crmConfig';
 import type { ContractStatus, Deal, DealStage } from '../types';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { useCrmCategoryCodeOptions } from './CrmCategorySelect';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 type Props = {
   deal: Deal | null;
@@ -85,6 +88,7 @@ export function DetailDrawer({
 }: Props) {
   const { user } = useAppAuth();
   const [otherVersions, setOtherVersions] = useState<Quote[]>([]);
+  const { options: contractStatusOptions } = useCrmCategoryCodeOptions('crm_contract_status', CONTRACT_STATUS_OPTIONS);
 
   useEffect(() => {
     setOtherVersions([]);
@@ -129,7 +133,7 @@ export function DetailDrawer({
 
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
+      <div className="crm-drawer-backdrop crm-drawer-backdrop--passive" />
       <aside className="crm-drawer">
         <header className="crm-drawer-header" style={{ backgroundColor: stageMeta.color }}>
           <div className="min-w-0">
@@ -160,10 +164,10 @@ export function DetailDrawer({
                   {deal.email}
                 </a>
               ) : null}
-              {deal.zalo ? (
-                <a href={`https://zalo.me/${tel(deal.zalo || deal.phone)}`} target="_blank" rel="noopener noreferrer">
-                  <MessageCircle className="crm-line-icon" />
-                  Zalo
+              {(deal.zalo || deal.phone) ? (
+                <a href={getZaloChatUrl(deal.zalo || deal.phone)} target="_blank" rel="noopener noreferrer" className="text-[#0068ff] font-medium flex items-center gap-1">
+                  <MessageCircle className="crm-line-icon text-[#0068ff]" />
+                  Nhắn Zalo
                 </a>
               ) : null}
             </div>
@@ -189,7 +193,7 @@ export function DetailDrawer({
 
           <section className="crm-meta-grid">
             {deal.decisionMaker ? <MetaCard icon={UserCog} label="Người quyết định" value={deal.decisionMaker} /> : null}
-            {deal.estimatedBudget ? <MetaCard icon={Wallet} label="Ngân sách" value={formatVND(deal.estimatedBudget) || ''} /> : null}
+            {deal.estimatedBudget != null ? <MetaCard icon={Wallet} label="Ngân sách" value={formatVND(deal.estimatedBudget) || '0 đ'} /> : null}
             {deal.followUpDate ? (
               <div className="crm-follow-up"><CalendarDays className="crm-line-icon" /> Follow-up dự kiến: <b>{formatDate(deal.followUpDate)}</b></div>
             ) : null}
@@ -215,7 +219,7 @@ export function DetailDrawer({
                   onChange={event => onUpdateContractStatus(deal, event.target.value as ContractStatus)}
                 >
                   <option value="">-- Chưa chọn --</option>
-                  {CONTRACT_STATUS_OPTIONS.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
+                  {contractStatusOptions.map(status => <option key={status.value} value={status.value}>{status.label}</option>)}
                 </select>
                 {deal.contract.status ? <span className="crm-contract-status-badge">{getContractStatusText(deal.contract.status)}</span> : null}
               </div>
@@ -270,7 +274,7 @@ export function DetailDrawer({
                         {isApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
                       </span>
                     </div>
-                    <strong>{formatVND(deal.quote.totalAmount || 0) || 'Chưa có giá trị'}</strong>
+                    <strong>{formatQuoteAmountOr(deal.quote.totalAmount || 0, deal.quote.currency, formatVND) || 'Chưa có giá trị'}</strong>
                   </div>
                   <div className="crm-quote-row-actions">
                     {!isApproved && canEditThisQuote ? (
@@ -278,7 +282,8 @@ export function DetailDrawer({
                         Chỉnh sửa
                       </button>
                     ) : null}
-                    {deal.quote.id && !isApproved && canEditThisQuote ? (
+                    {/* Xoa bao gia mo cho moi nguoi, ke ca da duyet - chi hoi xac nhan (feedback 2026-09-23). */}
+                    {deal.quote.id ? (
                       <button
                         type="button"
                         className="crm-quote-btn crm-quote-btn--danger"
@@ -349,7 +354,7 @@ export function DetailDrawer({
                             {versionApproved ? '🟢 Đã duyệt' : '🟠 Chưa duyệt'}
                           </span>
                         </div>
-                        <strong>{formatVND(version.totalAmount || 0) || 'Chưa có giá trị'}</strong>
+                        <strong>{formatQuoteAmountOr(version.totalAmount || 0, version.currency, formatVND) || 'Chưa có giá trị'}</strong>
                       </div>
                       <div className="crm-quote-row-actions">
                         {versionApproved ? (
@@ -473,11 +478,10 @@ export function DetailDrawer({
                 <UserCog className="crm-line-icon" /> Sửa thông tin
               </button>
             ) : null}
-            {canWrite ? (
-              <button type="button" className="crm-footer-button crm-footer-button--delete" onClick={() => onDelete(deal)}>
-                <Trash2 className="crm-line-icon" /> Xóa
-              </button>
-            ) : null}
+            {/* Xoa mo cho moi nguoi, chi hoi xac nhan (feedback 2026-09-23). */}
+            <button type="button" className="crm-footer-button crm-footer-button--delete" onClick={() => onDelete(deal)}>
+              <Trash2 className="crm-line-icon" /> Xóa
+            </button>
           </div>
           <button type="button" className="crm-close-button" onClick={onClose}>Đóng</button>
         </footer>

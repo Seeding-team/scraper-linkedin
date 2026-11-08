@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request, Header, UploadFile, File, Form
 from typing import List, Any, Optional
 import logging
-from app.modules.all_platform.schemas.common import BaseResponse
+from app.modules.linkedin.schemas.response_models import BaseResponse
 from app.modules.all_platform.schemas.customer_lead import (
     CustomerLeadCreate,
     CustomerLeadUpdate,
@@ -10,8 +10,19 @@ from app.modules.all_platform.schemas.customer_lead import (
     ActivityLogResponse,
     DEAL_STAGES,
 )
+from app.modules.all_platform.auth_deps import is_web_intake_user, resolve_web_intake_user
 from app.modules.all_platform.services import customer_lead_service, decode_token, get_user_by_id, can_write_deal
+from app.modules.all_platform.services.crm_permission_service import can_access_by_scope, get_scope_visible_user_ids, has_module_access
+
+
+def _deal_in_user_scope(user: Any, deal: dict | None) -> bool:
+    """User bi gioi han scope (team/ca nhan) chi duoc thay co hoi do minh/team phu trach (leaded_by/sdr_id)."""
+    if not isinstance(user, dict) or get_scope_visible_user_ids(user) is None:
+        return True
+    return bool(deal) and can_access_by_scope(user, deal.get('leaded_by'), deal.get('sdr_id'))
+from app.core.supabase_client import friendly_supabase_error_message
 from app.modules.all_platform.services.customer_lead_service import TransitionError
+from app.modules.all_platform.services.crm_delete_cascade_service import CascadeConfirmRequired
 from app.modules.all_platform.services.crm_attachment_service import (
     upload_attachment,
     allowed_mime,
@@ -27,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_user(request: Request, authorization: str | None = Header(None)) -> dict[str, Any]:
+    intake_user = resolve_web_intake_user(request)
+    if intake_user is not None:
+        return intake_user
     if not authorization:
         cookie_token = request.cookies.get("crawlpro_access_token")
         if cookie_token:
@@ -67,6 +81,8 @@ def get_customer_leads(
     page_size: int = Query(50, ge=1, le=500),
     current_user: Any = Depends(get_current_user),
 ):
+    if not has_module_access(current_user, "Deal"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Deal")
     try:
         result = customer_lead_service.get_all_customer_leads(
             current_user=current_user,
@@ -82,7 +98,13 @@ def get_customer_leads(
         )
         return BaseResponse(success=True, data=result, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        # BUG THAT DA GAP ("[WinError 10038] An operation was attempted on
+        # something that is not a socket" hien thang len UI): message=str(e)
+        # tra nguyen van loi ky thuat noi bo (socket Windows/timeout...) cho
+        # FE render thang thanh Error - nguoi dung khong hieu gi ca. Dung
+        # helper chung: loi transient -> 1 cau chung chung; loi nghiep vu
+        # that (permission/schema...) van giu nguyen de con debug.
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/stage-counts", response_model=BaseResponse)
@@ -92,7 +114,7 @@ def get_stage_counts(current_user: Any = Depends(get_current_user)):
         counts = customer_lead_service.get_stage_counts(current_user=current_user)
         return BaseResponse(success=True, data=counts, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/sdrs", response_model=BaseResponse)
@@ -101,7 +123,7 @@ def get_sdrs(_: Any = Depends(get_current_user)):
         data = customer_lead_service.get_all_sdrs()
         return BaseResponse(success=True, data=data, message="Success")
     except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
 
 
 @router.get("/by-conv/{conv_id}", response_model=BaseResponse)
@@ -167,8 +189,42 @@ def get_activity_log(
 ):
     """Audit trail cho 1 deal — DESC theo created_at."""
     try:
+        if not _deal_in_user_scope(_, customer_lead_service.get_customer_lead_by_id(lead_id)):
+            return BaseResponse(success=False, message="Không có quyền xem cơ hội này.")
         data = customer_lead_service.get_activity_log(lead_id, limit=limit, offset=offset)
         return BaseResponse(success=True, data=data, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+class AddNoteRequest(BaseModel):
+    note: str
+
+
+@router.post("/{lead_id}/notes", response_model=BaseResponse)
+def add_note(
+    lead_id: str,
+    payload: AddNoteRequest,
+    current_user: Any = Depends(get_current_user),
+):
+    """Them 1 ghi chu doc lap vao "Hoat dong" cua deal - KHONG gan voi doi
+    stage (feedback leader: man Sua co hoi truoc day chi cho them note kem
+    theo doi stage, khong co cach ghi chu doc lap bat cu luc nao)."""
+    try:
+        existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy deal")
+        if not can_write_deal(current_user, existing):
+            return BaseResponse(success=False, message="Bạn không có quyền ghi chú deal này")
+        customer_lead_service.add_note(
+            lead_id=lead_id,
+            note=payload.note,
+            actor=current_user.get("id"),
+            actor_name=current_user.get("name") or current_user.get("email"),
+        )
+        return BaseResponse(success=True, message="Đã thêm ghi chú")
+    except ValueError as ve:
+        return BaseResponse(success=False, message=str(ve))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 
@@ -298,6 +354,26 @@ async def post_ai_parse_deal(
 
 
 # ---------------------------------------------------------------------------
+# Single get — Customer 360's Cơ hội tab needs the FULL row to open the live
+# Deal Workspace (DealDetailDrawer) in-place, without a page navigation.
+# Placed AFTER every literal-path GET above (/stage-counts, /sdrs,
+# /ai-parse-deal/status) so this catch-all {lead_id} route doesn't shadow
+# them at registration time.
+# ---------------------------------------------------------------------------
+@router.get("/{lead_id}", response_model=BaseResponse)
+def get_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user)):
+    try:
+        lead = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not lead:
+            return BaseResponse(success=False, message="Không tìm thấy cơ hội này.")
+        if not _deal_in_user_scope(current_user, lead):
+            return BaseResponse(success=False, message="Không có quyền xem cơ hội này.")
+        return BaseResponse(success=True, data=lead)
+    except Exception as e:
+        return BaseResponse(success=False, message=friendly_supabase_error_message(e))
+
+
+# ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
 @router.post("", response_model=BaseResponse)
@@ -307,13 +383,13 @@ def create_customer_lead(
 ):
     try:
         data_dict = payload.model_dump(exclude_unset=True)
-        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id"):
+        if not data_dict.get("leaded_by") and isinstance(current_user, dict) and current_user.get("id") and not is_web_intake_user(current_user):
             data_dict["leaded_by"] = current_user.get("id")
             # NOTE: không ghi `leaded_by_name` vào customer_leads — bảng không có cột này
             # (tên leader được JOIN qua `leader:leaded_by(name)` ở SELECT và cache qua
             # `customer_lead_activity_log.actor_name` cho audit). Trước đây dòng này
             # gây PGRST204 khi ghi.
-        new_lead = customer_lead_service.create_customer_lead(data_dict)
+        new_lead = customer_lead_service.create_customer_lead(data_dict, actor=current_user)
         return BaseResponse(success=True, data=new_lead, message="Success")
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
@@ -332,6 +408,7 @@ def update_customer_lead(
         updated = customer_lead_service.update_customer_lead(
             lead_id,
             payload.model_dump(exclude_unset=True),
+            actor=current_user,
         )
         if not updated:
             return BaseResponse(success=False, message="Not found or update failed")
@@ -340,13 +417,36 @@ def update_customer_lead(
         return BaseResponse(success=False, message=str(e))
 
 
-@router.delete("/{lead_id}", response_model=BaseResponse)
-def delete_customer_lead(lead_id: str, current_user: Any = Depends(get_current_user)):
+@router.post("/{lead_id}/migrate-legacy-contracts", response_model=BaseResponse)
+def migrate_legacy_contracts(lead_id: str, current_user: Any = Depends(get_current_user)):
+    """Chuyển nốt purchase_contract_links/sale_contract_links cũ (nếu còn)
+    của deal này sang contracts canonical — xem
+    customer_lead_service.migrate_legacy_deal_phase_contracts(). Action thủ
+    công (nút "Chuyển sang hợp đồng chính thức" trong form Sửa Deal)."""
     try:
         existing = customer_lead_service.get_customer_lead_by_id(lead_id)
+        if not existing:
+            return BaseResponse(success=False, message="Không tìm thấy deal này")
         if not can_write_deal(current_user, existing):
-            return BaseResponse(success=False, message="Bạn không có quyền xóa deal này — chỉ deal do mình tạo hoặc được giao mới xóa được")
-        customer_lead_service.delete_customer_lead(lead_id)
+            return BaseResponse(success=False, message="Bạn không có quyền sửa deal này")
+        result = customer_lead_service.migrate_legacy_deal_phase_contracts(lead_id, actor=current_user)
+        return BaseResponse(success=True, data=result, message="Success")
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.delete("/{lead_id}", response_model=BaseResponse)
+def delete_customer_lead(
+    lead_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa kem Bao gia/Hop dong lien quan."),
+    current_user: Any = Depends(get_current_user),
+):
+    try:
+        # Khong chan quyen xoa (feedback 2026-09-23) - chi hoi xac nhan; tim
+        # theo tenant hien tai trong delete_customer_lead().
+        customer_lead_service.delete_customer_lead(lead_id, current_user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Deleted successfully")
+    except CascadeConfirmRequired as e:
+        return BaseResponse(success=False, message=str(e), data={"requiresCascadeConfirm": True, **e.summary})
     except Exception as e:
         return BaseResponse(success=False, message=str(e))

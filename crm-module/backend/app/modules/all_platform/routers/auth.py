@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
 from app.core.config import settings
-from app.modules.all_platform.auth_deps import require_admin, require_admin_strict
+from app.modules.all_platform.auth_deps import get_current_user, require_admin
 from app.modules.all_platform.services.workspace_handoff_service import (
     consume_handoff_code,
     mint_handoff_code,
@@ -44,7 +44,9 @@ from app.modules.all_platform.services import (
     reset_password_without_old,
     get_user_by_email,
     is_sale_member,
+    get_effective_permissions,
 )
+from app.modules.all_platform.services.auth_service import _resolve_crm_function_area
 
 router = APIRouter()
 
@@ -162,18 +164,27 @@ def auth_list_workspaces(request: Request) -> BaseResponse:
     auth — frontend dùng để hiện switcher (chỉ render UI khi role=admin, xem
     kiểm tra quyền thật ở /workspace-handoff bên dưới)."""
     current_instance = settings.crm_instance
+    # So khop khong phan biet hoa/thuong: workspace_domains luon co key chu thuong
+    # (_parse trong workspace_domains.py), nhung crm_instance co the la "SECURITYZONE"
+    # (viet hoa) tuy workspace - khong lowercase ca 2 thi "current" se sai het (bug
+    # that da gap 2026-10-30: khong workspace nao duoc danh dau dang dung tren SecurityZone).
+    current_key = (current_instance or "").strip().lower()
     items = [
-        {"instance": instance, "url": url, "current": instance == current_instance}
+        {"instance": instance, "url": url, "current": instance.lower() == current_key}
         for instance, url in settings.workspace_domains.items()
     ]
     return BaseResponse(success=True, data={"items": items, "current_instance": current_instance})
 
 
 @router.post("/workspace-handoff")
-def auth_mint_workspace_handoff(user: dict = Depends(require_admin_strict)) -> BaseResponse:
-    """CHỈ admin (không tính leader) — sinh 1 mã dùng 1 lần (~30s) để mang
-    session sang domain brand khác. Xem workspace_handoff_service.py để hiểu
-    vì sao cần bước trung gian này thay vì redirect kèm thẳng JWT."""
+def auth_mint_workspace_handoff(user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Bất kỳ tài khoản đã đăng nhập nào (admin hay non-admin đều mint được
+    mã cho CHÍNH mình) — sinh 1 mã dùng 1 lần (~30s) để mang session sang
+    domain brand khác. Việc mã này có ĐỔI ĐƯỢC cookie ở domain đích hay không
+    do `/workspace-handoff/consume` quyết định (kiểm tra allowed_instances ở
+    đó) — mint không phải là bước enforce quyền, chỉ enforce ở consume. Xem
+    workspace_handoff_service.py để hiểu vì sao cần bước trung gian này thay
+    vì redirect kèm thẳng JWT."""
     code = mint_handoff_code(user["id"])
     return BaseResponse(success=True, data={"code": code})
 
@@ -182,7 +193,10 @@ def auth_mint_workspace_handoff(user: dict = Depends(require_admin_strict)) -> B
 def auth_consume_workspace_handoff(code: str, response: Response) -> BaseResponse:
     """Đổi mã dùng 1 lần lấy cookie đăng nhập MỚI cho domain hiện tại (domain
     đích của switcher). Không cần auth (chính mã này LÀ bằng chứng quyền truy
-    cập, đã bị đốt ngay sau khi đọc dù thành công hay thất bại)."""
+    cập, đã bị đốt ngay sau khi đọc dù thành công hay thất bại) — NHƯNG vẫn
+    kiểm tra allowed_instances ở đây (không phải ở mint) vì mint giờ mở cho
+    mọi tài khoản, phải chặn đúng chỗ để non-admin không tự mint rồi consume
+    sang site họ không được cấp quyền."""
     user_id = consume_handoff_code(code)
     if not user_id:
         raise HTTPException(status_code=400, detail="Mã chuyển workspace đã hết hạn hoặc không hợp lệ, vui lòng thử lại.")
@@ -190,6 +204,11 @@ def auth_consume_workspace_handoff(code: str, response: Response) -> BaseRespons
     user = get_user_by_id(user_id)
     if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="Tài khoản không hợp lệ hoặc đã bị vô hiệu hoá.")
+
+    if user.get("role") != "admin":
+        allowed = user.get("allowed_instances") or ([user["home_instance"]] if user.get("home_instance") else None)
+        if allowed and settings.crm_instance not in allowed:
+            raise HTTPException(status_code=403, detail="Tài khoản này không có quyền truy cập workspace này.")
 
     token = create_access_token(user["id"], user["email"], user["role"])
     response.set_cookie(
@@ -209,6 +228,8 @@ def auth_consume_workspace_handoff(code: str, response: Response) -> BaseRespons
                 "email": user["email"],
                 "name": user.get("name"),
                 "role": user.get("role", "member"),
+                "quote_business_role": user.get("quote_business_role"),
+                "crm_function_area": _resolve_crm_function_area(user.get("id")),
             },
         },
     )
@@ -288,6 +309,12 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             authz = f"Bearer {cookie_token}"
 
         user = _get_user_from_header(authz)
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): modules=None
+        # (user CHUA duoc gan Nhom quyen) -> FE hieu la "khong gioi han them"
+        # (giu nguyen sidebar day du nhu hien tai). Chi khi co gia tri that
+        # (list, co the rong) FE moi an bot muc nav theo dung module.
+        effective = get_effective_permissions(user)
+        effective_modules = sorted(effective["modules"]) if effective["modules"] is not None else None
         return BaseResponse(success=True, data={
             "id": user.get("id"),
             "email": user.get("email"),
@@ -297,6 +324,16 @@ def auth_me(request: Request, authorization: str | None = Header(None)) -> BaseR
             "created_at": user.get("created_at"),
             "is_sale": is_sale_member(user.get("id")),
             "can_approve_quotes": bool(user.get("can_approve_quotes")),
+            "effective_modules": effective_modules,
+            "allowedInstances": user.get("allowed_instances"),
+            # Port tu Main: thieu field nay khien FE khong biet Sale/Presale/
+            # Both cua chinh user dang dang nhap (dung xuyen suot he thong
+            # gan Deal/Quote owner - xem DealFormFields.tsx/QuoteWorkspaceModal.tsx).
+            "quote_business_role": user.get("quote_business_role"),
+            # Khoi/chuyen mon cua Team CRM (2026-10-23, yeu cau sep) - dung de
+            # quyet dinh route mac dinh sau dang nhap (getDashboardHrefForRole).
+            "crm_function_area": _resolve_crm_function_area(user.get("id")),
+
         })
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

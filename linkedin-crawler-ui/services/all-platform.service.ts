@@ -25,12 +25,19 @@ import type {
   InternalEngagementPostInteractionsData,
   InternalEngagementTeamTrendData,
   InternalEngagementTeamTotalsData,
+  PostSeedingRosterData,
+  TeamsSeedingEfficiencyData,
+  MemberSeedingOverviewData,
+  MemberCrawlHistoryData,
+  OnlineSummaryData,
+  CrawlScheduleHistoryData,
 } from "@/types/unified.types";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
 const BASE = `${API_BASE_URL}/api/all-platform`;
 const authHeaders = () => ({});
 const AUTH_SUBMIT_TIMEOUT_MS = 12000;
+const GOOGLE_AUTH_SUBMIT_TIMEOUT_MS = 45000;
 
 /**
  * Lightweight in-memory TTL cache for read-mostly taxonomies & teams.
@@ -100,12 +107,27 @@ export function invalidateTaxonomyCache(key?: string): void {
  *  - X-API-Key: backend yêu cầu (verify_zalo_api_key), đọc từ NEXT_PUBLIC_LINKEDIN_CRAWLER_API_KEY
  *  - Có thể bị override bởi `init.headers` nếu caller cần custom
  */
+function getAuthTokenFromBrowser(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(?:^|;\s*)crawlpro_access_token=([^;]+)/);
+  if (match) return decodeURIComponent(match[1]);
+  try {
+    return localStorage.getItem("token") || localStorage.getItem("access_token");
+  } catch {
+    return null;
+  }
+}
+
 function getDefaultHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (API_KEY) {
     headers["X-API-Key"] = API_KEY;
+  }
+  const token = getAuthTokenFromBrowser();
+  if (token && !headers["Authorization"]) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
 }
@@ -284,6 +306,7 @@ export const internalEngagementService = {
     likes?: number;
     comments?: number;
     shares?: number;
+    scope?: "internal" | "external";
   }, emailParam?: string): Promise<ApiResponse<any>> => {
     const payload = typeof linkOrPayload === "string"
       ? { link: linkOrPayload, email: emailParam || "" }
@@ -309,6 +332,7 @@ export const internalEngagementService = {
         likes: payload.likes,
         comments: payload.comments,
         shares: payload.shares,
+        scope: payload.scope,
       }),
     });
   },
@@ -401,7 +425,7 @@ export const internalEngagementService = {
     });
   },
 
-  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus> }>> => {
+  getMyMarks: (emailMember: string, linkPosts: string[]): Promise<ApiResponse<{ marks: Record<string, InternalEngagementMarkStatus>; my_comments?: Record<string, string> }>> => {
     return requestJson(`${BASE}/internal-engagement/my-marks`, {
       method: "POST",
       body: JSON.stringify({ email_member: emailMember, link_posts: linkPosts }),
@@ -1117,6 +1141,21 @@ export const zaloInboxShareService = {
 // ── UNIFIED POSTS (Tong-hop — no cache, all server-side) ─────────────────────
 
 export const allPlatformPostsService = {
+  /** Ghi nhận việc người dùng đã nhắn tin Zalo tới số điện thoại này */
+  recordZaloSent: (data: {
+    post_id?: string;
+    platform?: string;
+    phone_number: string;
+    zalo_display_name?: string;
+    zalo_conversation_id?: string;
+    message_content?: string;
+    sent_by?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/auto-seeding-comments/record-zalo-sent`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
   /** Fetch + filter in one call — server-side, no cache */
   getAll: (payload: {
     email: string;
@@ -1300,12 +1339,51 @@ export const allPlatformPostsService = {
       body: JSON.stringify({ email, posts }),
     });
   },
+
+  /**
+   * "Xem seeding theo team" (Seeding bên ngoài, admin/leader) — toàn bộ roster
+   * thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding.
+   */
+  getPostSeedingRoster: (email: string, postId: string, platform: string): Promise<ApiResponse<PostSeedingRosterData>> => {
+    return requestJson(`${BASE}/unified/posts/seeding-roster`, {
+      method: "POST",
+      body: JSON.stringify({ email, post_id: postId, platform }),
+    });
+  },
+
+  /**
+   * "Hiệu quả theo team" (Dashboard leader, Seeding bên ngoài) — admin thấy mọi team,
+   * leader chỉ thấy team mình quản lý.
+   */
+  getTeamsSeedingEfficiency: (email: string): Promise<ApiResponse<TeamsSeedingEfficiencyData>> => {
+    return requestJson(`${BASE}/unified/teams/seeding-efficiency`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all" }),
+    });
+  },
+
+  /** Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
+   * leader chỉ thấy team mình quản lý. */
+  getMemberSeedingOverview: (email: string, timeRange: string = "all"): Promise<ApiResponse<MemberSeedingOverviewData>> => {
+    return requestJson(`${BASE}/unified/members/seeding-overview`, {
+      method: "POST",
+      body: JSON.stringify({ email, platform: "all", time_range: timeRange }),
+    });
+  },
+
+  /** Chi tiết lịch sử cào của 1 thành viên (bấm vào 1 hàng trong bảng "Tài khoản seeding"). */
+  getMemberCrawlHistory: (email: string, idMember: string): Promise<ApiResponse<MemberCrawlHistoryData>> => {
+    return requestJson(`${BASE}/unified/members/crawl-history`, {
+      method: "POST",
+      body: JSON.stringify({ email, id_member: idMember }),
+    });
+  },
 };
 
 // ── CATEGORIES ────────────────────────────────────────────────────────────────
 
 export const allPlatformCategoriesService = {
-  getAll: (category_type?: string, options?: { activeOnly?: boolean }): Promise<ApiResponse<Category[]>> => {
+  getAll: async (category_type?: string, options?: { activeOnly?: boolean; forceRefresh?: boolean }): Promise<ApiResponse<Category[]>> => {
     const params = new URLSearchParams();
     if (category_type) params.set("category_type", category_type);
     if (options?.activeOnly) params.set("active_only", "true");
@@ -1313,17 +1391,29 @@ export const allPlatformCategoriesService = {
     const url = qs ? `${BASE}/categories?${qs}` : `${BASE}/categories`;
     // Cache the entire categories list for 30s. Categories rarely change;
     // admin can invalidateTaxonomyCache() after edits.
-    return cachedFetch(`categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`, 30_000, () => requestJson<Category[]>(url));
+    const cacheKey = `categories:${category_type || "all"}:${options?.activeOnly ? "active" : "all"}`;
+    if (options?.forceRefresh) {
+      invalidateTaxonomyCache(cacheKey);
+      inflightRequests.delete(cacheKey);
+      const res = await requestJson<Category[]>(url);
+      if (res.success && Array.isArray(res.data)) {
+        taxonomyCache.set(cacheKey, { data: res, expiresAt: Date.now() + 30_000 });
+      }
+      return res;
+    }
+    return cachedFetch(cacheKey, 30_000, () => requestJson<Category[]>(url));
   },
 
-  add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean }): Promise<ApiResponse<Category>> => {
+  add: (payload: { category_type: string; code: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/add`, {
       method: "POST",
       body: JSON.stringify(payload),
     });
   },
 
-  update: (payload: { id: string; category_type?: string; code?: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean }): Promise<ApiResponse<Category>> => {
+  update: (payload: { id: string; category_type?: string; code?: string; name?: string; description?: string; leader?: string; geo?: string; platform?: string; is_active?: boolean; sort_order?: number }): Promise<ApiResponse<Category>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/update`, {
       method: "PUT",
       body: JSON.stringify(payload),
@@ -1331,6 +1421,7 @@ export const allPlatformCategoriesService = {
   },
 
   delete: (id: string): Promise<ApiResponse<{ deleted: number }>> => {
+    invalidateTaxonomyCache();
     return requestJson(`${BASE}/categories/delete?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
     });
@@ -1393,6 +1484,10 @@ export const allPlatformMembersService = {
 
   getSkills: (): Promise<ApiResponse<Skill[]>> => {
     return requestJson<Skill[]>(`${BASE}/members/skills`);
+  },
+
+  syncFromRecruitment: (): Promise<ApiResponse<{ created: number; updated: number; deleted: number; locked: number; unlocked: number; skipped: Array<{ row: string; reason: string }> }>> => {
+    return requestJson(`${BASE}/members/sync-from-recruitment`, { method: "POST" });
   },
 
   addSkill: (name: string, category?: string): Promise<ApiResponse<Skill>> => {
@@ -1506,8 +1601,8 @@ export const allPlatformGroupsService = {
    * Lấy groups cho Extension Launcher.
    * Backend tự động filter theo id_member từ auth token.
    */
-  getForExtension: (): Promise<ApiResponse<FacebookGroup[]>> => {
-    return requestJson(`${BASE}/facebook/groups?for_extension=true`);
+  getForExtension: (platform: "facebook" | "linkedin" = "facebook"): Promise<ApiResponse<(FacebookGroup | LinkedInGroup)[]>> => {
+    return requestJson(`${BASE}/${platform}/groups?for_extension=true`);
   },
 
   add: (payload: Record<string, unknown>, platform: string): Promise<ApiResponse<FacebookGroup | LinkedInGroup>> => {
@@ -1570,6 +1665,24 @@ export const allPlatformTeamsService = {
 
 // ── AUTH ────────────────────────────────────────────────────────────────────────
 
+export const presenceService = {
+  /** Heartbeat mỗi ~45s trong lúc tab đang hiển thị — xem AppAuthContext.tsx. */
+  heartbeat: (email: string): Promise<ApiResponse<{ recorded: boolean }>> => {
+    return requestJson(`${BASE}/presence/heartbeat`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+
+  /** "Thời gian online" cho Dashboard leader — admin thấy mọi thành viên, leader chỉ team mình. */
+  getOnlineSummary: (email: string): Promise<ApiResponse<OnlineSummaryData>> => {
+    return requestJson(`${BASE}/presence/online-summary`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+};
+
 export const authService = {
   register: (payload: { email: string; password: string; name?: string }): Promise<ApiResponse<AuthLoginResponse>> => {
     return requestJsonWithTimeout(
@@ -1602,7 +1715,7 @@ export const authService = {
         method: "POST",
         body: JSON.stringify({ credential }),
       },
-      AUTH_SUBMIT_TIMEOUT_MS,
+      GOOGLE_AUTH_SUBMIT_TIMEOUT_MS,
       "Đăng nhập quá lâu, vui lòng thử lại.",
     );
   },
@@ -1730,6 +1843,35 @@ export const socialAccountsService = {
   },
 };
 
+// ── YouTube Seeding (liên kết kênh + phiên comment tính KPI) ──────────────────
+
+export interface YouTubeCommentSession {
+  token: string;
+  post_url: string;
+  video_id: string;
+  expected_channel: { profile_id: string; handle?: string | null; name?: string | null };
+}
+
+export const youtubeSeedingService = {
+  /** Lưu kênh YouTube (extension nhận diện trên trình duyệt) thành tài khoản seeding của mình. */
+  linkChannel: (payload: { channel_id?: string | null; handle?: string | null; name?: string | null }): Promise<ApiResponse<SocialAccount & { already_linked?: boolean }>> => {
+    return requestJson(`${BASE}/youtube/link-channel`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
+  },
+
+  /** Token phiên comment cho 1 video + 1 kênh đã liên kết — extension dùng để báo KPI. */
+  createCommentSession: (payload: { post_id: string; id_social_account: string }): Promise<ApiResponse<YouTubeCommentSession>> => {
+    return requestJson(`${BASE}/youtube/comment-session`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify(payload),
+    }, 0);
+  },
+};
+
 // ── LinkedIn Account Management ───────────────────────────────────────────────
 
 export interface LinkedInAccount {
@@ -1843,6 +1985,70 @@ export interface AppUserProfile {
   /** Vai trò NGHIỆP VỤ báo giá (migration 095) — presale/sale/both/null, TÁCH
    * BIỆT hoàn toàn với `role` (system role admin/leader/member). */
   quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Workspace/clone CRM (markee/cloudgate/SECURITYZONE) tài khoản này được
+   * phép đăng nhập (migration 127) — quản trị tại Main, dùng bởi 3 clone. */
+  allowed_instances?: string[] | null;
+  /** "Nhóm quyền" CRM đang gán (migration 155) — null = chưa gán, tiếp tục
+   * dùng đúng rule quyền cũ (has_full_crm_access), không enforcement mới. */
+  permission_group_id?: string | null;
+  /** Phạm vi dữ liệu override riêng (null = lấy theo Nhóm quyền). */
+  data_scope?: CrmDataScope | null;
+  permission_override?: boolean;
+  permission_overrides?: string[] | null;
+  crm_status?: "active" | "pending_review" | "locked";
+  crm_note?: string | null;
+  /** Team CRM đang thuộc về (không có trong app_users — chỉ có khi BE join
+   * kèm, dùng cho hiển thị; ghi qua `crm_team_id` trong updateCrmPermission). */
+  crm_team_id?: string | null;
+  /** Chỉ có khi BE trả trong `CrmTeam.members` (tab Leader/Team Sale) - số
+   * Deal ĐANG XỬ LÝ (không tính won/lost/post_sale_care) của riêng user này. */
+  active_deal_count?: number;
+}
+
+export type CrmDataScope = "personal" | "team" | "deal_assigned" | "workspace" | "system";
+export type CrmModuleKey = "Lead" | "Customer" | "Deal" | "Quote" | "Product" | "Report" | "Account" | "Setting";
+
+export interface CrmPermissionGroup {
+  id: string;
+  name: string;
+  status: "active" | "draft";
+  default_system_role: "member" | "leader" | "admin";
+  default_scope: CrmDataScope;
+  description?: string | null;
+  default_quote_business_role?: "presale" | "sale" | "both" | null;
+  default_can_approve_quotes: boolean;
+  quote_cost_permission: "none" | "read_only" | "assigned" | "all";
+  quote_sell_permission: "none" | "read_only" | "assigned" | "all";
+  quote_release_permission: "none" | "assigned" | "all";
+  modules: CrmModuleKey[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CrmTeam {
+  id: string;
+  name: string;
+  code?: string | null;
+  leader_user_id?: string | null;
+  leader_name?: string | null;
+  status: "active" | "inactive";
+  segment?: "enterprise" | "smb" | "mid_market" | "government" | "mixed" | null;
+  function_area?: "sales" | "marketing" | "presale" | "infrastructure" | "software" | "security" | "finance" | "operations" | null;
+  industry?: string | null;
+  region?: string | null;
+  description?: string | null;
+  member_count?: number;
+  /** Tong so Deal DANG XU LY (khong tinh won/lost/post_sale_care) cua CAC
+   * MEMBER trong team (KHONG cong Deal rieng cua Leader) - khop dung cach
+   * tinh "Cơ hội đang xử lý" cua tab Leader/Team Sale. */
+  active_deal_count?: number;
+  /** Danh sach user_id thanh vien (chi co trong response cua list(), KHONG
+   * co trong get() - dung de FE tu tinh "tai khoan CRM chua thuoc Leader
+   * nao", tranh phai them 1 API rieng). */
+  member_ids?: string[];
+  members?: AppUserProfile[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface QuoteBusinessRoleUser {
@@ -1888,6 +2094,14 @@ export const usersService = {
       body: JSON.stringify({ email, role }),
     });
   },
+  /** Admin-only: gán danh sách workspace/clone CRM (markee/cloudgate/
+   * SECURITYZONE) 1 tài khoản được phép đăng nhập (migration 127). */
+  updateAllowedInstances: (email: string, allowed_instances: string[]): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-allowed-instances`, {
+      method: "POST",
+      body: JSON.stringify({ email, allowed_instances }),
+    });
+  },
   /** Admin-only: tạo tài khoản đăng nhập mới (chưa có mật khẩu dùng được — chỉ
    * đăng nhập qua Google). Dùng khi thêm 1 email chưa từng có trong hệ thống. */
   createAccount: (payload: { email: string; name?: string; role: string }): Promise<ApiResponse<AppUserProfile>> => {
@@ -1926,6 +2140,129 @@ export const usersService = {
   getUsersByQuoteBusinessRole: (role: "presale" | "sale"): Promise<ApiResponse<QuoteBusinessRoleUser[]>> => {
     return requestJson(`${BASE}/users/by-quote-business-role?role=${encodeURIComponent(role)}`);
   },
+  /** Admin-ONLY: sửa hồ sơ 1 tài khoản đã tồn tại (đổi email, họ tên, gán/gỡ
+   * Member liên kết) — giống nút "Sửa" của pm-new. `member_id: null` = gỡ
+   * liên kết hẳn; bỏ field này ra khỏi payload = không đụng tới liên kết. */
+  updateAccountProfile: (
+    email: string,
+    updates: { new_email?: string; full_name?: string; member_id?: string | null }
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-profile-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email, ...updates }),
+    });
+  },
+  /** Admin-ONLY: xóa HẲN 1 tài khoản đăng nhập (Member liên kết không bị xóa,
+   * chỉ tự gỡ liên kết) — giống nút "Xóa" của pm-new. */
+  deleteAccount: (email: string): Promise<ApiResponse<null>> => {
+    return requestJson(`${BASE}/users/delete-admin`, {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  },
+  /** Admin-ONLY: gán Nhóm quyền/Team CRM/Phạm vi dữ liệu/override quyền
+   * riêng/trạng thái CRM (migration 155) — drawer "Chỉnh quyền user" ở tab
+   * Tài khoản CRM. Field nào không truyền thì giữ nguyên giá trị cũ. */
+  updateCrmPermission: (
+    email: string,
+    updates: {
+      permission_group_id?: string | null;
+      crm_team_id?: string | null;
+      data_scope?: CrmDataScope | null;
+      permission_override?: boolean;
+      permission_overrides?: CrmModuleKey[];
+      crm_status?: "active" | "pending_review" | "locked";
+      crm_note?: string | null;
+    }
+  ): Promise<ApiResponse<AppUserProfile>> => {
+    return requestJson(`${BASE}/users/update-crm-permission`, {
+      method: "POST",
+      body: JSON.stringify({ email, ...updates }),
+    });
+  },
+};
+
+/** "Nhóm quyền" (CRM permission group/template) - tab mới trong
+ * `/all-platform/admin/quan-ly-thanh-vien`. Xem migration
+ * 155_crm_permission_groups_and_teams.sql. */
+export const crmPermissionGroupsService = {
+  list: (status?: string): Promise<ApiResponse<CrmPermissionGroup[]>> => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return requestJson(`${BASE}/crm/permission-groups${qs}`);
+  },
+  get: (groupId: string): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`);
+  },
+  listUsers: (groupId: string): Promise<ApiResponse<AppUserProfile[]>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}/users`);
+  },
+  create: (payload: Partial<CrmPermissionGroup>): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  update: (groupId: string, payload: Partial<CrmPermissionGroup>): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  clone: (groupId: string): Promise<ApiResponse<CrmPermissionGroup>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}/clone`, { method: "POST" });
+  },
+  delete: (groupId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/permission-groups/${groupId}`, { method: "DELETE" });
+  },
+};
+
+/** "Team CRM" (KHÁC HẲN bảng `teams`/`team_type` KPI nội bộ) - trang
+ * `/all-platform/crm/sale-teams`. Xem migration
+ * 155_crm_permission_groups_and_teams.sql. */
+export const crmTeamsService = {
+  list: (params?: { segment?: string; function_area?: string; search?: string }): Promise<ApiResponse<CrmTeam[]>> => {
+    const qs = new URLSearchParams();
+    if (params?.segment) qs.set("segment", params.segment);
+    if (params?.function_area) qs.set("function_area", params.function_area);
+    if (params?.search) qs.set("search", params.search);
+    const suffix = qs.toString() ? `?${qs.toString()}` : "";
+    return requestJson(`${BASE}/crm/teams${suffix}`);
+  },
+  get: (teamId: string): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`);
+  },
+  /** Team CRM hiện tại của 1 user (null nếu chưa thuộc Team nào) - dùng cho
+   * drawer "Chỉnh quyền user" hiển thị đúng Team đang chọn. */
+  getTeamIdForUser: (userId: string): Promise<ApiResponse<{ crm_team_id: string | null }>> => {
+    return requestJson(`${BASE}/crm/teams/member-of/${userId}`);
+  },
+  suggestCode: (leaderName: string): Promise<ApiResponse<{ code: string }>> => {
+    return requestJson(`${BASE}/crm/teams/suggest-code?leader_name=${encodeURIComponent(leaderName)}`);
+  },
+  create: (payload: Partial<CrmTeam>): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  update: (teamId: string, payload: Partial<CrmTeam>): Promise<ApiResponse<CrmTeam>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
+  },
+  delete: (teamId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}`, { method: "DELETE" });
+  },
+  addMember: (teamId: string, userId: string): Promise<ApiResponse<unknown>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    });
+  },
+  removeMember: (teamId: string, userId: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crm/teams/${teamId}/members/${userId}`, { method: "DELETE" });
+  },
 };
 
 export interface MemberOption {
@@ -1944,10 +2281,14 @@ export const memberOptionsService = {
    * trả email/password/token. `includeIds` ép trả thêm 1 vài id cụ thể dù
    * đang bị vô hiệu hoá - dùng khi Sửa 1 project mà người phụ trách hiện tại
    * đã ngừng hoạt động (vẫn phải hiện tên + badge, không được biến mất). */
-  getOptions: (opts?: { active?: boolean; includeIds?: string[] }): Promise<ApiResponse<{ items: MemberOption[] }>> => {
+  /** `teamType` (vd 'sale'): loc CHI giu nguoi thuoc dung team_type nay (backend
+   * whitelist gia tri hop le - xem routers/users.py _ALLOWED_TEAM_TYPE_FILTERS,
+   * gui gia tri khac se bi tu choi ro rang). */
+  getOptions: (opts?: { active?: boolean; includeIds?: string[]; teamType?: string }): Promise<ApiResponse<{ items: MemberOption[] }>> => {
     const params = new URLSearchParams();
     if (opts?.active === false) params.set("active", "false");
     if (opts?.includeIds?.length) params.set("include_id", opts.includeIds.join(","));
+    if (opts?.teamType) params.set("team_type", opts.teamType);
     const qs = params.toString();
     return requestJson(`${BASE}/users/member-options${qs ? `?${qs}` : ""}`);
   },
@@ -1970,13 +2311,20 @@ export interface Project {
 }
 
 export interface CreateProjectInput {
-  project_code: string;
+  // "Mã dự án tự sinh hoàn toàn ở backend" - KHÔNG còn field project_code ở
+  // đây nữa, frontend không tự dựng mã (xem preview_project_code() +
+  // create_project() ở backend).
   name: string;
-  customer_id: string;
+  customer_id: string; primary_contact_id?: string | null;
   description?: string;
   status?: Project["status"];
   manager_id?: string | null;
   team_id?: string | null;
+}
+
+export interface ProjectCodePreview {
+  projectCode: string;
+  isCustomerCodeNew: boolean;
 }
 
 export const projectsService = {
@@ -1988,6 +2336,12 @@ export const projectsService = {
   },
   get: (id: string): Promise<ApiResponse<Project>> => {
     return requestJson(`${BASE}/projects/${encodeURIComponent(id)}`);
+  },
+  /** CHỈ tính "Dự kiến" để hiển thị trên form - KHÔNG insert/persist gì (xem
+   * preview_project_code() ở backend). Mã chính thức luôn do create() cấp lại
+   * lúc tạo thật. */
+  previewCode: (customerId: string): Promise<ApiResponse<ProjectCodePreview>> => {
+    return requestJson(`${BASE}/projects/preview-code?customer_id=${encodeURIComponent(customerId)}`);
   },
   /** Chi Admin/Leader tao duoc (backend tu choi that neu goi sai quyen -
    * can_manage_project(), xem crm_permission_service.py). */
@@ -2573,3 +2927,293 @@ export const customerLeadsService = {
 };
 
 export type { QuickCommentTemplate } from "@/types/unified.types";
+
+
+// ── Post Evaluation & Crawl Exclude Keywords Services ──────────────────────────
+
+export const postEvaluationService = {
+  getEvaluation: (postId: string, platform: string = "facebook"): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/evaluation?platform=${encodeURIComponent(platform)}`);
+  },
+
+  updateEvaluation: (
+    postId: string,
+    payload: {
+      evaluation_code: string;
+      platform?: string;
+      reason?: string;
+      summary?: string;
+      exclude_keyword_exempt?: boolean;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/evaluation`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  batchReject: (payload: {
+    post_ids: string[];
+    platform?: string;
+    reason?: string;
+  }): Promise<ApiResponse<{ undo_token: string; affected_count: number }>> => {
+    return requestJson(`${BASE}/posts/evaluation/batch-reject`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  undoBatchReject: (undoToken: string): Promise<ApiResponse<{ restored_count: number; message: string }>> => {
+    return requestJson(`${BASE}/posts/evaluation/undo`, {
+      method: "POST",
+      body: JSON.stringify({ undo_token: undoToken }),
+    });
+  },
+};
+
+export const postCallResultService = {
+  getCallResult: (postId: string, platform: string = "facebook"): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result?platform=${encodeURIComponent(platform)}`);
+  },
+
+  updateCallResult: (
+    postId: string,
+    payload: {
+      result_code: string;
+      platform?: string;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+export const crawlKeywordsService = {
+  listExcludeKeywords: (platform?: string, status: string = "active"): Promise<ApiResponse<any[]>> => {
+    const params = new URLSearchParams();
+    if (platform) params.set("platform", platform);
+    if (status) params.set("status", status);
+    const qs = params.toString();
+    return requestJson(`${BASE}/crawl-keywords/exclude${qs ? `?${qs}` : ""}`);
+  },
+
+  createExcludeKeyword: (payload: {
+    keyword: string;
+    platform?: string | null;
+    status?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/exclude`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteExcludeKeyword: (id: string): Promise<ApiResponse<{ deleted: number }>> => {
+    return requestJson(`${BASE}/crawl-keywords/exclude/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  },
+
+  createProposal: (payload: {
+    keyword: string;
+    reason?: string;
+    source_post_id?: string;
+    platform?: string;
+  }): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listProposals: (status: string = "pending"): Promise<ApiResponse<any[]>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals?status=${encodeURIComponent(status)}`);
+  },
+
+  approveProposal: (id: string): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/${encodeURIComponent(id)}/approve`, {
+      method: "POST",
+    });
+  },
+
+  rejectProposal: (id: string, reason?: string): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/${encodeURIComponent(id)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason }),
+    });
+  },
+
+  bulkApproveProposals: (proposalIds: string[]): Promise<ApiResponse<{ approved_count: number; failed_count: number }>> => {
+    return requestJson(`${BASE}/crawl-keywords/proposals/bulk-approve`, {
+      method: "POST",
+      body: JSON.stringify({ proposal_ids: proposalIds }),
+    });
+  },
+};
+
+
+// ── CRAWL SCHEDULE HISTORY (VÒNG CÀO TỪ LỊCH ĐA NỀN TẢNG) ────────────────────
+
+export const crawlScheduleHistoryService = {
+  getHistory: (payload?: {
+    email?: string;
+    id_member?: string;
+    time_range?: string;
+    specific_date?: string;
+    date_from?: string;
+    date_to?: string;
+    limit?: number;
+  }): Promise<ApiResponse<CrawlScheduleHistoryData>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/history`, {
+      method: "POST",
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  recordRound: (payload: Record<string, unknown>): Promise<ApiResponse<{ success: boolean; round: unknown }>> => {
+    return requestJson(`${BASE}/unified/crawl-schedule/record-round`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+};
+
+
+// ── KEYWORDS LIBRARY ──────────────────────────────────────────────────────────
+
+export interface KeywordTopic {
+  id: string;
+  name: string;
+  code?: string;
+  description?: string;
+  app_user_id?: string;
+  creator_name: string;
+  creator_email: string;
+  creator_avatar?: string;
+  keywords_count: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface KeywordItem {
+  id: string;
+  topic_id: string;
+  keyword: string;
+  description?: string;
+  app_user_id?: string;
+  contributor_name: string;
+  contributor_email: string;
+  created_at: string;
+}
+
+export const allPlatformKeywordsService = {
+  getTopics: (): Promise<ApiResponse<KeywordTopic[]>> => {
+    return requestJson<KeywordTopic[]>(`${BASE}/keywords-library/topics`);
+  },
+
+  createTopic: (payload: {
+    name: string;
+    description?: string;
+    initial_keywords?: string[];
+  }): Promise<ApiResponse<KeywordTopic>> => {
+    return requestJson(`${BASE}/keywords-library/topics`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  deleteTopic: (topicId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}`, {
+      method: "DELETE",
+    });
+  },
+
+  getKeywordsInTopic: (topicId: string): Promise<ApiResponse<KeywordItem[]>> => {
+    return requestJson<KeywordItem[]>(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`);
+  },
+
+  addKeywords: (
+    topicId: string,
+    keywords: string[]
+  ): Promise<ApiResponse<{ added_count: number; total_attempted: number }>> => {
+    return requestJson(`${BASE}/keywords-library/topics/${encodeURIComponent(topicId)}/keywords`, {
+      method: "POST",
+      body: JSON.stringify({ keywords }),
+    });
+  },
+
+  deleteKeyword: (keywordId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/keywords-library/keywords/${encodeURIComponent(keywordId)}`, {
+      method: "DELETE",
+    });
+  },
+};
+
+
+// ── ROTATION CRAWL SCHEDULES (RBAC + CREATOR IDENTITY) ────────────────────────
+
+export interface RotationScheduleCreator {
+  user_id?: string;
+  name: string;
+  email: string;
+  role?: string;
+  avatar?: string;
+  is_system?: boolean;
+}
+
+export interface BackendRotationSchedule {
+  id: string;
+  label: string;
+  cfg: any;
+  enabled: boolean;
+  status: string;
+  currentStage?: string | null;
+  roundNumber?: number;
+  nextRunAt?: number | null;
+  lastRoundSummary?: { roundNumber: number; totalSaved: number; at: number } | null;
+  lastError?: string | null;
+  createdAt?: number;
+  creator?: RotationScheduleCreator;
+}
+
+export const allPlatformRotationSchedulesService = {
+  getSchedules: (): Promise<ApiResponse<BackendRotationSchedule[]>> => {
+    return requestJson<BackendRotationSchedule[]>(`${BASE}/rotation-schedules`);
+  },
+
+  syncSchedules: (schedules: any[]): Promise<ApiResponse<{ synced_count: number; total: number }>> => {
+    return requestJson(`${BASE}/rotation-schedules/sync`, {
+      method: "POST",
+      body: JSON.stringify({ schedules }),
+    });
+  },
+
+  saveSchedule: (schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules`, {
+      method: "POST",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
+  updateSchedule: (scheduleId: string, schedule: any): Promise<ApiResponse<BackendRotationSchedule>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ schedule }),
+    });
+  },
+
+  toggleSchedule: (scheduleId: string, enabled: boolean): Promise<ApiResponse<{ id: string; enabled: boolean }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}/toggle`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
+  },
+
+  deleteSchedule: (scheduleId: string): Promise<ApiResponse<{ deleted: boolean; id: string }>> => {
+    return requestJson(`${BASE}/rotation-schedules/${encodeURIComponent(scheduleId)}`, {
+      method: "DELETE",
+    });
+  },
+};

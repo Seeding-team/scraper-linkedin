@@ -33,6 +33,7 @@ export type MaterialSymbolName =
   | "group_add"
   | "person_add"
   | "calendar_month"
+  | "schedule"
   | "assignment"
   | "speed"
   | "database"
@@ -129,7 +130,19 @@ export type MaterialSymbolName =
   // Sidebar CRM: "Cơ hội" (Pipeline/Kanban) — thêm mới cho việc đổi nhãn mục
   // /all-platform/crm từ "CRM" sang "Cơ hội" kèm icon phễu, phân biệt với
   // "Leads" (person_add) và các icon còn lại trong nhóm Quản lý CRM.
-  | "filter_alt";
+  | "filter_alt"
+  | "bookmark_add"
+  | "folder_kanban"
+  | "package"
+  | "library_books"
+  | "folder_copy"
+  | "account_tree"
+  | "plug"
+  // Zalo chat: trả lời / chuyển tiếp tin nhắn + huỷ kết quả chuyển tiếp thất bại.
+  | "reply"
+  | "forward"
+  | "cancel"
+  | "folder_shared";
 
 export interface MaterialIconProps {
   name: MaterialSymbolName;

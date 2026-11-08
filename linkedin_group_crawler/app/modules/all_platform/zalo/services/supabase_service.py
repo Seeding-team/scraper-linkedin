@@ -83,7 +83,8 @@ async def _rest(
 async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
     """Tra cứu zalo_groups để xác định thread_type.
 
-    - Nếu group có is_friend=true → type 0 (cá nhân).
+    - Nếu group có is_friend=true hoặc thread_type in ('direct', 'user') → type 0 (cá nhân/người lạ).
+    - Nếu thread_type == 'group' → type 1 (nhóm).
     - Mặc định type 1 (nhóm) nếu không xác định được.
     """
     try:
@@ -91,14 +92,19 @@ async def resolve_thread_type(account_id: str, conversation_id: str) -> int:
             "GET",
             "zalo_groups",
             params={
-                "select": "is_friend",
+                "select": "is_friend,thread_type",
                 "user_id": f"eq.{account_id}",
                 "group_id": f"eq.{conversation_id}",
                 "limit": "1",
             },
         ) or []
-        if rows and rows[0].get("is_friend"):
-            return 0  # Cá nhân (friend/stranger chat)
+        if rows:
+            r = rows[0]
+            tt = str(r.get("thread_type") or "").strip().lower()
+            if tt in ("direct", "user") or r.get("is_friend"):
+                return 0  # Cá nhân (friend hoặc người lạ/stranger chat)
+            if tt == "group":
+                return 1  # Nhóm chat
     except Exception:
         pass
     return 1  # Nhóm chat
@@ -176,13 +182,32 @@ async def delete_storage_objects(paths: List[str]) -> None:
         raise RuntimeError(f"Supabase storage delete failed: {response.status_code} {response.text}")
 
 
-async def _download_image(source_url: str) -> Tuple[bytes, str, str]:
+def _guess_extension(content_type: str, filename_hint: Optional[str] = None, *, default: str = ".bin") -> str:
+    """Đoán extension từ content-type, ưu tiên extension THẬT của filename_hint
+    (tên file Zalo trả về cho share.file/video/voice) nếu content-type generic
+    (application/octet-stream — HTTP server nhiều khi không set đúng loại).
+    Trước đây fallback cứng ".jpg" cho MỌI loại không đoán được — sai hoàn
+    toàn với file/video/voice (huỷ luôn phần mở rộng thật, user tải về không
+    mở được), giờ chỉ fallback ".jpg" khi content-type xác nhận là ảnh."""
+    ext = mimetypes.guess_extension(content_type)
+    if ext:
+        return ext
+    if filename_hint:
+        hint_ext = posixpath.splitext(filename_hint)[1]
+        if hint_ext and len(hint_ext) <= 10:
+            return hint_ext
+    if content_type.startswith("image/"):
+        return ".jpg"
+    return default
+
+
+async def _download_image(source_url: str, filename_hint: Optional[str] = None) -> Tuple[bytes, str, str]:
     if source_url.startswith("data:image/"):
         header, _, payload = source_url.partition(",")
         if not payload or ";base64" not in header:
             raise RuntimeError("Unsupported data URL image format")
         content_type = header.removeprefix("data:").split(";")[0] or "image/jpeg"
-        ext = mimetypes.guess_extension(content_type) or ".jpg"
+        ext = _guess_extension(content_type, filename_hint)
         return base64.b64decode(payload), content_type, ext
 
     async with _http_client(timeout=60, follow_redirects=True) as client:
@@ -190,7 +215,7 @@ async def _download_image(source_url: str) -> Tuple[bytes, str, str]:
     if response.status_code >= 400:
         raise RuntimeError(f"Image download failed: HTTP {response.status_code}")
     content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
-    ext = mimetypes.guess_extension(content_type) or ".jpg"
+    ext = _guess_extension(content_type, filename_hint)
     return response.content, content_type, ext
 
 
@@ -229,6 +254,14 @@ def _listener_message_payload(user_id: str, group_id: str, group_name: str, msg:
         "is_sent": msg.is_sent,
         "is_deleted": msg.is_deleted,
         "updated_at": datetime.utcnow().isoformat(),
+        # Zalo tập trung (Mục 7.1 guide) — ghi qua RPC fn_bulk_save_zalo_messages
+        # (migration 128) hoặc REST fallback trực tiếp (cột đã có từ migration 127).
+        "ts": msg.ts,
+        "raw_content": msg.raw_content,
+        "mentions": [m.model_dump() for m in msg.mentions] if msg.mentions else None,
+        "cli_msg_id": msg.cli_msg_id,
+        "msg_kind": msg.msg_kind,
+        "reply_to_id": msg.reply_to_id,
     }
 
 
@@ -250,6 +283,12 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
         image_urls=list(dict.fromkeys(image_urls)),
         is_deleted=bool(row.get("is_deleted")),
         is_sent=bool(row.get("is_sent")),
+        ts=row.get("ts"),
+        cli_msg_id=row.get("cli_msg_id") or None,
+        mentions=row.get("mentions") or [],
+        msg_kind=row.get("msg_kind") or None,
+        raw_content=row.get("raw_content") or None,
+        reply_to_id=row.get("reply_to_id") or None,
     )
 
 
@@ -327,6 +366,7 @@ async def upsert_group(
     last_sender_name: Optional[str] = None,
     last_message_type: Optional[str] = None,
     is_friend: Optional[bool] = None,
+    thread_type: Optional[str] = None,
 ) -> None:
     resolved_name = group_name
     if group_name and (group_name.startswith("Conversation ") or group_name.isdigit() or group_name == group_id):
@@ -371,6 +411,8 @@ async def upsert_group(
         payload["last_message_type"] = last_message_type
     if is_friend is not None:
         payload["is_friend"] = is_friend
+    if thread_type is not None:
+        payload["thread_type"] = thread_type
 
     await _rest(
         "POST",
@@ -485,7 +527,7 @@ async def save_crawl_messages(user_id: str, job: JobData, group_id: str, message
                 source_msg_id = str(row.get("source_message_id") or "").strip()
                 original_msg = msg_by_source_id.get(source_msg_id)
                 if original_msg and original_msg.image_urls:
-                    asset_stats = await save_message_assets(message_uuid, user_id, job.job_id, original_msg.image_urls)
+                    asset_stats = await save_message_assets(message_uuid, user_id, job.job_id, original_msg.image_urls, filename_hint=original_msg.content)
                     uploaded_images += asset_stats["uploaded"]
                     failed_images += asset_stats["failed"]
         except Exception as exc:
@@ -514,6 +556,11 @@ async def upsert_zalo_account(
     is_active: bool = True,
     id_member: Optional[str] = None,
     is_shared_with_all: Optional[bool] = None,
+    owner_name: Optional[str] = None,
+    sim_location: Optional[str] = None,
+    sim_location_detail: Optional[str] = None,
+    assigned_domains: Optional[List[str]] = None,
+    assigned_groups: Optional[List[str]] = None,
 ) -> None:
     if not is_supabase_configured():
         return
@@ -535,6 +582,16 @@ async def upsert_zalo_account(
         payload["id_member"] = id_member
     if is_shared_with_all is not None:
         payload["is_shared_with_all"] = is_shared_with_all
+    if owner_name is not None:
+        payload["owner_name"] = owner_name
+    if sim_location is not None:
+        payload["sim_location"] = sim_location
+    if sim_location_detail is not None:
+        payload["sim_location_detail"] = sim_location_detail
+    if assigned_domains is not None:
+        payload["assigned_domains"] = assigned_domains
+    if assigned_groups is not None:
+        payload["assigned_groups"] = assigned_groups
     if status == "confirmed":
         payload["last_login_at"] = now
 
@@ -670,6 +727,10 @@ async def _hard_delete_zalo_account_data_fallback(account_id: str) -> Dict[str, 
 # Realtime: phân quyền user/role + share conversation
 # ----------------------------------------------------------------------------
 
+_USER_BY_EMAIL_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_USER_BY_EMAIL_CACHE_TTL = 60.0  # 60 giây
+
+
 async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     """Tra cứu ``public.app_users`` theo email (case-insensitive).
 
@@ -679,11 +740,18 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     Lưu ý: bảng ``app_users`` nằm ngoài schema zalo, có thể chưa được tạo trên
     một số môi trường. Hàm fail-soft trả về ``None`` thay vì raise.
     """
+    import time
+    import copy
     if not is_supabase_configured():
         return None
-    email_norm = (email or "").strip()
+    email_norm = (email or "").strip().lower()
     if not email_norm:
         return None
+    cached = _USER_BY_EMAIL_CACHE.get(email_norm)
+    if cached:
+        c_time, c_user = cached
+        if (time.time() - c_time) < _USER_BY_EMAIL_CACHE_TTL:
+            return copy.deepcopy(c_user)
     try:
         rows = await _rest(
             "GET",
@@ -704,6 +772,7 @@ async def get_app_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     row = rows[0]
     if not isinstance(row, dict):
         return None
+    _USER_BY_EMAIL_CACHE[email_norm] = (time.time(), copy.deepcopy(row))
     return row
 
 
@@ -1104,7 +1173,7 @@ async def save_listener_messages(
                 source_msg_id = str(row.get("source_message_id") or "").strip()
                 original_msg = msg_by_source_id.get(source_msg_id)
                 if original_msg and original_msg.image_urls:
-                    asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls)
+                    asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls, filename_hint=original_msg.content)
                     uploaded_images += asset_stats["uploaded"]
                     failed_images += asset_stats["failed"]
             
@@ -1153,7 +1222,7 @@ async def save_listener_messages(
                     source_msg_id = str(row.get("source_message_id") or "").strip()
                     original_msg = msg_by_source_id.get(source_msg_id)
                     if original_msg and original_msg.image_urls:
-                        asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls)
+                        asset_stats = await save_message_assets(message_uuid, user_id, None, original_msg.image_urls, filename_hint=original_msg.content)
                         uploaded_images += asset_stats["uploaded"]
                         failed_images += asset_stats["failed"]
         except Exception as exc:
@@ -1235,6 +1304,8 @@ async def save_message_assets(
     user_id: str,
     job_id: Optional[str],
     source_urls: Iterable[str],
+    *,
+    filename_hint: Optional[str] = None,
 ) -> Dict[str, int]:
     stats = {"uploaded": 0, "failed": 0}
     existing_assets = {}
@@ -1262,7 +1333,7 @@ async def save_message_assets(
         if source_url.startswith("data:image/"):
             # Normalize data URL structure to match source_url_ref hash check
             try:
-                content, content_type, ext = await _download_image(source_url)
+                content, content_type, ext = await _download_image(source_url, filename_hint)
                 source_url_ref = f"data:{content_type};sha256={hashlib.sha256(content).hexdigest()}"
             except Exception:
                 pass
@@ -1275,7 +1346,7 @@ async def save_message_assets(
             error = "Blob URL is browser-local and cannot be persisted after crawl"
         else:
             try:
-                content, content_type, ext = await _download_image(source_url)
+                content, content_type, ext = await _download_image(source_url, filename_hint)
                 if source_url.startswith("data:image/"):
                     source_url_ref = f"data:{content_type};sha256={hashlib.sha256(content).hexdigest()}"
                 storage_path = posixpath.join(
@@ -1411,7 +1482,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             "select": (
                 "group_id,group_name,avatar_url,unread_count,updated_at,"
                 "last_message_at,last_message_content,last_sender_id,"
-                "last_sender_name,last_message_type,is_pinned"
+                "last_sender_name,last_message_type,is_pinned,tag"
             ),
             "user_id": f"eq.{user_id}",
             "order": "is_pinned.desc,last_message_at.desc,updated_at.desc",
@@ -1434,6 +1505,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
                 "last_sender_name": g.get("last_sender_name"),
                 "last_message_type": g.get("last_message_type"),
                 "is_pinned": bool(g.get("is_pinned")),
+                "tag": g.get("tag"),
             }
             if g_name:
                 group_name_to_id[g_name.lower()] = g_id
@@ -1478,11 +1550,12 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             not raw_group_name
             or raw_group_name == conversation_id
             or raw_group_name == f"Conversation {conversation_id}"
+            or raw_group_name.lower() in {"markee", "zalo", "user", "dm", "me", "__me__"}
         )
         usable_sender_name = (
             bool(sender_name)
             and not row.get("is_sent")
-            and sender_name.lower() not in {"__me__", "me", "ban", "bạn"}
+            and sender_name.lower() not in {"__me__", "me", "ban", "bạn", "markee"}
         )
         conversation_name = (
             sender_name
@@ -1508,6 +1581,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
                 "unread_count": group_info.get(conversation_id, {}).get("unread_count", 0),
                 "updated_at": group_info.get(conversation_id, {}).get("updated_at"),
                 "is_pinned": group_info.get(conversation_id, {}).get("is_pinned", False),
+                "tag": group_info.get(conversation_id, {}).get("tag"),
             },
         )
         if is_fallback_name and usable_sender_name:
@@ -1548,6 +1622,7 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             "unread_count": int(group.get("unread_count") or 0),
             "updated_at": group.get("updated_at"),
             "is_pinned": bool(group.get("is_pinned")),
+            "tag": group.get("tag"),
         }
 
     # 4. Overlay metadata chính xác từ zalo_groups (last_message_at thật của tin nhắn).
@@ -1564,6 +1639,8 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             if info.get("last_sender_name"):
                 conv["latest_sender_name"] = info.get("last_sender_name")
         conv["is_pinned"] = info.get("is_pinned", conv.get("is_pinned", False))
+        if info.get("tag"):
+            conv["tag"] = info.get("tag")
 
     def _sort_key(item: Dict[str, Any]):
         real_ms = _parse_to_millis(item.get("latest_message_at"))
@@ -1576,6 +1653,24 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
         )
 
     return sorted(conversations.values(), key=_sort_key, reverse=True)
+
+
+def _message_sort_millis(row: Dict[str, Any]) -> int:
+    return (
+        _parse_to_millis(row.get("timestamp_text"))
+        or _parse_to_millis(row.get("time_text"))
+        or _parse_to_millis(row.get("created_at"))
+    )
+
+
+def _sort_messages_oldest_first(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(
+        rows,
+        key=lambda row: (
+            _message_sort_millis(row),
+            str(row.get("source_message_id") or row.get("id") or ""),
+        ),
+    )
 
 
 async def list_conversation_messages(
@@ -1609,8 +1704,7 @@ async def list_conversation_messages(
         total_count = int(data.get("total_count") or 0)
         
         hydrated_rows = await hydrate_message_groups_from_jobs(user_id, messages_list)
-        hydrated_rows.reverse()
-        return hydrated_rows, total_count
+        return _sort_messages_oldest_first(hydrated_rows), total_count
     except Exception as exc:
         logger.info(f"fn_get_zalo_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
         return await _list_conversation_messages_fallback(user_id, conversation_id, limit, offset)
@@ -1768,8 +1862,46 @@ async def _list_conversation_messages_fallback(
 
     rows, total = await _rest_with_count("zalo_messages", params=query_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
-    hydrated_rows.reverse()
-    return hydrated_rows, total
+    return _sort_messages_oldest_first(hydrated_rows), total
+
+
+async def search_conversation_messages(
+    user_id: str,
+    conversation_id: str,
+    keyword: str,
+    *,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Tìm tin nhắn cũ chứa `keyword` (không phân hoa/thường) TRONG 1 hội
+    thoại cụ thể (1 người hoặc 1 nhóm) — vd tìm "Leo" trong nhóm KẾ TOÁN -
+    VẬN HÀNH DENFOOD. ILIKE trên `content`, luôn kèm user_id+group_id nên
+    chỉ scan trong đúng hội thoại đó (đã có index idx_zalo_messages_lookup
+    trên (user_id, group_id, source_message_id) làm hẹp phạm vi trước khi
+    ILIKE, không cần thêm index full-text riêng).
+    """
+    if not is_supabase_configured():
+        return []
+    safe_limit = max(1, min(limit, 200))
+    # Escape ký tự đặc biệt của ILIKE ("%", "_") để tìm ĐÚNG chuỗi người dùng
+    # nhập, không bị hiểu nhầm thành wildcard (vd tìm "50%" không match mọi
+    # nội dung dài >= 1 ký tự vì "%" là wildcard trần trong ILIKE).
+    escaped = keyword.strip().replace("%", "\\%").replace("_", "\\_")
+    if not escaped:
+        return []
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,is_sent,created_at,reply_to_id",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id}",
+            "is_deleted": "eq.false",
+            "content": f"ilike.*{escaped}*",
+            "order": "timestamp_text.desc,created_at.desc",
+            "limit": str(safe_limit),
+        },
+    ) or []
+    return rows
 
 
 def group_summaries_from_message_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -2263,5 +2395,110 @@ async def mark_conversation_as_read(user_id: str, group_id: str) -> None:
             "unread_count": 0,
             "updated_at": datetime.utcnow().isoformat(),
         },
+    )
+
+
+async def set_zalo_message_reaction(
+    user_id: str,
+    group_id: str,
+    source_message_id: str,
+    reactor_uid: str,
+    icon: Optional[str],
+) -> Dict[str, str]:
+    """Thả/đổi/bỏ cảm xúc cho 1 tin — mỗi người chỉ có 1 icon/tin (giống Zalo
+    thật, đổi thì thay icon cũ). `icon=None` để bỏ reaction.
+
+    Cột `reactions` (migration 138) chưa có RPC merge riêng — tự GET rồi PATCH
+    lại nguyên cột (không atomic, nhưng đây không phải dữ liệu cần ACID chặt:
+    2 reaction cùng lúc trên cùng 1 tin, tệ nhất 1 cái bị đè, tự "sửa" ở lần
+    react tiếp theo). Nếu cột `reactions` chưa tồn tại (chưa áp migration 138),
+    _rest sẽ raise — caller (route) tự bắt và coi là "chưa hỗ trợ lưu", không
+    chặn việc GỬI reaction thật lên Zalo.
+
+    Trả về map reactions MỚI (sau khi merge) để caller trả thẳng cho FE, khỏi
+    phải GET lại.
+    """
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "id,reactions",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{group_id}",
+            "source_message_id": f"eq.{source_message_id}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise RuntimeError(f"Message not found: {source_message_id}")
+
+    current = dict(rows[0].get("reactions") or {})
+    if icon:
+        current[reactor_uid] = icon
+    else:
+        current.pop(reactor_uid, None)
+
+    await _rest(
+        "PATCH",
+        "zalo_messages",
+        params={
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{group_id}",
+            "source_message_id": f"eq.{source_message_id}",
+        },
+        json={"reactions": current, "updated_at": datetime.utcnow().isoformat()},
+    )
+    return current
+
+
+# ── Zalo tập trung: RBAC theo tài khoản (zalo_account_assignments) ──────────
+# Thay cho "staff_zalo_assignments" của ZALO_CENTRALIZED_MODULE_GUIDE.md —
+# khoá theo app_users.id vì dùng chung SSO app chính, không có bảng staff riêng.
+
+async def list_account_assignments(account_id: str) -> List[Dict[str, Any]]:
+    if not is_supabase_configured():
+        return []
+    return await _rest(
+        "GET",
+        "zalo_account_assignments",
+        params={"account_id": f"eq.{account_id}", "select": "*", "order": "created_at.asc"},
+    ) or []
+
+
+async def upsert_account_assignment(
+    account_id: str,
+    app_user_id: str,
+    *,
+    can_view: bool = True,
+    can_send: bool = False,
+    can_broadcast: bool = False,
+) -> Dict[str, Any]:
+    if not is_supabase_configured():
+        raise SupabaseNotConfigured("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required")
+    now = datetime.utcnow().isoformat()
+    result = await _rest(
+        "POST",
+        "zalo_account_assignments",
+        params={"on_conflict": "app_user_id,account_id"},
+        json={
+            "account_id": account_id,
+            "app_user_id": app_user_id,
+            "can_view": can_view,
+            "can_send": can_send,
+            "can_broadcast": can_broadcast,
+            "updated_at": now,
+        },
+        prefer="resolution=merge-duplicates,return=representation",
+    )
+    return (result or [{}])[0] if isinstance(result, list) else (result or {})
+
+
+async def delete_account_assignment(account_id: str, app_user_id: str) -> None:
+    if not is_supabase_configured():
+        return
+    await _rest(
+        "DELETE",
+        "zalo_account_assignments",
+        params={"account_id": f"eq.{account_id}", "app_user_id": f"eq.{app_user_id}"},
     )
 

@@ -19,6 +19,20 @@ Cả 2 đã được sửa/bổ sung template bên dưới.
 
 ## Các bước
 
+### Test có tạo/sửa/import dữ liệu: bắt buộc dùng DB riêng
+
+Không điền credential production/dev dùng chung để test mutation. File `.env`
+được gitignore chỉ giúp không commit secret, **không** ngăn thao tác ghi vào DB thật.
+Các secret trong bước 2 phải thuộc môi trường test riêng nếu dùng để test nghiệp vụ.
+
+Môi trường Import Lead local: xem `local-test-db/README.md`. Backend yêu cầu
+`APP_ENV=test`, đúng hostname DB nội bộ và tắt toàn bộ worker; mạng Docker test
+không có outbound Internet. FE vẫn dùng `http://localhost:8080`.
+
+`linkedin_group_crawler/.env.test.example` và
+`linkedin_group_crawler/scratch/test_db_guard.py` là hướng dẫn guard cho các test
+integration khác: không fallback sang DB production, ghi marker và cleanup đúng ID.
+
 1. **Copy file cấu hình mẫu:**
 
    ```bash
@@ -62,3 +76,14 @@ Cả 2 đã được sửa/bổ sung template bên dưới.
 - Không commit `docker-compose.override.yml` (không phải bản `.example`) —
   file này khác nhau giữa máy local / host dev / host app (domain build-arg
   khác nhau), commit nhầm sẽ làm hỏng deploy thật ở lần sau.
+
+## AI Contract Copilot: xuất PDF cần LibreOffice trong Docker
+
+Backend xuất DOCX -> PDF bằng **LibreOffice Writer (`soffice`) có sẵn trong Docker image backend** (đã kèm font tiếng Việt:
+Liberation/Carlito/Caladea/DejaVu). Production và local dùng chung image này, nên **hãy chạy backend bằng Docker**
+(`docker compose up -d --build backend`), KHÔNG chạy `uvicorn` trực tiếp trên Windows và KHÔNG cài LibreOffice lên máy cá nhân.
+Chạy `uvicorn` trần trên Windows vẫn dùng được Copilot, nhưng PDF sẽ báo "chưa cài LibreOffice" (không có PDF thay thế).
+
+Kiểm tra engine: `curl http://localhost:8080/api/all-platform/contract-docs/health` (nhanh) hoặc `...?deep=true` (chuyển thử 1 DOCX tiếng Việt, cache 5 phút).
+HTTP 200 = dùng được, 503 = thiếu/hỏng. Biến tuỳ chọn: `CONTRACT_SOFFICE_TIMEOUT` (giây, mặc định 90), `CONTRACT_PDF_MAX_CONCURRENCY` (mặc định 2),
+`CONTRACT_SOFFICE_PATH`. Chi tiết: `docs/CONTRACT_PDF_ENGINE_DEPLOY_2026-10-09.md`.

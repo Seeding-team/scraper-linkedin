@@ -21,6 +21,7 @@ import {
 import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
+import { getTeamTypeLabel } from "@/lib/teamTypes";
 import { useDragAutoScroll } from "@/hooks/useDragAutoScroll";
 import type { ContractStatus, Customer, DealStage } from "@/services/customer-lead.service";
 import {
@@ -76,7 +77,7 @@ const CONTRACT_STATUS_META: Record<
 };
 
 function formatVND(value: number | null | undefined) {
-  if (!value) return null;
+  if (value == null) return null;
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",
@@ -239,7 +240,7 @@ function DealCard({
 }) {
   const stage = getCurrentStage(customer);
   const isUnpaid = customer.payment_status === "unpaid" || customer.payment_status === "partial";
-  const isUnpaidTerminal = (stage === "won" || stage === "lost") && isUnpaid;
+  const isUnpaidTerminal = stage === "won" && isUnpaid;
   const effectiveStage = isUnpaidTerminal ? "contract_sent" : stage;
   
   const overdue = isPaymentOverdue(customer);
@@ -261,6 +262,7 @@ function DealCard({
 
   return (
     <article
+      data-crm-customer-row="true"
       draggable
       onDragStart={(event) => {
         event.dataTransfer.setData("text/customer-id", customer.id);
@@ -268,12 +270,18 @@ function DealCard({
       }}
       onClick={onClick}
       className={cn(
-        "group flex cursor-grab flex-col rounded-xl border border-slate-200 p-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing",
+        "group relative flex cursor-grab flex-col overflow-hidden rounded-xl border border-slate-200 p-3 text-slate-800 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing",
         terminal ? "w-[280px]" : "w-full",
         isUnpaidTerminal ? "bg-amber-100 border-amber-300" : "bg-white",
         overdue && !isUnpaidTerminal && "border-amber-200 shadow-[0_4px_12px_rgba(245,158,11,0.16)]",
       )}
     >
+      {customer.team_type ? (
+        <div className="crm-team-ribbon" title={customer.team_name ? `Team: ${customer.team_name}` : undefined}>
+          {getTeamTypeLabel(customer.team_type)}
+        </div>
+      ) : null}
+
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h4 className="truncate text-sm font-bold text-slate-900" title={customer.customer_name}>
@@ -700,7 +708,7 @@ export function CrmKanbanBoard({
     customers.forEach((customer) => {
       let stage = getCurrentStage(customer);
       const isUnpaid = customer.payment_status === "unpaid" || customer.payment_status === "partial";
-      if ((stage === "won" || stage === "lost") && isUnpaid) {
+      if (stage === "won" && isUnpaid) {
         stage = "contract_sent";
       }
       groups[stage].push(customer);

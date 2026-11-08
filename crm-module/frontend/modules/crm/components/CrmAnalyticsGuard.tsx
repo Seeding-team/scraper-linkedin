@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { AnalyticsView } from "./AnalyticsView";
+import { hasFullCrmAccess } from "../constants/crmConfig";
 
 /**
  * Trang "/crm/analytics" ("Kết quả cuối cùng") trước đây KHÔNG có guard thật —
@@ -18,7 +19,7 @@ export function CrmAnalyticsGuard() {
 
   useEffect(() => {
     if (isLoading) return;
-    const allowed = user?.role === "admin" || user?.role === "leader" || Boolean(user?.is_sale);
+    const allowed = hasFullCrmAccess(user);
     if (allowed) {
       setAuthorized(true);
     } else {

@@ -5,16 +5,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import {
-  buildZaloJobEventsUrl,
   createZaloAccount,
   deleteAllZaloSessions,
   deleteZaloAccount,
   deleteZaloAccountFull,
   getDefaultZaloWorkerId,
   getZaloAccounts,
-  getZaloCrawledGroups,
   getZaloCurrentStatus,
-  getZaloWorkers,
   initZaloAuthSession,
   refreshZaloLoginQr,
   resumeZaloManualLogin,
@@ -164,9 +161,32 @@ export interface ZaloCrawlerFlowValue {
   switchWorker: (workerId: string) => void;
   switchAccount: (accountId: string) => void;
   refreshLoginStatus: () => Promise<void>;
-  createAccount: (label: string, phone?: string) => Promise<void>;
+  createAccount: (
+    label: string,
+    phone?: string,
+    extra?: {
+      owner_name?: string;
+      id_member?: string;
+      sim_location?: string;
+      sim_location_detail?: string;
+      domain_ids?: string[];
+      group_ids?: string[];
+    }
+  ) => Promise<void>;
   deleteAccount: (accountId: string, deleteAuth?: boolean) => Promise<void>;
-  updateAccount: (accountId: string, label: string, phone?: string) => Promise<void>;
+  updateAccount: (
+    accountId: string,
+    label: string,
+    phone?: string,
+    extra?: {
+      owner_name?: string;
+      id_member?: string;
+      sim_location?: string;
+      sim_location_detail?: string;
+      domain_ids?: string[];
+      group_ids?: string[];
+    }
+  ) => Promise<void>;
   startSession: () => Promise<void>;
   openManualScreen: () => Promise<void>;
   resumeManualLogin: () => Promise<void>;
@@ -449,6 +469,8 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
   const [isLoadingWorkers, setIsLoadingWorkers] = useState(true);
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<ZaloAccountInfo[]>([]);
+  const accountsRef = useRef<ZaloAccountInfo[]>([]);
+  accountsRef.current = accounts;
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(true);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const [isUserIdReady, setIsUserIdReady] = useState(false);
@@ -551,50 +573,28 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     };
   }, [clearAuthEventStream, clearAuthPolling, clearJobEventStream, clearJobPolling]);
 
+  // Đã bỏ gọi "/zalo/workers" (route pool Playwright đa-worker cũ, xoá trong
+  // lần port sang kiến trúc Zalo tập trung) — kiến trúc mới chạy 1 listener
+  // zca-js/tài khoản, không còn khái niệm "worker" nữa nên chỉ cần 1 giá trị
+  // mặc định tĩnh, không cần gọi API (tránh 404 lặp lại mỗi 30s).
   const loadWorkers = useCallback(async () => {
-    setIsLoadingWorkers(true);
-    setWorkersError(null);
-    try {
-      const response = await getZaloWorkers(userId);
-      const nextWorkers =
-        response.workers.length > 0
-          ? response.workers
-          : [
-              {
-                id: getDefaultZaloWorkerId(),
-                label: "Default",
-                status: "unknown",
-                is_default: true,
-                queue_state: "unknown",
-              },
-            ];
-      setWorkers(nextWorkers);
-
-      const availableIds = new Set(nextWorkers.map((worker) => worker.id));
-      const backendSelected = response.selected_worker_id ?? nextWorkers[0]?.id ?? getDefaultZaloWorkerId();
-      const nextSelected = availableIds.has(backendSelected)
-        ? backendSelected
-        : nextWorkers[0]?.id ?? getDefaultZaloWorkerId();
-      setSelectedWorkerIdState(nextSelected);
-    } catch (error) {
-      setWorkersError(error instanceof Error ? error.message : "Không thể tải danh sách account Zalo.");
-      setWorkers([
-        {
-          id: getDefaultZaloWorkerId(),
-          label: "Default",
-          status: "unknown",
-          is_default: true,
-          queue_state: "unknown",
-        },
-      ]);
-      setSelectedWorkerIdState(getDefaultZaloWorkerId());
-    } finally {
-      setIsLoadingWorkers(false);
-    }
-  }, [userId]);
+    setWorkers([
+      {
+        id: getDefaultZaloWorkerId(),
+        label: "Default",
+        status: "unknown",
+        is_default: true,
+        queue_state: "unknown",
+      },
+    ]);
+    setSelectedWorkerIdState(getDefaultZaloWorkerId());
+  }, []);
 
   const loadAccounts = useCallback(async () => {
-    setIsLoadingAccounts(true);
+    // SWR: Chỉ hiện spinner nếu danh sách đang rỗng, nếu đã có dữ liệu thì cập nhật ngầm không làm đơ UI
+    if (accountsRef.current.length === 0) {
+      setIsLoadingAccounts(true);
+    }
     setAccountsError(null);
     try {
       const ownerId = appUser?.id ?? "default";
@@ -605,7 +605,7 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     } finally {
       setIsLoadingAccounts(false);
     }
-  }, [appUser?.id]);
+  }, [appUser?.id, appUser?.email]);
 
   useEffect(() => {
     if (!isUserIdReady) return;
@@ -618,35 +618,12 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     return () => clearInterval(intervalId);
   }, [isUserIdReady, loadAccounts, loadWorkers]);
 
+  // Đã bỏ gọi "/zalo/groups/crawled" (kết quả crawl-job Google Sheet cũ, xoá
+  // trong lần port sang kiến trúc Zalo tập trung — không còn tính năng crawl
+  // nhóm theo job nữa) — giữ state rỗng tĩnh, không gọi API (tránh 404).
   const loadCrawledGroups = useCallback(async () => {
-    if (!isUserIdReady) return;
-
-    setIsLoadingCrawledGroups(true);
-    setCrawledGroupsError(null);
-
-    try {
-      const response: ZaloCrawledGroupsResponse = await getZaloCrawledGroups(userId);
-      setCrawledGroups(response.groups ?? []);
-      setCrawledGroupsSheetUrl(response.sheet_url ?? null);
-      setCrawledGroupsTotal(response.total_groups ?? response.groups?.length ?? 0);
-    } catch (error) {
-      setCrawledGroupsError(
-        error instanceof Error
-          ? `${MSG_LOAD_CRAWLED_GROUPS_ERROR} ${error.message}`
-          : MSG_LOAD_CRAWLED_GROUPS_ERROR,
-      );
-    } finally {
-      setIsLoadingCrawledGroups(false);
-    }
-  }, [isUserIdReady, userId]);
-
-  useEffect(() => {
-    const timerId = setTimeout(() => {
-      void loadCrawledGroups();
-    }, 0);
-
-    return () => clearTimeout(timerId);
-  }, [loadCrawledGroups]);
+    // no-op — tính năng đã bỏ, xem comment phía trên.
+  }, []);
 
   const resetAuthState = useCallback(() => {
     setSessionId(null);
@@ -682,31 +659,50 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     setErrorMessage(null);
   }, [clearAuthEventStream, clearAuthPolling, clearJobEventStream, clearJobPolling, resetAuthState, userId]);
 
-  const createAccount = useCallback(async (label: string, phone?: string) => {
-    const cleanLabel = label.trim();
-    if (!cleanLabel) {
-      setErrorMessage("Nhập tên tài khoản Zalo trước.");
-      return;
-    }
-    setAccountsError(null);
-    try {
-      const accountId = normalizeZaloUserId(cleanLabel);
-      const ownerId = appUser?.id ?? "default";
-      const response = await createZaloAccount({
-        account_id: accountId,
-        owner_id: ownerId,
-        id_member: appUser?.id,
-        label: cleanLabel,
-        phone: phone?.trim() || undefined,
-      });
-      await loadAccounts();
-      switchAccount(response.account_id || accountId);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : "Không thể tạo tài khoản Zalo.";
-      setAccountsError(msg);
-      setErrorMessage(msg);
-    }
-  }, [loadAccounts, switchAccount]);
+  const createAccount = useCallback(
+    async (
+      label: string,
+      phone?: string,
+      extra?: {
+        owner_name?: string;
+        id_member?: string;
+        sim_location?: string;
+        sim_location_detail?: string;
+        domain_ids?: string[];
+        group_ids?: string[];
+      }
+    ) => {
+      const cleanLabel = label.trim();
+      if (!cleanLabel) {
+        setErrorMessage("Nhập tên tài khoản Zalo trước.");
+        return;
+      }
+      setAccountsError(null);
+      try {
+        const accountId = normalizeZaloUserId(cleanLabel);
+        const ownerId = appUser?.id ?? "default";
+        const response = await createZaloAccount({
+          account_id: accountId,
+          owner_id: ownerId,
+          id_member: extra?.id_member || appUser?.id,
+          label: cleanLabel,
+          phone: phone?.trim() || undefined,
+          owner_name: extra?.owner_name,
+          sim_location: extra?.sim_location || "owner",
+          sim_location_detail: extra?.sim_location_detail,
+          domain_ids: extra?.domain_ids,
+          group_ids: extra?.group_ids,
+        });
+        await loadAccounts();
+        switchAccount(response.account_id || accountId);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Không thể tạo tài khoản Zalo.";
+        setAccountsError(msg);
+        setErrorMessage(msg);
+      }
+    },
+    [appUser?.id, loadAccounts, switchAccount]
+  );
 
   const deleteAccount = useCallback(async (accountId: string, deleteAuth = false) => {
     const safeAccountId = normalizeZaloUserId(accountId);
@@ -723,24 +719,45 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     }
   }, [loadAccounts, switchAccount, userId]);
 
-  const updateAccount = useCallback(async (accountId: string, label: string, phone?: string) => {
-    const cleanLabel = label.trim();
-    if (!cleanLabel) {
-      setErrorMessage("Nhập tên tài khoản Zalo trước.");
-      return;
-    }
-    setAccountsError(null);
-    try {
-      const safeAccountId = normalizeZaloUserId(accountId);
-      await updateZaloAccount(safeAccountId, {
-        label: cleanLabel,
-        phone: phone?.trim() || undefined,
-      });
-      await loadAccounts();
-    } catch (error) {
-      setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
-    }
-  }, [loadAccounts]);
+  const updateAccount = useCallback(
+    async (
+      accountId: string,
+      label: string,
+      phone?: string,
+      extra?: {
+        owner_name?: string;
+        id_member?: string;
+        sim_location?: string;
+        sim_location_detail?: string;
+        domain_ids?: string[];
+        group_ids?: string[];
+      }
+    ) => {
+      const cleanLabel = label.trim();
+      if (!cleanLabel) {
+        setErrorMessage("Nhập tên tài khoản Zalo trước.");
+        return;
+      }
+      setAccountsError(null);
+      try {
+        const safeAccountId = normalizeZaloUserId(accountId);
+        await updateZaloAccount(safeAccountId, {
+          label: cleanLabel,
+          phone: phone?.trim() || undefined,
+          owner_name: extra?.owner_name,
+          id_member: extra?.id_member,
+          sim_location: extra?.sim_location,
+          sim_location_detail: extra?.sim_location_detail,
+          domain_ids: extra?.domain_ids,
+          group_ids: extra?.group_ids,
+        });
+        await loadAccounts();
+      } catch (error) {
+        setAccountsError(error instanceof Error ? error.message : "Không thể cập nhật tài khoản Zalo.");
+      }
+    },
+    [loadAccounts]
+  );
 
   const applyAuthStatus = useCallback((statusResponse: ZaloCurrentStatusResponse) => {
     setSessionId(statusResponse.session_id);
@@ -769,7 +786,7 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     }
     setWarningMessage(
       expired
-        ? "Phiên đăng nhập Zalo đã hết hạn. Vui lòng đăng nhập lại bằng mã QR."
+        ? "Phiên đăng nhập Zalo đã hết hạn hoặc bị đăng xuất. Vui lòng đăng nhập lại qua Chrome Extension."
         : null,
     );
   }, []);
@@ -880,39 +897,10 @@ export function useZaloCrawlerFlow(): ZaloCrawlerFlowValue {
     });
   }, []);
 
-  useEffect(() => {
-    if (!isUserIdReady) return;
-
-    if (typeof window === "undefined" || typeof EventSource === "undefined") {
-      return;
-    }
-
-    clearJobEventStream();
-    const eventSource = new EventSource(buildZaloJobEventsUrl(userId), {
-      withCredentials: true,
-    });
-    jobEventSourceRef.current = eventSource;
-
-    const onJobStatus = (event: Event) => {
-      try {
-        const messageEvent = event as MessageEvent;
-        const data = JSON.parse(messageEvent.data) as ZaloJobData;
-        applyRemoteJob(data);
-      } catch {
-        // ignore malformed payload
-      }
-    };
-
-    eventSource.addEventListener("job-status", onJobStatus);
-    eventSource.onerror = () => {
-      // keep polling fallback active
-    };
-
-    return () => {
-      eventSource.removeEventListener("job-status", onJobStatus);
-      clearJobEventStream();
-    };
-  }, [applyRemoteJob, clearJobEventStream, isUserIdReady, userId]);
+  // Đã bỏ SSE "/zalo/jobs/events" (route crawl-job cũ, xoá trong lần port sang
+  // kiến trúc Zalo tập trung — xem ZALO_CENTRALIZED_MODULE_GUIDE.md) — trước đây
+  // effect này mở EventSource vô điều kiện mỗi lần mount, gây 404 lặp lại liên
+  // tục dù tính năng "jobs" (crawl-job) không còn UI nào tạo job mới cả.
 
   const pollRunningJobs = useCallback(async () => {
     const activeJobIds = activeJobIdsRef.current;

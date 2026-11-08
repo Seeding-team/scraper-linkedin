@@ -13,3 +13,5 @@ export default async function CrmCustomerDetailRoute({
     </Suspense>
   );
 }
+
+// HMR Touch 1790529500.0000000

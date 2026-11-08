@@ -44,6 +44,9 @@ ACTION_TYPES = (
 class InternalEngagementActionRecordRequest(BaseModel):
     email_member: str
     link_post: str | None = ""
+    link_comment: str | None = None
+    comment_id: str | None = None
+    facebook_name: str | None = None
     fanpage_id: str | None = ""
     fanpage_name: str | None = None
     facebook_post_id: str | None = None
@@ -118,6 +121,9 @@ class AddCustomPostRequest(BaseModel):
     likes: int | None = None
     comments: int | None = None
     shares: int | None = None
+    # "internal" (mac dinh, bai cua chinh cong ty) | "external" (bai cua
+    # doi tac/khach hang/nguon ngoai - tab "Seeding ben ngoai").
+    scope: str | None = None
 
 
 class DebugFetchMetaRequest(BaseModel):

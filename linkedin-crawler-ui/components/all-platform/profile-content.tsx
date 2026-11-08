@@ -561,10 +561,10 @@ export function ProfileContent() {
 
               <div className="flex items-center justify-between gap-4 rounded-xl border border-outline-variant p-4">
                 <div className="min-w-0 space-y-1">
-                  <div className="text-xs font-bold text-on-surface">LinkedIn Group Post Crawler</div>
+                  <div className="text-xs font-bold text-on-surface">Markee Seeding Extension (Facebook + LinkedIn)</div>
                   <p className="text-[11px] text-on-surface-variant leading-normal">
-                    Cào bài viết theo Group, lấy nội dung/tương tác 1 bài viết và comment tự động
-                    cho tính năng &quot;Tương tác nội bộ&quot; (LinkedIn).
+                    1 extension gộp: cào bài viết theo Group và bình luận hàng loạt cho Facebook &amp;
+                    LinkedIn, lấy nội dung/tương tác 1 bài viết cho &quot;Tương tác nội bộ&quot;.
                   </p>
                   <div className="flex items-center gap-2 pt-1">
                     {isLiExtensionReady === null ? (
@@ -589,7 +589,7 @@ export function ProfileContent() {
                   </div>
                 </div>
                 <a
-                  href="/linkedin-group-crawler-extension.zip"
+                  href="/comment-extension.zip"
                   download
                   className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary hover:bg-on-primary-fixed-variant text-white text-xs font-bold transition-all active:scale-95 shadow-sm"
                 >

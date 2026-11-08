@@ -2,20 +2,23 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { allPlatformCategoriesService } from '@/services/all-platform.service';
 import { useMembers } from '@/hooks/useMembers';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { SOURCE_OPTIONS } from '../constants/crmConfig';
-import { mergeCategoryOptions } from '../hooks/useCrm';
 import { PositionSelect } from './PositionSelect';
+import { MemberSearchSelect } from './MemberSearchSelect';
+import { CrmCategoryCodeSelect, fetchCrmCategoryIdOptions } from './CrmCategorySelect';
 import { mapLead, LEAD_STATUS_LABEL } from './LeadsDirectory';
+import { getSourceLabel } from './DealFormFields';
+import { LEAD_SOURCE_EXCLUDED_VALUES } from '../constants/crmConfig';
 import { ChevronDown, ChevronUp, Loader2, X } from './icons';
+import { crmTeamsService, usersService, type CrmTeam } from '@/services/all-platform.service';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
 type FormState = {
   leadName: string;
   companyName: string;
+  taxCode: string;
   positionCategoryId: string;
   positionLabel: string;
   phone: string;
@@ -27,13 +30,38 @@ type FormState = {
   source: string;
   sdrId: string;
   sdrLabel: string;
+  /** Team Sale nhận bàn giao (crm_leads.team_id -> crm_teams). */
+  teamId: string;
   note: string;
 };
 
-function emptyForm(currentUser: AppUser | null): FormState {
+function leadSourceDefaultStorageKey(user: AppUser | null) {
+  return `crm:lead-default-source:v1:${user?.id || user?.email || 'anonymous'}`;
+}
+
+function readLeadSourceDefault(currentUser: AppUser | null): string {
+  if (typeof window === 'undefined') return 'Manual';
+  try {
+    return window.localStorage.getItem(leadSourceDefaultStorageKey(currentUser)) || 'Manual';
+  } catch {
+    return 'Manual';
+  }
+}
+
+function saveLeadSourceDefault(currentUser: AppUser | null, source: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(leadSourceDefaultStorageKey(currentUser), source || 'Manual');
+  } catch {
+    // localStorage can be blocked/full; default preference is only a UX helper.
+  }
+}
+
+function emptyForm(currentUser: AppUser | null, defaultSource = 'Manual'): FormState {
   return {
     leadName: '',
     companyName: '',
+    taxCode: '',
     positionCategoryId: '',
     positionLabel: '',
     phone: '',
@@ -42,9 +70,10 @@ function emptyForm(currentUser: AppUser | null): FormState {
     facebook: '',
     telegram: '',
     website: '',
-    source: 'Manual',
+    source: defaultSource || 'Manual',
     sdrId: currentUser?.id || '',
     sdrLabel: currentUser?.name || currentUser?.email || '',
+    teamId: '',
     note: '',
   };
 }
@@ -60,10 +89,67 @@ function isAdminOrLeader(user: AppUser | null) {
   return role === 'admin' || role === 'leader';
 }
 
-// Regex don gian cho SDT VN (10 so, bat dau 0, hoac +84) va email - du dung cho
-// ban rule-based dau tien (khong goi AI/backend), theo dung yeu cau spec.
-const PHONE_RE = /(?:\+?84|0)(?:\d[\s.-]?){9,10}\b/;
+// Bat phone tu noi dung dan vao: chap nhan format VN pho bien, co khoang trang,
+// dau cham/gach/ngoac va dau so +84/84/0084.
+const PHONE_RE = /(?:\+?84|0084|0)(?:\D*\d){8,10}\b/;
+
+function normalizePhoneDigits(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\ufeff]/g, '')
+    .replace(/[^\d+]/g, ch => {
+      const code = ch.codePointAt(0) ?? 0;
+      if (code >= 0xff10 && code <= 0xff19) return String(code - 0xff10);
+      if (code >= 0x0660 && code <= 0x0669) return String(code - 0x0660);
+      if (code >= 0x06f0 && code <= 0x06f9) return String(code - 0x06f0);
+      return '';
+    });
+}
+
+function normalizePhoneInput(value: string): string {
+  let raw = normalizePhoneDigits(value);
+  const hasLeadingPlus = raw.trim().startsWith('+');
+  raw = `${hasLeadingPlus ? '+' : ''}${raw.replace(/\+/g, '')}`;
+
+  if (raw.startsWith('+84')) return `0${raw.slice(3)}`;
+  if (raw.startsWith('0084')) return `0${raw.slice(4)}`;
+  if (raw.startsWith('84') && raw.length >= 10 && raw.length <= 12) return `0${raw.slice(2)}`;
+  return raw;
+}
 const EMAIL_RE = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+// "Lỗi không nhập công ty với chức vụ nhanh" (yeu cau rieng, kem screenshot QA
+// that): handleParsePaste() TRUOC DAY chi doan duoc SDT/Email/Ten/Nguon, hoan
+// toan bo qua Cong ty va Chuc vu du 2 truong nay THUONG xuat hien ngay canh
+// ten nguoi trong 1 dong dan vao dien hinh (vd "Anh Nam, Giám đốc kinh doanh
+// công ty TNHH ABC Solutions"). Bat tu khoa cong ty/tap doan/doanh nghiep den
+// het dong (hoac den dau phay ke tiep) - du hep hon NLP that su nhung an toan,
+// khong doan mo ho (giong dung tinh than detectSourceFromPaste ben tren).
+const COMPANY_RE = /(công\s*ty|tập\s*đoàn|doanh\s*nghiệp|cty)\b[^\n,]*/i;
+
+/** Doan Chuc vu tu van ban dan vao bang cach doi chieu voi CHINH danh muc
+ * "crm_position" that (khong bia them 1 danh sach cung cung) - chon nhan dai
+ * NHAT khop lam substring cua van ban (khong phan biet hoa/thuong) de uu tien
+ * nhan cu the hon nhan chung chung neu ca 2 cung xuat hien (vd "Giám đốc kinh
+ * doanh" thay vi chi "Giám đốc"). Tra ve null neu khong khop nhan nao ca -
+ * KHONG tu bia 1 gia tri khong co trong danh muc (vi form luu id tham chieu
+ * that, khong phai text tu do). */
+async function detectPositionFromPaste(text: string): Promise<{ id: string; label: string } | null> {
+  try {
+    const options = await fetchCrmCategoryIdOptions('crm_position');
+    const lower = text.toLowerCase();
+    let best: { id: string; label: string } | null = null;
+    for (const option of options) {
+      const label = option.label?.trim();
+      if (!label) continue;
+      if (lower.includes(label.toLowerCase()) && (!best || label.length > best.label.length)) {
+        best = { id: option.value, label };
+      }
+    }
+    return best;
+  } catch {
+    return null;
+  }
+}
 
 /** Nhan dien "Nguon" tu noi dung dan vao (yeu cau rieng - "chỗ nguồn lead vẫn
  * chưa feed") - TRUOC DAY handleParsePaste() chi doan duoc SDT/Email/Ten,
@@ -88,8 +174,11 @@ function detectSourceFromPaste(text: string): string | null {
 // dong goi API duplicate-check hay khong (UX), khong thay the chuan hoa that
 // o backend (vn_phone_to_e164 / normalize_email trong crm_lead_service.py).
 function looksLikePhone(value: string): boolean {
-  const digits = value.replace(/\D/g, '');
-  return digits.length >= 9 && digits.length <= 12;
+  const phone = normalizePhoneInput(value);
+  const digits = phone.replace(/\D/g, '');
+  if (phone.startsWith('+')) return digits.length >= 8 && digits.length <= 15;
+  if (phone.startsWith('0')) return digits.length >= 9 && digits.length <= 11;
+  return digits.length >= 8 && digits.length <= 15;
 }
 function looksLikeEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/i.test(value.trim());
@@ -121,6 +210,8 @@ export function LeadFormDrawer({
   onSaved,
   onOpenQualification,
   onOpenExistingLead,
+  initialValues,
+  suppressAutoCloseOnSave = false,
 }: {
   open: boolean;
   currentUser: AppUser | null;
@@ -130,6 +221,21 @@ export function LeadFormDrawer({
   /** Mo lead da co (tim thay khi check trung) bang chinh co che mo Lead hien
    * huu dang dung o LeadsDirectory (LeadDetailDrawer) - khong dung lai. */
   onOpenExistingLead?: (lead: CrmLeadRow) => void;
+  /** Dien san tu nguon ben ngoai (vd nut "Tao lead" tren post card seeding
+   * bai tu dong - da co san SDT + ten Zalo do bot tim duoc, khong bat go lai
+   * tu dau). SDT/email van di qua dung luong check-trung nhu go tay. `email`/
+   * `companyName` them cho luong "+ Tao co hoi" tu Omnichannel Inbox (Lead-
+   * first khi conv chua lien ket CRM) - KHONG anh huong cac nguon prefill cu
+   * (optional, chua truyen van hoat dong nhu truoc). */
+  initialValues?: { phone?: string; email?: string; leadName?: string; companyName?: string; note?: string; source?: string };
+  /** Nut "Tao Lead" (mode 'create') tu goi onClose() ngay sau onSaved() (xem
+   * handleAction() ben duoi) - dung khi drawer nay la MAN HINH DUY NHAT. Khi
+   * nhung vao 1 wizard nhieu buoc (QuickCreateOpportunityFromInbox), onSaved
+   * da tu chuyen buoc trong wizard cha - goi them onClose() se dong NHAM ca
+   * wizard. Bat cu nay de tat dung 1 nhanh do, KHONG doi hanh vi 'create-next'/
+   * 'create-qualify' (von da khong tu dong onClose san). Mac dinh false giu
+   * NGUYEN hanh vi cu cho 2 call site khac (LeadsDirectory, OmnichannelInboxView). */
+  suppressAutoCloseOnSave?: boolean;
 }) {
   const [checkPhone, setCheckPhone] = useState('');
   const [checkEmail, setCheckEmail] = useState('');
@@ -140,6 +246,7 @@ export function LeadFormDrawer({
   const [pasteText, setPasteText] = useState('');
 
   const [form, setForm] = useState<FormState>(() => emptyForm(currentUser));
+  const [defaultLeadSource, setDefaultLeadSource] = useState('Manual');
   const [saving, setSaving] = useState<'create' | 'create-next' | 'create-qualify' | null>(null);
   const [error, setError] = useState('');
   const [extraOpen, setExtraOpen] = useState(false);
@@ -162,33 +269,6 @@ export function LeadFormDrawer({
   const leadNameRef = useRef<HTMLInputElement>(null);
   useBodyScrollLock(open);
 
-  // BUG THAT DA GAP ("chỗ nguồn lead vẫn chưa feed"): dropdown "Nguồn" truoc
-  // day dung THANG `SOURCE_OPTIONS` tinh (hardcode trong crmConfig.ts), trong
-  // khi trang "Danh mục CRM" cho phep them/sua "Nguồn" dong qua bang
-  // categories (category_type='crm_source') - them "Nguồn" moi o Danh muc thi
-  // dropdown nay KHONG BAO GIO thay vi khong he goi API. `useCrm()` (hook
-  // dung o trang Leads/Pipeline chinh) da co san dung logic merge nay
-  // (`loadCrmCategoryOptions`) nhung LeadFormDrawer la drawer doc lap, KHONG
-  // dung chung hook nang do (se keo theo load ca deals/agents khong can) - chi
-  // tai su dung ham `mergeCategoryOptions()` da export tu useCrm.ts, tu fetch
-  // rieng 1 lan khi mo drawer.
-  const [sourceOptions, setSourceOptions] = useState(SOURCE_OPTIONS);
-  useEffect(() => {
-    if (!open) return;
-    let alive = true;
-    allPlatformCategoriesService
-      .getAll('crm_source')
-      .then(res => {
-        if (alive) setSourceOptions(mergeCategoryOptions(SOURCE_OPTIONS, res.data));
-      })
-      .catch(() => {
-        // Giu nguyen danh sach mac dinh neu tai danh muc mo rong that bai.
-      });
-    return () => {
-      alive = false;
-    };
-  }, [open]);
-
   // Bo dem chan-doi-thi (generation counter) - moi lan len lich goi
   // duplicate-check tang seq; khi response ve chi ap dung neu no van la lan
   // goi MOI NHAT. Mirror dung tinh than "alive flag" cua CustomerAddDrawer.tsx
@@ -200,8 +280,8 @@ export function LeadFormDrawer({
   useEffect(() => {
     if (!open) return;
     setError('');
-    setCheckPhone('');
-    setCheckEmail('');
+    setCheckPhone(initialValues?.phone ? normalizePhoneInput(initialValues.phone) : '');
+    setCheckEmail(initialValues?.email?.trim() || '');
     setDupState('idle');
     setDuplicates([]);
     setOverrideCreate(false);
@@ -209,34 +289,143 @@ export function LeadFormDrawer({
     setPasteText('');
     setCompanyMatches([]);
     setMatchedCustomerId('');
-    setForm(emptyForm(currentUser));
+    const storedDefaultSource = readLeadSourceDefault(currentUser);
+    setDefaultLeadSource(storedDefaultSource);
+    const base = emptyForm(currentUser, initialValues?.source || storedDefaultSource);
+    setForm({
+      ...base,
+      leadName: initialValues?.leadName || base.leadName,
+      companyName: initialValues?.companyName || base.companyName,
+      phone: initialValues?.phone ? normalizePhoneInput(initialValues.phone) : base.phone,
+      email: initialValues?.email?.trim() || base.email,
+      note: initialValues?.note || base.note,
+    });
     setExtraOpen(false);
     setInteractionForId('');
     setInteractionNote('');
     setInteractionSavedFor('');
     checkSeqRef.current += 1;
-  }, [open, currentUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, currentUser, initialValues?.phone, initialValues?.email, initialValues?.leadName, initialValues?.companyName, initialValues?.note, initialValues?.source]);
 
   function setValue<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm(current => ({ ...current, [key]: value }));
   }
 
+  function setCurrentSourceAsDefault() {
+    const next = form.source || 'Manual';
+    saveLeadSourceDefault(currentUser, next);
+    setDefaultLeadSource(next);
+  }
+
   const canPickOwner = isAdminOrLeader(currentUser);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
-  const sdrOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
+  const [leadOwnerUsers, setLeadOwnerUsers] = useState<Array<{ id: string; name: string; email?: string | null }>>([]);
   const memberName = useMemo(() => {
     const map = new Map<string, string>();
     members.forEach(m => {
       const key = m.linked_user_id || m.linked_user_id_2;
       if (key) map.set(key, m.display_name);
     });
+    leadOwnerUsers.forEach(u => map.set(u.id, u.name));
     if (currentUser?.id && !map.has(currentUser.id)) map.set(currentUser.id, currentUser.name || currentUser.email || 'Bạn');
     return map;
-  }, [members, currentUser]);
+  }, [members, leadOwnerUsers, currentUser]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    Promise.all([
+      usersService.getUsersByQuoteBusinessRole('presale'),
+      usersService.getUsersByQuoteBusinessRole('sale'),
+    ])
+      .then(([presaleRes, saleRes]) => {
+        if (!alive) return;
+        const byId = new Map<string, { id: string; name: string; email?: string | null }>();
+        const rows = [
+          ...(presaleRes.success ? presaleRes.data || [] : []),
+          ...(saleRes.success ? saleRes.data || [] : []),
+        ];
+        rows.forEach(user => {
+          if (user.id && !byId.has(user.id)) byId.set(user.id, { id: user.id, name: user.name || 'Chưa đặt tên' });
+        });
+        setLeadOwnerUsers([...byId.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => {
+        if (alive) setLeadOwnerUsers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !canPickOwner || leadOwnerUsers.length === 0) return;
+    if (leadOwnerUsers.some(user => user.id === form.sdrId)) return;
+    setForm(current => ({ ...current, sdrId: leadOwnerUsers[0]?.id || '' }));
+  }, [open, canPickOwner, leadOwnerUsers, form.sdrId]);
+
+  // Team Sale lấy từ Team CRM thật (crm_teams), không chọn một user Sale cá nhân.
+  const [saleTeams, setSaleTeams] = useState<CrmTeam[]>([]);
+  const [teamResolving, setTeamResolving] = useState(false);
+  const findTeamIdInLoadedTeams = (ownerId: string) => (
+    saleTeams.find(team => (
+      team.status === 'active' &&
+      (team.leader_user_id === ownerId || (team.member_ids || []).includes(ownerId))
+    ))?.id || ''
+  );
+  useEffect(() => {
+    let alive = true;
+    crmTeamsService
+      .list()
+      .then(res => {
+        if (alive) setSaleTeams(res.success ? (res.data || []).filter(t => t.status === 'active') : []);
+      })
+      .catch(() => {
+        if (alive) setSaleTeams([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  useEffect(() => {
+    const ownerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+    if (!ownerId) {
+      setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      return;
+    }
+    const localTeamId = findTeamIdInLoadedTeams(ownerId);
+    if (localTeamId) {
+      setForm(current => (current.teamId === localTeamId ? current : { ...current, teamId: localTeamId }));
+    }
+    let alive = true;
+    setTeamResolving(true);
+    crmTeamsService
+      .getTeamIdForUser(ownerId)
+      .then(res => {
+        if (!alive) return;
+        const nextTeamId = (res.success ? res.data?.crm_team_id || '' : '') || localTeamId;
+        setForm(current => (current.teamId === nextTeamId ? current : { ...current, teamId: nextTeamId }));
+      })
+      .catch(() => {
+        if (alive && !localTeamId) setForm(current => (current.teamId ? { ...current, teamId: '' } : current));
+      })
+      .finally(() => {
+        if (alive) setTeamResolving(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [form.sdrId, canPickOwner, currentUser?.id, saleTeams]);
+  const selectedOwnerId = form.sdrId || (!canPickOwner ? currentUser?.id || '' : '');
+  const locallyResolvedTeamId = selectedOwnerId ? findTeamIdInLoadedTeams(selectedOwnerId) : '';
+  const effectiveTeamId = form.teamId || locallyResolvedTeamId;
+  const teamOptionsForSelect = useMemo(() => {
+    const options = saleTeams.map(t => ({ id: t.id, displayName: t.name || t.code || 'Team Sale' }));
+    if (effectiveTeamId && !options.some(option => option.id === effectiveTeamId)) {
+      options.push({ id: effectiveTeamId, displayName: 'Team Sale đã gán' });
+    }
+    return options;
+  }, [saleTeams, effectiveTeamId]);
 
   // Auto-check trung khi SDT/Email hop le - debounce 400ms, huy neu component
   // unmount hoac gia tri lai doi truoc khi ket qua ve (dung effect-cleanup
@@ -244,7 +433,7 @@ export function LeadFormDrawer({
   // checkPhone/checkEmail nen dan noi dung se TU DONG kich hoat check nay,
   // khong bao gio bo qua buoc kiem tra trung sau khi paste.
   useEffect(() => {
-    const phone = checkPhone.trim();
+    const phone = normalizePhoneInput(checkPhone);
     const email = checkEmail.trim();
     if (!looksLikePhone(phone) && !looksLikeEmail(email)) {
       setDupState('idle');
@@ -256,7 +445,7 @@ export function LeadFormDrawer({
     setDupState('checking');
     const timer = window.setTimeout(() => {
       const params = new URLSearchParams();
-      if (phone) params.set('phone', phone);
+      if (looksLikePhone(phone)) params.set('phone', phone);
       if (email) params.set('email', email);
       fetch(`${API_BASE_URL}/api/all-platform/crm/leads/duplicate-check?${params.toString()}`, {
         credentials: 'include',
@@ -285,7 +474,7 @@ export function LeadFormDrawer({
             // de khong ghi de gia tri nguoi dung da sua tay ben phai.
             setForm(current => ({
               ...current,
-              phone: current.phone.trim() ? current.phone : phone,
+              phone: current.phone.trim() ? current.phone : (looksLikePhone(phone) ? phone : ''),
               email: current.email.trim() ? current.email : email,
             }));
           }
@@ -328,12 +517,49 @@ export function LeadFormDrawer({
     companyTimer.current = window.setTimeout(() => runCompanyMatch(value, form.website), 300);
   }
 
+  // Go ten khach hang trung voi khach hang da co trong CRM (cung ten voi Co hoi / danh sach Khach hang)
+  // -> o "Cong ty / To chuc" tu lay dung ten do. Khong ghi de khi nguoi dung da tu nhap cong ty khac.
+  const leadNameTimer = useRef<number | undefined>(undefined);
+  const companyAutoFilledRef = useRef('');
+  const formCompanyRef = useRef('');
+  formCompanyRef.current = form.companyName;
+  const foldName = (v?: string | null) =>
+    (v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().replace(/\s+/g, ' ').trim();
+  function handleLeadNameChange(value: string) {
+    setValue('leadName', value);
+    window.clearTimeout(leadNameTimer.current);
+    const name = value.trim();
+    if (name.length < 3) return;
+    leadNameTimer.current = window.setTimeout(() => {
+      fetch(`${API_BASE_URL}/api/all-platform/crm/leads/company-match?name=${encodeURIComponent(name)}`, {
+        credentials: 'include',
+        headers: headers(),
+      })
+        .then(res => res.json())
+        .then(body => {
+          if (body.success === false) return;
+          const matches = (body.data?.matches || []) as CompanyMatchRow[];
+          const exact = matches.find(m => foldName(m.customer_name) === foldName(name) || foldName(m.company_name) === foldName(name));
+          if (!exact) return;
+          const current = formCompanyRef.current.trim();
+          if (current && current !== companyAutoFilledRef.current) return; // nguoi dung da tu nhap
+          const companyName = (exact.company_name || exact.customer_name || '').trim();
+          if (!companyName) return;
+          companyAutoFilledRef.current = companyName;
+          setValue('companyName', companyName);
+          setCompanyMatches(matches);
+          setMatchedCustomerId(exact.id);
+        })
+        .catch(() => { /* goi y khong bat buoc */ });
+    }, 400);
+  }
+
   function handleParsePaste() {
     const text = pasteText;
     const phoneMatch = text.match(PHONE_RE);
     const emailMatch = text.match(EMAIL_RE);
     if (phoneMatch && !checkPhone.trim()) {
-      setCheckPhone(phoneMatch[0].replace(/[\s.-]/g, ''));
+      setCheckPhone(normalizePhoneInput(phoneMatch[0]));
     }
     if (emailMatch && !checkEmail.trim()) {
       setCheckEmail(emailMatch[0]);
@@ -353,6 +579,24 @@ export function LeadFormDrawer({
       const detected = detectSourceFromPaste(text);
       if (detected) setValue('source', detected);
     }
+    // Cong ty/To chuc - xem COMPANY_RE o tren, CHI dien khi truong dang trong
+    // (khong ghi de gia tri nguoi dung da tu nhap/sua truoc do).
+    if (!form.companyName.trim()) {
+      const companyMatch = text.match(COMPANY_RE);
+      if (companyMatch) {
+        const raw = companyMatch[0].trim();
+        const normalized = raw.charAt(0).toUpperCase() + raw.slice(1);
+        handleCompanyNameChange(normalized);
+      }
+    }
+    // Chuc vu - doi chieu bat dong bo voi danh muc crm_position that (xem
+    // detectPositionFromPaste), CHI dien khi truong dang trong.
+    if (!form.positionCategoryId) {
+      void detectPositionFromPaste(text).then(detected => {
+        if (!detected) return;
+        setForm(prev => (prev.positionCategoryId ? prev : { ...prev, positionCategoryId: detected.id, positionLabel: detected.label }));
+      });
+    }
   }
 
   // Dung 1 rule duy nhat voi ban goc: chi can 1 trong 2 (SDT hoac Email), o
@@ -360,16 +604,21 @@ export function LeadFormDrawer({
   // duoc autofill).
   function validate(): string | null {
     if (!form.leadName.trim()) return 'Vui lòng nhập tên khách hàng.';
-    if (!form.phone.trim() && !form.email.trim()) return 'Cần nhập số điện thoại hoặc email.';
+    const phone = normalizePhoneInput(form.phone);
+    const email = form.email.trim();
+    if (form.phone.trim() && !looksLikePhone(phone)) return 'Số điện thoại không hợp lệ.';
+    if (!phone && !email) return 'Cần nhập số điện thoại hoặc email.';
     return null;
   }
 
   function buildPayload() {
+    const phone = normalizePhoneInput(form.phone);
     return {
       lead_name: form.leadName.trim(),
       company_name: form.companyName.trim() || null,
+      tax_code: form.taxCode.trim() || null,
       position_category_id: form.positionCategoryId || null,
-      phone: form.phone.trim() || null,
+      phone: phone || null,
       email: form.email.trim() || null,
       zalo: form.zalo.trim() || null,
       facebook: form.facebook.trim() || null,
@@ -378,7 +627,11 @@ export function LeadFormDrawer({
       source: form.source || null,
       status: 'new_lead',
       sdr_id: canPickOwner ? (form.sdrId || null) : (currentUser?.id || null),
+      team_id: effectiveTeamId || null,
       note: form.note.trim() || null,
+      // Backend is the final dedup gate.  This flag is only sent after the
+      // user explicitly chose the existing manual-flow override.
+      allow_duplicate: overrideCreate,
     };
   }
 
@@ -430,7 +683,7 @@ export function LeadFormDrawer({
       if (!created) return;
       onSaved(created);
       if (mode === 'create') {
-        onClose();
+        if (!suppressAutoCloseOnSave) onClose();
       } else if (mode === 'create-next') {
         setCheckPhone('');
         setCheckEmail('');
@@ -454,9 +707,10 @@ export function LeadFormDrawer({
 
   function handleForceCreate() {
     setOverrideCreate(true);
+    const phone = normalizePhoneInput(checkPhone);
     setForm(current => ({
       ...current,
-      phone: current.phone.trim() ? current.phone : checkPhone.trim(),
+      phone: current.phone.trim() ? current.phone : (looksLikePhone(phone) ? phone : ''),
       email: current.email.trim() ? current.email : checkEmail.trim(),
     }));
     window.setTimeout(() => leadNameRef.current?.focus(), 0);
@@ -491,8 +745,12 @@ export function LeadFormDrawer({
 
   if (!open) return null;
 
+  // Feedback 2026-09-26: chi cho dong bang nut X, bam ra ngoai backdrop
+  // KHONG duoc dong nua (tranh mat du lieu dang nhap do bam nham ra ngoai) -
+  // bo onClick={onClose} khoi backdrop, giu nguyen stopPropagation o <aside>
+  // (khong con can thiet nhung khong hai gi neu giu).
   return (
-    <div className="crm-drawer-backdrop" onClick={onClose}>
+    <div className="crm-drawer-backdrop crm-lead-quickadd-backdrop">
       <aside className="crm-drawer crm-lead-drawer crm-lead-drawer--quick" onClick={event => event.stopPropagation()}>
         <header className="crm-lead-drawer-header">
           <div>
@@ -516,20 +774,24 @@ export function LeadFormDrawer({
               <div className="crm-form-grid">
                 <Field label="Số điện thoại">
                   <input
+                    name="crm-lead-form-check-phone"
                     value={checkPhone}
-                    onChange={e => setCheckPhone(e.target.value)}
+                    onChange={e => setCheckPhone(normalizePhoneInput(e.target.value))}
                     type="tel"
+                    inputMode="tel"
                     placeholder="VD: 0903 037 911"
-                    autoComplete="off"
+                    autoComplete="tel"
                   />
                 </Field>
                 <Field label="Email">
                   <input
+                    name="crm-lead-form-check-email"
                     value={checkEmail}
                     onChange={e => setCheckEmail(e.target.value)}
                     type="email"
+                    inputMode="email"
                     placeholder="VD: tien@abc.vn"
-                    autoComplete="off"
+                    autoComplete="email"
                   />
                 </Field>
               </div>
@@ -576,7 +838,7 @@ export function LeadFormDrawer({
                         <div>Email: <b>{dup.email || 'Chưa có'}</b></div>
                         <div>Phụ trách: <b>{memberName.get(dup.sdrId || '') || 'Chưa gán'}</b></div>
                         <div>Trạng thái: <b>{LEAD_STATUS_LABEL[dup.status] || dup.status}</b></div>
-                        <div>Nguồn: <b>{dup.source || 'Manual'}</b></div>
+                        <div>Nguồn: <b>{getSourceLabel(dup.source || 'Manual')}</b></div>
                         <div>
                           Cập nhật gần nhất: <b>{formatDateTime(dup.updatedAt) || 'chưa có hoạt động'}</b>
                         </div>
@@ -659,6 +921,7 @@ export function LeadFormDrawer({
                 <div className="crm-ai-fill crm-lead-paste-box">
                   <div className="crm-ai-fill-row">
                     <textarea
+                      name="crm-lead-form-paste-text"
                       className="crm-ai-fill-textarea"
                       value={pasteText}
                       onChange={event => setPasteText(event.target.value)}
@@ -695,14 +958,17 @@ export function LeadFormDrawer({
 
               <fieldset className="crm-lead-info-fieldset" disabled={!unlocked}>
                 <div className="crm-form-grid">
-                  <Field label="Tên khách hàng" required>
-                    <input ref={leadNameRef} value={form.leadName} onChange={e => setValue('leadName', e.target.value)} placeholder="Nguyễn Văn A" />
+                  <Field label="Họ và tên người liên hệ" required>
+                    <input ref={leadNameRef} value={form.leadName} onChange={e => handleLeadNameChange(e.target.value)} placeholder="Nguyễn Văn A" />
                   </Field>
-                  <Field label="Công ty">
+                  <Field label="Công ty / Tổ chức">
                     <input value={form.companyName} onChange={e => handleCompanyNameChange(e.target.value)} placeholder="Công ty TNHH ABC" />
                   </Field>
+                  <Field label="MST (mã số thuế)">
+                    <input value={form.taxCode} onChange={e => setValue('taxCode', e.target.value.replace(/[^0-9-]/g, ''))} inputMode="numeric" placeholder="VD: 0312345678" />
+                  </Field>
                   <Field label="Số điện thoại" hint="cần SĐT hoặc email">
-                    <input value={form.phone} onChange={e => setValue('phone', e.target.value)} type="tel" placeholder="Autofill từ kiểm tra trùng" />
+                    <input value={form.phone} onChange={e => setValue('phone', normalizePhoneInput(e.target.value))} type="tel" inputMode="tel" autoComplete="tel" placeholder="Autofill từ kiểm tra trùng" />
                   </Field>
                   <Field label="Email" hint="cần SĐT hoặc email">
                     <input value={form.email} onChange={e => setValue('email', e.target.value)} type="email" placeholder="Autofill từ kiểm tra trùng" />
@@ -718,28 +984,55 @@ export function LeadFormDrawer({
                     />
                   </Field>
                   <Field label="Nguồn" required>
-                    <select value={form.source} onChange={e => setValue('source', e.target.value)}>
-                      {sourceOptions.map(option => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </select>
+                    <CrmCategoryCodeSelect
+                      categoryType="crm_source"
+                      value={form.source}
+                      excludeValues={LEAD_SOURCE_EXCLUDED_VALUES}
+                      onChange={value => setValue('source', value)}
+                    />
+                    <div className="crm-lead-source-default-row">
+                      <button
+                        type="button"
+                        className="crm-link-button"
+                        onClick={setCurrentSourceAsDefault}
+                        disabled={(form.source || 'Manual') === defaultLeadSource}
+                      >
+                        {(form.source || 'Manual') === defaultLeadSource ? 'Đang là mặc định của bạn' : 'Đặt làm mặc định'}
+                      </button>
+                    </div>
                   </Field>
                   {canPickOwner ? (
                     <Field label="Người phụ trách Lead" required>
-                      <select value={form.sdrId} onChange={e => setValue('sdrId', e.target.value)}>
-                        <option value={currentUser?.id || ''}>-- Chính bạn --</option>
-                        {sdrOptions.map(m => (
-                          <option key={m.id} value={selectionKeyOf(m)}>
-                            {m.display_name}{m.email ? ` (${m.email})` : ''}
-                          </option>
-                        ))}
-                      </select>
+                      <MemberSearchSelect
+                        value={form.sdrId}
+                        onChange={value => setValue('sdrId', value)}
+                        hideClearOption
+                        showAvatar={false}
+                        members={[
+                          ...leadOwnerUsers.map(user => ({
+                            id: user.id,
+                            displayName: user.id === currentUser?.id ? `${user.name} (Chính bạn)` : user.name,
+                            email: user.email,
+                          })),
+                        ]}
+                      />
                     </Field>
                   ) : (
                     <Field label="Người phụ trách Lead" required>
                       <input value={currentUser?.name || currentUser?.email || 'Bạn'} disabled readOnly />
                     </Field>
                   )}
+                  <Field label="Team Sale">
+                    <MemberSearchSelect
+                      value={effectiveTeamId}
+                      onChange={() => {}}
+                      showAvatar={false}
+                      disabled
+                      loading={teamResolving}
+                      placeholder={teamResolving ? 'Đang tìm Team Sale...' : 'Chưa gán'}
+                      members={teamOptionsForSelect}
+                    />
+                  </Field>
                   <Field label="Trạng thái">
                     <input value="Lead mới" disabled readOnly />
                   </Field>
@@ -815,16 +1108,6 @@ export function LeadFormDrawer({
             >
               {saving === 'create-next' ? <Loader2 className="crm-save-spinner" /> : null}
               Tạo và thêm Lead tiếp theo
-            </button>
-            <button
-              type="button"
-              className="crm-secondary-button"
-              disabled={saving !== null || !dedupGatePassed}
-              title={dedupGatePassed ? undefined : 'Cần kiểm tra trùng SĐT/Email trước'}
-              onClick={() => void handleAction('create-qualify')}
-            >
-              {saving === 'create-qualify' ? <Loader2 className="crm-save-spinner" /> : null}
-              Tạo và mở Qualification
             </button>
             <button
               type="button"

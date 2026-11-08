@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
 import { ContractDetailModal } from './ContractDetailModal';
@@ -12,11 +12,8 @@ import { LayoutGrid, Loader2, Plus, RotateCcw, TableIcon, Trophy } from './icons
 import { StageModal } from './StageModal';
 import { CreateQuoteModal } from '../integrations/quotes';
 import {
-  CITY_OPTIONS,
   DEAL_STAGE_META,
   DEAL_STAGES,
-  INDUSTRY_OPTIONS,
-  SOURCE_OPTIONS,
   canApproveQuote,
   formatVND,
   getContractUrl,
@@ -28,6 +25,7 @@ import { teamsService, type TeamRow } from '@/services/all-platform.service';
 import { seedingQuoteRepository } from '@/modules/quotes';
 import type { Quote } from '@/modules/quotes';
 import { useAppAuth } from '@/contexts/AppAuthContext';
+import { CascadeConfirmRequiredError, cascadeWarningText } from '../utils/cascadeDelete';
 
 type FilterState = {
   search: string;
@@ -45,6 +43,7 @@ export function CrmShell() {
     servicePackageOptions: dealFormServicePackageOptions,
     packageOptions: dealFormPackageOptions,
     industryOptions: dealFormIndustryOptions,
+    cityOptions: dealFormCityOptions,
     loading,
     saving,
     error,
@@ -84,6 +83,7 @@ export function CrmShell() {
   // "Lich su phien ban" - deal.quote.id (van la ban DA DUYET) khong doi khi
   // tao ban nhap moi nen khong the dung no lam dependency duy nhat.
   const [quoteVersionsRefreshKey, setQuoteVersionsRefreshKey] = useState(0);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   // Toast tự ẩn sau vài giây — không dùng window.alert() cho việc báo thành công
   // vì alert chặn thao tác tiếp theo, gây khó chịu cho hành động vốn đã ổn.
@@ -99,25 +99,37 @@ export function CrmShell() {
   // trong chinh no roi - khong dua lai vao day, tranh 2 noi doc lap cung khoa
   // 1 tai nguyen (bug thuc te gap phai: body ket o overflow:hidden vinh vien
   // vi thu tu cleanup cua 2 effect rieng biet khong dong bo voi nhau).
-  const anyOverlayOpen = detailOpen || Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
+  const anyOverlayOpen = Boolean(contractDeal) || quoteModal.open || Boolean(stageData) || Boolean(reviewData);
   useBodyScrollLock(anyOverlayOpen);
 
   const sourceOptions = useMemo(() => {
     const fromData = deals.map(deal => deal.sourcePlatform || 'Manual').filter(Boolean);
-    const map = new Map(SOURCE_OPTIONS.map(option => [option.value, option]));
+    const map = new Map(dealFormSourceOptions.map(option => [option.value, option]));
     fromData.forEach(value => {
       if (!map.has(value)) map.set(value, { value, label: value });
     });
     return [...map.values()];
-  }, [deals]);
+  }, [dealFormSourceOptions, deals]);
 
-  const cityOptions = useMemo(() => [...new Set([...CITY_OPTIONS, ...deals.map(deal => deal.city || '').filter(Boolean)])], [deals]);
-  const industryOptions = useMemo(() => [...new Set([...INDUSTRY_OPTIONS, ...deals.map(deal => deal.industry || '').filter(Boolean)])], [deals]);
+  const cityOptions = useMemo(() => {
+    const map = new Map(dealFormCityOptions.map(option => [option.value, option.label]));
+    deals.map(deal => deal.city || '').filter(Boolean).forEach(value => {
+      if (!map.has(value)) map.set(value, value);
+    });
+    return [...map.entries()].map(([value, label]) => ({ value, label }));
+  }, [dealFormCityOptions, deals]);
+  const industryOptions = useMemo(() => {
+    const map = new Map(dealFormIndustryOptions.map(option => [option.value, option.label]));
+    deals.map(deal => deal.industry || '').filter(Boolean).forEach(value => {
+      if (!map.has(value)) map.set(value, value);
+    });
+    return [...map.entries()].map(([value, label]) => ({ value, label }));
+  }, [dealFormIndustryOptions, deals]);
 
   const filterDropdownOptions = {
     source: [{ value: '', label: 'Tất cả nguồn' }, ...sourceOptions],
-    city: [{ value: '', label: 'Tất cả thành phố' }, ...cityOptions.map(city => ({ value: city, label: city }))],
-    industry: [{ value: '', label: 'Tất cả lĩnh vực' }, ...industryOptions.map(industry => ({ value: industry, label: industry }))],
+    city: [{ value: '', label: 'Tất cả thành phố' }, ...cityOptions],
+    industry: [{ value: '', label: 'Tất cả lĩnh vực' }, ...industryOptions],
     team: [{ value: '', label: 'Tất cả team' }, ...teams.map(t => ({ value: t.id, label: t.name_team }))],
   };
 
@@ -150,6 +162,33 @@ export function CrmShell() {
     setOpenFilter('');
   }
 
+  function clearSearchFilter() {
+    setFilters(current => ({ ...current, search: '' }));
+  }
+
+  function openCreateDealModal() {
+    clearSearchFilter();
+    setCreateOpen(true);
+  }
+
+  function closeDealFormModal() {
+    setCreateOpen(false);
+    setEditingDeal(null);
+    setInitialCustomer(null);
+    setInitialProject(null);
+    clearSearchFilter();
+  }
+
+  function openQuoteModal(deal: Deal, editQuote: Quote | null = null) {
+    clearSearchFilter();
+    setQuoteModal({ open: true, deal, editQuote });
+  }
+
+  function closeQuoteModal() {
+    setQuoteModal({ open: false, deal: null, editQuote: null });
+    clearSearchFilter();
+  }
+
   function toggleStageFilter(stage: DealStage) {
     setActiveStageFilters(current =>
       current.includes(stage) ? current.filter(item => item !== stage) : [...current, stage]
@@ -164,6 +203,28 @@ export function CrmShell() {
     } catch {
       setSelectedDeal(deal);
     }
+  }
+
+  function closeDealSidePanels() {
+    setDetailOpen(false);
+  }
+
+  function handleShellPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!detailOpen) return;
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    if (target.closest('.crm-drawer')) return;
+    if (target.closest('[data-crm-deal-row="true"]')) return;
+    if (
+      target.closest(
+        'button, a, input, select, textarea, [role="button"], [role="combobox"], .crm-filter-select-menu, .crm-modal, .crm-stage-modal',
+      )
+    ) {
+      return;
+    }
+
+    closeDealSidePanels();
   }
 
   // Chỉ có id (chưa có object Deal đầy đủ) - dùng khi quay lại từ trang chi
@@ -207,7 +268,7 @@ export function CrmShell() {
         // chỉ mang query param rồi bỏ qua.
         const projectId = searchParams.get('projectId');
         setInitialProject(projectId ? { id: projectId } : null);
-        setCreateOpen(true);
+        openCreateDealModal();
       }
     } else {
       void openDetailById(openDealId);
@@ -252,7 +313,14 @@ export function CrmShell() {
   async function handleDelete(deal: Deal) {
     if (!window.confirm(`Xóa deal "${deal.customerName}"?`)) return;
     try {
-      await deleteDeal(deal.id);
+      try {
+        await deleteDeal(deal.id);
+      } catch (err) {
+        // Deal con Bao gia/Hop dong: hoi ro truoc khi xoa kem (feedback 2026-09-23).
+        if (!(err instanceof CascadeConfirmRequiredError)) throw err;
+        if (!window.confirm(cascadeWarningText('Cơ hội này', err.summary))) return;
+        await deleteDeal(deal.id, true);
+      }
       setDetailOpen(false);
       setSelectedDeal(null);
     } catch (err) {
@@ -315,7 +383,7 @@ export function CrmShell() {
     if (!deal.quote?.id) return;
     try {
       const quote = await seedingQuoteRepository.getQuote(deal.quote.id);
-      setQuoteModal({ open: true, deal, editQuote: quote });
+      openQuoteModal(deal, quote);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được báo giá để sửa.');
     }
@@ -324,7 +392,7 @@ export function CrmShell() {
   async function handleOpenQuoteVersion(deal: Deal, quoteId: string) {
     try {
       const quote = await seedingQuoteRepository.getQuote(quoteId);
-      setQuoteModal({ open: true, deal, editQuote: quote });
+      openQuoteModal(deal, quote);
     } catch (err) {
       window.alert(err instanceof Error ? err.message : 'Không tải được phiên bản báo giá này.');
     }
@@ -344,7 +412,7 @@ export function CrmShell() {
         setToast(`Đã tạo phiên bản mới V${result.quote.versionNumber}.`);
       }
       setQuoteVersionsRefreshKey(key => key + 1);
-      setQuoteModal({ open: true, deal, editQuote: result.quote });
+      openQuoteModal(deal, result.quote);
     } catch (err) {
       window.alert(err instanceof Error ? humanizeCrmError(err.message) : 'Không tạo được phiên bản báo giá mới.');
     }
@@ -352,7 +420,9 @@ export function CrmShell() {
 
   async function handleDeleteQuote(deal: Deal) {
     if (!deal.quote?.id) return;
-    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"? Báo giá sẽ chuyển sang trạng thái đã xoá (ẩn khỏi danh sách), Admin có thể khôi phục nếu cần.`)) return;
+    const approvedText = deal.quote.status === 'approved' ? ' Báo giá này đã duyệt, bạn có chắc muốn xóa?' : '';
+    if (!window.confirm(`Xoá báo giá ${deal.quote.number || ''} khỏi deal "${deal.customerName}"?${approvedText}
+Bạn chấp nhận mất báo giá này? (Báo giá bị ẩn khỏi danh sách, Admin có thể khôi phục nếu cần.)`)) return;
     try {
       await seedingQuoteRepository.deleteQuote(deal.quote.id);
       await refreshDealAfterQuoteChange(deal.id);
@@ -375,7 +445,7 @@ export function CrmShell() {
   }
 
   return (
-    <div className="crm-shell">
+    <div className="crm-shell" ref={shellRef} onPointerDownCapture={handleShellPointerDown}>
       <section className="crm-page-card">
         <div className="crm-header">
           <div>
@@ -391,7 +461,7 @@ export function CrmShell() {
                 <TableIcon className="crm-button-icon" /> Bảng
               </button>
             </div>
-            <button type="button" className="crm-primary-button" disabled={loading || saving} onClick={() => setCreateOpen(true)}>
+            <button type="button" className="crm-primary-button" disabled={loading || saving} onClick={openCreateDealModal}>
               <Plus className="crm-button-icon" /> Tạo cơ hội
             </button>
           </div>
@@ -409,7 +479,8 @@ export function CrmShell() {
             <input
               value={filters.search}
               onChange={event => setFilters(current => ({ ...current, search: event.target.value }))}
-              type="text"
+              type="search"
+              name="crm-pipeline-search"
               className="crm-input"
               placeholder="Tìm tên, SĐT, email..."
               autoComplete="off"
@@ -479,7 +550,7 @@ export function CrmShell() {
               <div>
                 <h3>Chưa có khách hàng CRM</h3>
                 <p>Tạo deal mới để bắt đầu quản lý pipeline.</p>
-                <button type="button" className="crm-primary-button crm-empty-action" onClick={() => setCreateOpen(true)}>
+                <button type="button" className="crm-primary-button crm-empty-action" onClick={openCreateDealModal}>
                   <Plus className="crm-button-icon" /> Tạo cơ hội
                 </button>
               </div>
@@ -490,7 +561,7 @@ export function CrmShell() {
               loading={loading}
               onCardClick={openDetail}
               onContractClick={setContractDeal}
-              onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
+              onCreateQuote={deal => openQuoteModal(deal)}
               onRequestMove={(deal, toStage) => setStageData({ deal, toStage })}
             />
           ) : (
@@ -510,7 +581,7 @@ export function CrmShell() {
         onEdit={setEditingDeal}
         onDelete={handleDelete}
         onUpdateContractStatus={updateContractStatus}
-        onCreateQuote={deal => setQuoteModal({ open: true, deal, editQuote: null })}
+        onCreateQuote={deal => openQuoteModal(deal)}
         onEditQuote={handleEditQuote}
         onDeleteQuote={handleDeleteQuote}
         onCreateQuoteVersion={handleCreateQuoteVersion}
@@ -540,7 +611,7 @@ export function CrmShell() {
         initialDeal={quoteModal.deal}
         editQuote={quoteModal.editQuote}
         canApproveQuotes={canApproveQuote(user)}
-        onClose={() => setQuoteModal({ open: false, deal: null, editQuote: null })}
+        onClose={closeQuoteModal}
         onCreated={async quote => {
           // Quote tạo xong đã gắn deal_id (nếu có) ở backend rồi, nhưng danh sách
           // deal trên board vẫn là bản cũ trong state — phải load lại thì card mới
@@ -562,12 +633,7 @@ export function CrmShell() {
         servicePackageOptions={dealFormServicePackageOptions}
         packageOptions={dealFormPackageOptions}
         industryOptions={dealFormIndustryOptions}
-        onClose={() => {
-          setCreateOpen(false);
-          setEditingDeal(null);
-          setInitialCustomer(null);
-          setInitialProject(null);
-        }}
+        onClose={closeDealFormModal}
         onCreate={handleCreate}
         onCreateAndContinue={handleCreateAndContinue}
         onUpdate={handleUpdate}
@@ -588,3 +654,4 @@ function StatCard({ tone, label, value }: { tone: string; label: React.ReactNode
     </div>
   );
 }
+

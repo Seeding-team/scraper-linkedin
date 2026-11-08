@@ -1,8 +1,38 @@
+// Thuật toán xáo trộn ngẫu nhiên Fisher-Yates chuẩn xác chống ban chu kỳ
+function shuffleArray(array) {
+    const arr = [...array];
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
 // background.js - Điều phối auto crawl API
 
 let isRunning = false;
 let shouldStop = false;
 let currentTabId = null;
+
+// Watchdog Lifecycle: Nếu người dùng đóng tab Web Seeding hoặc tắt trình duyệt,
+// lập tức dừng cào và đóng sạch các tab cào ngầm để bảo vệ an toàn cho tài khoản.
+let lastAppHeartbeat = Date.now();
+function stopCrawlAndCloseCrawlTabs(reason = 'TAB_CLOSED') {
+    shouldStop = true;
+    isRunning = false;
+    if (currentTabId) {
+        chrome.tabs.remove(currentTabId).catch(() => {});
+        currentTabId = null;
+    }
+    chrome.storage.local.set({ crawl_status: 'PAUSED_BY_USER_TAB_CLOSED' });
+    sendLog(`🛑 [Lifecycle Watchdog] ${reason === 'TAB_CLOSED' ? 'Đã phát hiện tắt tab/app Web Seeding' : reason}. Đã lập tức dừng cào và đóng sạch các tab ngầm!`, false, 'warn');
+}
+
+setInterval(() => {
+    if (isRunning && Date.now() - lastAppHeartbeat > 8000) {
+        stopCrawlAndCloseCrawlTabs('Mất kết nối tab Web Seeding quá 8 giây');
+    }
+}, 3000);
 
 // Nhận lệnh từ Popup
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -14,6 +44,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         isRunning = false;
         sendLog('Cảnh báo: Yêu cầu dừng cào...');
         sendResponse({ success: true });
+    } else if (msg.action === 'GROUP_FINISHED') {
+        if (msg.reason === 'OLD_POSTS_LIMIT_REACHED') {
+            sendLog('🛑 [Bộ Lọc Ngày] Đã phát hiện 15 bài viết cũ liên tiếp ngoài ngày hôm nay. Dừng cào nhóm hiện tại theo chỉ đạo và chuyển sang nhóm kế tiếp!', false, 'warn');
+        } else if (msg.reason === 'MAX_SCROLLS_REACHED') {
+            sendLog('🏁 Đã hoàn thành đủ số nhịp cuộn tối đa cho nhóm này. Chuyển nhóm...', false, 'info');
+        }
+        sendResponse({ received: true });
+    } else if (msg.action === 'APP_TAB_HEARTBEAT' || msg.action === 'APP_TAB_ACTIVE') {
+        lastAppHeartbeat = Date.now();
+        sendResponse({ alive: true });
+    } else if (msg.action === 'APP_TAB_CLOSING') {
+        lastAppHeartbeat = 0;
+        if (isRunning) {
+            stopCrawlAndCloseCrawlTabs('Người dùng chủ động đóng tab Web Seeding');
+        }
+        sendResponse({ stopped: true });
     }
 });
 
@@ -82,126 +128,157 @@ async function startAutoCrawl(groups, config = {}) {
         currentTabId = tab.id;
 
         let totalPostsCrawled = 0;
+        let roundCount = 0;
 
-        for (let i = 0; i < groups.length; i++) {
-            if (shouldStop) break;
-            
-            sendFrontendProgress(i, groups.length);
-            
-            const group = groups[i];
-            sendLog(`\n▶ [${i+1}/${groups.length}] Đang xử lý: ${group.name || group.url}`, false, 'info');
-            
-            // Bước 1: Navigate tới Group
-            await chrome.tabs.update(currentTabId, { url: group.url });
-            await sleep(5000); // Chờ load trang ban đầu
-            
-            if (shouldStop) break;
+        // Vòng lặp cào đa vòng kèm xáo trộn ngẫu nhiên Anti-Ban
+        while (!shouldStop) {
+            roundCount++;
+            // Vòng 1 theo danh sách ban đầu, từ vòng 2 trở đi luôn xáo trộn ngẫu nhiên
+            const currentGroups = roundCount === 1 ? [...groups] : shuffleArray(groups);
 
-            // Bước 2: Reload 2 lần (theo yêu cầu của USER để làm sạch session/state)
-            sendLog(`Vệ sinh session: Reload lần 1...`);
-            await chrome.tabs.reload(currentTabId);
-            await sleep(5000);
-            
-            sendLog(`Vệ sinh session: Reload lần 2...`);
-            await chrome.tabs.reload(currentTabId);
-            await sleep(6000); // Chờ load lại xong hoàn toàn
+            sendLog(`\n🔄 ══════════════════════════════════════════════`, false, 'info');
+            sendLog(`🚀 BẮT ĐẦU VÒNG CÀO THỨ ${roundCount} (${currentGroups.length} nhóm)${roundCount > 1 ? ' [ĐÃ XÁO TRỘN NGẪU NHIÊN 🎲]' : ''}`, false, 'success');
+            sendLog(`══════════════════════════════════════════════`, false, 'info');
 
-            if (shouldStop) break;
+            for (let i = 0; i < currentGroups.length; i++) {
+                if (shouldStop) break;
+                
+                sendFrontendProgress(i, currentGroups.length);
+                
+                const group = currentGroups[i];
+                sendLog(`\n▶ [Vòng ${roundCount} | Nhóm ${i+1}/${currentGroups.length}] Đang xử lý: ${group.name || group.url}`, false, 'info');
+                
+                // Bước 1: Navigate tới Group
+                await chrome.tabs.update(currentTabId, { url: group.url });
+                await sleep(Math.floor(Math.random() * 2000) + 4500); // 4.5s - 6.5s
+                
+                if (shouldStop) break;
 
-            // Bước 3: Tiêm Content Script để gọi API GraphQL
-            sendLog(`Đang tiêm lệnh gọi GraphQL API vào trang...`);
-            let results = await chrome.scripting.executeScript({
-                target: { tabId: currentTabId },
-                files: ['content.js']
-            }).catch(async (e) => {
-                sendLog(`❌ Lỗi tiêm script: ${e.message}. Tiến hành tải lại tab và thử lại...`);
+                // Bước 2: Reload vệ sinh session
+                sendLog(`Vệ sinh session: Reload lần 1...`);
                 await chrome.tabs.reload(currentTabId);
-                await sleep(5000);
-                return chrome.scripting.executeScript({
+                await sleep(Math.floor(Math.random() * 2000) + 4500);
+                
+                sendLog(`Vệ sinh session: Reload lần 2...`);
+                await chrome.tabs.reload(currentTabId);
+                await sleep(Math.floor(Math.random() * 2000) + 5500);
+
+                if (shouldStop) break;
+
+                // Bước 3: Tiêm Content Script để gọi API GraphQL
+                sendLog(`Đang tiêm lệnh gọi GraphQL API vào trang...`);
+                let results = await chrome.scripting.executeScript({
                     target: { tabId: currentTabId },
                     files: ['content.js']
-                }).catch(err => {
-                    sendLog(`❌ Lỗi tiêm script (lần 2): ${err.message}. Extension sẽ tự động khởi động lại!`);
-                    chrome.runtime.reload();
-                    return null;
-                });
-            });
-
-            if (!results || !results[0]) {
-                sendLog(`❌ Không thể thực thi script tại group này.`);
-                continue;
-            }
-
-            // Gửi thông báo bắt đầu cho content.js
-            await sleep(1000);
-            
-            try {
-                sendLog(`Đang ra lệnh lấy 100 bài viết qua API...`);
-                const response = await chrome.tabs.sendMessage(currentTabId, {
-                    action: "FETCH_API_POSTS",
-                    count: 100
-                });
-
-                if (response && response.success && response.data) {
-                    const postCount = response.data.length;
-                    totalPostsCrawled += postCount;
-                    sendLog(`✅ API trả về ${postCount} bài. Dữ liệu trích xuất được:`, false, 'success');
-                    
-                    response.data.forEach((p, idx) => {
-                        const snippet = (p.content || '').substring(0, 50).replace(/\n/g, ' ') + (p.content?.length > 50 ? '...' : '');
-                        sendLog(`   ${idx + 1}. [${p.author_name || 'Khách'}] ${snippet} (❤️ ${p.reactions || 0}, 💬 ${p.comments || 0})`, false, 'info');
+                }).catch(async (e) => {
+                    sendLog(`❌ Lỗi tiêm script: ${e.message}. Tiến hành tải lại tab và thử lại...`);
+                    await chrome.tabs.reload(currentTabId);
+                    await sleep(5000);
+                    return chrome.scripting.executeScript({
+                        target: { tabId: currentTabId },
+                        files: ['content.js']
+                    }).catch(err => {
+                        sendLog(`❌ Lỗi tiêm script (lần 2): ${err.message}.`);
+                        return null;
                     });
-                    
-                    sendLog(`Đang gửi ${postCount} bài lên Backend để lọc lấy 3 bài tốt nhất...`, false, 'info');
-                    
-                    // Bước 4: Gửi đống này lên backend
-                    let pushRes = null;
+                });
 
-                    let backendRetry = 0;
-                    while (backendRetry <= 2) {
-                        try {
-                            pushRes = await fetch(`${API_BASE}/api/all-platform/extension/save-posts`, {
-                                method: "POST",
-                                headers: { 
-                                    "Content-Type": "application/json",
-                                    "x-api-key": "markee-extension-key-2024"
-                                },
-                                body: JSON.stringify({
-                                    posts: response.data,
-                                    group_id: '',
-                                    group_url: group.url,
-                                    id_member: idMember,
-                                    extension_version: "API-Automated-1.0",
-                                    // Pass keyword filter params (from app UI) to backend
-                                    keywords: group.keywords || null,
-                                    post_limit: group.post_limit ?? null
-                                })
-
-                            });
-                            break;
-                        } catch(err) {
-                            if (backendRetry >= 2) throw err;
-                            backendRetry++;
-                            sendLog(`⚠️ Backend mất kết nối, thử lại lần ${backendRetry}/2...`, false, 'warn');
-                            await sleep(2000);
-                        }
-                    }
-
-                    if (pushRes && pushRes.ok) {
-                        const pushData = await pushRes.json();
-                        sendLog(`🎉 Backend phản hồi: Đã lưu ${pushData.count || 0} bài!`, false, 'success');
-                    } else {
-                        sendLog(`❌ Lỗi Backend: ${pushRes ? pushRes.status : 'Disconnected'}`, false, 'error');
-                    }
-                } else {
-                    sendLog(`⚠️ Không nhận được dữ liệu bài viết.`, false, 'warn');
+                if (!results || !results[0]) {
+                    sendLog(`❌ Không thể thực thi script tại group này.`);
+                    continue;
                 }
-            } catch (err) {
-                sendLog(`❌ Lỗi giao tiếp content script: ${err.message}`, false, 'error');
+
+                await sleep(1500);
+                
+                try {
+                    sendLog(`Đang ra lệnh lấy 100 bài viết qua API...`);
+                    const response = await chrome.tabs.sendMessage(currentTabId, {
+                        action: "FETCH_API_POSTS",
+                        count: 100
+                    });
+
+                    if (response && response.success && response.data) {
+                        const postCount = response.data.length;
+                        totalPostsCrawled += postCount;
+                        sendLog(`✅ API trả về ${postCount} bài. Dữ liệu trích xuất được:`, false, 'success');
+                        
+                        response.data.forEach((p, idx) => {
+                            const snippet = (p.content || '').substring(0, 50).replace(/\n/g, ' ') + (p.content?.length > 50 ? '...' : '');
+                            sendLog(`   ${idx + 1}. [${p.author_name || 'Khách'}] ${snippet} (❤️ ${p.reactions || 0}, 💬 ${p.comments || 0})`, false, 'info');
+                        });
+                        
+                        sendLog(`Đang gửi ${postCount} bài lên Backend để lọc & chấm điểm AI...`, false, 'info');
+                        
+                        let pushRes = null;
+                        let backendRetry = 0;
+                        while (backendRetry <= 2) {
+                            try {
+                                pushRes = await fetch(`${API_BASE}/api/all-platform/extension/save-posts`, {
+                                    method: "POST",
+                                    headers: { 
+                                        "Content-Type": "application/json",
+                                        "x-api-key": "markee-extension-key-2024"
+                                    },
+                                    body: JSON.stringify({
+                                        posts: response.data,
+                                        group_id: '',
+                                        group_url: group.url,
+                                        id_member: idMember,
+                                        extension_version: "API-Automated-System-2.0",
+                                        keywords: group.keywords || null,
+                                        post_limit: group.post_limit ?? null,
+                                        is_system_crawl: true,
+                                        worker_type: "system_account"
+                                    })
+                                });
+                                break;
+                            } catch(err) {
+                                if (backendRetry >= 2) throw err;
+                                backendRetry++;
+                                sendLog(`⚠️ Backend mất kết nối, thử lại lần ${backendRetry}/2...`, false, 'warn');
+                                await sleep(2000);
+                            }
+                        }
+
+                        if (pushRes && pushRes.ok) {
+                            const pushData = await pushRes.json();
+                            sendLog(`🎉 Backend phản hồi: Đã lưu ${pushData.count || 0} bài!`, false, 'success');
+                        } else {
+                            sendLog(`❌ Lỗi Backend: ${pushRes ? pushRes.status : 'Disconnected'}`, false, 'error');
+                        }
+                    } else {
+                        sendLog(`⚠️ Không nhận được dữ liệu bài viết.`, false, 'warn');
+                    }
+                } catch (err) {
+                    sendLog(`❌ Lỗi giao tiếp content script: ${err.message}`, false, 'error');
+                }
+
+                // Đọc thời gian nghỉ giữa các nhóm từ cấu hình cá nhân của user
+                let userGroupRestSec = 45;
+                try {
+                    const storageRes = await chrome.storage.local.get(['fb_crawler_user_config']);
+                    if (storageRes?.fb_crawler_user_config?.group_rest_sec) {
+                        userGroupRestSec = parseInt(storageRes.fb_crawler_user_config.group_rest_sec, 10) || 45;
+                    }
+                } catch (e) {}
+
+                // Nghỉ ngẫu nhiên giữa các nhóm (mô phỏng người thật chuyển tab): +-15s Jitter
+                const jitterMs = (Math.floor(Math.random() * 15) - 7) * 1000;
+                const interGroupDelay = Math.max(10000, (userGroupRestSec * 1000) + jitterMs);
+                sendLog(`⏳ Nghỉ giãn cách giữa các nhóm: ${(interGroupDelay/1000).toFixed(1)}s (Theo cấu hình cá nhân, mô phỏng người thật chống checkpoint)...\n`);
+                await sleep(interGroupDelay);
             }
 
-            // Nghỉ chút trước khi qua group khác
-            await sleep(3000);
+            if (shouldStop) break;
+
+            // Nếu không bật infiniteLoop trong config thì dừng sau 1 vòng
+            if (config.singleRun) break;
+
+            // Nghỉ ngơi giữa các vòng cào toàn bộ nhóm: 35s - 75s
+            const roundCooldownMs = Math.floor(Math.random() * 40000) + 35000;
+            sendLog(`\n⏸️ [Anti-Ban] Đã hoàn thành toàn bộ nhóm của Vòng ${roundCount}!`);
+            sendLog(`🛌 Tạm nghỉ ngơi ${(roundCooldownMs/1000).toFixed(0)} giây trước khi xáo trộn ngẫu nhiên thứ tự nhóm cho Vòng ${roundCount + 1}...\n`);
+            await sleep(roundCooldownMs);
         }
 
         sendLog(`\n🏁 HOÀN TẤT TOÀN BỘ TIẾN TRÌNH CÀO!`, false, 'success');

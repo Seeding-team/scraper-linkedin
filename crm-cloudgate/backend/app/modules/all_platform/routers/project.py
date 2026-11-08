@@ -17,6 +17,7 @@ from app.modules.all_platform.services import (
     update_project,
 )
 from app.modules.all_platform.services.crm_permission_service import can_view_project, can_manage_project
+from app.modules.all_platform.services.supabase_project_service import preview_project_code
 
 router = APIRouter()
 
@@ -27,6 +28,23 @@ def projects_list(customer_id: str | None = Query(None), user: dict = Depends(ge
         return BaseResponse(success=False, message="Không có quyền xem dự án")
     try:
         return BaseResponse(success=True, data=list_projects(customer_id))
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+# Dat TRUOC "/{project_id}" - neu khong FastAPI se hieu "preview-code" la 1
+# project_id (path param nuot truoc route co dinh khai sau no).
+@router.get("/preview-code")
+def projects_preview_code(customer_id: str = Query(...), user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Chi tinh de hien 'Du kien' tren form tao du an - KHONG insert/persist
+    gi (xem preview_project_code()). Chi doc, dung lai quyen xem nhu GET ""/
+    GET "/{id}"."""
+    if not can_view_project(user):
+        return BaseResponse(success=False, message="Không có quyền xem dự án")
+    try:
+        return BaseResponse(success=True, data=preview_project_code(customer_id))
+    except ValueError as e:
+        return BaseResponse(success=False, message=str(e))
     except Exception as e:
         return BaseResponse(success=False, message=str(e))
 

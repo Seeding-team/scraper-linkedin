@@ -1,32 +1,32 @@
-"""Categories endpoints — platform-agnostic.
-
-Trước đây router này không có auth gì cả — bất kỳ ai (kể cả chưa đăng nhập)
-cũng thêm/sửa/xoá được category (vd crm_source), gây ra bug nguồn lead
-"Personal" lọt vào dropdown CRM dù DB không hỗ trợ (xem migration 056).
-"""
+"""Categories endpoints for shared platform/CRM master data."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.modules.all_platform.auth_deps import get_current_user, require_admin_or_leader
+from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import (
+    BaseResponse,
     CategoryAddRequest,
     CategoryUpdateRequest,
-    CategoryDeleteRequest,
-    BaseResponse,
 )
 from app.modules.all_platform.services import (
+    add_category,
+    delete_category,
     get_all_categories,
     get_categories_by_type,
-    add_category,
     update_category,
-    delete_category,
 )
+from app.modules.all_platform.services.crm_permission_service import can_manage_shared_master_data
 
 router = APIRouter()
+
+
+def _require_master_data_manager(user: dict[str, Any]) -> None:
+    if not can_manage_shared_master_data(user):
+        raise HTTPException(status_code=403, detail="Forbidden: CRM master data manager role required")
 
 
 @router.get("")
@@ -35,48 +35,43 @@ def categories_get_all(
     active_only: bool = Query(False),
     _: Any = Depends(get_current_user),
 ) -> BaseResponse:
-    """Get all categories, optionally filtered by type. Mọi user đã đăng nhập đều
-    đọc được (form CRM/dashboard cần load danh mục cho tất cả role).
-
-    active_only=true chỉ có tác dụng khi có category_type — dùng cho ô search
-    chọn giá trị MỚI (vd combobox Chức vụ) để ẩn các danh mục đã bị ngừng
-    dùng; trang quản trị (Danh mục CRM) luôn gọi không kèm active_only để vẫn
-    thấy các mục đã ngừng dùng và bật lại được."""
+    """Every authenticated user can read shared category master data."""
     try:
-        if category_type:
-            data = get_categories_by_type(category_type, active_only=active_only)
-        else:
-            data = get_all_categories()
+        data = (
+            get_categories_by_type(category_type, active_only=active_only)
+            if category_type
+            else get_all_categories()
+        )
         return BaseResponse(success=True, data=data)
-    except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+    except Exception as exc:
+        return BaseResponse(success=False, message=str(exc))
 
 
 @router.post("/add")
-def categories_add(payload: CategoryAddRequest, _: Any = Depends(require_admin_or_leader)) -> BaseResponse:
-    """Add a new category. Chỉ admin/leader."""
+def categories_add(payload: CategoryAddRequest, user: Any = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = add_category(payload.model_dump(exclude_none=True))
         return BaseResponse(success=True, message="Category added", data=data)
-    except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+    except Exception as exc:
+        return BaseResponse(success=False, message=str(exc))
 
 
 @router.put("/update")
-def categories_update(payload: CategoryUpdateRequest, _: Any = Depends(require_admin_or_leader)) -> BaseResponse:
-    """Update an existing category. Chỉ admin/leader."""
+def categories_update(payload: CategoryUpdateRequest, user: Any = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = update_category(payload.id, payload.model_dump(exclude_none=True))
         return BaseResponse(success=True, message="Category updated", data=data)
-    except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+    except Exception as exc:
+        return BaseResponse(success=False, message=str(exc))
 
 
 @router.delete("/delete")
-def categories_delete(id: str = Query(...), _: Any = Depends(require_admin_or_leader)) -> BaseResponse:
-    """Delete a category. Chỉ admin/leader."""
+def categories_delete(id: str = Query(...), user: Any = Depends(get_current_user)) -> BaseResponse:
+    _require_master_data_manager(user)
     try:
         data = delete_category(id)
         return BaseResponse(success=True, message="Category deleted", data=data)
-    except Exception as e:
-        return BaseResponse(success=False, message=str(e))
+    except Exception as exc:
+        return BaseResponse(success=False, message=str(exc))

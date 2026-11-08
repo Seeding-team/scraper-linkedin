@@ -13,6 +13,7 @@ import {
   type PriceBookVersion,
 } from './repositories/PriceBookZoneRepository';
 import { previewPriceBookItem, formatVnd, formatPercent, formatUsd } from './price-book-preview';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 function emptyForm(groupLabel: 'I' | 'II'): PriceBookItemInput {
   return {
@@ -299,6 +300,17 @@ export function PriceBookZoneTab() {
             ?
           </button>
         </div>
+        {/* "Hàng 1" gon (yeu cau rieng): gop them trang thai phien ban NGAY
+         * TRONG CUNG hang voi segmented Dang phat hanh/Ban nhap + nut phat
+         * hanh, thay vi 1 dong <p> rieng ben duoi nhu truoc - giu nguyen 100%
+         * logic/state, chi doi VI TRI hien thi. */}
+        {version ? (
+          <span className="sc-pb-version-status">
+            Phiên bản {version.version} — {version.status === 'draft' ? 'Bản nháp, chưa áp dụng cho báo giá mới' : 'Đang áp dụng'}
+          </span>
+        ) : (
+          <span className="sc-pb-version-status">Chưa có phiên bản nào.</span>
+        )}
         {statusView === 'draft' && version ? (
           <button type="button" className="sc-btn sc-btn-primary" onClick={() => void handlePublish()} disabled={publishing}>
             {publishing ? 'Đang phát hành…' : `Phát hành phiên bản ${version.version}`}
@@ -306,50 +318,44 @@ export function PriceBookZoneTab() {
         ) : null}
       </div>
 
-      {/* Toggle CHI la che do XEM (khong phai bao gia chinh thuc bang USD) -
-       * nhan phai ghi ro "Xem quy đổi" de khong ai hieu nham he thong phat
-       * hanh bao gia USD. So USD la tinh THAT o backend (Decimal), khong
-       * phai gia lap doi ky hieu tien te. */}
-      <div className="sc-mode-toggle sc-pb-currency-toggle" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={currencyView === 'vnd'}
-          className={currencyView === 'vnd' ? 'active' : ''}
-          onClick={() => setCurrencyView('vnd')}
-        >
-          Giá VNĐ
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={currencyView === 'usd'}
-          className={currencyView === 'usd' ? 'active' : ''}
-          onClick={() => setCurrencyView('usd')}
-        >
-          Xem quy đổi USD
-        </button>
-      </div>
-      {currencyView === 'usd' && representativeExchangeRate != null ? (
-        <p className="sc-pb-fx-note">
-          Tỷ giá: 1 USD = {representativeExchangeRate.toLocaleString('vi-VN')} VNĐ ·{' '}
-          <span className="sc-pb-fx-badge">Tham khảo</span>
-        </p>
+      {error ? (
+        <div className="sc-error">
+          {error}{' '}
+          <button type="button" className="sc-mini-link-btn" onClick={() => void refresh(statusView)}>
+            Thử lại
+          </button>
+        </div>
       ) : null}
-
-      {version ? (
-        <p style={{ fontSize: 12, color: 'var(--sc-muted, #888)' }}>
-          Phiên bản {version.version} — {version.status === 'draft' ? 'Bản nháp, chưa áp dụng cho báo giá mới' : 'Đang áp dụng'}
-        </p>
-      ) : (
-        <p style={{ fontSize: 12, color: 'var(--sc-muted, #888)' }}>Chưa có phiên bản nào.</p>
-      )}
-
-      {error ? <div className="sc-error">{error}</div> : null}
       {notice ? <div className="sc-notice">{notice}</div> : null}
-      {loading ? <div>Đang tải...</div> : null}
+      {loading ? <div className="sc-loading">Đang tải...</div> : null}
 
-      <div className="sc-toolbar">
+      {/* "Hàng 2" gon (yeu cau rieng): toggle Giá VNĐ/Xem quy đổi USD + tim
+       * kiem + bo loc Muc + bo loc trang thai CUNG 1 hang - toggle CHI la che
+       * do XEM (khong phai bao gia chinh thuc bang USD, nhan phai ghi ro
+       * "Xem quy đổi" de khong ai hieu nham he thong phat hanh bao gia USD -
+       * so USD la tinh THAT o backend Decimal, khong phai gia lap doi ky
+       * hieu tien te). */}
+      <div className="sc-toolbar sc-pb-toolbar-row2">
+        <div className="sc-mode-toggle sc-pb-currency-toggle" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={currencyView === 'vnd'}
+            className={currencyView === 'vnd' ? 'active' : ''}
+            onClick={() => setCurrencyView('vnd')}
+          >
+            Giá VNĐ
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={currencyView === 'usd'}
+            className={currencyView === 'usd' ? 'active' : ''}
+            onClick={() => setCurrencyView('usd')}
+          >
+            Xem quy đổi USD
+          </button>
+        </div>
         <input
           className="sc-search"
           placeholder="Tìm theo mã, tên, mô tả..."
@@ -372,6 +378,12 @@ export function PriceBookZoneTab() {
           </button>
         ) : null}
       </div>
+      {currencyView === 'usd' && representativeExchangeRate != null ? (
+        <p className="sc-pb-fx-note">
+          Tỷ giá: 1 USD = {representativeExchangeRate.toLocaleString('vi-VN')} VNĐ ·{' '}
+          <span className="sc-pb-fx-badge">Tham khảo</span>
+        </p>
+      ) : null}
 
       {!loading ? (
         <div className="sc-table-wrap">
@@ -420,7 +432,7 @@ export function PriceBookZoneTab() {
                     ) : (
                       <td className={item.costUnit == null ? 'sc-cell-price-missing' : undefined}>{formatVnd(item.costUnit)}</td>
                     )}
-                    <td>{item.defaultRatePercent != null ? `${item.defaultRatePercent}%` : '—'}</td>
+                    <td>{formatPercent(item.defaultRatePercent)}</td>
                     {currencyView === 'usd' ? (
                       <td>
                         {item.exchangeRate == null ? (
@@ -434,7 +446,7 @@ export function PriceBookZoneTab() {
                     ) : (
                       <td>{formatVnd(item.unitPrice)}</td>
                     )}
-                    <td>{item.vatEuPercent ?? 0}%</td>
+                    <td>{formatPercent(item.vatEuPercent ?? 0)}</td>
                     <td>
                       <span className={`sc-badge ${item.status === 'discontinued' ? 'sc-badge-inactive' : 'sc-badge-active'}`}>
                         {item.status === 'active' ? 'Đang kinh doanh' : 'Ngừng kinh doanh'}
@@ -480,7 +492,7 @@ export function PriceBookZoneTab() {
                     <span>Giá vốn/ĐV (USD)</span>
                     <span>{item.exchangeRate == null ? '—' : <>{formatUsd(item.costUsd)} <span className="sc-pb-fx-badge">Tham khảo</span></>}</span>
                   </div>
-                  <div className="sc-product-card-price-row"><span>Markup</span><span>{item.defaultRatePercent != null ? `${item.defaultRatePercent}%` : '—'}</span></div>
+                  <div className="sc-product-card-price-row"><span>Markup</span><span>{formatPercent(item.defaultRatePercent)}</span></div>
                   <div className="sc-product-card-price-row">
                     <span>Giá khách/ĐV (USD)</span>
                     <span>{item.exchangeRate == null ? '—' : <>{formatUsd(item.customerPriceUsd)} <span className="sc-pb-fx-badge">Tham khảo</span></>}</span>
@@ -489,7 +501,7 @@ export function PriceBookZoneTab() {
               ) : (
                 <>
                   <div className="sc-product-card-price-row"><span>Giá vốn/ĐV</span><span>{formatVnd(item.costUnit)}</span></div>
-                  <div className="sc-product-card-price-row"><span>Markup</span><span>{item.defaultRatePercent != null ? `${item.defaultRatePercent}%` : '—'}</span></div>
+                  <div className="sc-product-card-price-row"><span>Markup</span><span>{formatPercent(item.defaultRatePercent)}</span></div>
                   <div className="sc-product-card-price-row"><span>Giá khách/ĐV</span><span>{formatVnd(item.unitPrice)}</span></div>
                 </>
               )}
@@ -606,19 +618,18 @@ export function PriceBookZoneTab() {
                 {form.costMode === 'usd' ? (
                   <label className="sc-field">
                     <span>Đơn giá USD</span>
-                    <input
-                      type="number"
-                      value={form.unitPriceUsd ?? ''}
-                      onChange={e => setForm({ ...form, unitPriceUsd: e.target.value ? Number(e.target.value) : null })}
+                    <CurrencyInput
+                      locale="en-US"
+                      value={form.unitPriceUsd ?? null}
+                      onChange={value => setForm({ ...form, unitPriceUsd: value })}
                     />
                   </label>
                 ) : (
                   <label className="sc-field">
                     <span>Giá vốn VND trực tiếp</span>
-                    <input
-                      type="number"
-                      value={form.unitPriceVndDirect ?? ''}
-                      onChange={e => setForm({ ...form, unitPriceVndDirect: e.target.value ? Number(e.target.value) : null })}
+                    <CurrencyInput
+                      value={form.unitPriceVndDirect ?? null}
+                      onChange={value => setForm({ ...form, unitPriceVndDirect: value })}
                     />
                   </label>
                 )}
@@ -628,10 +639,9 @@ export function PriceBookZoneTab() {
                  * ty gia nao ca, khong quy doi duoc. */}
                 <label className="sc-field">
                   <span>Tỷ giá (USD/VNĐ)</span>
-                  <input
-                    type="number"
-                    value={form.exchangeRate ?? ''}
-                    onChange={e => setForm({ ...form, exchangeRate: e.target.value ? Number(e.target.value) : null })}
+                  <CurrencyInput
+                    value={form.exchangeRate ?? null}
+                    onChange={value => setForm({ ...form, exchangeRate: value })}
                     placeholder="Vd: 26326"
                   />
                 </label>
@@ -662,7 +672,7 @@ export function PriceBookZoneTab() {
               <p className="sc-drawer-section-title">Giá bán (Markup)</p>
               <div className="sc-panel-grid">
                 <label className="sc-field">
-                  <span>Markup (Rate) mặc định (%)</span>
+                  <span>Markup mặc định (%)</span>
                   <input
                     type="number"
                     value={form.defaultRatePercent ?? 0}
@@ -675,10 +685,9 @@ export function PriceBookZoneTab() {
                 </label>
                 <label className="sc-field">
                   <span>Giá tham chiếu (tuỳ chọn)</span>
-                  <input
-                    type="number"
-                    value={form.referencePrice ?? ''}
-                    onChange={e => setForm({ ...form, referencePrice: e.target.value ? Number(e.target.value) : null })}
+                  <CurrencyInput
+                    value={form.referencePrice ?? null}
+                    onChange={value => setForm({ ...form, referencePrice: value })}
                   />
                 </label>
                 <label className="sc-field">
@@ -755,15 +764,15 @@ export function PriceBookZoneTab() {
                 </li>
               </ul>
 
-              <h4>Bước 2 — Tính giá bán (mục &quot;Markup (Rate) mặc định&quot;)</h4>
+              <h4>Bước 2 — Tính giá bán (mục &quot;Markup mặc định&quot;)</h4>
               <p>
-                Ở trang này (Bảng giá chuẩn), giá bán luôn tính từ <strong>Markup %</strong> (phần trăm lời thêm vào giá vốn):
+                Ở trang này (Bảng giá chuẩn), giá bán luôn tính từ <strong>Markup %</strong>:
               </p>
-              <p className="sc-row-sub">Giá bán = Giá vốn × (1 + Markup%). Ví dụ: 1.754.891đ × (1 + 34,06%) ≈ 2.352.596đ.</p>
+              <p className="sc-row-sub">Giá bán = Giá vốn / (1 - GM%). Ví dụ: 34.300đ / (1 - 30%) = 49.000đ.</p>
               <p>
                 Markup ở đây chỉ là <strong>mức đề xuất mặc định</strong>. Khi Sale làm báo giá thật cho khách (bên Quote Workspace),
-                Sale có thể đổi cách khác: <strong>gõ thẳng Giá khách</strong> muốn báo, hệ thống sẽ tự tính ngược ra Markup% tương
-                ứng — không ảnh hưởng tới Markup mặc định lưu ở đây.
+                Sale có thể đổi cách khác: <strong>gõ thẳng Giá khách</strong> muốn báo, hệ thống sẽ tự tính ngược ra GM% tương
+                ứng — không ảnh hưởng tới GM mặc định lưu ở đây.
               </p>
 
               <h4>VAT — tính riêng 2 đầu</h4>

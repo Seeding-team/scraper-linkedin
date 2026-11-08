@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { seedingQuoteRepository } from '@/modules/quotes';
 import type { QuoteForm } from '@/modules/quotes';
+import type { IssuerCompany } from '@/modules/quotes/types';
 import { DealFormFields, emptyDealForm, validateDealForm } from '../../components/DealFormFields';
 import type { DealFormState } from '../../components/DealFormFields';
 import { CheckCircle2, Loader2, X } from '../../components/icons';
@@ -12,6 +14,7 @@ import { SelectQuoteFormStep } from './SelectQuoteFormStep';
 import { emptyQuoteDraft, quoteDraftFromForm } from './types';
 import type { QuoteDraft, WizardStep } from './types';
 import { useDealQuoteSubmit } from './useDealQuoteSubmit';
+import { useAppAuth } from '@/contexts/AppAuthContext';
 
 const STEP_LABELS: Record<WizardStep, string> = {
   1: 'Khách hàng',
@@ -36,6 +39,19 @@ export function DealQuoteWizard({
   const [selectedForm, setSelectedForm] = useState<QuoteForm | null>(null);
   const [quoteDraft, setQuoteDraft] = useState<QuoteDraft>(emptyQuoteDraft);
   const { submit, submitting, submitError, resetError } = useDealQuoteSubmit();
+  const { user: currentUser } = useAppAuth();
+
+  // Bug thuc te (2026-10-10): wizard nay truoc gio GOI quoteDraftFromForm(form, dealDraft,
+  // undefined, ...) - khong bao gio snapshot Don vi phat hanh (ten/logo/dia chi/SDT...) nhu
+  // CreateQuoteModal/QuoteWorkspaceModal, nen bao gia tao tu day thieu logo (va moi field seller*
+  // khac) du Don vi phat hanh DA co day du du lieu - chi dung dung defaultValue tinh cua MAU bao
+  // gia (thuong Khong dien san logo vi phai nhap URL tay). Fetch issuerCompanies de resolve dung
+  // cong ty theo form.issuerCompanyId (dung pattern voi CreateQuoteModal Buoc 1).
+  const [issuerCompanies, setIssuerCompanies] = useState<IssuerCompany[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    void seedingQuoteRepository.getIssuerCompanies().then(setIssuerCompanies).catch(() => setIssuerCompanies([]));
+  }, [open]);
 
   function setDealValue<K extends keyof DealFormState>(key: K, value: DealFormState[K]) {
     setDealDraft(current => ({ ...current, [key]: value }));
@@ -67,7 +83,10 @@ export function DealQuoteWizard({
 
   function handleSelectForm(form: QuoteForm) {
     setSelectedForm(form);
-    setQuoteDraft(quoteDraftFromForm(form, dealDraft));
+    const issuerCompany = form.issuerCompanyId
+      ? issuerCompanies.find(c => c.id === form.issuerCompanyId)
+      : undefined;
+    setQuoteDraft(quoteDraftFromForm(form, dealDraft, issuerCompany, currentUser?.name));
     setStep(3);
   }
 
@@ -94,7 +113,7 @@ export function DealQuoteWizard({
   if (!open) return null;
 
   return (
-    <div className="crm-modal-backdrop" onClick={resetAndClose}>
+    <div className="crm-modal-backdrop" onClick={event => { if (event.target === event.currentTarget) resetAndClose(); }}>
       <div className="crm-modal crm-wizard-modal" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <div>

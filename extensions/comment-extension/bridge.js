@@ -4,14 +4,47 @@
 // Bridge between Web App window.postMessage and Extension chrome.runtime.sendMessage
 // -----------------------------------------------------------------------------
 
-function safeSendMessage(message, callback) {
+const MK_EXTENSION_INFO = (() => {
+    let version = "";
+    try { version = chrome.runtime.getManifest().version; } catch (e) {}
+    return { version, features: ["fb_crawl", "fb_comment", "li_crawl", "li_comment", "th_crawl", "th_crawl_live", "rotate_crawl", "yt_crawl", "yt_comment"] };
+})();
+
+// Truoc day KHONG check chrome.runtime.lastError va KHONG co timeout gi ca -
+// neu background service worker (Manifest V3) bi treo/crash/khong wake len
+// duoc de xu ly message, chrome.runtime.sendMessage co the KHONG BAO GIO goi
+// callback (khong throw, khong loi, khong gi ca) - trang web dung im mai mai,
+// dung y het trieu chung "bam Gui khong ra gi ca" (xac nhan qua watchdog phia
+// FE). Them timeout 4s + luon check lastError de callback CHAC CHAN duoc goi.
+function safeSendMessage(message, callback, timeoutMs) {
     try {
         if (!chrome.runtime?.id) {
             window.postMessage({ action: "COMMENT_EXTENSION_INVALIDATED" }, "*");
             window.postMessage({ action: "LI_EXTENSION_INVALIDATED" }, "*");
             return;
         }
-        chrome.runtime.sendMessage(message, callback);
+        let settled = false;
+        const timeoutId = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            console.warn("[Bridge] chrome.runtime.sendMessage khong nhan duoc phan hoi trong " + (timeoutMs || 4000) + "ms — background service worker co the da bi treo/crash.");
+            callback({
+                success: false,
+                error: "Background service worker của Extension không phản hồi (có thể đã bị treo/crash). Hãy vào chrome://extensions, bấm reload (vòng tròn) trên extension rồi F5 lại trang này.",
+            });
+        }, timeoutMs || 4000);
+
+        chrome.runtime.sendMessage(message, (response) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timeoutId);
+            if (chrome.runtime.lastError) {
+                console.warn("[Bridge] chrome.runtime.sendMessage lastError:", chrome.runtime.lastError.message);
+                callback({ success: false, error: chrome.runtime.lastError.message || "Lỗi kết nối tới Extension background." });
+                return;
+            }
+            callback(response);
+        });
     } catch (e) {
         window.postMessage({ action: "COMMENT_EXTENSION_INVALIDATED" }, "*");
         window.postMessage({ action: "LI_EXTENSION_INVALIDATED" }, "*");
@@ -43,6 +76,13 @@ window.addEventListener("message", function(event) {
             if (response && response.success) {
                 window.postMessage({ action: "BULK_COMMENT_STARTED", success: true }, "*");
                 window.postMessage({ action: "LI_COMMENT_STARTED", success: true }, "*");
+            } else {
+                // Truoc day nhanh nay KHONG lam gi ca khi background tu choi (vd dang co
+                // tien trinh khac chua xong) hoac khong tra loi gi - trang web im re khong
+                // biet gi, giong het "bam nut Gui khong co phan hoi gi ca".
+                const errMsg = (response && response.error) || "Không nhận được phản hồi từ Extension.";
+                window.postMessage({ action: "BULK_COMMENT_FAILED_TO_START", error: errMsg }, "*");
+                window.postMessage({ action: "LI_COMMENT_FAILED_TO_START", error: errMsg }, "*");
             }
         });
     } else if (action === "SYNC_ACTIVE_MEMBER" || event.data.type === "SYNC_ACTIVE_MEMBER") {
@@ -61,11 +101,91 @@ window.addEventListener("message", function(event) {
         safeSendMessage({ action: "GET_STATUS" }, response => {
             window.postMessage({ action: "STATUS_RESPONSE", payload: response }, "*");
         });
+    } else if (action === "MK_PING") {
+        window.postMessage({ action: "MK_EXTENSION_READY", payload: MK_EXTENSION_INFO }, "*");
+    } else if (action === "MK_FB_CRAWL_START" || action === "MK_LI_CRAWL_START") {
+        // Tên lệnh cào MỚI (MK_*) cố ý khác API_LAUNCH_FROM_APP của extension cũ
+        // "FB API Crawler": nếu người dùng chưa gỡ extension cũ, 2 extension sẽ
+        // không cùng nhận 1 lệnh rồi mở 2 tiến trình cào song song.
+        const resultAction = action === "MK_FB_CRAWL_START" ? "MK_FB_CRAWL_START_RESULT" : "MK_LI_CRAWL_START_RESULT";
+        safeSendMessage({
+            action,
+            groups: payload?.groups || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: resultAction, payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_TH_CRAWL_START") {
+        // Threads không có group: web app gửi danh sách TỪ KHOÁ thay cho danh sách nhóm.
+        safeSendMessage({
+            action,
+            keywords: payload?.keywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_TH_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_YT_CRAWL_START") {
+        // YouTube: mỗi mục là 1 từ khoá HOẶC 1 link video (extension tự phân biệt).
+        safeSendMessage({
+            action,
+            keywords: payload?.keywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: "MK_YT_CRAWL_START_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_YT_DETECT_ACCOUNT") {
+        // Có thể phải mở 1 tab YouTube ngầm để đọc kênh đang đăng nhập -> chờ lâu hơn mặc định.
+        safeSendMessage({ action }, response => {
+            window.postMessage({ action: "MK_YT_DETECT_ACCOUNT_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        }, 45000);
+    } else if (action === "MK_YT_COMMENT_OPEN") {
+        safeSendMessage({ action, payload }, response => {
+            window.postMessage({ action: "MK_YT_COMMENT_OPEN_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_FB_CRAWL_STOP" || action === "MK_LI_CRAWL_STOP" || action === "MK_TH_CRAWL_STOP" || action === "MK_YT_CRAWL_STOP") {
+        safeSendMessage({ action }, () => {});
+    } else if (action === "MK_FB_CRAWL_STATUS" || action === "MK_LI_CRAWL_STATUS" || action === "MK_TH_CRAWL_STATUS" || action === "MK_YT_CRAWL_STATUS") {
+        safeSendMessage({ action }, response => {
+            window.postMessage({ action: action + "_RESULT", payload: response }, "*");
+        });
+    } else if (action === "MK_ROTATE_SCHEDULE_LIST" || action === "MK_ROTATE_SCHEDULE_TOGGLE" || action === "MK_ROTATE_SCHEDULE_STOP" || action === "MK_ROTATE_SCHEDULE_DELETE" || action === "MK_ROTATE_SCHEDULE_RUN_NOW" || action === "MK_ROTATE_SCHEDULE_STOP_ALL") {
+        // Cac lenh CRUD lich cao xoay vong (nhieu lich doc lap, xem bg/rotation-crawl.js) -
+        // request/response don gian, chi can relay nguyen payload va tra ket qua ve dung khuon.
+        safeSendMessage({ action, ...(payload || {}) }, response => {
+            window.postMessage({ action: action + "_RESULT", payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "MK_ROTATE_SCHEDULE_ADD" || action === "MK_ROTATE_SCHEDULE_UPDATE") {
+        const resultAction = action === "MK_ROTATE_SCHEDULE_ADD" ? "MK_ROTATE_SCHEDULE_ADD_RESULT" : "MK_ROTATE_SCHEDULE_UPDATE_RESULT";
+        safeSendMessage({
+            action,
+            id: payload?.id || "",
+            label: payload?.label || "",
+            fbGroups: payload?.fbGroups || [],
+            liGroups: payload?.liGroups || [],
+            threadsKeywords: payload?.threadsKeywords || [],
+            config: payload?.config || {},
+        }, response => {
+            window.postMessage({ action: resultAction, payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." } }, "*");
+        });
+    } else if (action === "LI_FETCH_POST_INFO") {
+        // Tương thích luồng "Thêm bài viết" LinkedIn ở trang Tương tác nội bộ (lib/li-ext-bridge.ts),
+        // trước đây chỉ extension "LinkedIn Group Post Crawler" riêng mới xử lý được.
+        safeSendMessage({ type: "LI_FETCH_POST_INFO", url: payload?.url }, response => {
+            window.postMessage({
+                action: "LI_FETCH_POST_INFO_RESULT",
+                payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." },
+            }, "*");
+        }, 60000);
     }
 });
 
 // Lắng nghe tiến trình từ background và relay xuống Web App UI
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (typeof request.action === "string" && (request.action.startsWith("MK_FB_CRAWL_") || request.action.startsWith("MK_LI_CRAWL_") || request.action.startsWith("MK_TH_CRAWL_") || request.action.startsWith("MK_ROTATE_SCHEDULE_") || request.action.startsWith("MK_YT_CRAWL_") || request.action === "MK_YT_COMMENT_RESULT")) {
+        const { action, ...rest } = request;
+        window.postMessage({ action, payload: rest }, "*");
+        return;
+    }
     if (request.action === "BULK_COMMENT_PROGRESS") {
         window.postMessage({ action: "BULK_COMMENT_PROGRESS", payload: request.payload }, "*");
         window.postMessage({ action: "LI_COMMENT_PROGRESS", payload: request.payload }, "*");
@@ -79,3 +199,4 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Gửi tín hiệu sẵn sàng khi vừa load bridge.js
 window.postMessage({ action: "COMMENT_EXTENSION_READY" }, "*");
 window.postMessage({ action: "LI_EXTENSION_READY" }, "*");
+window.postMessage({ action: "MK_EXTENSION_READY", payload: MK_EXTENSION_INFO }, "*");

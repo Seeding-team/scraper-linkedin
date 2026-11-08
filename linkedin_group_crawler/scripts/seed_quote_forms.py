@@ -159,6 +159,7 @@ def default_standard_schema():
     còn hardcode "CLOUDGATE"/"Dương Thị Mai" nữa) và thêm 2 field mới sellerTaxCode/
     sellerLogo mà bản Cloudgate cũ chưa có."""
     schema = copy.deepcopy(standard_schema())
+    schema["enableDynamicPaymentPlan"] = True
     for section_data in schema["sections"]:
         if section_data["key"] == "seller":
             section_data["fields"] = [
@@ -373,7 +374,7 @@ def villa_schema():
             section("implementation", "TRIỂN KHAI VÀ LIÊN HỆ", [
                 field("implementationStepOne", "Bước 1", "text", default_value="Đặt lịch tư vấn 15 phút miễn phí"),
                 field("implementationStepTwo", "Bước 2", "text", default_value="Triển khai trong 7 ngày làm việc"),
-                field("sellerEmail", "Email liên hệ", "email", default_value="hello@markeeai.com"),
+                field("sellerEmail", "Email liên hệ", "email", default_value="admin@markee.vn"),
                 field("sellerZalo", "Zalo", "text", default_value="076 5055 708"),
                 field("offerExpiryText", "Thời hạn ưu đãi", "text", default_value="Ưu đãi hết ngày"),
                 field("offerExpiryDate", "Ngày hết hạn ưu đãi", "date", required=False),

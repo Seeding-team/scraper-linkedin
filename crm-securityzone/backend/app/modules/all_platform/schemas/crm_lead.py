@@ -8,12 +8,25 @@ from pydantic import BaseModel, Field
 # Cung to chuc file rieng cho schema Lead, giong precedent crm_customer.py
 # (co file schemas/crm_customer.py rieng, router import thang tu do, khong
 # qua aggregator schemas/__init__.py) - khong piggyback vao 1 file khac.
-CrmLeadStatus = Literal["new_lead", "qualifying", "qualified", "nurture", "converted", "disqualified"]
+CrmLeadStatus = Literal[
+    "mql",
+    "sql",
+    "nurturing",
+    "unqualified",
+    # Legacy values kept for read/update compatibility until data is backfilled.
+    "new_lead",
+    "qualifying",
+    "qualified",
+    "nurture",
+    "converted",
+    "disqualified",
+]
 
 
 class CrmLeadBase(BaseModel):
     lead_name: str = Field(..., min_length=1)
     company_name: Optional[str] = None
+    tax_code: Optional[str] = None  # MST (migration tax_code)
     position: Optional[str] = None
     # migration 079 — Chuc vu category-driven select (category_type=crm_position).
     position_category_id: Optional[str] = None
@@ -24,19 +37,25 @@ class CrmLeadBase(BaseModel):
     telegram: Optional[str] = None
     website: Optional[str] = None
     source: Optional[str] = None
-    status: CrmLeadStatus = "new_lead"
+    status: CrmLeadStatus = "mql"
     score: Optional[float] = None
     sdr_id: Optional[str] = None
     note: Optional[str] = None
 
 
 class CrmLeadCreate(CrmLeadBase):
-    pass
+    # Manual quick-create may explicitly override the duplicate warning.  The
+    # import flow never exposes/sends this flag and is always strict.
+    allow_duplicate: bool = False
+    # Lead tu Mua Sam Cong (MSC): chua co nguoi lien he nen cho phep thieu SDT/email.
+    # Thieu ca hai thi khong kiem tra trung duoc; Lead nhap tay van bat buoc nhu cu.
+    allow_no_contact: bool = False
 
 
 class CrmLeadUpdate(BaseModel):
     lead_name: Optional[str] = None
     company_name: Optional[str] = None
+    tax_code: Optional[str] = None
     position: Optional[str] = None
     position_category_id: Optional[str] = None
     phone: Optional[str] = None
@@ -49,6 +68,12 @@ class CrmLeadUpdate(BaseModel):
     status: Optional[CrmLeadStatus] = None
     score: Optional[float] = None
     sdr_id: Optional[str] = None
+    team_id: Optional[str] = None
+    # "Marketing" (LeadsDirectory) - doi TAY nguoi dung lam "nguoi tao" sau
+    # khi Lead da co san (feedback leader 2026-09-27). Quyen gate o
+    # crm_lead_service.update_lead() (chi full CRM access), KHONG anh huong
+    # luc TAO Lead (van luon ep = actor_id that qua create_lead()).
+    created_by: Optional[str] = None
     note: Optional[str] = None
 
     # Qualification fields - plain update only, service layer guarantees
@@ -62,12 +87,23 @@ class CrmLeadUpdate(BaseModel):
     next_step: Optional[str] = None
     follow_up_date: Optional[datetime] = None
 
+    # project_name/deal_stage are real crm_leads fields (draft values typed
+    # before conversion) - synced to the converted customer_leads row when
+    # one exists, same pattern as team_id. project_id remains a Deal-only
+    # handoff field sent by the qualification form after conversion.
+    project_name: Optional[str] = None
+    deal_stage: Optional[str] = None
+    project_id: Optional[str] = None
+
 
 class CrmLeadResponse(CrmLeadBase):
     id: str
     position_label_snapshot: Optional[str] = None
     phone_normalized: Optional[str] = None
     email_normalized: Optional[str] = None
+    team_id: Optional[str] = None
+    project_name: Optional[str] = None
+    deal_stage: Optional[str] = None
     qualification_need: Optional[str] = None
     qualification_icp_fit: Optional[bool] = None
     qualification_estimated_value: Optional[float] = None
@@ -109,4 +145,16 @@ class CrmLeadConvertRequest(BaseModel):
     contact_id: Optional[str] = None
     deal: dict[str, Any] = Field(default_factory=dict)
     update_customer: bool = False
+    idempotency_key: Optional[str] = None
+    # GD3: link Doc/Sheet hang muc bao gia + co gui email cho nguoi nhan (convert 'Xac minh dat chuan' co nguoi nhan)
+    handover: Optional[dict[str, Any]] = None
+
+
+class CrmLeadHandoverRequest(BaseModel):
+    to_user_id: str
+    doc_links: Optional[Any] = None
+    send_email: bool = True
+    note: Optional[str] = None
+    missing_items: Optional[list[str]] = None
+    crm_team_id: Optional[str] = None
     idempotency_key: Optional[str] = None

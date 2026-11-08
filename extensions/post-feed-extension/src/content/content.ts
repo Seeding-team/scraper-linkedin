@@ -558,7 +558,7 @@ function extractPostData(el: Element): any {
 
       const allDirs = node.querySelectorAll('div[dir="auto"]');
       let bestText = '';
-      const banWords = ['bình luận', 'chia sẻ', 'comment', 'share', 'thông báo', 'trả lời'];
+      const banWords = ['viết bình luận', 'write a comment', 'xem thêm bình luận', 'view more comments'];
 
       for (const div of Array.from(allDirs)) {
         // Bỏ qua nếu nằm trong vùng comments

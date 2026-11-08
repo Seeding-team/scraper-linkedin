@@ -1,10 +1,17 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import type {
+import {
   ServiceCatalogItem,
   ServiceCatalogItemInput,
   BundleComponentInput,
   ServiceCatalogItemPricingRow,
   ServiceCatalogItemPricingUpsertInput,
+  ServiceCatalogUnit,
+  ServiceCatalogVatRate,
+  ServiceCatalogStatus,
+  MscSyncStats,
+  WorkspaceMeta,
+  WorkspaceAssignResult,
+  CatalogChangeFingerprint,
 } from '../types';
 
 type ApiResponse<T> = {
@@ -39,7 +46,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 function toItemPayload(input: ServiceCatalogItemInput) {
-  return {
+  const optionalFields = [
+    'brand', 'part_number', 'product_type', 'internal_note',
+    'supplier_currency', 'supplier_list_price', 'supplier_discount_percent',
+    'supplier_net_price', 'supplier_exchange_rate', 'supplier_converted_price',
+    'supplier_vendor_id', 'supplier_quote_ref', 'supplier_quote_source',
+    'supplier_quote_date', 'supplier_valid_until', 'shipping_cost',
+    'import_fee', 'other_cost', 'pricing_policy'
+  ];
+  
+  const payload: Record<string, unknown> = {
     item_type: input.itemType,
     parent_id: input.parentId,
     sku: input.sku,
@@ -49,26 +65,86 @@ function toItemPayload(input: ServiceCatalogItemInput) {
     list_price_usd: input.listPriceUsd,
     unit_price_usd: input.unitPriceUsd,
     exchange_rate_snapshot: input.exchangeRateSnapshot,
-    default_unit_price_vnd: input.defaultUnitPriceVnd,
+    default_unit_price_vnd: input.defaultUnitPriceVnd ?? input.monthlyPriceVnd ?? undefined,
     default_discount_percent: input.defaultDiscountPercent,
     default_vat_rate: input.defaultVatRate,
+    customer_visible: input.customerVisible,
+    quote_display_name: input.quoteDisplayName,
+    quote_description: input.quoteDescription,
+    quote_cta: input.quoteCta,
+    monthly_price_vnd: input.monthlyPriceVnd,
+    annual_commit_monthly_price_vnd: input.annualCommitMonthlyPriceVnd,
+    annual_total_price_vnd: input.annualTotalPriceVnd,
+    max_sale_discount_percent: input.maxSaleDiscountPercent,
+    target_gross_margin_percent: input.targetGrossMarginPercent,
+    cost_basis_rule: input.costBasisRule,
+    pricing_policy_exceptions: input.pricingPolicyExceptions,
+    quota_user_count: input.quotaUserCount,
+    quota_user_label: input.quotaUserLabel,
+    quota_connected_channels: input.quotaConnectedChannels,
+    quota_connected_channels_label: input.quotaConnectedChannelsLabel,
+    quota_messages_per_month: input.quotaMessagesPerMonth,
+    quota_messages_per_month_label: input.quotaMessagesPerMonthLabel,
+    quota_ai_data: input.quotaAiData,
+    quota_highlights: input.quotaHighlights,
+    quota_extra: input.quotaExtra,
+    default_cost_price_vnd: input.defaultCostPriceVnd,
+    default_markup_percent: input.defaultMarkupPercent,
+    default_customer_price_vnd: input.defaultCustomerPriceVnd,
+    pricing_input_mode: input.pricingInputMode,
     spec_quantity_per_unit: input.specQuantityPerUnit,
     spec_unit_label: input.specUnitLabel,
     note: input.note,
     status: input.status,
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Gửi instance khi tạo mới hoặc cập nhật
+    ...(input.instance ? { instance: input.instance } : {}),
   };
+  
+  // Only include optional fields with non-empty values (for databases that may not have migration 127 applied)
+  for (const [key, snakeKey] of [
+    ['brand', 'brand'],
+    ['partNumber', 'part_number'],
+    ['productType', 'product_type'],
+    ['internalNote', 'internal_note'],
+    ['supplierCurrency', 'supplier_currency'],
+    ['supplierListPrice', 'supplier_list_price'],
+    ['supplierDiscountPercent', 'supplier_discount_percent'],
+    ['supplierNetPrice', 'supplier_net_price'],
+    ['supplierExchangeRate', 'supplier_exchange_rate'],
+    ['supplierConvertedPrice', 'supplier_converted_price'],
+    ['supplierVendorId', 'supplier_vendor_id'],
+    ['supplierQuoteRef', 'supplier_quote_ref'],
+    ['supplierQuoteSource', 'supplier_quote_source'],
+    ['supplierQuoteDate', 'supplier_quote_date'],
+    ['supplierValidUntil', 'supplier_valid_until'],
+    ['shippingCost', 'shipping_cost'],
+    ['importFee', 'import_fee'],
+    ['otherCost', 'other_cost'],
+    ['pricingPolicy', 'pricing_policy'],
+    ['defaultCostVatRate', 'default_cost_vat_rate'],
+  ] as const) {
+    const value = input[key as keyof ServiceCatalogItemInput];
+    if (value !== '' && value !== null && value !== undefined) {
+      payload[snakeKey] = value;
+    }
+  }
+  
+  return payload;
 }
 
 export interface ServiceCatalogListOptions {
   /** 'quote_picker' = dang goi tu Catalog Picker trong 1 quote - anh huong
    * quyen xem Gia von/Markup mac dinh (Gia khach LUON tra, khong qua cong
    * quyen nay). BAT BUOC kem `quoteId` THAT (1 row `quotes` da ton tai) de
-   * duoc cap cost - KHONG con nhan `issuerCompanyId` rieng: thieu quoteId
-   * se LUON bi an cost, khong co ngoai le nao cho "dang tao moi" (da sua lo
-   * hong bao mat o backend, xem routers/service_catalog.py). Mac dinh
-   * 'admin' (trang quan tri danh muc). */
+   * duoc cap cost theo quote. Rieng draft chua co quoteId co the truyen
+   * `issuerCompanyId`; backend chi cap cost draft cho global cost viewer
+   * (Admin/Leader), khong mo cho moi user da dang nhap. Mac dinh 'admin'
+   * (trang quan tri danh muc). */
   context?: 'admin' | 'quote_picker';
   quoteId?: string | null;
+  issuerCompanyId?: string | null;
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Danh sách instance/workspace cần lọc */
+  instances?: string[];
 }
 
 export class ServiceCatalogRepository {
@@ -76,8 +152,27 @@ export class ServiceCatalogRepository {
     const params = new URLSearchParams();
     if (options?.context) params.set('context', options.context);
     if (options?.quoteId) params.set('quote_id', options.quoteId);
+    if (options?.issuerCompanyId) params.set('issuer_company_id', options.issuerCompanyId);
+    // TÍCH HỢP BỘ LỌC WORKSPACE: Đưa tham số instances vào query string nếu có
+    if (options?.instances && options.instances.length > 0) {
+      params.set('instances', options.instances.join(','));
+    }
     const qs = params.toString();
     return apiFetch<ServiceCatalogItem[]>(`/api/all-platform/service-catalog${qs ? `?${qs}` : ''}`);
+  }
+
+  /** TÍCH HỢP BỘ LỌC WORKSPACE: Lấy danh sách Workspace từ DB */
+  async getWorkspaces(): Promise<WorkspaceMeta[]> {
+    return apiFetch<WorkspaceMeta[]>('/api/all-platform/service-catalog/workspaces');
+  }
+
+  /** ĐỒNG BỘ CROSS-CLONE (Requirement C): fingerprint thay đổi dữ liệu danh mục
+   * (max updated_at + counts). Poll chu kỳ bounded ở use-service-catalog;
+   * fingerprint đổi → refetch list/workspaces. Endpoint tồn tại trên clone
+   * backend; MAIN/TimeTech chưa có → chỉ clone standalone gọi (guard bằng
+   * IS_STANDALONE_CRM). */
+  async getCatalogVersion(): Promise<CatalogChangeFingerprint> {
+    return apiFetch<CatalogChangeFingerprint>('/api/all-platform/service-catalog/version');
   }
 
   /** Danh sách đầy đủ bộ giá (mọi issuer_company_id) của 1 sản phẩm — CHỈ
@@ -94,7 +189,11 @@ export class ServiceCatalogRepository {
         default_cost_price_vnd: input.defaultCostPriceVnd ?? null,
         default_markup_percent: input.defaultMarkupPercent ?? null,
         default_customer_price_vnd: input.defaultCustomerPriceVnd ?? null,
-        pricing_input_mode: input.pricingInputMode,
+        // Backend chi chap nhan dung 3 literal "cost"|"markup"|"customer_price"
+        // (xem ServiceCatalogItemPricingUpsertRequest) - FE dung "price" lam
+        // ten mode noi bo (ServiceCatalogPricingInputMode), phai doi ten khi
+        // goi API keo Pydantic tra 422 "Invalid request body".
+        pricing_input_mode: input.pricingInputMode === 'price' ? 'customer_price' : input.pricingInputMode,
       }),
     });
   }
@@ -122,7 +221,7 @@ export class ServiceCatalogRepository {
     });
   }
 
-  async delete(id: string): Promise<{ deleted: boolean }> {
+  async delete(id: string): Promise<{ deleted: boolean; deactivated?: boolean }> {
     return apiFetch(`/api/all-platform/service-catalog/delete?id=${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
@@ -135,6 +234,48 @@ export class ServiceCatalogRepository {
     });
   }
 
+  // "Đơn vị tính & VAT" (migration 117) - master-data that, dung cho
+  // ServiceCatalogConfigPage.tsx.
+  async listUnits(includeInactive = true): Promise<ServiceCatalogUnit[]> {
+    return apiFetch<ServiceCatalogUnit[]>(
+      `/api/all-platform/service-catalog/units?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createUnit(name: string, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>('/api/all-platform/service-catalog/units', {
+      method: 'POST',
+      body: JSON.stringify({ name, status }),
+    });
+  }
+
+  async updateUnit(id: string, patch: { name?: string; status?: ServiceCatalogStatus }): Promise<ServiceCatalogUnit> {
+    return apiFetch<ServiceCatalogUnit>(`/api/all-platform/service-catalog/units/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  }
+
+  async listVatRates(includeInactive = true): Promise<ServiceCatalogVatRate[]> {
+    return apiFetch<ServiceCatalogVatRate[]>(
+      `/api/all-platform/service-catalog/vat-rates?include_inactive=${includeInactive}`
+    );
+  }
+
+  async createVatRate(rate: number, status: ServiceCatalogStatus = 'active'): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>('/api/all-platform/service-catalog/vat-rates', {
+      method: 'POST',
+      body: JSON.stringify({ rate, status }),
+    });
+  }
+
+  async updateVatRate(id: string, patch: { rate?: number; status?: ServiceCatalogStatus }): Promise<ServiceCatalogVatRate> {
+    return apiFetch<ServiceCatalogVatRate>(`/api/all-platform/service-catalog/vat-rates/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ id, ...patch }),
+    });
+  }
+
   async setBundleComponents(bundleId: string, items: BundleComponentInput[]): Promise<ServiceCatalogItem> {
     return apiFetch<ServiceCatalogItem>(
       `/api/all-platform/service-catalog/${encodeURIComponent(bundleId)}/components`,
@@ -144,11 +285,45 @@ export class ServiceCatalogRepository {
           items: items.map(item => ({
             component_id: item.componentId,
             quantity: item.quantity,
+            quota: item.quota,
+            customer_display_name: item.customerDisplayName,
+            crm_note: item.crmNote,
+            quota_pool_key: item.quotaPoolKey,
+            quota_pool_name: item.quotaPoolName,
+            quota_pool_quota: item.quotaPoolQuota,
+            quota_pool_limit: item.quotaPoolLimit,
+            is_required: item.required ?? true,
+            overage_policy: item.overagePolicy,
+            show_on_quote: item.showOnQuote ?? true,
             sort_order: item.sortOrder,
           })),
         }),
       }
     );
+  }
+
+  /** Dong bo hang hoa tu MSC (button "Đồng bộ hàng hóa từ MSC").
+   * dryRun=true → backend chi tinh toan dem du kien, KHONG ghi CRM. */
+  async runMscSync(dryRun = false): Promise<MscSyncStats> {
+    return apiFetch<MscSyncStats>('/api/all-platform/msc-sync/run', {
+      method: 'POST',
+      body: JSON.stringify({ dry_run: dryRun }),
+    });
+  }
+
+  /** Trang thai cac lan dong bo MSC gan nhat (msc_sync_runs). */
+  async getMscSyncStatus(limit = 10): Promise<MscSyncStats[]> {
+    return apiFetch<MscSyncStats[]>(`/api/all-platform/msc-sync/status?limit=${encodeURIComponent(String(limit))}`);
+  }
+
+  /** Many-to-many Workspace assignment (migration 190): bulk replace-all cho
+   * cac NHOM da chon (+ tat ca san pham ben trong). Backend goi 1 RPC
+   * `service_catalog_ws_assign` de atomic (khong co partial failure). */
+  async assignWorkspaces(groupIds: string[], instances: string[]): Promise<WorkspaceAssignResult> {
+    return apiFetch<WorkspaceAssignResult>('/api/all-platform/service-catalog/workspaces-assign', {
+      method: 'POST',
+      body: JSON.stringify({ group_ids: groupIds, instances }),
+    });
   }
 }
 

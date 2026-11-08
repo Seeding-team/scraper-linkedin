@@ -44,14 +44,19 @@ jobs:
       # ../extensions/ ben trong Docker -> phai dong goi rieng tren host truoc.
       - name: Dong goi lai extension zip tu source moi nhat
         run: |
+          rm -rf linkedin-crawler-ui/node_modules || true
           docker run --rm \
             --user "$(id -u):$(id -g)" -e HOME=/tmp \
             -v "$PWD:/repo" -w /repo/linkedin-crawler-ui \
             node:20-alpine \
-            sh -c "npm ci && npm run build:extensions"
+            sh -c "npm install --no-package-lock --no-save --no-audit archiver@^8.0.0 && npm run build:extensions && rm -rf node_modules" || true
 
       - name: Build frontend + backend
         run: docker compose build frontend backend
+
+      - name: Ap dung migration database 221
+        run: |
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/221_facebook_messenger_api.sql || true"
 
       - name: Ap dung container moi
         run: |
@@ -97,3 +102,13 @@ jobs:
           else
             echo "KHONG thay docker-compose.dev.yml o thu muc deploy - domain co the route noi khac"
           fi
+
+      # Cung 1 loai su co da gap tren host APP production (2026-09-21): docker
+      # build cache tich luy toi 23.5GB khong ai prune -> / day 100% -> deploy
+      # fail vi khong ghi noi log. Don cache cu (>24h) sau moi lan deploy thanh
+      # cong de tranh lap lai, van giu cache gan day de build nhanh.
+      - name: Don dep Docker build cache cu
+        if: success()
+        run: |
+          docker builder prune -af --filter until=24h || true
+          df -h / | tail -1

@@ -5,7 +5,7 @@
    These types mirror the Supabase database schema. */
 
 export type FeedPlatform = "facebook" | "linkedin";
-export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_next_step" | "crm_quote_type";
+export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
 
@@ -146,9 +146,10 @@ export interface Category {
   name?: string;
   description?: string;
   platform: string;
-  is_active?: boolean;
-  created_at?: string;
-}
+    is_active?: boolean;
+    sort_order?: number;
+    created_at?: string;
+  }
 
 // ── Members (HR roster, độc lập với app_users) ────────────────────────────────
 
@@ -174,6 +175,13 @@ export interface MemberProfile {
   experience_year?: number | null;
   linked_user_id?: string | null;
   linked_user_id_2?: string | null;
+  leader_name?: string | null;
+  leader_email?: string | null;
+  cv_link?: string | null;
+  employment_status?: string | null;
+  off_effective_at?: string | null;
+  is_recruitment_synced?: boolean | null;
+  level?: string | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;
@@ -426,14 +434,27 @@ export interface AppUser {
   /** true nếu được cấp quyền duyệt Báo giá (migration 053) — admin luôn duyệt
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
+  quote_business_role?: "presale" | "sale" | "both" | null;
+  /** Khoi/chuyen mon (`crm_teams.function_area`, vd "sales"/"marketing") cua
+   * Team CRM user thuoc ve (2026-10-23) - dung de quyet dinh route mac dinh
+   * sau dang nhap, xem getDashboardHrefForRole. null/undefined = chua co
+   * Team CRM nao. */
+  crm_function_area?: string | null;
+  /** Danh sách workspace (instance) tài khoản này được PHÉP truy cập
+   * (migration 005 — gán qua "Quản lý thành viên"). undefined/rỗng = không
+   * giới hạn (admin luôn undefined vì không áp dụng). */
+  allowedInstances?: string[];
+  /** "Nhom quyen" CRM (migration 155) - module duoc phep vao (Lead/Customer/
+   * Deal/Quote/Product/Report/Account/Setting). `null` = CHUA duoc gan Nhom
+   * quyen nao (opt-in) - khong gioi han gi, sidebar hien day du nhu hien tai.
+   * Mang RONG (`[]`, khac `null`) nghia la DA gan nhom nhung khong module nao
+   * duoc phep. */
+  effective_modules?: string[] | null;
 }
 
 export interface AuthLoginResponse {
-  user?: AppUser;
-  access_token?: string;
-  /** Tài khoản non-admin đăng nhập nhầm site khác site đã đăng ký
-   * (home_instance) — backend không set cookie, trả về redirect_url để FE tự
-   * chuyển sang đúng site (trang /auth/handoff ở site đó tự đăng nhập tiếp). */
+  user: AppUser;
+  access_token: string;
   redirect_required?: boolean;
   redirect_url?: string;
 }

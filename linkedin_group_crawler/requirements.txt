@@ -2,7 +2,7 @@ fastapi
 # Cần [standard] để WebSocket (/facebook/api/v1/ws/CrawlFbForFE) hoạt động (websockets + wsproto)
 uvicorn[standard]
 websockets>=12.0
-playwright
+playwright==1.58.0
 python-dotenv
 pydantic
 pydantic-settings
@@ -32,4 +32,11 @@ beautifulsoup4
 # Trich xuat text tu file mau hop dong (.docx/.pdf) cho AI Contract Copilot tham chieu
 python-docx
 pdfplumber
+pymupdf
+pytesseract
+# Zalo tap trung: Web Push notification (VAPID) -- thay the npm web-push cua guide goc
+pywebpush
+# Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python, khong can subprocess/Node
+# nhu zca-js cua Zalo.
+telethon
 

@@ -16,12 +16,22 @@ from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.posts import (
     UnifiedPostsRequest,
     UnifiedFilterRequest,
+    PostSeedingRosterRequest,
+    MemberCrawlHistoryRequest,
+    CrawlScheduleHistoryRequest,
+    RecordCrawlRoundRequest,
 )
 from app.modules.all_platform.services.unified_posts_service import (
     get_unified_posts,
     filter_unified_posts,
     get_unified_stats,
     get_unified_daily_trend,
+    get_post_seeding_roster,
+    get_teams_seeding_efficiency,
+    get_member_seeding_overview,
+    get_member_crawl_history,
+    get_crawl_schedule_rounds_history,
+    record_crawl_schedule_round,
 )
 
 router = APIRouter()
@@ -141,6 +151,55 @@ def unified_get_daily_trend(payload: UnifiedPostsRequest) -> BaseResponse:
         return _fail(e)
 
 
+@router.post("/posts/seeding-roster")
+def unified_post_seeding_roster(payload: PostSeedingRosterRequest) -> BaseResponse:
+    """'Xem seeding theo team' modal (Seeding bên ngoài, admin/leader) — toàn bộ
+    roster thành viên team sở hữu group của bài viết, kèm ai đã/chưa seeding."""
+    try:
+        data = get_post_seeding_roster(
+            post_id=payload.post_id, platform=payload.platform, email=payload.email
+        )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/teams/seeding-efficiency")
+def unified_teams_seeding_efficiency(payload: UnifiedPostsRequest) -> BaseResponse:
+    """"Hiệu quả theo team" cho Dashboard leader (Seeding bên ngoài) — admin thấy mọi
+    team, leader chỉ thấy team mình quản lý, member không thấy gì."""
+    try:
+        data = get_teams_seeding_efficiency(email=payload.email)
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/members/seeding-overview")
+def unified_member_seeding_overview(payload: UnifiedPostsRequest) -> BaseResponse:
+    """Tab phụ "Tài khoản seeding" (Lịch crawl & Hàng đợi) — admin thấy mọi thành viên,
+    leader chỉ thấy team mình quản lý, member không thấy gì."""
+    try:
+        time_range_val = getattr(payload, "time_range", None) or "all"
+        data = get_member_seeding_overview(email=payload.email, time_range=time_range_val)
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/members/crawl-history")
+def unified_member_crawl_history(payload: MemberCrawlHistoryRequest) -> BaseResponse:
+    """Chi tiết lịch sử cào của 1 thành viên — mở khi bấm vào 1 hàng trong bảng "Tài
+    khoản seeding" (giống style bấm vào 1 lead ở CRM)."""
+    try:
+        data = get_member_crawl_history(email=payload.email, id_member=payload.id_member)
+        return BaseResponse(success=True, data=data)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        return _fail(e)
+
+
 @router.post("/feed/overview")
 def unified_feed_overview(payload: FeedOverviewRequest) -> BaseResponse:
     """Phase 6: Single RPC for unified feed dashboard.
@@ -182,3 +241,31 @@ def unified_feed_overview(payload: FeedOverviewRequest) -> BaseResponse:
         return BaseResponse(success=True, data=rpc_data)
     except Exception as e:
         return _fail(e)
+
+@router.post("/crawl-schedule/history")
+def unified_crawl_schedule_history(payload: CrawlScheduleHistoryRequest) -> BaseResponse:
+    """Lấy lịch sử các vòng cào đa kênh theo từng user và accsystem crawler."""
+    try:
+        data = get_crawl_schedule_rounds_history(
+            email=payload.email,
+            id_member=payload.id_member,
+            time_range=payload.time_range or "all",
+            specific_date=payload.specific_date,
+            date_from_str=payload.date_from,
+            date_to_str=payload.date_to,
+            limit=payload.limit or 100,
+        )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
+@router.post("/crawl-schedule/record-round")
+def unified_crawl_schedule_record_round(payload: RecordCrawlRoundRequest) -> BaseResponse:
+    """Ghi nhận trực tiếp 1 vòng cào vừa hoàn thành từ extension hoặc worker."""
+    try:
+        data = record_crawl_schedule_round(payload.model_dump())
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+

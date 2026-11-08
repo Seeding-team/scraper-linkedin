@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * Bridge helpers để dashboard nói chuyện với LinkedIn Group Post Crawler extension
- * (extensions/linkedin-group-crawler-extension/bridge.js) qua window.postMessage.
+ * Bridge helpers để dashboard nói chuyện với Markee Seeding Extension
+ * (extensions/comment-extension/bridge.js — đã gộp cào LinkedIn) qua window.postMessage.
  * Dùng cho luồng "Thêm bài viết Seeding mới" (lấy info 1 bài LinkedIn) — luồng
  * "Comment ngay" tự lắng nghe LI_COMMENT_* trực tiếp trong page.tsx vì cần cập nhật
  * tiến trình liên tục, không phải request/response một lần như ở đây.

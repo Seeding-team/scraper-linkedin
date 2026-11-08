@@ -31,7 +31,6 @@ const MANAGED_EXTENSIONS = [
   "comment-extension",
   "api-facebook-get-extension",
   "extension-login-zalo",
-  "linkedin-group-crawler-extension",
 ];
 
 // Ghi ra file .tmp rồi rename đè lên đích — rename là atomic ở cấp hệ điều hành,

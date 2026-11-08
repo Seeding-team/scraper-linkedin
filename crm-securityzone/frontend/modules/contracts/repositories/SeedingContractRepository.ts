@@ -3,6 +3,7 @@ import type {
   Contract,
   ContractClause,
   ContractDashboardStats,
+  ContractOcrReconcileResult,
   ContractRiskReview,
   CreateContractInput,
   GenerateContractDraftInput,
@@ -10,6 +11,7 @@ import type {
   UpdateContractInput,
 } from '../types';
 import type { ContractRepository } from './ContractRepository';
+import { notifyDealsChanged } from '@/modules/crm/utils/dealSync';
 
 type ApiResponse<T> = {
   success?: boolean;
@@ -45,16 +47,22 @@ function toClausePayload(clause: ContractClause) {
 
 function toCreatePayload(input: CreateContractInput) {
   return {
+    contract_number: input.contractNumber,
+    number_short: input.numberShort,
     deal_id: input.dealId,
+    customer_id: input.customerId,
     manual_customer_name: input.manualCustomerName,
     quote_id: input.quoteId,
     title: input.title,
     template_type: input.templateType,
+    status: input.status,
+    signed_at: input.signedAt,
     contract_value: input.contractValue,
     currency: input.currency,
     start_date: input.startDate,
     end_date: input.endDate,
     payment_terms: input.paymentTerms,
+    warranty_period: input.warrantyPeriod,
     progress_percent: input.progressPercent,
     payment_collected_percent: input.paymentCollectedPercent,
     owner_id: input.ownerId,
@@ -63,6 +71,13 @@ function toCreatePayload(input: CreateContractInput) {
     ai_risk_score: input.aiRiskScore,
     ai_review: input.aiReview,
     ai_prompt: input.aiPrompt,
+    source: input.source,
+    file_url: input.fileUrl,
+    note: input.note,
+    deal_phase: input.dealPhase,
+    contact_id: input.contactId,
+    representative_confirmed: input.representativeConfirmed,
+    legal_snapshot: input.legalSnapshot,
   };
 }
 
@@ -71,25 +86,39 @@ function toUpdatePayload(input: UpdateContractInput) {
     title: input.title,
     manual_customer_name: input.manualCustomerName,
     template_type: input.templateType,
+    status: input.status,
     contract_value: input.contractValue,
     currency: input.currency,
+    signed_at: input.signedAt,
     start_date: input.startDate,
     end_date: input.endDate,
     payment_terms: input.paymentTerms,
+    warranty_period: input.warrantyPeriod,
     progress_percent: input.progressPercent,
     payment_collected_percent: input.paymentCollectedPercent,
     owner_id: input.ownerId,
     clauses: input.clauses?.map(toClausePayload),
     ai_risk_score: input.aiRiskScore,
     ai_review: input.aiReview,
+    source: input.source,
+    file_url: input.fileUrl,
+    note: input.note,
+    quote_id: input.quoteId,
+    deal_id: input.dealId,
+    contact_id: input.contactId,
+    deal_phase: input.dealPhase,
+    contract_number: input.contractNumber,
+    representative_confirmed: input.representativeConfirmed,
+    legal_snapshot: input.legalSnapshot,
   };
 }
 
 export class SeedingContractRepository implements ContractRepository {
-  async getContracts(params?: { dealId?: string; status?: string }): Promise<Contract[]> {
+  async getContracts(params?: { dealId?: string; status?: string; quoteId?: string }): Promise<Contract[]> {
     const q = new URLSearchParams();
     if (params?.dealId) q.set('deal_id', params.dealId);
     if (params?.status) q.set('status', params.status);
+    if (params?.quoteId) q.set('quote_id', params.quoteId);
     const qs = q.toString() ? `?${q.toString()}` : '';
     return apiFetch<Contract[]>(`/api/all-platform/contracts${qs}`);
   }
@@ -102,9 +131,11 @@ export class SeedingContractRepository implements ContractRepository {
     return apiFetch<ContractDashboardStats>('/api/all-platform/contracts/dashboard-stats');
   }
 
-  async createContract(input: CreateContractInput): Promise<Contract> {
+  async createContract(input: CreateContractInput, options?: { idempotencyKey?: string }): Promise<Contract> {
     return apiFetch<Contract>('/api/all-platform/contracts', {
       method: 'POST',
+      // Idempotency-Key: gửi lại cùng key (double-click, retry) => backend trả đúng hợp đồng đã tạo, không tạo trùng
+      headers: { ...getDefaultHeaders(), ...(options?.idempotencyKey ? { 'Idempotency-Key': options.idempotencyKey } : {}) },
       body: JSON.stringify(toCreatePayload(input)),
     });
   }
@@ -116,10 +147,10 @@ export class SeedingContractRepository implements ContractRepository {
     });
   }
 
-  async updateStatus(id: string, status: string, signedAt?: string): Promise<Contract> {
+  async updateStatus(id: string, status: string, signedAt?: string, version?: number): Promise<Contract> {
     return apiFetch<Contract>(`/api/all-platform/contracts/${encodeURIComponent(id)}/status`, {
       method: 'POST',
-      body: JSON.stringify({ status, signed_at: signedAt }),
+      body: JSON.stringify({ status, signed_at: signedAt, version }),
     });
   }
 
@@ -127,8 +158,8 @@ export class SeedingContractRepository implements ContractRepository {
     await apiFetch<unknown>(`/api/all-platform/contracts/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
-  async generateDraft(input: GenerateContractDraftInput): Promise<{ clauses: ContractClause[] }> {
-    return apiFetch<{ clauses: ContractClause[] }>('/api/all-platform/contracts/generate-draft', {
+  async generateDraft(input: GenerateContractDraftInput): Promise<{ clauses: ContractClause[]; warnings?: string[] }> {
+    return apiFetch<{ clauses: ContractClause[]; warnings?: string[] }>('/api/all-platform/contracts/generate-draft', {
       method: 'POST',
       body: JSON.stringify({
         deal_id: input.dealId,
@@ -138,6 +169,22 @@ export class SeedingContractRepository implements ContractRepository {
         detail_level: input.detailLevel,
         extra_prompt: input.extraPrompt,
         reference_template_id: input.referenceTemplateId,
+        customer_id: input.customerId,
+        acknowledge_missing: input.acknowledgeMissing,
+        reference_text: input.referenceText,
+        language: input.language,
+        style: input.style,
+        contact_id: input.contactId,
+        representative: input.representative ? {
+          name: input.representative.name, position: input.representative.position, phone: input.representative.phone,
+          email: input.representative.email, contact_id: input.representative.contactId,
+        } : null,
+        legal_overrides: input.legalOverrides ? {
+          company_name: input.legalOverrides.companyName, tax_code: input.legalOverrides.taxCode, address: input.legalOverrides.address,
+          contact_name: input.legalOverrides.contactName, contact_position: input.legalOverrides.contactPosition,
+          contact_phone: input.legalOverrides.contactPhone, contact_email: input.legalOverrides.contactEmail,
+        } : null,
+        save_overrides_to_crm: !!input.saveOverridesToCrm,
       }),
     });
   }
@@ -166,6 +213,65 @@ export class SeedingContractRepository implements ContractRepository {
       }),
     });
   }
+
+  async ocrReconcile(file: File, quoteId: string): Promise<ContractOcrReconcileResult> {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('quote_id', quoteId);
+
+    const headers: Record<string, string> = {};
+    if (API_KEY) headers['X-API-Key'] = API_KEY;
+    // QUAN TRỌNG: KHÔNG set Content-Type thủ công cho FormData - giống hệt
+    // customerLeadService.uploadAttachment (browser tự thêm boundary).
+    const res = await fetch(`${API_BASE_URL}/api/all-platform/contracts/ocr-reconcile`, {
+      method: 'POST',
+      credentials: 'include',
+      headers,
+      body: fd,
+    });
+    const body = (await res.json()) as ApiResponse<{
+      extracted: {
+        contract_number: string | null;
+        signed_at: string | null;
+        subtotal_amount: number | null;
+        vat_amount: number | null;
+        total_amount: number | null;
+        extraction_method: 'ai' | 'heuristic';
+        extractable: boolean;
+      };
+      comparison: ContractOcrReconcileResult['comparison'];
+      allMatched: boolean;
+      extractable: boolean;
+    }>;
+    if (!res.ok) throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
+    if (body.success === false) throw new Error(body.message || 'Không đối chiếu được hợp đồng.');
+    const data = body.data!;
+    return {
+      extracted: {
+        contractNumber: data.extracted.contract_number,
+        signedAt: data.extracted.signed_at,
+        subtotalAmount: data.extracted.subtotal_amount,
+        vatAmount: data.extracted.vat_amount,
+        totalAmount: data.extracted.total_amount,
+        extractionMethod: data.extracted.extraction_method,
+        extractable: data.extracted.extractable,
+      },
+      comparison: data.comparison,
+      allMatched: data.allMatched,
+      extractable: data.extractable,
+    };
+  }
 }
 
 export const seedingContractRepository = new SeedingContractRepository();
+
+// Sau moi thao tac DOI bao gia/hop dong thanh cong: backend da tu cap nhat stage cua Deal -> bao cac man hinh tai lai tu du lieu that.
+for (const method of ['createContract', 'updateContract', 'updateStatus', 'deleteContract'] as const) {
+  const proto = SeedingContractRepository.prototype as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = proto[method];
+  proto[method] = async function (this: unknown, ...args: unknown[]) {
+    const result = await original.apply(this, args);
+    notifyDealsChanged();
+    return result;
+  };
+}

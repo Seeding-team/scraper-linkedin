@@ -3,6 +3,7 @@ export type QuoteStatus = 'draft' | 'confirmed' | 'approved' | 'cancelled';
 export type QuoteLayoutType =
   | 'cloudgate_standard_quote'
   | 'villa_solution_package'
+  | 'markee_promo_bundle'
   | 'blank_quote';
 
 export type QuoteFieldType =
@@ -47,10 +48,31 @@ export interface QuoteSection {
   fields: QuoteField[];
 }
 
+/** Nhom "Tong hop gia" trong "Cot hien thi" (5 dong cua khoi tong tien cuoi bao
+ * gia - KHAC HOAN TOAN voi cot bang hang muc, xem resolveQuoteItemColumns) -
+ * cau hinh nay thuoc VE SCHEMA cua tung Mau bao gia (giong het cach
+ * config.columns[].visible/required cua bang hang muc da la 1 phan schema),
+ * KHONG hardcode theo layoutType trong resolver - xem quoteSummaryFields.ts. */
+export interface SummaryFieldConfig {
+  key: 'grossSubtotal' | 'subtotalBeforeVat' | 'overallDiscount' | 'totalDiscount' | 'subtotalAfterDiscount' | 'vatTotal' | 'grandTotal';
+  label?: string;
+  order?: number;
+  defaultVisible?: boolean;
+  /** true = khong duoc phep tat (hien "Bắt buộc" trong Cột hiển thị). Mac dinh
+   * KHONG khoa truong nao (xem DEFAULT_SUMMARY_FIELDS) - mau nao can bat buoc 1
+   * truong thi tu khai rieng required:true trong CHINH schema cua minh. */
+  required?: boolean;
+}
+
 export interface QuoteSchema {
+  enableDynamicPaymentPlan?: boolean;
   version: number;
   layoutType: QuoteLayoutType;
   sections: QuoteSection[];
+  /** Optional - schema chua co (mau cu chua backfill) thi resolver dung fallback
+   * DEFAULT_SUMMARY_FIELDS (xem quoteSummaryFields.ts), khong bao gio undefined
+   * gay loi hien thi. */
+  summaryFields?: SummaryFieldConfig[];
 }
 
 export interface QuoteForm {
@@ -99,6 +121,16 @@ export interface QuoteTelegramLog {
  * với khách hàng CRM (bên nhận). Chọn ở Bước 1 wizard tạo báo giá; thông tin được
  * SNAPSHOT thẳng vào QuoteData lúc chọn (xem quoteDraftFromForm) — sửa công ty ở
  * danh mục sau này không ảnh hưởng báo giá đã tạo. */
+/** 1 dong goi y trong picker "Giới hạn theo Email/SĐT" (xem
+ * SeedingQuoteRepository.getAccessSuggestions()) - name/role de hien thi
+ * phan biet, email/phone co the null (1 nguon chi co 1 trong 2). */
+export interface QuoteAccessSuggestion {
+  name: string;
+  role: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
 export interface IssuerCompany {
   id: string;
   code: string;
@@ -106,6 +138,9 @@ export interface IssuerCompany {
   brandName?: string;
   address?: string;
   contactName?: string;
+  /** Chức vụ của "Người liên hệ" (contactName) - tái sử dụng dropdown Chức vụ chung (category_type=crm_position). */
+  positionCategoryId?: string;
+  positionLabel?: string;
   phone?: string;
   email?: string;
   website?: string;
@@ -113,6 +148,15 @@ export interface IssuerCompany {
   logoUrl?: string;
   defaultQuoteFormId?: string;
   status: 'active' | 'inactive';
+  /** Workspace "nhà" của đơn vị phát hành này (CRM_INSTANCE, vd 'markee'/'cloudgate') -
+   * dùng để gợi ý MẶC ĐỊNH đúng đơn vị theo workspace đang chạy lúc tạo báo giá mới
+   * (xem CreateQuoteModal.tsx) - KHÔNG dùng để lọc/ẩn, mọi workspace vẫn thấy đủ
+   * danh sách (bảng quote_issuer_companies dùng chung giữa các workspace). */
+  instance?: string;
+  /** (I) Điều khoản thanh toán MẶC ĐỊNH của đơn vị phát hành này - SNAPSHOT
+   * 1 LẦN vào custom block 'payment_terms' của báo giá lúc tạo mới (nếu block
+   * đó đang trống) - sửa ở đây KHÔNG đổi báo giá đã tạo trước đó. */
+  paymentTerms?: string;
 }
 
 export interface BundleSnapshotComponent {
@@ -125,10 +169,53 @@ export interface BundleSnapshotComponent {
   computedQuantity: number;
   displayText: string;
   unitPriceVnd: number;
+  monthlyPriceVnd?: number | null;
+  annualCommitMonthlyPriceVnd?: number | null;
+  defaultCostPriceVnd?: number | null;
+  defaultMarkupPercent?: number | null;
+  defaultCustomerPriceVnd?: number | null;
+  quota?: string | null;
+  customerDisplayName?: string | null;
+  crmNote?: string | null;
+  quotaPoolKey?: string | null;
+  quotaPoolName?: string | null;
+  quotaPoolQuota?: string | null;
+  quotaPoolLimit?: number | null;
+  required?: boolean;
+  overagePolicy?: string | null;
+  showOnQuote?: boolean;
   sortOrder?: number;
 }
 
+export interface BundleSnapshotValue {
+  pricingMode?: 'fixed' | 'auto';
+  targetGrossMarginPercent?: number | null;
+  components: BundleSnapshotComponent[];
+  /** "Ẩn/Hiện GIÁ của thành phần con trên báo giá" (2026-10-14, doi y nghia tu
+   * "an/hien THANH PHAN CON" - yeu cau xac nhan lai: ten thanh phan con LUON
+   * hien voi khach, chi GIA tung thanh phan la can bat/tat) - mac dinh FALSE
+   * (an gia tung thanh phan, chi gia o dong goi cha). Bat len (true) thi khach
+   * thay ca gia rieng tung thanh phan con. CHI anh huong hien thi o
+   * QuoteDocumentRenderer (preview/PDF/link cong khai) - man Sale sua
+   * (QuoteWorkspaceModal.tsx, bundleComponentsToWorkspaceRows) LUON hien du
+   * thanh phan con VA gia cua chung, khong doc field nay. */
+  showComponentsOnQuote?: boolean;
+  /** "Chuan hoa gia von Combo" (2026-10-13) - nguon gia von dang dung:
+   * 'target' = dung CHINH gia von muc tieu cua Combo (targetCostPerMonthVnd),
+   * KHONG tinh tu thanh phan con. 'rollup' (mac dinh khi chua cau hinh HOAC
+   * bao gia cu chua co key nay) = hanh vi CU 100% (tong gia von thanh phan
+   * con, calculateBundleComponentCost). Fixed/Auto deu dung CHUNG 1 nguon
+   * nay. */
+  costSource?: 'target' | 'rollup';
+  /** Gia von muc tieu/thang cua Combo, DONG BANG luc them vao bao gia (tu
+   * ServiceCatalogItem.defaultCostPriceVnd cua CHINH Combo, KHAC gia von
+   * tung thanh phan con) - KHONG tu tinh lai khi giam gia/doi Chu ky/xoa
+   * thanh phan con. Chi dung khi costSource==='target'. */
+  targetCostPerMonthVnd?: number | null;
+}
+
 export interface QuoteItem {
+  warrantyScope?: string | null;
   id?: string;
   quoteId?: string;
   parentItemId?: string;
@@ -142,10 +229,16 @@ export interface QuoteItem {
   serviceDescription?: string;
   unit?: string;
   quantity: number;
-  unitPrice: number;
+  unitPrice: number | null;
   discountPercent?: number;
   discountAmount?: number;
+  discountType?: 'percent' | 'amount';
   amountAfterDiscount?: number;
+  /** Ghi chú/Khuyến mãi rieng cho tung dong hang muc (public, khach xem duoc -
+   * KHAC voi warrantyScope). Da co san o DB/backend (quote_items.note), chua
+   * tung duoc khai bao rieng o day (roi vao index signature) - khai bao ro de
+   * co type-safety, theo dung tien le VillaSolutionItem.note. */
+  note?: string | null;
   vatRate: number;
   subtotalAmount?: number;
   vatAmount?: number;
@@ -154,7 +247,17 @@ export interface QuoteItem {
   children?: QuoteItem[];
   /** Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá đông cứng lúc chọn dịch vụ. */
   catalogItemId?: string;
-  bundleSnapshot?: BundleSnapshotComponent[];
+  bundleSnapshot?: BundleSnapshotComponent[] | BundleSnapshotValue;
+  __bundleComponent?: boolean;
+  /** Chi dung trong QuoteDocumentRenderer.tsx - true khi dong thanh phan con
+   * nay PHAI che cot gia (Combo cha dang showComponentsOnQuote!==true). Gan
+   * san luc dung bundleComponentsToDisplayItems() vi renderCell() chi nhan
+   * dong con, khong co ngu canh Combo cha. */
+  __bundleComponentPricesHidden?: boolean;
+  __bundleComponentIds?: string[];
+  __bundlePoolKey?: string | null;
+  __bundleRequired?: boolean;
+  __bundleCanDeriveCost?: boolean;
   listPriceUsd?: number;
   unitPriceUsd?: number;
   exchangeRate?: number;
@@ -163,6 +266,8 @@ export interface QuoteItem {
    * hoac chua ai dien), KHONG bia du lieu. costTotal = quantity*costPrice,
    * tinh o backend, null neu costPrice null. */
   costPrice?: number | null;
+  /** Gia von GOC bang VND (chi o bao gia USD) - doi lai VND khong troi do lam tron. */
+  costPriceVnd?: number | null;
   markupPercent?: number | null;
   costTotal?: number | null;
   /** true = hạng mục này không có giá vốn để nhập (migration 090) - cho phép
@@ -180,6 +285,20 @@ export interface QuoteItem {
   costOverrideBy?: string | null;
   costOverrideAt?: string | null;
   costPriceOriginal?: number | null;
+  /** Chu ky "tra thang/tra nam" (migration 189) - dung chung moi nhom san
+   * pham co ca 2 gia tu danh muc (vd Markee Chat MCHAT-AGENT). null/undefined
+   * = hang muc chi co 1 gia (khong doi duoc chu ky) hoac bao gia cu truoc
+   * tinh nang nay - calculateItemSubtotal() coi nhu billingTermMonths=1,
+   * hanh vi tinh tien giu nguyen y het truoc day. */
+  billingCycle?: 'monthly' | 'annual' | null;
+  /** So thang nhan vao Thanh tien khi billingCycle='annual' (thuong la 12) -
+   * dung boi calculateItemSubtotal(). 1/null cho hang muc thang thuong. */
+  billingTermMonths?: number | null;
+  /** Snapshot 2 gia goc tu danh muc luc them hang (KHONG doi khi danh muc doi
+   * sau nay, giong nguyen tac snapshot cua bundleSnapshot) - dung de doi qua
+   * lai Chu ky ma khong can goi lai danh muc. */
+  catalogMonthlyPriceVnd?: number | null;
+  catalogAnnualCommitMonthlyPriceVnd?: number | null;
   [key: string]: unknown;
 }
 
@@ -220,7 +339,16 @@ export interface CustomBlock {
   content: string;
 }
 
+export interface PaymentPlanRow {
+  id: string;
+  phase: string;
+  percent: number;
+  condition: string;
+  note: string;
+}
+
 export interface QuoteData {
+  paymentPlan?: PaymentPlanRow[];
   quoteTitle?: string;
   quoteNumber?: string;
   quoteDate?: string;
@@ -231,12 +359,52 @@ export interface QuoteData {
    * undefined = hiện hết. Nội bộ (preview/detail) luôn hiện đủ cột, không bị
    * ảnh hưởng bởi field này. Xem QuoteDocumentRenderer (mode==='public'). */
   visibleColumns?: string[];
+  /** Trường "Tổng hợp giá" hiện cho KHÁCH (5 dòng khối tổng tiền) - áp dụng ở
+   * MỌI mode (preview/detail/public/print), KHÁC với visibleColumns (chỉ lọc ở
+   * public/print/preview, mode='detail' luôn hiện đủ cột bảng). Xem
+  * quoteSummaryFields.ts. */
+  visibleSummaryFields?: string[];
+  /** Truong thong tin khach hang hien cho KHACH (public/PDF/preview khach).
+   * undefined = dung mac dinh: Kinh gui + Khach hang + SDT lien he + Email. */
+  visibleCustomerFields?: string[];
+  /** Section cuoi tai lieu bi an theo tung bao gia. undefined/rong = hien
+   * tat ca de tuong thich nguoc voi moi bao gia cu. Chi an luc render, khong
+   * xoa paymentPlan/customBlocks/notes/chu ky khoi data. */
+  hiddenDocumentSections?: string[];
   customBlocks?: CustomBlock[];
+  /** Id Don vi phat hanh da snapshot vao cac field seller* (applyIssuerCompanySnapshot). */
+  issuerSnapshotCompanyId?: string;
+  /** Dieu khoan thanh toan mac dinh cua issuer da snapshot lan gan nhat (applyIssuerPaymentTermsSnapshot). */
+  issuerPaymentTermsSnapshot?: string;
+  /** (D) id crm_contacts cua "Người liên hệ" da chon luc tao/sua bao gia nay -
+   * CHI la tham chieu snapshot-tai-thoi-diem (khong doc song tu crm_contacts),
+   * cac gia tri hien thi THAT su van la customerRecipient/customerPhone/
+   * customerEmail o cung object nay - xem quoteDraftFromForm trong
+   * modules/crm/integrations/quotes/types.ts. */
+  customerContactId?: string;
+  /** Huong giay + do rong cot da keo tay o toolbar in, luu qua nut "Lưu"
+   * tren QuoteDetailPage (trang noi bo da dang nhap) - xem
+   * SeedingQuoteRepository.updatePrintLayoutPrefs + backend
+   * set_print_layout_prefs. columnWidths key la QuoteItemColumn['key']. KHONG
+   * duoc set tu trang public /baogia/[token] (khong xac thuc) - xem thao
+   * luan trong PublicQuotePage.tsx. */
+  printLayoutPrefs?: {
+    orientation: 'portrait' | 'landscape';
+    columnWidths?: Record<string, number>;
+  };
+  /** Số tiền giảm giá cố định toàn báo giá (VND/USD) khi nhập theo số tiền thay vì %. */
+  overallDiscountAmount?: number | null;
+  overallDiscountType?: 'percent' | 'amount' | null;
+  vatAmount?: number | null;
+  vatType?: 'percent' | 'amount' | null;
+  itemDiscountTypes?: Record<string, 'percent' | 'amount'>;
   [key: string]: unknown;
 }
 
 export interface Quote {
   id: string;
+  code?: string;
+  grandTotal?: number;
   accountId?: string;
   contactId?: string;
   dealId?: string;
@@ -253,7 +421,17 @@ export interface Quote {
   subtotalAmount: number;
   vatAmount: number;
   totalAmount: number;
+  /** Tien te CAP QUOTE: 'VND' (mac dinh, ke ca bao gia cu) | 'USD'. Moi so tien cua
+   * quote/hang muc nam TRONG tien te nay. */
   currency: string;
+  /** So VND cho 1 USD, DONG BANG luc tao/chuyen currency (null voi bao gia VND). */
+  exchangeRate?: number | null;
+  currencySnapshot?: { currency: string; exchange_rate: number | null; base_currency: string; captured_at: string } | null;
+  /** "Gia da gom VAT" toggle (migration 204, 2026-11-04) - 'exclusive' (mac
+   * dinh, HANH VI CU - unitPrice chua gom VAT, VAT cong them) | 'inclusive'
+   * (unitPrice da gom VAT, VAT tach nguoc ra). Khong truyen = 'exclusive' =
+   * bao gia cu. Xem calculateItemSubtotal trong quoteCalculations.ts. */
+  priceMode?: 'exclusive' | 'inclusive';
   issuedAt: string;
   validUntil?: string;
   createdById?: string;
@@ -265,6 +443,12 @@ export interface Quote {
   publicToken?: string;
   publicUrl?: string;
   publicEnabled?: boolean;
+  /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118)
+   * - NOI BO, khong bao gio co mat tren Quote lay tu getPublicQuote() (khach
+   * xem link cong khai). `publicAccessMode`: 'none' | 'email' | 'phone'. */
+  publicAccessMode?: 'none' | 'email' | 'phone';
+  publicAllowedEmails?: string[];
+  publicAllowedPhones?: string[];
   /** Chuỗi phiên bản (V1/V2/V3...) — cùng versionChainId là cùng 1 chuỗi báo
    * giá, versionNumber tăng độc lập theo thứ tự tạo (không suy theo ngày).
    * parentQuoteId trỏ bản ngay trước nó trong chuỗi (null nếu là V1 gốc). */
@@ -277,6 +461,11 @@ export interface Quote {
   processingStage?: QuoteProcessingStage;
   technicalOwnerId?: string;
   quoteOwnerId?: string;
+  /** Ten hien thi that cua Sale dang duoc gan (quote_owner_id) - backend tra
+   * san qua embed, dung de hien "Người liên hệ" tren tai lieu bao gia (xem
+   * QuoteDocumentRenderer contactPersonName) thay vi field tu do
+   * sellerContactName. null/undefined = quote chua co Sale. */
+  quoteOwnerName?: string | null;
   /** Gia von/loi nhuan (migration 086) - tinh THAT o backend tu cost_price
    * tung dong (khong tin so tong tu FE). hasCostData=false khi CHUA co dong
    * nao nhap cost_price - UI phai hien "Chua co du lieu gia von", KHONG bia
@@ -305,6 +494,15 @@ export interface Quote {
   deletedAt?: string | null;
   deletedById?: string | null;
   cancellationReason?: string | null;
+  /** Ket qua cua KHACH sau phat hanh (migration 179): null = dang cho phan hoi; 'lost' = Khong chot / OUT. */
+  customerOutcome?: 'lost' | null;
+  lostReason?: string | null;
+  lostReasonLabel?: string | null;
+  lostReasonOther?: string | null;
+  lostNote?: string | null;
+  lostById?: string | null;
+  lostByName?: string | null;
+  lostAt?: string | null;
   cancelledAt?: string | null;
   cancelledById?: string | null;
   publishedAt?: string | null;
@@ -329,6 +527,7 @@ export interface Quote {
    * Chi anh huong hien thi Buoc 2 (Gia sau giam/Margin sau giam), KHONG dung
    * de tinh lai subtotalAmount/vatAmount/totalAmount o tren. */
   overallDiscountPercent?: number | null;
+  overallDiscountType?: 'percent' | 'amount' | null;
   /** "Loai bao gia" (migration 112) - multi-select CODE cua
    * category_type='crm_quote_type' (Danh muc CRM), DOC LAP voi Linh vuc
    * khach hang. Luon la mang (co the rong []), khong bao gio null/undefined
@@ -442,6 +641,7 @@ export interface CreateIssuerCompanyInput {
   brandName?: string;
   address?: string;
   contactName?: string;
+  positionCategoryId?: string;
   phone?: string;
   email?: string;
   website?: string;
@@ -450,6 +650,7 @@ export interface CreateIssuerCompanyInput {
   defaultQuoteFormId?: string;
   status?: 'active' | 'inactive';
   sortOrder?: number;
+  paymentTerms?: string;
 }
 
 export type UpdateIssuerCompanyInput = Partial<CreateIssuerCompanyInput>;
@@ -464,14 +665,26 @@ export interface CreateQuoteInput {
   projectId?: string | null;
   slaDueAt?: string | null;
   quoteTypeCodes?: string[];
+  /** 'VND' | 'USD' + ty gia (VND/USD). Bo trong = VND. */
+  currency?: string;
+  exchangeRate?: number | null;
+  /** "Gia da gom VAT" (migration 204) - bo trong = 'exclusive' (HANH VI CU). */
+  priceMode?: 'exclusive' | 'inclusive';
 }
 
 export interface UpdateQuoteInput {
   data?: QuoteData;
   items?: QuoteItem[];
   issuerCompanyId?: string;
+  quoteFormId?: string;
   projectId?: string | null;
   slaDueAt?: string | null;
   overallDiscountPercent?: number | null;
   quoteTypeCodes?: string[];
+  /** Doi tien te bao gia DRAFT - PHAI gui kem toan bo `items` da quy doi. */
+  currency?: string;
+  exchangeRate?: number | null;
+  /** "Gia da gom VAT" (migration 204) - KHONG can gui kem items (chi doi
+   * cach dien giai unitPrice, khong rescale gi ca - khac han currency). */
+  priceMode?: 'exclusive' | 'inclusive';
 }

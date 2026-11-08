@@ -11,6 +11,7 @@ class GetAllPostsRequest(BaseModel):
     email: str
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
 
 
@@ -19,6 +20,7 @@ class FilterPostsRequest(BaseModel):
     date: Optional[str] = None
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
     industry: Optional[str] = None
     team: Optional[str] = None
@@ -30,6 +32,7 @@ class UnifiedPostsRequest(BaseModel):
     platform: str = "all"
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    time_range: Optional[str] = "all"
     intent: Optional[str] = None
     industry: Optional[str] = None
     team: Optional[str] = None
@@ -62,3 +65,39 @@ class UnifiedFilterRequest(BaseModel):
 class SyncProgressRequest(BaseModel):
     email: str
     posts: list[dict[str, Any]]
+
+
+class PostSeedingRosterRequest(BaseModel):
+    email: str
+    post_id: str
+    platform: str
+
+
+class MemberCrawlHistoryRequest(BaseModel):
+    email: str
+    id_member: str
+
+class CrawlScheduleHistoryRequest(BaseModel):
+    email: Optional[str] = None
+    id_member: Optional[str] = None
+    time_range: Optional[str] = "all"
+    specific_date: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    limit: Optional[int] = 100
+
+
+class RecordCrawlRoundRequest(BaseModel):
+    schedule_id: Optional[str] = None
+    schedule_label: Optional[str] = None
+    round_number: Optional[int] = 1
+    user_id: Optional[str] = None
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+    is_system: Optional[bool] = False
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    duration_seconds: Optional[int] = 0
+    status: Optional[str] = "done"
+    summary: Optional[dict[str, Any]] = None
+

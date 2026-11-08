@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 
 _SALE_TEAM_TYPE = "sale"
@@ -72,15 +73,87 @@ def is_sale_member(user_id: str | None) -> bool:
     return _SALE_TEAM_TYPE in get_user_team_types(user_id)
 
 
+# Danh ba HR (`members`, migration 043) - TEN team la text tu do (khac han
+# `teams.team_type` o tren, doc lap hoan toan). Tai khoan co Member lien ket
+# (linked_user_id) thuoc team "Sale" thi full CRM access BAT KE role he thong
+# - quyet dinh rieng cua user (2026-09), khong lien quan gi toi co che
+# teams/team_type='sale' da co san. Team "Marketing": CHI Leader duoc nang
+# (da co san qua role=="leader"), Member Marketing KHONG tu dong duoc full
+# access - phai duoc admin cap tay quote_business_role thi moi co (di qua
+# nhanh has_quote_business_role o duoi).
+_FULL_ACCESS_MEMBER_TEAMS = {"Sale"}
+
+_MEMBER_TEAM_CACHE_TTL_SECONDS = 60.0
+_MEMBER_TEAM_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def get_linked_member_team(user_id: str | None) -> str | None:
+    """Team (text tu do trong bang `members`) cua Member dang lien ket voi
+    tai khoan dang nhap user_id nay, neu co. None neu chua lien ket/khong co
+    team. Cache ngan (60s) - cung nhip voi get_user_team_types o tren."""
+    if not user_id:
+        return None
+
+    now = time.monotonic()
+    cached = _MEMBER_TEAM_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    try:
+        supabase = get_supabase_client()
+        result = execute_supabase_query(
+            lambda: supabase.table("members").select("team").eq("linked_user_id", user_id).limit(1).execute()
+        )
+        rows = result.data or []
+        team = (rows[0].get("team") or None) if rows else None
+    except Exception:
+        team = None
+
+    _MEMBER_TEAM_CACHE[user_id] = (now + _MEMBER_TEAM_CACHE_TTL_SECONDS, team)
+    if len(_MEMBER_TEAM_CACHE) > 1000:
+        for key in list(_MEMBER_TEAM_CACHE.keys())[:-1000]:
+            _MEMBER_TEAM_CACHE.pop(key, None)
+    return team
+
+
+def clear_member_team_cache(user_id: str | None = None) -> None:
+    if user_id:
+        _MEMBER_TEAM_CACHE.pop(user_id, None)
+    else:
+        _MEMBER_TEAM_CACHE.clear()
+
+
+def has_quote_business_role(user: dict[str, Any] | None, target: str) -> bool:
+    """True neu user da duoc gan vai tro nghiep vu bao gia `target`
+    ('presale'/'sale'). `both` hop le cho ca hai vai tro, doc lap voi system
+    role admin/leader/member."""
+    if target not in ("presale", "sale"):
+        return False
+    value = str((user or {}).get("quote_business_role") or "").strip().lower()
+    return value == target or value == "both"
+
+
 def has_full_crm_access(user: dict[str, Any] | None) -> bool:
-    """True neu user duoc xem/sua toan bo Pipeline + Phan tich CRM: admin,
-    leader, hoac thanh vien 1 team team_type='sale'."""
+    """True neu user duoc xem/sua toan bo CRM: admin, leader, thanh vien
+    team_type='sale', da duoc gan vai tro nghiep vu bao gia (presale/sale/
+    both), hoac Member lien ket thuoc team "Sale"/"Marketing" (danh ba HR,
+    xem _FULL_ACCESS_MEMBER_TEAMS - luat rieng, khong lien quan teams/
+    team_type). Quote business role la nguon quyen CRM chung, khong bat
+    buoc phai nam trong team sale."""
     if not user:
         return False
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
         return True
-    return is_sale_member(user.get("id"))
+    # Phan quyen theo CRM Team: user da gan Nhom quyen voi scope 'team' KHONG phai "full" du co vai tro nghiep vu
+    # sale/presale hay thuoc team Sale cu - chi duoc doc/ghi du lieu thuoc CRM Team cua minh (xem can_access_by_scope).
+    if get_effective_permissions(user).get("scope") == "team":
+        return False
+    if has_quote_business_role(user, "sale") or has_quote_business_role(user, "presale"):
+        return True
+    if is_sale_member(user.get("id")):
+        return True
+    return get_linked_member_team(user.get("id")) in _FULL_ACCESS_MEMBER_TEAMS
 
 
 def can_write_deal(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> bool:
@@ -95,7 +168,9 @@ def can_write_deal(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> 
     uid = str(user.get("id") or "")
     if not uid:
         return False
-    return str(lead.get("leaded_by") or "") == uid or str(lead.get("sdr_id") or "") == uid
+    if str(lead.get("leaded_by") or "") == uid or str(lead.get("sdr_id") or "") == uid:
+        return True
+    return can_access_by_scope(user, lead.get("leaded_by"), lead.get("sdr_id"))
 
 
 def can_approve_quote(user: dict[str, Any] | None) -> bool:
@@ -116,6 +191,25 @@ def can_approve_quote(user: dict[str, Any] | None) -> bool:
     return bool(user.get("can_approve_quotes"))
 
 
+def is_web_intake_user(user: dict[str, Any] | None) -> bool:
+    """True nếu user là user kỹ thuật của tích hợp Web Intake (Project 2). Chỉ dùng để cấp các ngoại lệ TỐI THIỂU bên dưới."""
+    expected = (getattr(settings, "web_intake_user_id", "") or "").strip()
+    return bool(expected and user and str(user.get("id") or "") == expected)
+
+
+def _is_web_intake_owner(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
+    """User Web Intake + báo giá do CHÍNH nó tạo (qua form web). Không áp dụng cho báo giá của ai khác, không bao giờ
+    cấp quyền duyệt/phát hành/gửi/xoá (những quyền đó không nằm trong allowlist của khoá và vẫn cần JWT thật)."""
+    if not quote or not is_web_intake_user(user):
+        return False
+    created_by = str(quote.get("created_by") or quote.get("createdById") or "")
+    if not created_by or created_by != str(user.get("id") or ""):
+        return False
+    # Chỉ khi báo giá còn là bản nháp ở "Yêu cầu mới": nội bộ đã nhận xử lý (chuyển bước) thì khách không sửa nữa.
+    stage = str(quote.get("processingStage") or quote.get("processing_stage") or "request")
+    return stage == "request" and str(quote.get("status") or "draft") == "draft"
+
+
 def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
     """True neu user duoc sua phan KY THUAT (scope/cost/checklist) cua 1
     quote: chinh nguoi duoc gan `technical_owner_id`, hoac admin/leader/
@@ -125,10 +219,15 @@ def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] 
         return False
     if has_full_crm_access(user):
         return True
+    if _is_web_intake_owner(user, quote):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "") == uid
+    return (
+        str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "") == uid
+        and has_quote_business_role(user, "presale")
+    )
 
 
 # ── Quyen doc/sua GIA VON / GIA BAN / LOI NHUAN - 3 NHOM RIENG (sua lai sau
@@ -146,6 +245,27 @@ def can_edit_technical_quote(user: dict[str, Any] | None, quote: dict[str, Any] 
 # hon nhu vay, theo dung yeu cau "Leader khong tu dong thay cost/profit".
 
 
+def _group_quote_permission_grants_all(user: dict[str, Any] | None, field: str) -> bool:
+    """"Nhom quyen" (migration 155, OPT-IN): True CHI khi user da duoc gan
+    Nhom quyen VA field do (`quote_cost_permission`/`quote_sell_permission`/
+    `quote_release_permission`) = 'all' - dung de THEM 1 duong cap quyen MOI
+    (giong admin/leader, xem/sua duoc MOI bao gia du khong phai
+    technical_owner/quote_owner) cho 1 role khong phai he thong admin/leader
+    (vd 1 nhan su van hanh cao cap). CO CHU DICH KHONG xu ly 'none'/
+    'read_only'/'assigned' o day - 3 gia tri do da dung DUNG hanh vi mac
+    dinh hien co (xem docstring tung ham *_view_*/*_edit_* quote_cost/
+    quote_pricing) nen KHONG can code them; chi 'all' la duong cap MOI thuc
+    su, tranh dong vao logic han che (restrictive) da rat nhieu lan sua loi
+    truoc day trong file nay."""
+    if not user or not field:
+        return False
+    eff = get_effective_permissions(user)
+    group = eff.get("group")
+    if not group:
+        return False
+    return group.get(field) == "all"
+
+
 def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
     """Nhom A - TECHNICAL/COST fields (costPrice/costTotal/costNotApplicable):
     admin hoac leader (moi Leader Dev deu la Presale, can xem gia von cua ca
@@ -160,23 +280,44 @@ def can_view_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | Non
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
         return True
+    if _group_quote_permission_grants_all(user, "quote_cost_permission"):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
     technical_owner_id = str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "")
     quote_owner_id = str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
-    return uid == technical_owner_id or uid == quote_owner_id
+    return (
+        (uid == technical_owner_id and has_quote_business_role(user, "presale"))
+        or (uid == quote_owner_id and has_quote_business_role(user, "sale"))
+    )
 
 
 def can_edit_quote_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
-    """Quyen SUA gia von - CHI technical_owner (Presale duoc gan) hoac admin/
-    leader/sale-team (giu nguyen has_full_crm_access, KHONG doi hanh vi SUA da
-    chot tu truoc). Sale (quote_owner) KHONG duoc sua cost du duoc XEM read-
-    only qua can_view_quote_cost() - day la lan ranh READ vs WRITE THAT SU,
-    chan o tang API (_check_item_field_level_permission), khong chi FE disable
-    input. Alias ten ro nghia cua can_edit_technical_quote() (giu nguyen ham
-    do cho cac noi goi cu, khong doi hanh vi)."""
-    return can_edit_technical_quote(user, quote)
+    """Quyen SUA gia von trong quote.
+
+    defaultCostPriceVnd trong San pham & Dich vu chi la gia von mac dinh de
+    prefill. Trong Yeu cau bao gia, gia von la gia thuc te theo case va duoc
+    sua rieng boi nguoi tham gia bao gia: admin/leader/full CRM, Presale duoc
+    gan technical_owner, hoac Sale duoc gan quote_owner.
+    """
+    if not user:
+        return False
+    if has_full_crm_access(user):
+        return True
+    if _group_quote_permission_grants_all(user, "quote_cost_permission"):
+        return True
+    if _is_web_intake_owner(user, quote):
+        return True
+    uid = str(user.get("id") or "")
+    if not uid or not quote:
+        return False
+    technical_owner_id = str(quote.get("technicalOwnerId") or quote.get("technical_owner_id") or "")
+    quote_owner_id = str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        (uid == technical_owner_id and has_quote_business_role(user, "presale"))
+        or (uid == quote_owner_id and has_quote_business_role(user, "sale"))
+    )
 
 
 def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -203,10 +344,17 @@ def can_view_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
         return True
+    if _group_quote_permission_grants_all(user, "quote_sell_permission"):
+        return True
+    if _is_web_intake_owner(user, quote):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_view_quote_profitability(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -223,10 +371,15 @@ def can_view_quote_profitability(user: dict[str, Any] | None, quote: dict[str, A
     role = str(user.get("role") or "").strip().lower()
     if role in ("admin", "leader"):
         return True
+    if _group_quote_permission_grants_all(user, "quote_sell_permission"):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+    return (
+        uid == str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "")
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_edit_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -238,10 +391,17 @@ def can_edit_quote_pricing(user: dict[str, Any] | None, quote: dict[str, Any] | 
         return False
     if has_full_crm_access(user):
         return True
+    if _group_quote_permission_grants_all(user, "quote_sell_permission"):
+        return True
+    if _is_web_intake_owner(user, quote):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+    return (
+        str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_transition_quote_stage(user: dict[str, Any] | None, quote: dict[str, Any] | None, target_stage: str) -> bool:
@@ -252,6 +412,8 @@ def can_transition_quote_stage(user: dict[str, Any] | None, quote: dict[str, Any
     BAN GIAO) can quyen ky thuat (nguoi ky thuat la nguoi bam ban giao); chuyen
     SANG 'review' (pricing->review, HOAN TAT gia ban) can quyen gia ban."""
     if not user:
+        return False
+    if is_web_intake_user(user):  # khách web không tự chuyển bước; nội bộ phân công và xử lý trong CRM
         return False
     if has_full_crm_access(user):
         return True
@@ -272,7 +434,8 @@ def can_edit_quote(user: dict[str, Any] | None, quote: dict[str, Any] | None, le
         return False
     if has_full_crm_access(user):
         return True
-    if can_approve_quote(user):
+    # Quyen duyet KHONG vuot scope team: user bi gioi han theo CRM Team chi duyet/xem bao gia thuoc team minh.
+    if can_approve_quote(user) and get_scope_visible_user_ids(user) is None:
         return True
     uid = str(user.get("id") or "")
     if not uid:
@@ -281,7 +444,13 @@ def can_edit_quote(user: dict[str, Any] | None, quote: dict[str, Any] | None, le
         return True
     if lead and (str(lead.get("leaded_by") or "") == uid or str(lead.get("sdr_id") or "") == uid):
         return True
-    return False
+    return can_access_by_scope(
+        user,
+        (quote or {}).get("created_by"), (quote or {}).get("createdById"),
+        (quote or {}).get("quoteOwnerId"), (quote or {}).get("quote_owner_id"),
+        (quote or {}).get("technicalOwnerId"), (quote or {}).get("technical_owner_id"),
+        (lead or {}).get("leaded_by"), (lead or {}).get("sdr_id"),
+    )
 
 
 def can_manage_quote_email_settings(user: dict[str, Any] | None) -> bool:
@@ -324,10 +493,15 @@ def can_send_quote_email(user: dict[str, Any] | None, quote: dict[str, Any] | No
         return True
     if user.get("can_send_quotes") is True:
         return True
+    if _group_quote_permission_grants_all(user, "quote_release_permission"):
+        return True
     uid = str(user.get("id") or "")
     if not uid or not quote:
         return False
-    return str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+    return (
+        str(quote.get("quoteOwnerId") or quote.get("quote_owner_id") or "") == uid
+        and has_quote_business_role(user, "sale")
+    )
 
 
 def can_view_project(user: dict[str, Any] | None) -> bool:
@@ -338,19 +512,12 @@ def can_view_project(user: dict[str, Any] | None) -> bool:
 
 
 def can_manage_project(user: dict[str, Any] | None, project: dict[str, Any] | None = None) -> bool:
-    """QUAN TRONG: KHONG dung has_full_crm_access() o day - ham do gom ca
-    "thanh vien 1 team team_type='sale'" (mot co che TEAM assignment THAT,
-    KHONG PHAI system role thu 4 - xem get_user_team_types()/teams.team_type,
-    migration 049; app_users.role van CHI co admin/leader/member, khong doi).
-    Nhung rieng cho QUAN TRI Du an, yeu cau moi noi ro: sale-team KHONG tu
-    dong duoc quan tri Project - chi Admin/Leader, HOAC (voi 1 Du an DA TON
-    TAI) chinh nguoi tao (`created_by`) hoac nguoi duoc gan quan ly
-    (`manager_id`) cua DUNG Du an do. Tao Du an MOI: CHI Admin/Leader (chua
-    co project de tu nhan la "nguoi tao/manager")."""
+    """Quan ly Du an theo quyen CRM chung: admin/leader/member co vai tro bao
+    gia (sale/presale/both) duoc them/sua; member thuong chi sua du an minh
+    tao hoac duoc gan quan ly."""
     if not user:
         return False
-    role = str(user.get("role") or "").strip().lower()
-    if role in ("admin", "leader"):
+    if has_full_crm_access(user):
         return True
     if not project:
         return False
@@ -374,6 +541,18 @@ def can_manage_quote_approval_rules(user: dict[str, Any] | None) -> bool:
     return role == "admin"
 
 
+def can_manage_lead_classification_rules(user: dict[str, Any] | None) -> bool:
+    """Dieu kien phan loai Lead (SQL/Nuoi duong/Khong dat chuan, migration 152)
+    - "chỉ có admin mới được tick chọn" (yeu cau rieng cua leader) - CHI role
+    == admin, dung cung pattern voi can_manage_quote_approval_rules(). GET
+    khong can ham nay - moi nguoi dang nhap deu xem duoc rule dang ap dung;
+    CHI PUT/sua rule moi bat buoc admin."""
+    if not user:
+        return False
+    role = str(user.get("role") or "").strip().lower()
+    return role == "admin"
+
+
 def can_manage_price_book(user: dict[str, Any] | None) -> bool:
     """Bang gia VPS Zone - CRUD Draft/publish version cho Admin VA Leader
     (yeu cau rieng, mo rong tu ban dau CHI Admin - Leader cung duoc quan ly
@@ -391,10 +570,15 @@ def can_manage_service_catalog_pricing(user: dict[str, Any] | None) -> bool:
     Admin (mirror can_manage_price_book) - khong lien quan 1 quote cu the
     nao nen dung kiem tra role toan cuc, khong the dung
     can_view_quote_cost(user, quote) o day (chua co quote de kiem)."""
-    if not user:
-        return False
-    role = str(user.get("role") or "").strip().lower()
-    return role == "admin"
+    return can_manage_shared_master_data(user)
+
+
+def can_manage_shared_master_data(user: dict[str, Any] | None) -> bool:
+    """Quyen quan tri master data dung chung CRM/Quote (categories,
+    service_catalog, quote_forms/issuer companies, vendor import, MSC sync):
+    bat ky user da dang nhap nao cung duoc them/sua/xoa (mo full quyen theo
+    yeu cau 2026-11-02)."""
+    return user is not None
 
 
 def can_view_price_book_cost(user: dict[str, Any] | None, quote: dict[str, Any] | None) -> bool:
@@ -438,7 +622,11 @@ def can_edit_contract(user: dict[str, Any] | None, contract: dict[str, Any] | No
         return True
     if lead and (str(lead.get("leaded_by") or "") == uid or str(lead.get("sdr_id") or "") == uid):
         return True
-    return False
+    return can_access_by_scope(
+        user,
+        (contract or {}).get("createdById"), (contract or {}).get("ownerId"),
+        (lead or {}).get("leaded_by"), (lead or {}).get("sdr_id"),
+    )
 
 
 def can_write_lead(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> bool:
@@ -455,7 +643,9 @@ def can_write_lead(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> 
     uid = str(user.get("id") or "")
     if not uid:
         return False
-    return str(lead.get("sdr_id") or "") == uid
+    if str(lead.get("sdr_id") or "") == uid:
+        return True
+    return can_access_by_scope(user, lead.get("sdr_id"), lead.get("qualification_ae_id"), lead.get("created_by"), team_id=lead.get("team_id"))
 
 
 def can_view_lead(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> bool:
@@ -478,6 +668,8 @@ def can_view_lead(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> b
     converted_deal = lead.get("_converted_deal")
     if converted_deal and (str(converted_deal.get("leaded_by") or "") == uid or str(converted_deal.get("sdr_id") or "") == uid):
         return True
+    if converted_deal and can_access_by_scope(user, converted_deal.get("leaded_by"), converted_deal.get("sdr_id")):
+        return True
     return False
 
 
@@ -490,3 +682,235 @@ def can_view_lead(user: dict[str, Any] | None, lead: dict[str, Any] | None) -> b
 # list_customers - khong hop voi chu ky ham (user, customer, linked_deals)
 # dung chung cho deal/quote/contract o file nay. Khong nhan doi 1 ban thu 2
 # khong dung o day de tranh 2 nguon quyen lech nhau theo thoi gian.
+
+
+# ── "Nhom quyen" (crm_permission_groups) + "Team CRM" (crm_teams/
+# crm_team_members) - migration 155. Enforcement o day la OPT-IN THEO TUNG
+# USER: chi ap dung khi user.permission_group_id CO gia tri (admin chu dong
+# gan qua tab "Tai khoan CRM" moi) - user chua duoc gan gi thi MOI ham o TREN
+# (has_full_crm_access va cac ham can_*) hoat dong CHINH XAC nhu truoc gio,
+# khong doi hanh vi dang chay that (xem CLAUDE.md/plan phien lam viec them
+# Nhom quyen/Team CRM, 2026-09-28).
+
+_CRM_TEAM_OF_USER_CACHE_TTL_SECONDS = 60.0
+_CRM_TEAM_OF_USER_CACHE: dict[str, tuple[float, str | None]] = {}
+_CRM_TEAM_MEMBERS_CACHE_TTL_SECONDS = 60.0
+_CRM_TEAM_MEMBERS_CACHE: dict[str, tuple[float, set[str]]] = {}
+_CRM_PERMISSION_GROUP_CACHE_TTL_SECONDS = 60.0
+_CRM_PERMISSION_GROUP_CACHE: dict[str, tuple[float, dict | None]] = {}
+
+
+def clear_crm_permission_enforcement_cache() -> None:
+    """Goi khi 1 Nhom quyen/Team CRM duoc sua qua UI moi, de thay doi co hieu
+    luc ngay (khong doi toi khi cache 60s het han)."""
+    _CRM_TEAM_OF_USER_CACHE.clear()
+    _CRM_TEAMS_OF_USER_CACHE.clear()
+    _CRM_TEAM_MEMBERS_CACHE.clear()
+    _CRM_PERMISSION_GROUP_CACHE.clear()
+
+
+def _get_permission_group_cached(group_id: str | None) -> dict | None:
+    if not group_id:
+        return None
+    now = time.monotonic()
+    cached = _CRM_PERMISSION_GROUP_CACHE.get(group_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        supabase = get_supabase_client()
+        result = execute_supabase_query(
+            lambda: supabase.table("crm_permission_groups").select("*").eq("id", group_id).limit(1).execute()
+        )
+        group = result.data[0] if result.data else None
+    except Exception:
+        group = None
+    _CRM_PERMISSION_GROUP_CACHE[group_id] = (now + _CRM_PERMISSION_GROUP_CACHE_TTL_SECONDS, group)
+    return group
+
+
+def get_crm_team_id_for_user(user_id: str | None) -> str | None:
+    if not user_id:
+        return None
+    now = time.monotonic()
+    cached = _CRM_TEAM_OF_USER_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        supabase = get_supabase_client()
+        result = execute_supabase_query(
+            lambda: supabase.table("crm_team_members").select("crm_team_id").eq("user_id", user_id).limit(1).execute()
+        )
+        team_id = result.data[0].get("crm_team_id") if result.data else None
+        if not team_id:
+            leader_result = execute_supabase_query(
+                lambda: supabase.table("crm_teams").select("id").eq("leader_user_id", user_id).eq("status", "active").limit(1).execute()
+            )
+            team_id = leader_result.data[0].get("id") if leader_result.data else None
+    except Exception:
+        team_id = None
+    _CRM_TEAM_OF_USER_CACHE[user_id] = (now + _CRM_TEAM_OF_USER_CACHE_TTL_SECONDS, team_id)
+    return team_id
+
+
+_CRM_TEAMS_OF_USER_CACHE: dict[str, tuple[float, set[str]]] = {}
+
+
+def get_crm_team_ids_for_user(user_id: str | None) -> set[str]:
+    """TAP HOP tat ca CRM Team (bang crm_teams, KHONG phai `teams` cu) ma user thuoc: lam thanh vien
+    (crm_team_members) HOAC la leader (crm_teams.leader_user_id, status active). User nhieu team -> union."""
+    if not user_id:
+        return set()
+    now = time.monotonic()
+    cached = _CRM_TEAMS_OF_USER_CACHE.get(user_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        supabase = get_supabase_client()
+        mem = execute_supabase_query(
+            lambda: supabase.table("crm_team_members").select("crm_team_id").eq("user_id", user_id).execute()
+        )
+        lead = execute_supabase_query(
+            lambda: supabase.table("crm_teams").select("id").eq("leader_user_id", user_id).eq("status", "active").execute()
+        )
+        team_ids = {r["crm_team_id"] for r in (mem.data or []) if r.get("crm_team_id")} | {r["id"] for r in (lead.data or []) if r.get("id")}
+    except Exception:
+        team_ids = set()
+    _CRM_TEAMS_OF_USER_CACHE[user_id] = (now + _CRM_TEAM_OF_USER_CACHE_TTL_SECONDS, team_ids)
+    return team_ids
+
+
+def get_crm_team_member_ids(crm_team_id: str | None) -> set[str]:
+    if not crm_team_id:
+        return set()
+    now = time.monotonic()
+    cached = _CRM_TEAM_MEMBERS_CACHE.get(crm_team_id)
+    if cached and cached[0] > now:
+        return cached[1]
+    try:
+        supabase = get_supabase_client()
+        result = execute_supabase_query(
+            lambda: supabase.table("crm_team_members").select("user_id").eq("crm_team_id", crm_team_id).execute()
+        )
+        member_ids = {row["user_id"] for row in (result.data or []) if row.get("user_id")}
+        team_result = execute_supabase_query(
+            lambda: supabase.table("crm_teams").select("leader_user_id").eq("id", crm_team_id).limit(1).execute()
+        )
+        leader_id = team_result.data[0].get("leader_user_id") if team_result.data else None
+        if leader_id:
+            member_ids.add(leader_id)
+    except Exception:
+        member_ids = set()
+    _CRM_TEAM_MEMBERS_CACHE[crm_team_id] = (now + _CRM_TEAM_MEMBERS_CACHE_TTL_SECONDS, member_ids)
+    return member_ids
+
+
+def get_effective_permissions(user: dict[str, Any] | None) -> dict[str, Any]:
+    """Resolve quyen hieu luc cua 1 user tu Nhom quyen (+ override rieng, neu
+    co). Tra ve `{"modules": None, "scope": None, "group": None}` (KHONG co
+    Nhom quyen nao duoc gan - fallback nguyen xi hanh vi cu o cac ham can_*/
+    has_full_crm_access phia tren) neu `user.permission_group_id` rong hoac
+    khong tim thay nhom tuong ung."""
+    empty = {"modules": None, "scope": None, "group": None}
+    if not user:
+        return empty
+    group_id = user.get("permission_group_id")
+    if not group_id:
+        return empty
+    group = _get_permission_group_cached(group_id)
+    if not group:
+        return empty
+
+    if user.get("permission_override"):
+        modules = set(user.get("permission_overrides") or [])
+    else:
+        modules = set(group.get("modules") or [])
+    scope = user.get("data_scope") or group.get("default_scope") or "system"
+    return {"modules": modules, "scope": scope, "group": group}
+
+
+def has_module_access(user: dict[str, Any] | None, module: str) -> bool:
+    """True neu user duoc VAO module nay (Lead/Customer/Deal/Quote/Product/
+    Report/Account/Setting). User CHUA duoc gan Nhom quyen (opt-in) luon True
+    - khong chan nav/API cua ai chua duoc admin dong cham toi qua man hinh
+    moi."""
+    eff = get_effective_permissions(user)
+    if eff["modules"] is None:
+        return True
+    return module in eff["modules"]
+
+
+def can_access_by_scope(user: dict[str, Any] | None, *owner_ids: Any, team_id: Any = None) -> bool:
+    """User bi gioi han scope (team/personal/deal_assigned) co duoc cham vao ban ghi nay khong: TRUE neu 1 trong cac
+    `owner_ids` (nguoi phu trach/tao ban ghi hoac cua deal cha) nam trong tap user cua scope, HOAC `team_id` (CRM Team,
+    crm_leads.team_id - KHONG phai `teams` cu cua customer_leads/projects) la 1 trong cac CRM Team cua user.
+    User khong bi gioi han scope (admin/leader/Nhom quyen system-workspace/chua gan Nhom quyen) -> luon False o day
+    (noi goi da xu ly bang has_full_crm_access) de ham nay chi la duong cap quyen THEM theo team."""
+    scope_ids = get_scope_visible_user_ids(user)
+    if scope_ids is None:
+        return False
+    for oid in owner_ids:
+        if oid and str(oid) in scope_ids:
+            return True
+    if team_id and get_effective_permissions(user).get("scope") == "team":
+        return str(team_id) in get_crm_team_ids_for_user(str((user or {}).get("id") or ""))
+    return False
+
+
+def filter_rows_by_scope(user: dict[str, Any] | None, rows: list[dict[str, Any]], owner_keys: tuple[str, ...], deal_key: str = "dealId") -> list[dict[str, Any]]:
+    """Loc 1 danh sach ban ghi (bao gia/hop dong...) theo scope cua user: giu dong khi 1 trong `owner_keys` (nguoi tao/
+    phu trach) HOAC nguoi phu trach deal cha (sdr_id/leaded_by cua customer_leads) nam trong tap scope.
+    scope None (khong gioi han) -> tra nguyen danh sach."""
+    scope_ids = get_scope_visible_user_ids(user)
+    if scope_ids is None:
+        return rows
+    deal_ids = list({str(r.get(deal_key)) for r in rows if r.get(deal_key)})
+    deal_owner: dict[str, set[str]] = {}
+    if deal_ids:
+        try:
+            supabase = get_supabase_client()
+            res = execute_supabase_query(
+                lambda: supabase.table("customer_leads").select("id, sdr_id, leaded_by").in_("id", deal_ids).eq("instance", settings.crm_instance).execute()
+            )
+            for d in res.data or []:
+                deal_owner[str(d["id"])] = {str(x) for x in (d.get("sdr_id"), d.get("leaded_by")) if x}
+        except Exception:
+            deal_owner = {}
+    kept = []
+    for r in rows:
+        if any(r.get(k) and str(r[k]) in scope_ids for k in owner_keys):
+            kept.append(r)
+        elif r.get(deal_key) and (deal_owner.get(str(r[deal_key]), set()) & scope_ids):
+            kept.append(r)
+    return kept
+
+
+def get_scope_visible_user_ids(user: dict[str, Any] | None) -> set[str] | None:
+    """None = KHONG gioi han them theo Nhom quyen (giu nguyen logic
+    has_full_crm_access/_visible_lead_ids/_customer_ids_visible_to/Pipeline
+    universal nhu hien tai) - ap dung cho user chua gan Nhom quyen, HOAC scope
+    hieu luc la 'system'/'workspace' ('workspace' chua co du lieu workspace
+    rieng de loc them o app goc mot-instance - xem gioi han da neu trong
+    plan). Tra ve 1 set user_id (app_users.id) neu scope='personal'/
+    'deal_assigned' (chi minh - Lead/Customer/Deal khong co khai niem "duoc
+    gan" nao khac sdr_id/leaded_by/owner_id, nen 2 scope nay dong nhat cho 3
+    module do) hoac 'team' (ca Team CRM) - noi goi PHAI giao (intersect)
+    thanh phan sdr_id/leaded_by/owner_id hien co voi set nay, KHONG thay the
+    hoan toan logic loc cu."""
+    eff = get_effective_permissions(user)
+    scope = eff["scope"]
+    if scope is None or scope in ("system", "workspace"):
+        return None
+    uid = str((user or {}).get("id") or "")
+    if scope in ("personal", "deal_assigned"):
+        return {uid} if uid else set()
+    if scope == "team":
+        team_ids = get_crm_team_ids_for_user(uid)
+        if not team_ids:
+            # Chua duoc gan Team CRM nao - an toan hon la chi thay cua minh,
+            # khong phai rong hoan toan (tranh 1 man hinh trang khong ro ly do).
+            return {uid} if uid else set()
+        members: set[str] = set()
+        for team_id in team_ids:  # nhieu team -> UNION
+            members |= get_crm_team_member_ids(team_id)
+        return members or ({uid} if uid else set())
+    return None

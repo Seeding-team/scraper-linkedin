@@ -19,16 +19,30 @@ export function ConfirmModal({
   message,
   actions,
   onClose,
+  elevated,
+  cancelLabel,
 }: {
   open: boolean;
   title: string;
   message: string;
   actions: ConfirmModalAction[];
   onClose: () => void;
+  cancelLabel?: string;
+  /** BUG THAT DA GAP ("không bấm tick được" - Cột hiển thị trong popup
+   * preview): .crm-modal-backdrop mac dinh z-index:100000, THAP HON
+   * .qc-modal-backdrop--nested (100210, popup preview dang mo) - ConfirmModal
+   * mo ra bi VE PHIA SAU popup preview, VO HINH voi nguoi dung (bam vao
+   * "khong thay gi xay ra" thuc chat la dang bam xuyen qua 1 dialog an sau
+   * lung). Optional, mac dinh false de KHONG doi hanh vi/giao dien cua moi
+   * noi khac dang dung ConfirmModal (hang chuc noi trong app) - CHI bat len
+   * o noi can hien TREN 1 modal khac dang mo san. */
+  elevated?: boolean;
 }) {
   if (!open) return null;
   return (
-    <div className="crm-modal-backdrop" onClick={onClose}>
+    // Chi dong khi click THAT SU vao backdrop (khong phai bubble tu dropdown
+    // portal ra document.body ben trong modal - xem CustomerFormModal.tsx).
+    <div className="crm-modal-backdrop" style={elevated ? { zIndex: 100300 } : undefined} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="crm-modal crm-modal--confirm" onClick={event => event.stopPropagation()}>
         <header className="crm-modal-header">
           <h2 className="crm-modal-title">{title}</h2>
@@ -41,7 +55,7 @@ export function ConfirmModal({
         </div>
         <footer className="crm-modal-footer">
           <div className="crm-deal-footer-actions">
-            <button type="button" className="crm-cancel-button" onClick={onClose}>Huỷ</button>
+            <button type="button" className="crm-cancel-button" onClick={onClose}>{cancelLabel || 'Huỷ'}</button>
             {actions.map((action, index) => (
               <button
                 key={index}

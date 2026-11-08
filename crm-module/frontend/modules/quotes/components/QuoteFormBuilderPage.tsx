@@ -8,6 +8,7 @@ import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import type { IssuerCompany, QuoteField, QuoteForm, QuoteLayoutType, QuoteSchema } from '../types';
 import { serviceCatalogRepository } from '../../service-catalog/repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from '../../service-catalog/types';
+import { CurrencyInput } from '@/components/CurrencyInput';
 
 const clone = <T,>(value: T): T => structuredClone(value);
 
@@ -98,8 +99,18 @@ function FieldValueInput({ field, onChange }: { field: QuoteField; onChange: (va
       />
     );
   }
+  if (field.type === 'currency') {
+    const raw = field.defaultValue;
+    const numericValue = typeof raw === 'number' ? raw : raw ? Number(raw) : null;
+    return (
+      <CurrencyInput
+        value={Number.isFinite(numericValue) ? numericValue : null}
+        onChange={value => onChange(value ?? undefined)}
+      />
+    );
+  }
   const inputType =
-    field.type === 'number' || field.type === 'currency'
+    field.type === 'number'
       ? 'number'
       : field.type === 'date'
         ? 'date'
@@ -226,7 +237,18 @@ export function QuoteFormBuilderPage({ formId }: Props) {
   useEffect(() => {
     serviceCatalogRepository
       .list()
-      .then(items => setCatalogGroups(items.filter(item => item.itemType === 'group' && item.status === 'active')))
+      .then(items => {
+        const activeGroups = items.filter(item => item.itemType === 'group' && item.status === 'active');
+        setCatalogGroups(activeGroups);
+        // Mau MOI (chua co formId): tu tick san TAT CA nhom dang active -
+        // khong bat nguoi dung phai vao lai sua mau moi dung duoc "Chon tu
+        // danh muc" (theo yeu cau: khong can doi bam ap dung tung buoc).
+        // Mau DA TON TAI van uu tien du lieu that da luu (getFormCatalogLinks
+        // ben duoi), KHONG ghi de lua chon cu cua nguoi dung.
+        if (!formId) {
+          setSelectedGroupIds(activeGroups.map(g => g.id));
+        }
+      })
       .catch(() => setCatalogGroups([]));
     if (formId) {
       seedingQuoteRepository

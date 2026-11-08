@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint."""
+"""FastAPI application entrypoint (hot-reloaded 2026-10-03 TargetInstance Fallback)."""
 
 from __future__ import annotations
 
@@ -54,6 +54,11 @@ ensure_directory(settings.session_storage_dir)
 async def lifespan(_: FastAPI):
     warmup_task: asyncio.Task[None] | None = None
     zca_listeners_task: asyncio.Task[None] | None = None
+    zalo_forward_task: asyncio.Task[None] | None = None
+    zalo_automation_task: asyncio.Task[None] | None = None
+    zalo_push_task: asyncio.Task[None] | None = None
+    zalo_bot_task: asyncio.Task[None] | None = None
+    email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
     import os as _os
@@ -79,6 +84,54 @@ async def lifespan(_: FastAPI):
             logger.info("All-platform maintenance scheduler started (24h Facebook crawl stays gated by DISABLE_ALL_PLATFORM_CRAWL_24H)")
         except Exception:
             logger.exception("Failed to start all-platform maintenance scheduler")
+        try:
+            # MSC → CRM product sync (migration 175): cron 1 lan/ngay, goi dung
+            # msc_sync_service.run_sync nhu button manual. Gate: DISABLE_MSC_SYNC;
+            # khong them job neu MSC_API_BASE_URL chua cau hinh (xem jobs/msc_sync_job.py).
+            from app.modules.all_platform.jobs.msc_sync_job import setup_msc_sync_job
+            setup_msc_sync_job()
+            logger.info("MSC product sync scheduler setup finished")
+        except Exception:
+            logger.exception("Failed to start MSC product sync scheduler")
+
+        try:
+            from app.modules.all_platform.jobs.kpi_snapshot_job import setup_kpi_snapshot_job
+            setup_kpi_snapshot_job()
+            logger.info("KPI weekly snapshot scheduler setup finished")
+        except Exception:
+            logger.exception("Failed to start KPI weekly snapshot scheduler")
+
+        try:
+            from app.modules.all_platform.jobs.contract_drive_sync_job import (
+                setup_contract_drive_sync_worker,
+            )
+
+            setup_contract_drive_sync_worker()
+            logger.info("Contract Drive sync worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Contract Drive sync worker")
+
+        try:
+            from app.modules.all_platform.jobs.contract_edit_forcesave_job import (
+                setup_contract_edit_forcesave_worker,
+            )
+
+            setup_contract_edit_forcesave_worker()
+            logger.info("Word Editor forcesave worker setup finished")
+        except Exception:
+            logger.exception("Failed to start Word Editor forcesave worker")
+
+    # Email ingestion has its own explicit gate. It is intentionally independent
+    # from DISABLE_SCHEDULER (which protects crawler jobs in local/dev), so a Dev
+    # stack can receive mail only when EMAIL_IMAP_SYNC_ENABLED=1 is provided.
+    try:
+        from app.modules.all_platform.jobs.email_imap_sync_job import (
+            setup_email_imap_sync_worker,
+        )
+
+        email_imap_scheduler = setup_email_imap_sync_worker()
+    except Exception:
+        logger.exception("Failed to start Email IMAP sync worker")
     async def _warmup_background() -> None:
         try:
             await asyncio.to_thread(warmup_playwright_pool)
@@ -113,9 +166,80 @@ async def lifespan(_: FastAPI):
     else:
         zca_listeners_task = asyncio.create_task(_start_zca_listeners_background())
 
+    # ── Auto-start lại các Telegram client (Telethon) đã connected trước khi BE
+    # restart — cùng lý do với ZCA listeners ở trên (không có hook này thì mất realtime
+    # cho tới khi ai đó chủ động mở lại trang Telegram Chat).
+    async def _start_telegram_clients_background() -> None:
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import start_persisted_clients
+            await start_persisted_clients()
+            logger.info("Telegram persistent clients auto-start finished")
+        except Exception:
+            logger.exception("Telegram persistent clients auto-start failed — sẽ thử lại khi user kết nối lại")
+
+    telegram_clients_task: asyncio.Task[None] | None = None
+    if _os.getenv("DISABLE_TELEGRAM_LISTENERS", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_TELEGRAM_LISTENERS enabled -> not auto-starting Telegram clients.")
+    else:
+        telegram_clients_task = asyncio.create_task(_start_telegram_clients_background())
+
+    # ── Zalo tập trung: 3 background tick loop (forward engine / bulk-send+campaigns /
+    # web push) — dịch từ 3 worker Node.js riêng của guide sang asyncio task cùng
+    # process, giống pattern zca_listeners_task ở trên. Mỗi task tự bắt Exception
+    # trong tick của nó (không để 1 lỗi tick làm chết cả loop).
+    async def _tick_loop(name: str, tick_fn, interval_ms_env: str, default_ms: int) -> None:
+        interval_s = max(1.0, int(_os.getenv(interval_ms_env, str(default_ms))) / 1000)
+        while True:
+            try:
+                await tick_fn()
+            except Exception:
+                logger.exception(f"[{name}] tick loop error")
+            await asyncio.sleep(interval_s)
+
+    if _os.getenv("DISABLE_ZALO_FORWARD_ENGINE", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_FORWARD_ENGINE enabled -> not starting forward engine.")
+    else:
+        from app.modules.all_platform.zalo.services.forward_engine import run_forward_tick
+        zalo_forward_task = asyncio.create_task(_tick_loop("zalo-forward", run_forward_tick, "FORWARD_POLL_INTERVAL_MS", 3000))
+
+    if _os.getenv("DISABLE_ZALO_AUTOMATION_WORKER", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_AUTOMATION_WORKER enabled -> not starting bulk-send/campaigns worker.")
+    else:
+        from app.modules.all_platform.zalo.services.automation_worker import run_automation_tick
+        zalo_automation_task = asyncio.create_task(_tick_loop("zalo-automation", run_automation_tick, "AUTOMATION_TICK_INTERVAL_MS", 5000))
+
+    if _os.getenv("DISABLE_ZALO_PUSH_NOTIFIER", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_PUSH_NOTIFIER enabled -> not starting push notifier.")
+    else:
+        from app.modules.all_platform.zalo.services.push_notifier import run_push_tick
+        zalo_push_task = asyncio.create_task(_tick_loop("zalo-push", run_push_tick, "PUSH_POLL_INTERVAL_MS", 4000))
+
+    if _os.getenv("DISABLE_ZALO_CHATWOOT_BRIDGE", "").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_ZALO_CHATWOOT_BRIDGE enabled -> not starting Zalo -> Chatwoot bridge.")
+    else:
+        from app.modules.all_platform.zalo.services.zalo_chatwoot_bridge import run_bridge_tick
+        zalo_bot_task = asyncio.create_task(_tick_loop("zalo-chatwoot-bridge", run_bridge_tick, "ZALO_BOT_POLL_INTERVAL_MS", 3000))
+
     try:
         yield
     finally:
+        if email_imap_scheduler is not None:
+            try:
+                email_imap_scheduler.shutdown(wait=False)
+            except Exception:
+                logger.exception("Email IMAP sync worker shutdown failed")
+        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task, zalo_bot_task):
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        try:
+            from app.modules.all_platform.zalo.services.forward_engine import flush_all_pending_image_batches
+            await asyncio.wait_for(flush_all_pending_image_batches(), timeout=8.0)
+        except Exception:
+            logger.exception("Zalo forward engine: flush pending image batches on shutdown failed")
         if warmup_task is not None and not warmup_task.done():
             warmup_task.cancel()
             try:
@@ -135,13 +259,24 @@ async def lifespan(_: FastAPI):
             await shutdown_persistent_listeners()
         except Exception:
             logger.exception("ZCA persistent listeners shutdown failed")
+        if telegram_clients_task is not None and not telegram_clients_task.done():
+            telegram_clients_task.cancel()
+            try:
+                await telegram_clients_task
+            except asyncio.CancelledError:
+                pass
+        try:
+            from app.modules.all_platform.telegram.services.client_manager import shutdown_all as shutdown_telegram_clients
+            await shutdown_telegram_clients()
+        except Exception:
+            logger.exception("Telegram clients shutdown failed")
         await asyncio.to_thread(shutdown_playwright_pool)
 
 
 app = FastAPI(
-    title="LinkedIn Group Crawler API",
+    title="Seeding App API",
     version="1.0.0",
-    description="FastAPI service to login, crawl LinkedIn groups, and expose top daily posts for n8n.",
+    description="All-Platform Seeding & Social Media Automation API",
     lifespan=lifespan,
 )
 
@@ -191,11 +326,14 @@ async def handle_cors_middleware(request: Request, call_next):
         "http://127.0.0.1:3001",
         "http://localhost:3002",
         "http://127.0.0.1:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
         "http://localhost:8000",
         "http://127.0.0.1:8000",
         "https://seeding.markeeai.com",
+        "https://seeding.markee.vn",
         "https://facebook.com",
         "https://www.facebook.com",
         "https://web.facebook.com",
@@ -225,7 +363,7 @@ async def handle_cors_middleware(request: Request, call_next):
         else:
             response.headers["Access-Control-Allow-Origin"] = origin or "*"
         response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS, PUT, DELETE, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-api-key, Authorization, X-User-ID, X-Session-ID, X-Zalo-Worker-ID, X-Caller-Email, Idempotency-Key"
         return response
 
     response = await call_next(request)
@@ -252,6 +390,20 @@ def root_health() -> BaseResponse:
     return BaseResponse(success=True, message="Service is healthy")
 
 
+@app.get("/debug/instance", response_model=BaseResponse)
+def debug_instance(request: Request) -> BaseResponse:
+    """Local/debug endpoint to verify which CRM tenant this backend serves."""
+    return BaseResponse(
+        success=True,
+        message="CRM instance debug",
+        data={
+            "host_header": (request.headers.get("host") or "").split(":")[0].strip().lower(),
+            "runtime_instance": settings.crm_instance,
+            "default_crm_instance": settings.crm_instance,
+        },
+    )
+
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_, exc: RequestValidationError) -> JSONResponse:
@@ -273,10 +425,82 @@ async def request_validation_exception_handler(_, exc: RequestValidationError) -
     )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_, exc: Exception) -> JSONResponse:
+    """Safety net cho loi chua bat: FastAPI/Starlette tu uu tien handler cu
+    the hon (HTTPException/RequestValidationError da dang ky o tren) truoc
+    khi roi xuong day, nen handler nay CHI nhan cac exception thuc su chua
+    bat o dau ca. BUG THAT DA GAP: 1 so call site Supabase (auth, quote,
+    project, members...) goi `.execute()` truc tiep, khong qua wrapper
+    `execute_supabase_query()` - khi PostgREST self-host tra ve 502/503/504
+    (OpenResty/Kong gap su co), `postgrest.exceptions.APIError` thoat nguyen
+    dang (dict Python: `{'message': 'JSON could not be generated', 'code':
+    502, ...}`) toi tan response cho FE neu co code nao do lam `str(exc)`.
+    Bat toan bo o day de KHONG bao gio lo raw dict/HTML nhu vay ra ngoai."""
+    from app.core.supabase_client import (
+        friendly_supabase_error_message,
+        is_transient_supabase_error,
+    )
+
+    logger.exception("Unhandled exception: %s", exc)
+    if is_transient_supabase_error(exc):
+        return JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "message": friendly_supabase_error_message(exc),
+                "data": None,
+            },
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "success": False,
+            "message": "Đã có lỗi xảy ra, vui lòng thử lại.",
+            "data": None,
+        },
+    )
+
+
 app.include_router(router)
 app.include_router(linkedin_app_router)
 app.include_router(api_router, prefix="/facebook/api/v1")
 app.include_router(all_platform_router, prefix="/api/all-platform")
+
+# OnlyOffice loads plugin assets from the public CRM origin in the browser.
+from fastapi.staticfiles import StaticFiles
+
+_onlyoffice_plugin_dir = os.path.join(
+    os.path.dirname(__file__), "..", "static", "onlyoffice_plugin",
+)
+
+
+@app.get("/api/onlyoffice-plugin/config.json")
+def onlyoffice_plugin_config() -> dict:
+    base = f"{settings.crm_public_url}/api/onlyoffice-plugin/"
+    return {
+        "name": "Markee Contract Editor Bridge",
+        "guid": "asc.{B7E4C9F1-6A2D-4E3B-8C5A-1F9D2E8B4C7A}",
+        "baseUrl": base,
+        "variations": [{
+            "description": "Markee Contract Editor Bridge",
+            "url": "index.html",
+            "icons": [],
+            "isViewer": False,
+            "EditorsSupport": ["word"],
+            "isVisual": False,
+            "initDataType": "none",
+            "initData": "",
+            "buttons": [],
+        }],
+    }
+
+
+app.mount(
+    "/api/onlyoffice-plugin",
+    StaticFiles(directory=_onlyoffice_plugin_dir),
+    name="onlyoffice-plugin-assets",
+)
 
 # WebSocket đã được chuyển vào all_platform_router
 

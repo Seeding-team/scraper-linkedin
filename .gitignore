@@ -1,3 +1,22 @@
+.aevum/
+.agents/
+.agent/
+_aevum/
+_agents/
+_agent/
+GEMINI.md
+AGENTS.md
+TONGQUAN.md
+tools/
+source_code_skill/
+skillstudyforalluser/
+# Zero-Leak Master Plans & Strategy Docs (Master IP)
+*PLAN*.md
+*plan*.md
+docs/*PLAN*
+docs/*plan*
+docs/PLAN_*
+docs/plan_*
 # =========================
 # Monorepo ignore (FE + BE)
 # =========================
@@ -105,6 +124,8 @@ linkedin-crawler-ui/realtime_explore/
 /container_code.txt
 /container_image.txt
 /container_top.txt
+/network_logs_*.json
+/network_logs*.json
 /conv_1070.txt
 /fe_image.txt
 /fe_latest.txt
@@ -161,17 +182,16 @@ node_modules/
 # Cau hinh docker rieng tung host (dev vs app co domain build-arg khac nhau) - khong commit
 docker-compose.override.yml
 
+# DB local (Postgres + PostgREST) — chi chay may local, khong commit
+/local-db/
+
 # ---- Root-level generated artifacts ----
+artifacts/
 __pycache__/
-scratch/*.xlsx
-scratch/*.png
-scratch/*.html
-scratch/*.sql
-scratch/*.py
-scratch/*.log
-scratch/**/*.js
-scratch/**/package.json
-scratch/**/package-lock.json
+scratch/
+linkedin-crawler-ui/scratch/
+linkedin_group_crawler/scratch/
+api-sniffer-*.json
 
 # Code review reports
 code-review-report-*.md
@@ -184,7 +204,21 @@ docs/INFRASTRUCTURE.md
 # Doc tien do phien lam viec, phong hua thong tin ha tang nhay cam lot vao sau nay
 docs/QUOTE_ISSUER_COMPANY_WIZARD_2026-08-27.md
 
-# ---- crm-module + crm-cloudgate + crm-securityzone (module CRM doc lap, FE + BE, 1 instance/host) ----
+# ---- crm-module + crm-cloudgate + crm-securityzone + crm-timetech (module CRM doc lap, FE + BE, 1 instance/host) ----
+crm-timetech/.env
+crm-timetech/docker-compose.override.yml
+crm-timetech/backend/.env
+crm-timetech/backend/.env.local
+crm-timetech/backend/.venv
+crm-timetech/backend/__pycache__
+crm-timetech/backend/**/__pycache__
+crm-timetech/backend/artifacts
+crm-timetech/backend/node_modules
+crm-timetech/frontend/.env*
+crm-timetech/frontend/node_modules
+crm-timetech/frontend/.next
+crm-timetech/frontend/nextdev.log
+crm-timetech/frontend/npm-install.log
 crm-securityzone/.env
 crm-securityzone/docker-compose.override.yml
 crm-securityzone/backend/.env
@@ -192,6 +226,8 @@ crm-securityzone/backend/.env.local
 crm-securityzone/backend/.venv
 crm-securityzone/backend/__pycache__
 crm-securityzone/backend/**/__pycache__
+crm-securityzone/backend/artifacts
+crm-securityzone/backend/node_modules
 crm-securityzone/frontend/.env*
 crm-securityzone/frontend/node_modules
 crm-securityzone/frontend/.next
@@ -204,6 +240,8 @@ crm-module/backend/.env.local
 crm-module/backend/.venv
 crm-module/backend/__pycache__
 crm-module/backend/**/__pycache__
+crm-module/backend/artifacts
+crm-module/backend/node_modules
 crm-module/frontend/.env*
 crm-module/frontend/node_modules
 crm-module/frontend/.next
@@ -216,6 +254,8 @@ crm-cloudgate/backend/.env.local
 crm-cloudgate/backend/.venv
 crm-cloudgate/backend/__pycache__
 crm-cloudgate/backend/**/__pycache__
+crm-cloudgate/backend/artifacts
+crm-cloudgate/backend/node_modules
 crm-cloudgate/frontend/.env*
 crm-cloudgate/frontend/node_modules
 crm-cloudgate/frontend/.next
@@ -237,4 +277,47 @@ zalo-module/frontend/node_modules
 zalo-module/frontend/.next
 zalo-module/frontend/nextdev.log
 zalo-module/frontend/npm-install.log
+
+# ---- facebook-module (module cao bai viet Facebook + comment tu dong doc lap) ----
+facebook-module/.env
+facebook-module/docker-compose.override.yml
+facebook-module/backend/.env
+facebook-module/backend/.env.local
+facebook-module/backend/.venv
+facebook-module/backend/__pycache__
+facebook-module/backend/**/__pycache__
+facebook-module/backend/artifacts
+facebook-module/backend/temp_otp
+facebook-module/frontend/.env*
+facebook-module/frontend/node_modules
+facebook-module/frontend/.next
+facebook-module/frontend/nextdev.log
+facebook-module/frontend/npm-install.log
+
 crm-cloudgate/frontend/.next
+
+
+prompts/
+
+Reports/
+
+AGENTS.md
+.opencode/
+
+graphify-out/
+linkedin_group_crawler/graphify-out/
+
+docker-compose.local-test.yml
+scripts/init-local-test-db.sql
+scripts/local-test/
+
+# ---- Local Mock Seed for QA/Testing (NEVER push to Production) ----
+supabase/local_mock.sql
+linkedin_group_crawler/supabase/local_mock.sql
+scripts/local-mock-seed.*
+local_mock.sql
+
+# Cloned external prototypes
+prototype-studio/
+
+nhantin.json

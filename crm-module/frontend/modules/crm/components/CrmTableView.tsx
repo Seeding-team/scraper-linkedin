@@ -91,7 +91,7 @@ export function CrmTableView({
           </thead>
           <tbody>
             {sortedDeals.map(deal => (
-              <tr key={deal.id} className="crm-row" onClick={() => onCardClick(deal)}>
+              <tr key={deal.id} className="crm-row" data-crm-deal-row="true" onClick={() => onCardClick(deal)}>
                 <td className="crm-td">
                   <div className="crm-customer-name">
                     {deal.position ? `${deal.customerName} - ${deal.position}` : deal.customerName}
@@ -128,7 +128,7 @@ export function CrmTableView({
                   </span>
                   <div className="crm-muted crm-stage-days">{deal.daysInStage} ngày ở giai đoạn</div>
                 </td>
-                <td className="crm-td crm-td--right crm-budget">{deal.estimatedBudget ? formatVND(deal.estimatedBudget) : '-'}</td>
+                <td className="crm-td crm-td--right crm-budget">{deal.estimatedBudget != null ? formatVND(deal.estimatedBudget) : '-'}</td>
                 <td className="crm-td crm-small">{deal.decisionMaker || '-'}</td>
                 <td className="crm-td crm-small">
                   {getContractLabel(deal) ? (

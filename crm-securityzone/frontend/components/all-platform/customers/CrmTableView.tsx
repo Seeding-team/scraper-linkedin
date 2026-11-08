@@ -26,7 +26,7 @@ interface ColumnDef<T> {
 }
 
 function formatVND(value: number | null | undefined) {
-  if (!value) return "—";
+  if (value == null) return "—";
   return new Intl.NumberFormat("vi-VN", {
     style: "currency",
     currency: "VND",
@@ -271,6 +271,7 @@ export function CrmTableView({ customers, onCardClick, onEdit, onChat, onDelete 
               sorted.map((c) => (
                 <tr
                   key={c.id}
+                  data-crm-customer-row="true"
                   onClick={() => onCardClick(c)}
                   className="cursor-pointer transition-colors hover:bg-slate-50"
                 >

@@ -7,6 +7,7 @@ import type {
   Quote,
   QuoteActivityLogEntry,
   QuoteForm,
+  QuoteAccessSuggestion,
   QuoteHandoffChecklist,
   QuotePhase,
   QuoteProcessingStage,
@@ -18,8 +19,9 @@ import type {
   UpdateQuoteHandoffChecklistInput,
   UpdateQuoteInput,
 } from '../types';
-import type { QuoteRepository } from './QuoteRepository';
+import type { QuoteRepository, SystemExchangeRate } from './QuoteRepository';
 import type { ServiceCatalogOptions } from '../../service-catalog/types';
+import { notifyDealsChanged } from '@/modules/crm/utils/dealSync';
 
 type ApiResponse<T> = {
   success?: boolean;
@@ -42,18 +44,36 @@ export class QuoteApprovalRequiresExceptionError extends Error {
   }
 }
 
+/** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118,
+ * thay thế QuotePublicEmailRequiredError cũ chỉ hỗ trợ email) - PublicQuotePage
+ * bắt lỗi này để hiện ĐÚNG màn hình xác minh theo `method` đang bật ('email'
+ * hoặc 'phone'), không bao giờ hiện cả 2. `invalid` = true nghĩa là đã nhập
+ * nhưng không nằm trong danh sách cho phép (khác với false = chưa nhập lần nào). */
+export class QuotePublicVerificationRequiredError extends Error {
+  method: 'email' | 'phone';
+  invalid: boolean;
+  constructor(method: 'email' | 'phone', invalid: boolean) {
+    super(invalid ? `quote_public_${method}_not_allowed` : `quote_public_${method}_required`);
+    this.name = 'QuotePublicVerificationRequiredError';
+    this.method = method;
+    this.invalid = invalid;
+  }
+}
+
 type QuoteItemPayload = {
   row_type?: 'section' | 'item';
   description: string;
   service_description: string | null;
+  warranty_scope: string | null;
   unit?: string;
   quantity: number;
-  unit_price: number;
+  unit_price: number | null;
   discount_percent: number;
+  discount_amount?: number | null;
   vat_rate: number;
   children: QuoteItemPayload[];
   catalog_item_id?: string | null;
-  bundle_snapshot?: unknown[] | null;
+  bundle_snapshot?: unknown | null;
   list_price_usd?: number | null;
   unit_price_usd?: number | null;
   exchange_rate?: number | null;
@@ -68,6 +88,11 @@ type QuoteItemPayload = {
   cost_override_by?: string | null;
   cost_override_at?: string | null;
   cost_price_original?: number | null;
+  cost_price_vnd?: number | null;
+  billing_cycle?: string | null;
+  billing_term_months?: number | null;
+  catalog_monthly_price_vnd?: number | null;
+  catalog_annual_commit_monthly_price_vnd?: number | null;
 };
 
 function getDefaultHeaders(): Record<string, string> {
@@ -95,6 +120,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
       const evaluation = (body.data as { evaluation?: { result?: string; details?: unknown } } | undefined)?.evaluation;
       throw new QuoteApprovalRequiresExceptionError(evaluation || null);
     }
+    const gateData = body.data as { requiresVerification?: boolean; method?: 'email' | 'phone'; invalid?: boolean } | undefined;
+    if (gateData?.requiresVerification && gateData.method) {
+      throw new QuotePublicVerificationRequiredError(gateData.method, Boolean(gateData.invalid));
+    }
     throw new Error(body.message || 'Không thực hiện được yêu cầu báo giá.');
   }
   return body.data as T;
@@ -108,7 +137,7 @@ function toCreateFormPayload(input: CreateQuoteFormInput) {
     layout_type: input.layoutType,
     schema_version: input.schemaVersion,
     schema_json: input.schemaJson,
-    issuer_company_id: input.issuerCompanyId,
+    issuer_company_id: optionalUuid(input.issuerCompanyId),
   };
 }
 
@@ -120,7 +149,7 @@ function toUpdateFormPayload(input: UpdateQuoteFormInput) {
     layout_type: input.layoutType,
     schema_version: input.schemaVersion,
     schema_json: input.schemaJson,
-    issuer_company_id: input.issuerCompanyId,
+    issuer_company_id: optionalUuid(input.issuerCompanyId),
   };
 }
 
@@ -131,28 +160,43 @@ function toIssuerCompanyPayload(input: CreateIssuerCompanyInput | UpdateIssuerCo
     brand_name: input.brandName,
     address: input.address,
     contact_name: input.contactName,
+    // Chi gui key nay khi caller THAT SU co truyen (!== undefined) - optionalUuid() bien undefined thanh null, neu
+    // luon gui se lam cac noi CHI sua 1 vai truong (vd toggleStatus() chi gui {status}, IssuerInlineEditor chi gui
+    // legalName/taxCode/address/phone/email) VO TINH xoa mat Chuc vu da chon moi lan luu (JSON.stringify giu key co
+    // gia tri null nhung bo key co gia tri undefined).
+    position_category_id: input.positionCategoryId !== undefined ? optionalUuid(input.positionCategoryId) : undefined,
     phone: input.phone,
     email: input.email,
     website: input.website,
     tax_code: input.taxCode,
     logo_url: input.logoUrl,
-    default_quote_form_id: input.defaultQuoteFormId,
+    default_quote_form_id: optionalUuid(input.defaultQuoteFormId),
     status: input.status,
     sort_order: input.sortOrder,
+    payment_terms: input.paymentTerms,
   };
 }
 
 function toCreateQuotePayload(input: CreateQuoteInput) {
-  return {
+  const payload: Record<string, unknown> = {
     deal_id: input.dealId,
     quote_form_id: input.quoteFormId,
-    issuer_company_id: input.issuerCompanyId ?? null,
     data: input.data,
     items: (input.items || []).map(toQuoteItemPayload),
-    project_id: input.projectId ?? null,
-    sla_due_at: input.slaDueAt ?? null,
     quote_type_codes: input.quoteTypeCodes ?? [],
   };
+  if (input.issuerCompanyId) payload.issuer_company_id = input.issuerCompanyId;
+  if (input.projectId) payload.project_id = input.projectId;
+  if (input.slaDueAt) payload.sla_due_at = input.slaDueAt;
+  if (input.currency) payload.currency = input.currency;
+  if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
+  if (input.priceMode) payload.price_mode = input.priceMode;
+  return payload;
+}
+
+function optionalUuid(value: string | null | undefined): string | null {
+  const text = String(value || '').trim();
+  return text || null;
 }
 
 function toUpdateQuotePayload(input: UpdateQuoteInput) {
@@ -170,12 +214,21 @@ function toUpdateQuotePayload(input: UpdateQuoteInput) {
   const payload: Record<string, unknown> = {
     data: input.data,
     items: input.items?.map(toQuoteItemPayload),
-    issuer_company_id: input.issuerCompanyId ?? null,
   };
-  if ('projectId' in input) payload.project_id = input.projectId ?? null;
+  if ('issuerCompanyId' in input) payload.issuer_company_id = optionalUuid(input.issuerCompanyId);
+  // "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI gui khi caller
+  // that su truyen quoteFormId (doi mau that su), KHONG dung `?? null` nhu
+  // issuer_company_id o tren vi backend (QuoteUpdateRequest) dung exclude_none
+  // mac dinh - gui null se bi bo qua (khong doi), khong can tri-state nhu
+  // project_id/sla_due_at.
+  if (optionalUuid(input.quoteFormId)) payload.quote_form_id = optionalUuid(input.quoteFormId);
+  if ('projectId' in input) payload.project_id = optionalUuid(input.projectId);
   if ('overallDiscountPercent' in input) payload.overall_discount_percent = input.overallDiscountPercent ?? null;
   if ('slaDueAt' in input) payload.sla_due_at = input.slaDueAt ?? null;
   if ('quoteTypeCodes' in input) payload.quote_type_codes = input.quoteTypeCodes ?? [];
+  if (input.currency) payload.currency = input.currency;
+  if (input.exchangeRate) payload.exchange_rate = input.exchangeRate;
+  if ('priceMode' in input && input.priceMode) payload.price_mode = input.priceMode;
   return payload;
 }
 
@@ -184,13 +237,15 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     row_type: item.rowType === 'section' ? 'section' : 'item',
     description: item.description ?? '',
     service_description: item.serviceDescription ?? null,
+    warranty_scope: item.warrantyScope?.trim() || null,
     unit: item.unit,
     quantity: item.quantity,
-    unit_price: item.unitPrice,
+    unit_price: item.unitPrice ?? null,
     discount_percent: item.discountPercent ?? 0,
+    discount_amount: item.discountAmount ?? null,
     vat_rate: item.vatRate,
     children: (item.children || []).map(toQuoteItemPayload),
-    catalog_item_id: item.catalogItemId ?? null,
+    catalog_item_id: optionalUuid(item.catalogItemId),
     bundle_snapshot: item.bundleSnapshot ?? null,
     list_price_usd: item.listPriceUsd ?? null,
     unit_price_usd: item.unitPriceUsd ?? null,
@@ -199,13 +254,18 @@ function toQuoteItemPayload(item: NonNullable<CreateQuoteInput['items']>[number]
     cost_price: item.costPrice ?? null,
     markup_percent: item.markupPercent ?? null,
     cost_not_applicable: item.costNotApplicable ?? false,
-    price_book_item_id: item.priceBookItemId ?? null,
-    price_book_version_id: item.priceBookVersionId ?? null,
+    price_book_item_id: optionalUuid(item.priceBookItemId),
+    price_book_version_id: optionalUuid(item.priceBookVersionId),
     price_book_snapshot: item.priceBookSnapshot ?? null,
     cost_override_reason: item.costOverrideReason ?? null,
-    cost_override_by: item.costOverrideBy ?? null,
+    cost_override_by: optionalUuid(item.costOverrideBy),
     cost_override_at: item.costOverrideAt ?? null,
     cost_price_original: item.costPriceOriginal ?? null,
+    cost_price_vnd: item.costPriceVnd ?? null,
+    billing_cycle: item.billingCycle ?? null,
+    billing_term_months: item.billingTermMonths ?? null,
+    catalog_monthly_price_vnd: item.catalogMonthlyPriceVnd ?? null,
+    catalog_annual_commit_monthly_price_vnd: item.catalogAnnualCommitMonthlyPriceVnd ?? null,
   };
 }
 
@@ -253,8 +313,9 @@ export class SeedingQuoteRepository implements QuoteRepository {
     );
   }
 
-  async getQuotes(): Promise<Quote[]> {
-    return apiFetch<Quote[]>('/api/all-platform/quotes');
+  async getQuotes(params?: { dealId?: string }): Promise<Quote[]> {
+    const qs = params?.dealId ? `?deal_id=${encodeURIComponent(params.dealId)}` : '';
+    return apiFetch<Quote[]>(`/api/all-platform/quotes${qs}`);
   }
 
   /** Quote Center THAT (backend gom theo version_chain_id + loc/dem/phan
@@ -308,8 +369,52 @@ export class SeedingQuoteRepository implements QuoteRepository {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(id)}`);
   }
 
-  async getPublicQuote(token: string): Promise<Quote> {
-    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}`);
+  async getPublicQuote(token: string, email?: string, phone?: string): Promise<Quote> {
+    const qs = new URLSearchParams();
+    if (email) qs.set('email', email);
+    if (phone) qs.set('phone', phone);
+    const qsStr = qs.toString();
+    return apiFetch<Quote>(`/api/all-platform/quotes/public/${encodeURIComponent(token)}${qsStr ? `?${qsStr}` : ''}`);
+  }
+
+  /** "Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration 118) -
+   * đổi chế độ giới hạn xem link công khai của 1 quote cụ thể: 'none'/'email'/'phone'. */
+  async setPublicAccessRestriction(
+    quoteId: string,
+    mode: 'none' | 'email' | 'phone',
+    allowedEmails: string[],
+    allowedPhones: string[]
+  ): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/public-access-restriction`, {
+      method: 'PUT',
+      body: JSON.stringify({ mode, allowed_emails: allowedEmails, allowed_phones: allowedPhones }),
+    });
+  }
+
+  /** Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (lay tu Khach hang/Nguoi
+   * lien he/Sale/Presale cua CHINH bao gia nay, khong go tay) - xem
+   * supabase_quote_service.get_access_suggestions(). */
+  async getAccessSuggestions(quoteId: string): Promise<QuoteAccessSuggestion[]> {
+    return apiFetch<QuoteAccessSuggestion[]>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/access-suggestions`);
+  }
+
+  /** Nút "Lưu" ở toolbar in trên QuoteDetailPage (trang nội bộ đã đăng nhập)
+   * - xem QuoteRepository.ts. */
+  async updatePrintLayoutPrefs(
+    quoteId: string,
+    orientation: 'portrait' | 'landscape',
+    columnWidths: Record<string, number>
+  ): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/print-layout-prefs`, {
+      method: 'PUT',
+      body: JSON.stringify({ orientation, column_widths: columnWidths }),
+    });
+  }
+
+  /** Nút "Lưu" trên trang public /baogia/{token} (PublicQuotePage) - chỉ đọc
+   * quyền, xem QuoteRepository.ts. */
+  async getQuoteEditPermission(quoteId: string): Promise<{ canEdit: boolean }> {
+    return apiFetch<{ canEdit: boolean }>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/edit-permission`);
   }
 
   async createQuote(input: CreateQuoteInput): Promise<Quote> {
@@ -328,6 +433,20 @@ export class SeedingQuoteRepository implements QuoteRepository {
 
   async deleteQuote(id: string): Promise<void> {
     await apiFetch<unknown>(`/api/all-platform/quotes/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  /** Xoa MEM nhieu bao gia 1 lan (Admin khoi phuc duoc). includeVersions=true:
+   * xoa ca chuoi version cua moi id (thao tac "Xoá báo giá" o danh sach);
+   * false: chi xoa dung id (xoa rieng 1 version). */
+  async bulkDeleteQuotes(ids: string[], includeVersions: boolean): Promise<{ deletedIds: string[]; failed: Array<{ quoteId: string; message: string }> }> {
+    const data = await apiFetch<{ deleted_ids?: string[]; failed?: Array<{ quote_id: string; message: string }> }>(
+      '/api/all-platform/quotes/bulk-delete',
+      { method: 'POST', body: JSON.stringify({ quote_ids: ids, include_versions: includeVersions }) },
+    );
+    return {
+      deletedIds: data?.deleted_ids || [],
+      failed: (data?.failed || []).map(f => ({ quoteId: f.quote_id, message: f.message })),
+    };
   }
 
   async approveQuote(id: string, exceptionReason?: string): Promise<Quote> {
@@ -372,6 +491,21 @@ export class SeedingQuoteRepository implements QuoteRepository {
     );
   }
 
+  async getExchangeRate(): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate');
+  }
+
+  async refreshExchangeRate(): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate/refresh', { method: 'POST' });
+  }
+
+  async setExchangeRate(rate: number, note?: string): Promise<SystemExchangeRate> {
+    return apiFetch<SystemExchangeRate>('/api/all-platform/quotes/exchange-rate', {
+      method: 'PUT',
+      body: JSON.stringify({ rate, note: note ?? null }),
+    });
+  }
+
   async getIssuerCompanies(includeInactive = false): Promise<IssuerCompany[]> {
     return apiFetch<IssuerCompany[]>(
       `/api/all-platform/quotes/issuer-companies${includeInactive ? '?include_inactive=true' : ''}`
@@ -414,8 +548,8 @@ export class SeedingQuoteRepository implements QuoteRepository {
     input: { technicalOwnerId?: string | null; quoteOwnerId?: string | null }
   ): Promise<Quote> {
     const payload: Record<string, string | null> = {};
-    if ('technicalOwnerId' in input) payload.technical_owner_id = input.technicalOwnerId ?? null;
-    if ('quoteOwnerId' in input) payload.quote_owner_id = input.quoteOwnerId ?? null;
+    if ('technicalOwnerId' in input) payload.technical_owner_id = optionalUuid(input.technicalOwnerId);
+    if ('quoteOwnerId' in input) payload.quote_owner_id = optionalUuid(input.quoteOwnerId);
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/owners`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -466,8 +600,30 @@ export class SeedingQuoteRepository implements QuoteRepository {
     });
   }
 
+  async getLostReasons(): Promise<Array<{ code: string; label: string }>> {
+    return apiFetch<Array<{ code: string; label: string }>>('/api/all-platform/quotes/lost-reasons');
+  }
+
+  async markQuoteLost(
+    quoteId: string,
+    payload: { reason: string; reasonOther?: string; note?: string },
+  ): Promise<{ quote: Quote; dealOut: { changed: boolean; message?: string } }> {
+    return apiFetch(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/mark-lost`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: payload.reason, reason_other: payload.reasonOther || null, note: payload.note || null }),
+    });
+  }
+
   async revokePublicQuote(quoteId: string): Promise<Quote> {
     return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/revoke-public`, {
+      method: 'POST',
+    });
+  }
+
+  /** "Mở lại link báo giá" - chieu nguoc cua revokePublicQuote() (truoc day
+   * CHUA co, chi co "Khoá link" ma khong the mo lai). */
+  async enablePublicQuote(quoteId: string): Promise<Quote> {
+    return apiFetch<Quote>(`/api/all-platform/quotes/${encodeURIComponent(quoteId)}/enable-public`, {
       method: 'POST',
     });
   }
@@ -554,6 +710,67 @@ export class SeedingQuoteRepository implements QuoteRepository {
     );
   }
 
+  // ── Copy báo giá cross-workspace (2026-10-03, Phase 1 — chỉ Admin có
+  // allowed_instances chứa workspace đích mới gọi được, backend tự chặn
+  // 403/message rõ nếu không đủ quyền, xem cross_workspace_quote_service.py). ──
+
+  async searchCrossWorkspaceCustomers(targetInstance: string, search: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, search });
+    return apiFetch<Array<{ id: string; customer_name: string; company_name?: string | null; phone?: string | null; email?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/customers?${params.toString()}`
+    );
+  }
+
+  async createCrossWorkspaceCustomer(targetInstance: string, payload: { customer_name: string; company_name?: string; phone?: string; email?: string; tax_code?: string }) {
+    return apiFetch<{ id: string; customer_name: string }>(
+      `/api/all-platform/quotes/cross-workspace/customers`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, ...payload }) }
+    );
+  }
+
+  async listCrossWorkspaceProjects(targetInstance: string, targetCustomerId: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    return apiFetch<Array<{ id: string; name: string; project_code?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/projects?${params.toString()}`
+    );
+  }
+
+  async listCrossWorkspaceDeals(targetInstance: string, targetCustomerId: string, targetProjectId?: string | null) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    if (targetProjectId) params.set('target_project_id', targetProjectId);
+    return apiFetch<Array<{ id: string; customer_name?: string | null; company_name?: string | null; deal_stage?: string | null; project_id?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/deals?${params.toString()}`
+    );
+  }
+
+  async createCrossWorkspaceDeal(targetInstance: string, targetCustomerId: string, payload: { dealName?: string; targetProjectId?: string | null; dealStage?: string }) {
+    return apiFetch<{ id: string; customer_name?: string | null; company_name?: string | null; deal_stage?: string | null; project_id?: string | null }>(
+      `/api/all-platform/quotes/cross-workspace/deals`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, targetCustomerId, ...payload }) }
+    );
+  }
+
+  async listCrossWorkspaceContacts(targetInstance: string, targetCustomerId: string) {
+    const params = new URLSearchParams({ target_instance: targetInstance, target_customer_id: targetCustomerId });
+    return apiFetch<Array<{ id: string; name: string; phone?: string | null; email?: string | null }>>(
+      `/api/all-platform/quotes/cross-workspace/contacts?${params.toString()}`
+    );
+  }
+
+  async copyQuoteToWorkspace(quoteId: string, targetInstance: string, targetCustomerId: string, targetDealId: string, targetContactId?: string | null) {
+    return apiFetch<Quote>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/copy-cross-workspace`,
+      { method: 'POST', body: JSON.stringify({ targetInstance, targetCustomerId, targetDealId, targetContactId: targetContactId || null }) }
+    );
+  }
+
+  async moveQuoteInWorkspace(quoteId: string, targetCustomerId: string, targetDealId: string, targetContactId?: string | null) {
+    return apiFetch<Quote>(
+      `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/move-in-workspace`,
+      { method: 'POST', body: JSON.stringify({ targetCustomerId, targetDealId, targetContactId: targetContactId || null }) }
+    );
+  }
+
   async sendQuoteEmail(quoteId: string, input: import('./QuoteRepository').SendQuoteEmailInput) {
     return apiFetch<import('./QuoteRepository').QuoteDeliveryLogEntry>(
       `/api/all-platform/quotes/${encodeURIComponent(quoteId)}/send`,
@@ -574,3 +791,14 @@ export class SeedingQuoteRepository implements QuoteRepository {
 }
 
 export const seedingQuoteRepository = new SeedingQuoteRepository();
+
+// Sau moi thao tac DOI bao gia/hop dong thanh cong: backend da tu cap nhat stage cua Deal -> bao cac man hinh tai lai tu du lieu that.
+for (const method of ['createQuote', 'deleteQuote', 'approveQuote', 'createQuoteVersion', 'cancelQuote', 'softDeleteQuote', 'restoreQuote'] as const) {
+  const proto = SeedingQuoteRepository.prototype as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = proto[method];
+  proto[method] = async function (this: unknown, ...args: unknown[]) {
+    const result = await original.apply(this, args);
+    notifyDealsChanged();
+    return result;
+  };
+}

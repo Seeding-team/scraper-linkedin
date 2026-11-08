@@ -92,6 +92,16 @@ def get_authenticated_caller_email(request: Request, authorization: str | None =
     return str(user.get("email") or "").strip().lower() or None
 
 
+def is_web_intake_user(_user: dict[str, Any] | None) -> bool:
+    """CRM clones do not include Web Intake; keep quote router compatibility as a no-op."""
+    return False
+
+
+def resolve_web_intake_user(_request: Request) -> dict[str, Any] | None:
+    """CRM clones do not include Web Intake; keep router compatibility as a no-op (luon None -> roi qua luong JWT thuong)."""
+    return None
+
+
 async def require_admin_ws(websocket, authorization: str | None = None) -> dict[str, Any] | None:
     """Bản cho WebSocket — không raise HTTPException (không áp dụng được), tự đóng
     connection với close code 4403 nếu thiếu quyền. Trả None nếu đã đóng — caller

@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 
 from supabase import Client
 
-from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 
 TABLE = "contract_templates"
@@ -92,27 +91,18 @@ def extract_text_from_file(file_name: str, content: bytes) -> tuple[str, str]:
 
 def list_contract_templates() -> list[dict]:
     supabase: Client = get_supabase_client()
-    result = (
-        supabase.table(TABLE)
-        .select("*")
-        .eq("instance", settings.crm_instance)
-        .order("created_at", desc=True)
-        .execute()
-    )
+    result = supabase.table(TABLE).select("*").order("created_at", desc=True).execute()
     return [_row_to_template(row) for row in (result.data or [])]
 
 
 def get_contract_template(template_id: str, include_text: bool = True) -> dict:
+    # BUG THAT DA GAP: .single() nem APIError tho (PGRST116) khi 0 dong khop -
+    # truoc day khong co guard nao, se crash mo ho. Doi sang .maybe_single().
     supabase: Client = get_supabase_client()
-    row = (
-        supabase.table(TABLE)
-        .select("*")
-        .eq("id", template_id)
-        .eq("instance", settings.crm_instance)
-        .single()
-        .execute()
-        .data
-    )
+    result = supabase.table(TABLE).select("*").eq("id", template_id).maybe_single().execute()
+    row = result.data if result else None
+    if not row:
+        raise ValueError("Khong tim thay mau hop dong.")
     return _row_to_template(row, include_text=include_text)
 
 
@@ -130,7 +120,6 @@ def create_contract_template(name: str, description: str | None, file_name: str,
         "file_type": file_type,
         "extracted_text": text,
         "created_by": created_by,
-        "instance": settings.crm_instance,
     }
     row = supabase.table(TABLE).insert(insert_data).execute().data[0]
     return _row_to_template(row)
@@ -138,4 +127,4 @@ def create_contract_template(name: str, description: str | None, file_name: str,
 
 def delete_contract_template(template_id: str) -> None:
     supabase: Client = get_supabase_client()
-    supabase.table(TABLE).delete().eq("id", template_id).eq("instance", settings.crm_instance).execute()
+    supabase.table(TABLE).delete().eq("id", template_id).execute()

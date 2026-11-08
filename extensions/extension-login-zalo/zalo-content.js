@@ -528,6 +528,25 @@
   }
 
   function findImeiCandidate() {
+    // ƯU TIÊN đọc đúng key "z_uuid" — đây LÀ device id thật mà chính Zalo Web
+    // lưu trong localStorage và gắn với session/cookie hiện tại (xác nhận qua
+    // extension tham chiếu của module gốc — đọc thẳng `localStorage.getItem
+    // ("z_uuid")`, không dò mò). Trước đây hàm này dò TOÀN BỘ localStorage/
+    // sessionStorage theo pattern mơ hồ (bất kỳ chuỗi hex 16+ ký tự nào) — Zalo
+    // Web lưu rất nhiều token/hash không liên quan (session token, feature
+    // flag, analytics id...) cũng khớp pattern đó, nên dễ lấy NHẦM giá trị —
+    // gửi sai imei lên khiến Zalo từ chối cookie đúng 100% với lỗi "session key
+    // improperly submitted", hiển thị nhầm thành "phiên đăng nhập hết hạn".
+    try {
+      const zUuid = window.localStorage ? window.localStorage.getItem("z_uuid") : "";
+      if (zUuid && /^[0-9a-f-]{16,}$/i.test(zUuid)) return zUuid;
+    } catch (_) {
+      // localStorage bị chặn — rơi xuống fallback dò mò bên dưới.
+    }
+
+    // Fallback: dò mò như cũ, CHỈ dùng khi không tìm được đúng "z_uuid" ở trên
+    // (vd Zalo đổi tên key trong tương lai) — giữ lại để không mất khả năng
+    // hoạt động hoàn toàn, nhưng đây không còn là đường đi chính.
     const candidates = [];
     try {
       for (const store of [window.localStorage, window.sessionStorage]) {
@@ -582,4 +601,45 @@
       .catch((error) => sendResponse({ success: false, error: error?.message || String(error) }));
     return true;
   });
+
+  // Tự động nhận diện khi người dùng đăng nhập thành công trên tab chat.zalo.me
+  try {
+    const urlParams = new URLSearchParams(window.location.search);
+    const extUserId = urlParams.get("zaloExtUserId");
+    const extBackendUrl = urlParams.get("zaloExtBackendUrl");
+
+    if (extUserId) {
+      let imported = false;
+      const checkInterval = setInterval(() => {
+        if (imported) {
+          clearInterval(checkInterval);
+          return;
+        }
+        const hasChatUi = !!document.querySelector("#conversationListId, .chat-message, [data-id='div_TabMsg_ThrdChItem']");
+        const hasCookie = /zpsid|zpw_sek/i.test(document.cookie);
+
+        if (hasChatUi || hasCookie) {
+          imported = true;
+          clearInterval(checkInterval);
+          console.log("[zalo-content] Detected successful Zalo Web login! Auto-importing session for:", extUserId);
+          try {
+            chrome.runtime.sendMessage({
+              action: "AUTO_IMPORT_ON_LOGIN",
+              data: {
+                account_id: extUserId,
+                user_id: extUserId,
+                owner_id: extUserId,
+                backend_url: extBackendUrl || undefined,
+              },
+            });
+          } catch (e) {
+            console.warn("[zalo-content] auto-import notify failed:", e);
+          }
+        }
+      }, 2000);
+
+      setTimeout(() => clearInterval(checkInterval), 120000);
+    }
+  } catch (_) {}
+
 })();

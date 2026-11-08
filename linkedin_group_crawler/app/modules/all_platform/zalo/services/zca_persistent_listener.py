@@ -349,6 +349,7 @@ def _sort_messages_new_to_old(messages: List[Message]) -> List[Message]:
 
 
 def _to_message(row: Dict[str, Any]) -> Message:
+    raw_mentions = row.get("mentions") or []
     return Message(
         message_id=str(row.get("message_id") or ""),
         sender_id=row.get("sender_id") or None,
@@ -363,6 +364,13 @@ def _to_message(row: Dict[str, Any]) -> Message:
         is_sent=bool(row.get("is_sent")),
         # thread_id / group_id từ raw row (dùng khi resolve group_name).
         group_id=str(row.get("thread_id") or row.get("group_id") or "") or None,
+        # Zalo tập trung (Mục 7.1 guide) — cli_msg_id để thu hồi tin, ts cho
+        # forward engine watermark, mentions cho @tag hiển thị lại đúng.
+        ts=int(row["ts"]) if row.get("ts") else None,
+        cli_msg_id=row.get("cli_msg_id") or None,
+        mentions=[m for m in raw_mentions if isinstance(m, dict) and "uid" in m],
+        msg_kind=row.get("msg_kind") or None,
+        raw_content=row.get("raw") or row.get("raw_content") or None,
     )
 
 
@@ -809,7 +817,7 @@ class ZcaPersistentListenerManager:
                 if _looks_like_auth_expired(str(exc)):
                     state.auth_expired = True
 
-            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại bằng QR.
+            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại qua Chrome Extension.
             if state.auth_expired:
                 state.desired = False
                 reason = state.last_error or "unknown"
@@ -835,13 +843,12 @@ class ZcaPersistentListenerManager:
             # Safety: if crashed more than 10 times in a row, stop entirely.
             # This prevents resource leaks from cascading crashes (e.g. ZCA buffer overflow).
             if state.restart_attempt > 10:
-                logger.error(
-                    f"ZCA listener for user={state.user_id} crashed {state.restart_attempt} times "
-                    f"in a row (last error: {state.last_error}) — STOPPING. "
-                    f"Manual restart via /api/zalo/listener/restart required."
+                logger.warning(
+                    f"ZCA listener for user={state.user_id} restarted {state.restart_attempt} times "
+                    f"(last error: {state.last_error}). Continuing supervised retry with 60s backoff."
                 )
-                state.desired = False
-                return
+                await asyncio.sleep(60.0)
+                continue
             
             delay = _RESTART_BACKOFFS[min(state.restart_attempt - 1, len(_RESTART_BACKOFFS) - 1)]
             logger.warning(
@@ -872,7 +879,7 @@ class ZcaPersistentListenerManager:
         ]
 
         if sys.platform == "win32":
-            from app.modules.all_platform.zalo.services.zca_qr_bridge import WindowsSubprocessWrapper
+            from app.modules.all_platform.zalo.services.win_subprocess import WindowsSubprocessWrapper
             stdin_payload = json.dumps(
                 {"auth": state.auth, "user_id": state.user_id}
             ).encode("utf-8")
@@ -1027,6 +1034,22 @@ class ZcaPersistentListenerManager:
                 if chat.group_id and chat.name and chat.name != chat.group_id
             }
             logger.info(f"Loaded {len(state.group_names)} ZCA group/friend names for listener user={state.user_id}")
+
+            # Đồng bộ avatar + tên đầy đủ vào zalo_groups (trước đây groups/friends
+            # load từ ZCA API CÓ avatar_url thật nhưng chỉ dùng để build cache tên
+            # trong RAM (state.group_names) rồi bỏ luôn avatar_url — mọi hội thoại
+            # do listener tự phát hiện (không qua nút "Đồng bộ" tay) không bao giờ
+            # có avatar. upsert_groups() tự merge an toàn (không đè avatar/last_
+            # message cũ bằng null), chạy 1 lần lúc listener (re)connect, KHÔNG
+            # nằm trong hot path xử lý từng tin nhắn.
+            try:
+                from app.modules.all_platform.zalo.services.supabase_service import upsert_groups
+                await upsert_groups(
+                    state.user_id,
+                    [chat.model_dump() for chat in (groups + friends) if chat.group_id],
+                )
+            except Exception as exc:
+                logger.warning(f"Could not backfill avatar/name into zalo_groups for user={state.user_id}: {exc}")
         else:
             logger.info(f"No ZCA group/friend names loaded for listener user={state.user_id} (will use Supabase cache)")
 
@@ -1054,24 +1077,18 @@ class ZcaPersistentListenerManager:
             return
         if event_name == "connected":
             state.connected = True
-            # Only reset crash counter if we've been running stably for 60s
-            # This prevents premature reset from crashing immediately after startup
-            if state.last_event_at:
-                try:
-                    last_ts = datetime.fromisoformat(state.last_event_at.replace("Z", "+00:00"))
-                    age_s = (datetime.now(timezone.utc) - last_ts).total_seconds()
-                    if age_s > 60:
-                        state.restart_attempt = 0
-                except Exception:
-                    # Fallback: reset on first successful connect after any startup
-                    if state.restart_attempt > 0:
-                        state.restart_attempt = 0
+            state.restart_attempt = 0
             state.last_error = None
             logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
             await self._sync_recent_groups_after_connect(state)
             return
         if event_name in {"disconnected", "closed", "stopping"}:
             state.connected = False
+            if event_name != "stopping":
+                code = event.get("code")
+                reason = str(event.get("reason") or "").strip()
+                state.last_error = f"socket_{event_name}: code={code} reason={reason}"[:1000]
+                logger.warning(f"ZCA listener socket {event_name} user={state.user_id}: {state.last_error}")
             return
         if event_name in {"error", "fatal", "login_failed"}:
             detail = event.get("error_detail") or event.get("error") or event
@@ -1081,10 +1098,80 @@ class ZcaPersistentListenerManager:
             logger.warning(f"ZCA listener event error user={state.user_id}: {state.last_error}")
             return
         if event_name == "message":
+            # Nhan duoc tin nhan la bang chung manh nhat rang session dang song -
+            # truoc day chi co event "connected" moi bat state.connected=True, nen
+            # neu zca-js tu phat 1 dot "disconnected"/"closed" thoang qua (roi tu
+            # ket noi lai NOI BO ma khong bao "connected" moi) thi connected bi ket
+            # o False MAI MAI du tin nhan van vao deu deu - dung dung trieu chung
+            # "ket noi ngon nhung UI khong hien da ket noi thanh cong".
+            state.connected = True
             await self._record_messages(state, [event.get("message") or {}])
             return
         if event_name == "old_messages":
+            state.connected = True
             await self._record_messages(state, event.get("messages") or [], increment_unread=False)
+            return
+        if event_name == "reaction":
+            state.connected = True
+            await self._handle_reaction(state, event.get("reaction") or {})
+            return
+
+    async def _handle_reaction(self, state: ListenerState, reaction: Dict[str, Any]) -> None:
+        """Lưu cảm xúc (thả/đổi/bỏ) vào cột `reactions` của tin nhắn tương ứng.
+
+        Xử lý CẢ 2 nguồn: chính tài khoản này tự react (echo về do selfListen=
+        true — xem cmdAddReaction/POST /react) LẪN đối phương/thành viên khác
+        react — cùng 1 event "reaction" từ zca-js, phân biệt bằng is_self.
+        Đây là nơi DUY NHẤT ghi cột reactions (route /react chỉ gửi lên Zalo,
+        không tự ghi DB) để tránh 2 nguồn tranh nhau ghi đè.
+        """
+        group_id = str(reaction.get("thread_id") or "").strip()
+        message_id = str(reaction.get("message_id") or "").strip()
+        reactor_uid = str(reaction.get("reactor_uid") or "").strip()
+        if not group_id or not message_id or not reactor_uid:
+            return
+        icon = None if reaction.get("removed") else reaction.get("icon")
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                set_zalo_message_reaction,
+            )
+            new_reactions = await set_zalo_message_reaction(
+                state.user_id, group_id, message_id, reactor_uid, icon,
+            )
+        except Exception as exc:
+            # Fail-soft: cột `reactions` (migration 138) có thể chưa áp trên
+            # DB này, hoặc chưa từng thấy tin nhắn này (race hiếm) — reaction
+            # đã gửi lên Zalo thật thành công rồi (route /react), chỉ riêng
+            # phần LƯU LẠI để hiển thị lại sau bị bỏ qua, không phải lỗi chặn.
+            logger.info(
+                f"Could not persist reaction (msg={message_id} user={state.user_id}): {exc}"
+            )
+            return
+
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_zalo_message_event,
+                register_account_owner,
+            )
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                list_shared_conversation_ids,
+            )
+
+            register_account_owner(state.user_id, state.user_id)
+            shared_ids = await list_shared_conversation_ids(state.user_id)
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "reaction_update",
+                    "account_id": state.user_id,
+                    "group_id": group_id,
+                    "source_message_id": message_id,
+                    "reactions": new_reactions,
+                },
+                shared_conversation_ids=shared_ids,
+            )
+        except Exception as exc:
+            logger.warning(f"Realtime reaction publish failed for user={state.user_id}: {exc}")
 
     async def _record_messages(self, state: ListenerState, rows: List[Dict[str, Any]], *, increment_unread: bool = True) -> None:
         grouped: Dict[str, List[Message]] = {}
@@ -1148,18 +1235,20 @@ class ZcaPersistentListenerManager:
                 # Personal chat (DM): tìm tên từ sender của bất kỳ message nào trong batch.
                 # Không chỉ dùng messages[0] vì message đầu có thể là tin của chính mình
                 # (sender_name = "__me__") — cần tìm tin từ đối phương.
-                _dm_skip = {"__me__", "me", "ban", "bạn", "", None}
+                _dm_skip = {"__me__", "me", "ban", "bạn", "markee", "", None}
                 for _msg in messages:
-                    if _msg.sender_name not in _dm_skip:
-                        group_name = _msg.sender_name
+                    s_name = (_msg.sender_name or "").strip()
+                    if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                        group_name = s_name
                         break
                 # Nếu toàn bộ batch là tin của mình (gửi đi), kiểm tra in-memory cache
                 # để xem đối phương có tên trong tin nhắn cũ không.
                 if not group_name:
                     cached_msgs = list((self._cache.get((state.user_id, group_id)) or {}).values())
                     for _msg in reversed(cached_msgs):  # tin mới nhất trước
-                        if _msg.sender_name not in _dm_skip:
-                            group_name = _msg.sender_name
+                        s_name = (_msg.sender_name or "").strip()
+                        if s_name and s_name.lower() not in _dm_skip and not getattr(_msg, "is_sent", False):
+                            group_name = s_name
                             break
                 if not group_name:
                     # Cuối cùng mới dùng group_id — vẫn hiển thị đẹp hơn "Conversation g123"

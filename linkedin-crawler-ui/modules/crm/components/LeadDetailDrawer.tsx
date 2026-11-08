@@ -1,15 +1,30 @@
 'use client';
+import { MessageCircle } from 'lucide-react';
+import { getZaloChatUrl } from '@/lib/zaloChatNavigation';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { API_BASE_URL, API_KEY } from '@/lib/env';
-import { useMembers } from '@/hooks/useMembers';
-import { useBodyScrollLock } from '@/hooks/useBodyScrollLock';
-import { formatMoneyInput, formatVND, parseMoney } from '../constants/crmConfig';
+import { usersService, crmTeamsService, projectsService, type QuoteBusinessRoleUser, type CrmTeam, type AppUserProfile, type Project } from '@/services/all-platform.service';
+import { parseMoney, DEAL_STAGE_META } from '../constants/crmConfig';
 import { mapLead } from './LeadsDirectory';
-import { PositionSelect } from './PositionSelect';
-import { CrmCategorySelect } from './CrmCategorySelect';
-import { AlertTriangle, CheckCircle2, Loader2, X, XCircle } from './icons';
+import { CheckCircle2, HelpCircle, Loader2, X } from './icons';
+import { LeadDealQualificationPanel, formatEstimatedValue } from './LeadDealQualificationPanel';
+import { CrmTeamFormModal } from './CrmTeamFormModal';
+import { SearchableSelect, type SelectAction } from './SearchableSelect';
+import { getSourceLabel } from './DealFormFields';
+import { LeadHandoverSection, parseDocLinks, type HandoverMode } from './LeadHandoverSection';
+import { useCrmCategoryLabels } from './CrmCategorySelect';
+import { useLeadQualificationEngine } from '../hooks/useLeadQualificationEngine';
+import {
+  ICP_OPTIONS,
+  INTEREST_LEVEL_OPTIONS,
+  icpToApi,
+  interestLevelFromScore,
+  toDatetimeLocal,
+  type InterestLevel,
+} from '../utils/leadQualificationRules';
 import type { AppUser } from '@/types/unified.types';
 import type { CrmLeadRow } from '../types';
 
@@ -27,61 +42,19 @@ type CompanyMatchRow = {
   match_reason?: string;
 };
 
-type IcpFit = 'unknown' | 'fit' | 'unfit';
-
-/** 3 lua chon "Co dung nhom khach hang muc tieu?".
- *
- * Anh xa thang vao cot `crm_leads.qualification_icp_fit` (BOOLEAN NULLABLE, da
- * co tu migration 078) — KHONG can migration moi: NULL = chua ro, true = phu
- * hop, false = khong phu hop. Truoc day UI chi co 1 checkbox nen ep NULL ve
- * false ("chua xac dinh / khong phu hop" gop lam mot); tach lai dung 3 trang
- * thai chi la doc/ghi dung kieu du lieu von co cua cot. */
-const ICP_OPTIONS: Array<{ value: IcpFit; label: string }> = [
-  { value: 'unknown', label: 'Chưa rõ' },
-  { value: 'fit', label: 'Phù hợp' },
-  { value: 'unfit', label: 'Không phù hợp' },
-];
-
-function icpFromApi(value: boolean | null | undefined): IcpFit {
-  if (value === true) return 'fit';
-  if (value === false) return 'unfit';
-  return 'unknown';
-}
-function icpToApi(value: IcpFit): boolean | null {
-  if (value === 'fit') return true;
-  if (value === 'unfit') return false;
-  return null;
-}
-
-/** Enum co dinh cho "Du kien trien khai khi nao?".
- *
- * Luu MA (`value`) vao cot `crm_leads.qualification_expected_timeline` (TEXT,
- * khong co CHECK constraint — xem migration 078), nen khong can migration.
- * Ban ghi cu dang giu chuoi tu do (vd "Quy 3/2026") van hien thi nguyen van:
- * gia tri la vi duoc chen tam vao dau danh sach thay vi bi nuot mat. */
-const TIMELINE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Chưa rõ' },
-  { value: 'now', label: 'Ngay' },
-  { value: 'lt_1m', label: 'Trong 1 tháng' },
-  { value: '1_3m', label: '1–3 tháng' },
-  { value: '3_6m', label: '3–6 tháng' },
-  { value: 'gt_6m', label: 'Sau 6 tháng' },
-];
-
-/** Dung khi category_type='crm_next_step' chua co dong nao (migration 080 chua
- * duoc ap dung o moi truong dang chay) — dropdown "Viec tiep theo" khong bao
- * gio duoc rong/chet. Co du lieu that thi danh sach nay khong duoc dung den. */
-const NEXT_STEP_FALLBACK = ['Gọi lại', 'Gửi tài liệu', 'Demo/Tư vấn', 'Gửi báo giá', 'Theo dõi lại', 'Khác'];
-
-const STEPS = ['Khách quan tâm gì', 'Có phù hợp', 'Việc tiếp theo', 'Bàn giao Sale'];
-
-function toDatetimeLocal(value?: string | null): string {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+type ConvertedDealSnapshot = {
+  customer_id?: string | null;
+  deal_stage?: string | null;
+  team_id?: string | null;
+  sdr_id?: string | null;
+  service_package?: string | null;
+  estimated_budget?: number | string | null;
+  next_step?: string | null;
+  follow_up_date?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  project?: { name?: string | null } | null;
+};
 
 function initialOf(name: string): string {
   const trimmed = (name || '').trim();
@@ -90,13 +63,23 @@ function initialOf(name: string): string {
 
 type VerifyForm = {
   interest: string;
-  icpFit: IcpFit;
+  interestLevel: InterestLevel | '';
+  score: number | null;
   timeline: string;
-  estimatedValue: string;
+  estimatedValue: number | null;
   nextStep: string;
   nextStepAt: string;
   aeId: string;
   note: string;
+  followUpChannel: string;
+  dealStage: string;
+  /** "Dự án (tùy chọn)" - feedback leader + WIP full-flow, section A "Thông
+   * tin then chốt". Chỉ gõ TÊN (chưa có ProjectPicker chọn Dự án có sẵn ở
+   * màn Xác minh Lead - Customer thường CHƯA xác định lúc này) - backend
+   * (crm_lead_service.convert_lead) tự tạo Dự án THẬT sau khi convert xong,
+   * gắn vào Deal vừa tạo (migration 153 + supabase_project_service). */
+  project: string;
+  projectId: string;
 };
 
 /**
@@ -118,32 +101,75 @@ export function LeadDetailDrawer({
   initialMode,
   currentUser,
   onClose,
+  onBack,
+  parentLabel,
   onSaved,
   onEdit,
+  embedded = false,
+  readOnly = false,
+  suppressNavigation = false,
+  onConverted,
 }: {
   lead: CrmLeadRow | null;
   open: boolean;
   initialMode: 'view' | 'qualify' | 'convert';
   currentUser: AppUser | null;
   onClose: () => void;
+  /** Co khi mo tu Lead 360: Back quay ve Lead 360 (khong dong drawer). X van dong tat ca. */
+  onBack?: () => void;
+  parentLabel?: string;
   onSaved: (lead: CrmLeadRow) => void;
   /** Mở form sửa hồ sơ Lead. Drawer này KHÔNG tự dựng form sửa riêng — nó đẩy
    * ngược lên LeadsDirectory để mở đúng LeadEditDrawer mà "Sửa nhanh" dùng,
    * nên chỉ tồn tại duy nhất 1 bản form sửa Lead trong toàn bộ ứng dụng. */
   onEdit?: (lead: CrmLeadRow) => void;
+  /** Nhúng thẳng vào 1 drawer khác (Quản lý tiến độ): không vẽ drawer/backdrop/tiêu đề/nút đóng riêng - drawer chứa lo phần đó. */
+  embedded?: boolean;
+  /** Chỉ xem: ẩn mọi nút sửa/lưu/xác nhận và khoá toàn bộ ô nhập. */
+  readOnly?: boolean;
+  /** Khi nhúng vào 1 wizard khác đang dở dang (vd QuickCreateOpportunityFromInbox) - tắt
+   * hẳn `onClose()` + `router.push(...)` sau khi convert thành công (dòng ~1027-1030),
+   * để wizard cha tự quyết định bước tiếp theo thay vì bị điều hướng rời trang. Mặc định
+   * `false` giữ NGUYÊN hành vi cũ cho mọi call site khác (LeadsDirectory, Lead360Drawer...).
+   * Cùng tinh thần `suppressNavigation` đã có sẵn ở CreateOpportunityDrawer.tsx. */
+  suppressNavigation?: boolean;
+  /** Bắn ngay sau khi convert thành công (trước đoạn điều hướng) - CHỈ cần dùng kèm
+   * `suppressNavigation`, cho wizard cha biết để chuyển bước/hiện interstitial riêng. */
+  onConverted?: (result: { customerId: string; contactId: string; dealId: string }) => void;
 }) {
-  useBodyScrollLock(open);
-  const { members } = useMembers();
+  const router = useRouter();
+  const [saleOptions, setSaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // Presale cung duoc chon lam nguoi nhan khi Re-assign (khoi can doi Team truoc); khong anh huong danh sach Sale o form xac minh.
+  const [presaleOptions, setPresaleOptions] = useState<QuoteBusinessRoleUser[]>([]);
+  // "Team Sale" - filter cascading rieng, KHONG luu vao lead (chi aeId moi
+  // luu that). teamOptions fetch 1 lan/moi lan mo (giong pattern saleOptions
+  // ben duoi); teamMembers fetch lai moi khi doi teamId, thay THANG cho
+  // saleOptions he thong (feedback: "CHỈ xổ các thành viên thuộc Team đó").
+  const [teamOptions, setTeamOptions] = useState<CrmTeam[]>([]);
+  const [teamId, setTeamId] = useState('');
+  const [teamMembers, setTeamMembers] = useState<AppUserProfile[] | null>(null);
+  // "+ Thêm Team mới" trong dropdown Team Sale (feedback leader 2026-09-29:
+  // "tái sử dụng lại bên chỗ team crm") - tai su dung CrmTeamFormModal (dung
+  // chung voi CrmTeamsShell/trang Team CRM).
+  const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [teamLeaders, setTeamLeaders] = useState<AppUserProfile[]>([]);
+  const [teamAllUsers, setTeamAllUsers] = useState<AppUserProfile[]>([]);
   const [form, setForm] = useState<VerifyForm>({
     interest: '',
-    icpFit: 'unknown',
+    interestLevel: '',
+    score: null,
     timeline: '',
-    estimatedValue: '',
+    estimatedValue: null,
     nextStep: '',
     nextStepAt: '',
     aeId: '',
     note: '',
+    followUpChannel: '',
+    dealStage: 'dealing',
+    project: '',
+    projectId: '',
   });
+  const [customerProjects, setCustomerProjects] = useState<Project[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedOk, setSavedOk] = useState('');
@@ -155,7 +181,36 @@ export function LeadDetailDrawer({
   const [contact, setContact] = useState({ name: '', phone: '', email: '', positionCategoryId: '', positionLabel: '' });
   const [converting, setConverting] = useState(false);
   const [convertError, setConvertError] = useState('');
+  const [nurtureReason, setNurtureReason] = useState('');
+  const [unqualifiedReason, setUnqualifiedReason] = useState('');
+  // Lead da convert - panel Thong tin then chot/Ban giao Sale mac dinh khoa
+  // (read-only), nut "Chỉnh sửa" o day de MO KHOA lai (feedback: "hiện tại
+  // đang có 1 nút chỉnh sửa thông tin lead, giờ cho thêm 1 nút... chỉnh sửa
+  // phần này"). Bam Luu chi PUT thuong vao dung Lead (saveVerification(),
+  // KHONG dung submitFinalOutcome/handleConvert) - tuyet doi khong tao lai
+  // Customer/Deal moi hay doi status.
+  const [qualificationEditOpen, setQualificationEditOpen] = useState(false);
   const idempotencyKeyRef = useRef<string>('');
+  // GD3 - ban giao / assign: link Doc/Sheet, co gui email, khoa chong gui trung, lich su
+  const handoverKeyRef = useRef<string>('');
+  const [docLinksText, setDocLinksText] = useState('');
+  const [sendEmail, setSendEmail] = useState(true);
+  const [handoverBusy, setHandoverBusy] = useState(false);
+  // Re-assign SAU KHI Lead da convert (dong bo Co hoi/Khach hang qua update_lead)
+  const [reassignAeId, setReassignAeId] = useState('');
+  // Khoi 'Ban giao & tai lieu' mo san (lich su ben trong van thu gon).
+  const [handoverOpen, setHandoverOpen] = useState(true);
+  // Dau '?' canh cac nut o footer: bam de xem giai thich (bam ra ngoai / bam lai de dong).
+  const [footerHelp, setFooterHelp] = useState<string | null>(null);
+  useEffect(() => {
+    if (!footerHelp) return;
+    const close = (event: MouseEvent) => {
+      if (!(event.target as HTMLElement | null)?.closest?.('.crm-footer-btn-wrap')) setFooterHelp(null);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [footerHelp]);
+  const [handoverHistory, setHandoverHistory] = useState<Array<{ id: string; kind: string; at: string; from: string | null; to: string | null; emailStatus?: string | null }>>([]);
   const bodyRef = useRef<HTMLDivElement>(null);
   const readinessRef = useRef<HTMLElement>(null);
 
@@ -170,28 +225,144 @@ export function LeadDetailDrawer({
   // duoc luc chay Playwright, khong phai gia thuyet).
   const initializedLeadRef = useRef<string>('');
 
+  const [freshLead, setFreshLead] = useState<CrmLeadRow | null>(null);
+  const [convertedDeal, setConvertedDeal] = useState<ConvertedDealSnapshot | null>(null);
+
+  // ── Master Hydration Function (Pure Drawer Hydration, NO onSaved call!) ────
+  const hydrateLeadDrawer = useCallback((params: {
+    lead: CrmLeadRow;
+    freshLead?: CrmLeadRow | null;
+    deal?: ConvertedDealSnapshot | null;
+    customerProjects: Project[];
+  }) => {
+    const { lead, freshLead, deal, customerProjects } = params;
+    const currentLead = freshLead || lead;
+
+    // ── 1. SALE PHỤ TRÁCH (aeId) ───────────────────────────────────────────
+    // Source chính: crm_leads.qualification_ae_id
+    // Priority: Valid Lead qualificationAeId || Valid Deal sdr_id || ''
+    const rawLeadAe = currentLead.qualificationAeId || lead.qualificationAeId || '';
+    const rawDealAe = deal?.sdr_id || '';
+    const resolvedAeId = rawLeadAe || rawDealAe || '';
+
+    // ── 2. TEAM SALE (teamId) ──────────────────────────────────────────────
+    // Rule: Lead teamId valid > Deal team_id valid > infer từ Sale > empty
+    const rawLeadTeam = currentLead.teamId || lead.teamId || '';
+    const rawDealTeam = deal?.team_id || '';
+    const resolvedTeamId = rawLeadTeam || rawDealTeam || '';
+
+    // ── 3. DỰ ÁN (project & projectId) ──────────────────────────────────────
+    // Vì Lead đã có converted_deal_id, Project phải hydrate từ converted Deal detail.
+    let resolvedProjectId = currentLead.projectId || lead.projectId || deal?.project_id || '';
+    let resolvedProjectName = currentLead.projectName || lead.projectName || deal?.project_name || deal?.project?.name || '';
+
+    if (deal) {
+      if (deal.project_id) resolvedProjectId = deal.project_id;
+      if (deal.project?.name) {
+        resolvedProjectName = deal.project.name;
+      } else if (deal.project_name) {
+        resolvedProjectName = deal.project_name;
+      }
+    }
+
+    // Nếu Deal API chỉ trả project_id mà không trả tên (hoặc ngược lại): resolve từ customerProjects
+    if (resolvedProjectId && !resolvedProjectName && customerProjects.length > 0) {
+      const foundProject = customerProjects.find(p => p.id === resolvedProjectId);
+      if (foundProject) resolvedProjectName = foundProject.name;
+    } else if (resolvedProjectName && !resolvedProjectId && customerProjects.length > 0) {
+      const foundProject = customerProjects.find(p => p.name === resolvedProjectName);
+      if (foundProject) resolvedProjectId = foundProject.id;
+    }
+
+    // ── 4. GIAI ĐOẠN (dealStage) ───────────────────────────────────────────
+    // Converted: deal.deal_stage || lead.dealStage || 'dealing'
+    // Unconverted: lead.dealStage || 'dealing'
+    let resolvedDealStage = currentLead.dealStage || lead.dealStage || 'dealing';
+    if (deal && deal.deal_stage) {
+      resolvedDealStage = deal.deal_stage;
+    }
+
+    const estimatedValue = deal?.estimated_budget != null && deal.estimated_budget !== ''
+      ? Number(deal.estimated_budget)
+      : (currentLead.qualificationEstimatedValue ?? lead.qualificationEstimatedValue ?? null);
+
+    setForm(prev => ({
+      ...prev,
+      interest: deal?.service_package || currentLead.qualificationNeed || lead.qualificationNeed || prev.interest || '',
+      interestLevel: interestLevelFromScore(currentLead.score ?? lead.score) || prev.interestLevel,
+      score: currentLead.score ?? lead.score ?? prev.score,
+      timeline: currentLead.qualificationExpectedTimeline || lead.qualificationExpectedTimeline || prev.timeline || '',
+      estimatedValue: estimatedValue == null || Number.isNaN(estimatedValue) ? prev.estimatedValue : estimatedValue,
+      nextStep: deal?.next_step || currentLead.nextStep || lead.nextStep || prev.nextStep || '',
+      nextStepAt: deal?.follow_up_date
+        ? toDatetimeLocal(String(deal.follow_up_date))
+        : (toDatetimeLocal(currentLead.followUpDate || lead.followUpDate) || prev.nextStepAt),
+      note: currentLead.note || lead.note || prev.note || '',
+      aeId: resolvedAeId,
+      dealStage: resolvedDealStage,
+      project: resolvedProjectName,
+      projectId: resolvedProjectId,
+    }));
+
+    setTeamId(resolvedTeamId || '');
+    // Team Sale theo Sale phu trach: team that cua Sale (leader/thanh vien) la nguon dung nhat.
+    // team_id da luu co the cu/lech (vd Sale la leader Team Minh nhung lead luu Presale) -> uu tien team cua Sale,
+    // chi giu team da luu khi Sale khong thuoc Team CRM nao.
+    if (resolvedAeId) {
+      const leadIdAtRequest = lead.id;
+      crmTeamsService.getTeamIdForUser(resolvedAeId)
+        .then(res => {
+          if (initializedLeadRef.current !== leadIdAtRequest) return;
+          const foundTeamId = res.success ? res.data?.crm_team_id : null;
+          if (foundTeamId) setTeamId(foundTeamId);
+        })
+        .catch(() => {});
+    }
+  }, []);
+
+  // ── Master Hydration Effect ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!open || !lead) return;
+    hydrateLeadDrawer({
+      lead,
+      freshLead,
+      deal: convertedDeal,
+      customerProjects,
+    });
+  }, [open, lead, freshLead, convertedDeal, customerProjects, hydrateLeadDrawer]);
+
   useEffect(() => {
     if (!open || !lead) {
       initializedLeadRef.current = '';
+      setFreshLead(null);
+      setConvertedDeal(null);
+      setAddTeamOpen(false);
       return;
     }
     if (initializedLeadRef.current === lead.id) return;
     initializedLeadRef.current = lead.id;
+    setFreshLead(null);
+    setConvertedDeal(null);
+    // Bug thuc te (2026-10-10): mo Lead khac sau khi da xem/dien 1 Lead truoc do - "THÔNG TIN
+    // THEN CHỐT"/"BÀN GIAO SALE" con giu lai du lieu cua Lead CU. Nguyen nhan: effect hydrate
+    // ben duoi (hydrateLeadDrawer) merge setForm(prev => ({... || prev.xxx || ''})) - cac field
+    // Lead moi chua co gia tri se fallback ve `prev` (tuc du lieu Lead cu con sot trong state),
+    // vi effect nay (reset theo lead.id) truoc gio KHONG reset `form` nhu cac state khac. Phai
+    // dua form ve dung mac dinh rong truoc khi hydrate effect chay lai cho Lead moi.
+    setForm({
+      interest: '', interestLevel: '', score: null, timeline: '', estimatedValue: null,
+      nextStep: '', nextStepAt: '', aeId: '', note: '', followUpChannel: '',
+      dealStage: 'dealing', project: '', projectId: '',
+    });
     setError('');
     setSavedOk('');
     setConvertError('');
     setSuggestionUsed(false);
     setConvertOpen(initialMode === 'convert');
-    setForm({
-      interest: lead.qualificationNeed || '',
-      icpFit: icpFromApi(lead.qualificationIcpFit),
-      timeline: lead.qualificationExpectedTimeline || '',
-      estimatedValue: lead.qualificationEstimatedValue != null ? formatMoneyInput(String(lead.qualificationEstimatedValue)) : '',
-      nextStep: lead.nextStep || '',
-      nextStepAt: toDatetimeLocal(lead.followUpDate),
-      aeId: lead.qualificationAeId || '',
-      note: lead.note || '',
-    });
+    setNurtureReason('');
+    setUnqualifiedReason('');
+    setQualificationEditOpen(false);
+    setAddTeamOpen(false);
     setContact({
       name: lead.leadName || '',
       phone: lead.phone || '',
@@ -203,11 +374,14 @@ export function LeadDetailDrawer({
     idempotencyKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID)
       ? crypto.randomUUID()
       : `lead-convert-${lead.id}-${Date.now()}`;
+    handoverKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `lead-handover-${lead.id}-${Date.now()}`;
+    setDocLinksText((lead.handoverLinks || []).map(link => link.url).join('\n'));
+    setSendEmail(true);
+    setReassignAeId('');
+    setHandoverOpen(true);
+    setHandoverHistory([]);
+    void loadHandoverHistory(lead.id);
 
-    // Check trùng doanh nghiệp — đúng endpoint company-match đã dùng từ trước.
-    // Khi lead không có công ty/website thì lùi về duplicate-check theo
-    // SĐT/email để ô "đã được check trùng" phản ánh 1 lần kiểm tra THẬT chứ
-    // không tự bật xanh.
     setCompanyMatches([]);
     setDupChecked(false);
     const hasCompanyKeys = Boolean(lead.companyName || lead.website);
@@ -234,16 +408,231 @@ export function LeadDetailDrawer({
       .catch(() => setDupChecked(false));
   }, [open, lead, initialMode]);
 
+  // Always fetch fresh Lead details from server on drawer open (read-only, NO onSaved!)
+  useEffect(() => {
+    if (!open || !lead?.id) return;
+    let alive = true;
+    const targetLeadId = lead.id;
+    fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(targetLeadId)}`, {
+      credentials: 'include',
+      headers: headers(),
+    })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || body.success === false || !body.data) return;
+        const mapped = mapLead(body.data);
+        setFreshLead(mapped);
+      })
+      .catch(() => { /* silent fallback */ });
+    return () => { alive = false; };
+  }, [open, lead?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getUsersByQuoteBusinessRole('sale')
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setSaleOptions([...rows].sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => {
+        if (alive) setSaleOptions([]);
+      });
+    usersService.getUsersByQuoteBusinessRole('presale')
+      .then(res => {
+        if (alive) setPresaleOptions(res.success ? res.data || [] : []);
+      })
+      .catch(() => {
+        if (alive) setPresaleOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    crmTeamsService.list()
+      .then(res => {
+        if (!alive) return;
+        const rows = res.success ? res.data || [] : [];
+        setTeamOptions(rows);
+      })
+      .catch(() => {
+        if (alive) setTeamOptions([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open]);
+
+  // Danh sach Leader/user cho modal "+ Thêm Team mới" (CrmTeamFormModal).
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    usersService.getAllProfiles().then(res => {
+      if (!alive || !res.success) return;
+      const rows = res.data || [];
+      setTeamLeaders(rows.filter(u => u.role === 'leader' || u.role === 'admin'));
+      setTeamAllUsers(rows);
+    });
+    return () => { alive = false; };
+  }, [open]);
+
+  // Load danh sach Du an cua Khach hang (neu lead da link voi Customer hoac user chon Customer co san).
+  const hydratedLead = freshLead || lead;
+  const targetCustomerId = convertedDeal?.customer_id
+    || hydratedLead?.convertedCustomerId
+    || (customerChoice !== 'new' ? customerChoice : undefined);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    projectsService.list(targetCustomerId)
+      .then(res => {
+        if (!alive) return;
+        setCustomerProjects(res.success && res.data ? res.data : []);
+      })
+      .catch(() => {
+        if (alive) setCustomerProjects([]);
+      });
+    return () => { alive = false; };
+  }, [open, targetCustomerId]);
+
+  // Doi Team -> tai lai thanh vien Team do, thay THANG cho danh sach Sale he thong.
+  useEffect(() => {
+    if (!teamId) {
+      setTeamMembers(null);
+      return;
+    }
+    let alive = true;
+    crmTeamsService.get(teamId)
+      .then(res => {
+        if (!alive) return;
+        const members = res.success ? res.data?.members || [] : [];
+        const leaderId = res.success ? res.data?.leader_user_id : undefined;
+        const leaderName = res.success ? res.data?.leader_name : undefined;
+        const hasLeader = leaderId && members.some(m => m.id === leaderId);
+        setTeamMembers(
+          leaderId && !hasLeader
+            ? [...members, { id: leaderId, name: leaderName || '', email: '' } as AppUserProfile]
+            : members
+        );
+      })
+      .catch(() => {
+        if (alive) setTeamMembers([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [teamId]);
+
+  // Fetch Converted Deal snapshot (read-only hydration, NO onSaved call!)
+  useEffect(() => {
+    if (!open || !lead?.convertedDealId) return;
+    let alive = true;
+    const leadIdAtRequest = lead.id;
+    fetch(`${API_BASE_URL}/api/all-platform/customer-leads/${encodeURIComponent(lead.convertedDealId)}`, {
+      credentials: 'include',
+      headers: headers(),
+    })
+      .then(res => res.json())
+      .then(body => {
+        if (!alive || initializedLeadRef.current !== leadIdAtRequest || body.success === false) return;
+        const deal = (body.data || {}) as ConvertedDealSnapshot;
+        setConvertedDeal(deal);
+      })
+      .catch(() => { /* silent fallback */ });
+    return () => {
+      alive = false;
+    };
+  }, [open, lead?.id, lead?.convertedDealId]);
+
+  const { labels: knownProductLabels } = useCrmCategoryLabels('crm_service_package');
+
+  const {
+    ruleConditions, verificationOutcome, outcomeReasons, outcomeMissing, sqlProgress, icpFit,
+  } = useLeadQualificationEngine({
+    open,
+    productValue: form.interest,
+    knownProductLabels,
+    hasInterestLevel: Boolean(form.interestLevel),
+    hasValue: form.estimatedValue != null,
+    hasTeam: Boolean(form.aeId),
+    hasNext: Boolean(form.nextStep.trim()),
+    nextStepValue: form.nextStep,
+    hasFollow: Boolean(form.nextStepAt),
+    hasContact: Boolean(contact.phone.trim() || contact.email.trim()),
+  });
+
+  // Chua chon Team -> giu danh sach Sale toan he thong nhu cu (fallback UX);
+  // da chon Team -> THAY THANG bang dung thanh vien Team do (khong hoi cu).
   const aeOptions = useMemo(() => {
-    const linked = members.filter(m => m.linked_user_id || m.linked_user_id_2);
-    return [...linked].sort((a, b) => a.display_name.localeCompare(b.display_name));
-  }, [members]);
-  const selectionKeyOf = (m: { id: string; linked_user_id?: string | null; linked_user_id_2?: string | null }) =>
-    m.linked_user_id || m.linked_user_id_2 || m.id;
+    const baseList = teamId && teamMembers && teamMembers.length > 0
+      ? [...teamMembers, ...saleOptions]
+      : saleOptions;
+    // Presale cung co the nhan Lead (vd Ngoc Thao Vu): luon co trong danh sach, tim theo ten van thay, khong phu thuoc Team dang chon.
+    const list = [...baseList, ...presaleOptions];
+    const seen = new Set<string>();
+    const result: Array<{ value: string; label: string }> = [];
+    for (const u of list) {
+      if (u && u.id && !seen.has(u.id)) {
+        seen.add(u.id);
+        result.push({ value: u.id, label: u.name || (u as any).email || u.id });
+      }
+    }
+    return result;
+  }, [teamId, teamMembers, saleOptions, presaleOptions]);
+  /** Danh sach nguoi nhan khi Re-assign sau convert: Sale/thanh vien team hien tai + Presale. */
+  const reassignOptions = useMemo(() => {
+    const seen = new Set(aeOptions.map(option => option.value));
+    const extra = presaleOptions.filter(user => user?.id && !seen.has(user.id)).map(user => ({ value: user.id, label: user.name || (user as { email?: string }).email || user.id }));
+    return [...aeOptions, ...extra];
+  }, [aeOptions, presaleOptions]);
+  const teamOptionsForSelect = useMemo(
+    () => teamOptions.map(team => ({ value: team.id, label: team.name })),
+    [teamOptions],
+  );
+  const teamActions: SelectAction[] = useMemo(
+    () => [{ key: 'add-team', label: '+ Thêm Team mới', type: 'add', onSelect: () => setAddTeamOpen(true) }],
+    [],
+  );
+  const projectOptions = useMemo(
+    () => customerProjects.map(p => ({ id: p.id, name: p.name, code: (p as Project & { code?: string }).code })),
+    [customerProjects],
+  );
+  /** Doi Team do NGUOI DUNG tu bam (khac voi auto-load luc mo lead) - phai
+   * reset aeId dang chon vi Sale cu co the khong con thuoc Team moi. */
+  function handleTeamIdChange(value: string) {
+    setTeamId(value);
+    setField('aeId', '');
+  }
+  /** Chon Sale phu trach -> tu doi Team Sale sang team cua Sale do (thanh vien hoac leader). Khong doi neu Sale
+   * khong thuoc Team CRM nao; khong reset Sale (khac handleTeamIdChange). */
+  const latestAeIdRef = useRef('');
+  function handleAeIdChange(value: string) {
+    latestAeIdRef.current = value;
+    setField('aeId', value);
+    if (!value) return;
+    crmTeamsService.getTeamIdForUser(value)
+      .then(res => {
+        if (latestAeIdRef.current !== value) return; // da chon nguoi khac trong luc cho
+        const foundTeamId = res.success ? res.data?.crm_team_id : null;
+        if (foundTeamId) setTeamId(foundTeamId);
+      })
+      .catch(() => { /* Sale khong thuoc Team CRM nao - giu nguyen Team */ });
+  }
   const aeName = (id?: string) => {
     if (!id) return 'Chưa gán';
     if (id === currentUser?.id) return currentUser?.name || currentUser?.email || 'Bạn';
-    return aeOptions.find(m => selectionKeyOf(m) === id)?.display_name || 'Chưa gán';
+    // Tim ca trong saleOptions (he thong) lan teamMembers (dang loc theo Team)
+    // - aeId da luu co the thuoc Team dang chon nhung khong nam trong danh
+    // sach vai tro "sale" he thong (vd Leader/Presale duoc bo sung vao Team).
+    return saleOptions.find(user => user.id === id)?.name
+      || (teamMembers || []).find(user => user.id === id)?.name
+      || presaleOptions.find(user => user.id === id)?.name
+      || 'Chưa gán';
   };
 
   // ---- Mức sẵn sàng Convert: tính hoàn toàn client-side từ 5 điều kiện thật.
@@ -251,26 +640,43 @@ export function LeadDetailDrawer({
     const nextStepOk = Boolean(form.nextStep.trim()) && Boolean(form.nextStepAt);
     return [
       { key: 'need', label: 'Nhu cầu đã xác định', ok: Boolean(form.interest.trim()) },
-      { key: 'icp', label: 'ICP đã xác định', ok: form.icpFit !== 'unknown' },
+      { key: 'icp', label: 'ICP đã xác định', ok: icpFit !== 'unknown' },
       { key: 'next', label: 'Việc tiếp theo đã có', ok: nextStepOk },
       { key: 'dup', label: 'Doanh nghiệp đã được check trùng', ok: dupChecked },
       { key: 'ae', label: 'Sale nhận bàn giao đã chọn', ok: Boolean(form.aeId) },
     ];
-  }, [form, dupChecked]);
+  }, [form, dupChecked, icpFit]);
 
   const okCount = checks.filter(c => c.ok).length;
   const isReady = okCount === checks.length;
   const readinessLabel = isReady ? 'Sẵn sàng tạo cơ hội' : okCount >= 3 ? 'Cần xác minh thêm' : 'Chưa sẵn sàng';
-  const readinessTone = isReady ? 'ready' : okCount >= 3 ? 'partial' : 'blocked';
+  const readinessTone: 'ready' | 'partial' | 'blocked' = isReady ? 'ready' : okCount >= 3 ? 'partial' : 'blocked';
 
-  const currentStep = !checks[0].ok ? 1 : !checks[1].ok ? 2 : !checks[2].ok ? 3 : 4;
+  // ---- GD3: CTA tu doi theo nguoi thao tac / nguoi nhan / dieu kien SQL ----
+  const actorId = currentUser?.id || '';
+  const recipientId = form.aeId;
+  const isSelfHandling = !recipientId || recipientId === actorId;
+  const savedAssigneeId = lead?.qualificationAeId || '';
+  const sqlOk = verificationOutcome === 'sql' && isReady && Boolean(teamId);
+  const handoverMode: HandoverMode = isSelfHandling
+    ? 'self'
+    : sqlOk
+      ? 'verify_assign'
+      : savedAssigneeId && savedAssigneeId !== actorId && savedAssigneeId !== recipientId ? 'reassign' : 'handover';
+  const missingForVerify = Array.from(new Set([
+    ...checks.filter(item => !item.ok).map(item => item.label),
+    ...outcomeMissing,
+    ...(teamId ? [] : ['Team Sale đã chọn']),
+  ]));
+  const verifyLabel = isSelfHandling ? 'Xác minh' : 'Xác minh đạt chuẩn';
+  const handoverLabel = handoverMode === 'reassign' ? 'Re-assign' : 'Bàn giao xử lý';
 
-  const nextStepWarning = Boolean(form.nextStep.trim()) !== Boolean(form.nextStepAt) || (!form.nextStep.trim() && !form.nextStepAt);
+  const nextStepWarning = verificationOutcome === 'sql' && (Boolean(form.nextStep.trim()) !== Boolean(form.nextStepAt) || (!form.nextStep.trim() && !form.nextStepAt));
 
   // Nhảy tới phần liên quan nhất với trạng thái Lead lúc mở drawer.
   useEffect(() => {
     if (!open || !lead) return;
-    if (initialMode !== 'convert' && lead.status !== 'qualified') return;
+    if (initialMode !== 'convert' && lead.status !== 'sql' && lead.status !== 'qualified') return;
     const timer = window.setTimeout(() => {
       readinessRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }, 120);
@@ -279,7 +685,10 @@ export function LeadDetailDrawer({
 
   if (!open || !lead) return null;
   const canWrite = Boolean(lead.canWrite);
-  const isConverted = lead.status === 'converted';
+  const hasConvertedDeal = Boolean(lead.convertedDealId);
+  const isConverted = hasConvertedDeal;
+  const canHandover = !isConverted && canWrite && !isSelfHandling && !sqlOk && verificationOutcome !== 'unqualified';
+  const displayScore = form.score ?? lead.score ?? null;
 
   /** "Dùng gợi ý" — suy ra giá trị từ CHÍNH dữ liệu Lead đang có (ghi chú,
    * nguồn, công ty). Đây là gợi ý theo quy tắc, KHÔNG phải AI: khối này không
@@ -291,15 +700,14 @@ export function LeadDetailDrawer({
     setForm(prev => {
       const next = { ...prev };
       if (!next.interest.trim() && lead?.qualificationNeed) next.interest = lead.qualificationNeed;
-      if (next.icpFit === 'unknown' && lead?.companyName) next.icpFit = 'fit';
       if (!next.timeline) {
-        if (/(gấp|ngay|asap|luôn)/.test(haystack)) next.timeline = 'now';
-        else if (/(tháng này|trong tháng|1 tháng)/.test(haystack)) next.timeline = 'lt_1m';
-        else if (/(quý|3 tháng)/.test(haystack)) next.timeline = '1_3m';
+        if (/(gấp|ngay|asap|luôn)/.test(haystack)) next.timeline = 'Ngay';
+        else if (/(tháng này|trong tháng|1 tháng)/.test(haystack)) next.timeline = 'Trong 1 tháng';
+        else if (/(quý|3 tháng)/.test(haystack)) next.timeline = '1-3 tháng';
       }
-      if (!next.estimatedValue.trim()) {
+      if (next.estimatedValue == null) {
         const money = (lead?.note || '').match(/(\d[\d.,]{5,})/);
-        if (money) next.estimatedValue = formatMoneyInput(money[1]);
+        if (money) next.estimatedValue = parseMoney(money[1]);
       }
       if (!next.nextStep.trim()) next.nextStep = lead?.phone ? 'Gọi lại' : 'Gửi tài liệu';
       if (!next.nextStepAt) {
@@ -307,6 +715,10 @@ export function LeadDetailDrawer({
         when.setDate(when.getDate() + 1);
         when.setHours(9, 0, 0, 0);
         next.nextStepAt = toDatetimeLocal(when.toISOString());
+      }
+      if (!next.interestLevel && next.score == null) {
+        next.interestLevel = 'need';
+        next.score = 55;
       }
       if (!next.aeId) next.aeId = lead?.qualificationAeId || lead?.sdrId || currentUser?.id || '';
       return next;
@@ -318,28 +730,96 @@ export function LeadDetailDrawer({
     if (!lead) return;
     setForm({
       interest: lead.qualificationNeed || '',
-      icpFit: icpFromApi(lead.qualificationIcpFit),
+      interestLevel: interestLevelFromScore(lead.score),
+      score: lead.score ?? null,
       timeline: lead.qualificationExpectedTimeline || '',
-      estimatedValue: lead.qualificationEstimatedValue != null ? formatMoneyInput(String(lead.qualificationEstimatedValue)) : '',
+      estimatedValue: lead.qualificationEstimatedValue ?? null,
       nextStep: lead.nextStep || '',
       nextStepAt: toDatetimeLocal(lead.followUpDate),
       aeId: lead.qualificationAeId || '',
       note: lead.note || '',
+      followUpChannel: '',
+      dealStage: lead.dealStage || 'dealing',
+      project: lead.projectName || '',
+      projectId: '',
     });
     setSuggestionUsed(false);
   }
 
+  function setInterestLevel(value: InterestLevel) {
+    const option = INTEREST_LEVEL_OPTIONS.find(item => item.value === value);
+    setForm(prev => ({
+      ...prev,
+      interestLevel: value,
+      score: option?.score ?? prev.score,
+    }));
+  }
+
   function buildQualificationPayload(): Record<string, unknown> {
-    return {
+    const payload: Record<string, unknown> = {
+      score: form.score ?? null,
       qualification_need: form.interest.trim() || null,
-      qualification_icp_fit: icpToApi(form.icpFit),
-      qualification_estimated_value: form.estimatedValue.trim() ? parseMoney(form.estimatedValue) : null,
+      qualification_icp_fit: icpToApi(icpFit),
+      qualification_estimated_value: form.estimatedValue ?? null,
       qualification_expected_timeline: form.timeline || null,
       qualification_ae_id: form.aeId || null,
       next_step: form.nextStep.trim() || null,
       follow_up_date: form.nextStepAt ? new Date(form.nextStepAt).toISOString() : null,
       note: form.note.trim() || null,
+      team_id: teamId || null,
+      // "Dự án"/"Giai đoạn" là field thật trên crm_leads (migration 165/166)
+      // nên luôn gửi, kể cả khi Lead chưa convert — trước đây chỉ gửi khi
+      // convertedDealId nên gõ/chọn ở trạng thái Nuôi dưỡng/SQL chưa chốt bị
+      // rớt mất.
+      project_name: form.project.trim() || null,
+      deal_stage: form.dealStage || null,
     };
+    if (lead?.convertedDealId) {
+      if (form.projectId) payload.project_id = form.projectId;
+    }
+    return payload;
+  }
+
+  function noteWithVerification(prefix: string, reason?: string) {
+    const details = [prefix, reason ? `Lý do: ${reason}` : '', form.note.trim()].filter(Boolean);
+    return details.join('\n');
+  }
+
+  /** Đồng bộ lại form/teamId ngay sau khi lưu thành công, KHÔNG qua effect
+   * khởi tạo (effect đó cố tình bỏ qua khi `lead.id` không đổi - xem comment
+   * ở initializedLeadRef - để không reset convertOpen/qualificationEditOpen
+   * giữa chừng). Thiếu bước này thì giá trị vừa lưu (Team Sale/Dự án/Giai
+   * đoạn/Sale phụ trách...) không hiện liền trên UI, phải F5 mới thấy, dù
+   * data đã lưu đúng dưới DB. */
+  function syncFormFromSavedLead(updatedLead: CrmLeadRow) {
+    if (updatedLead.teamId) {
+      setTeamId(updatedLead.teamId);
+    } else {
+      const ae = updatedLead.qualificationAeId || form.aeId;
+      if (ae) {
+        crmTeamsService.getTeamIdForUser(ae)
+          .then(res => {
+            const foundTeamId = res.success ? res.data?.crm_team_id : null;
+            if (foundTeamId) setTeamId(foundTeamId);
+          })
+          .catch(() => {});
+      }
+    }
+    setForm(prev => ({
+      ...prev,
+      interest: updatedLead.qualificationNeed || '',
+      interestLevel: interestLevelFromScore(updatedLead.score),
+      score: updatedLead.score ?? null,
+      timeline: updatedLead.qualificationExpectedTimeline || '',
+      estimatedValue: updatedLead.qualificationEstimatedValue ?? null,
+      nextStep: updatedLead.nextStep || '',
+      nextStepAt: toDatetimeLocal(updatedLead.followUpDate),
+      aeId: updatedLead.qualificationAeId || prev.aeId,
+      note: updatedLead.note || '',
+      dealStage: updatedLead.dealStage || prev.dealStage || 'dealing',
+      project: updatedLead.projectName || prev.project,
+      projectId: updatedLead.projectId || prev.projectId,
+    }));
   }
 
   /** Lưu xác minh — PUT thường, TUYỆT ĐỐI không tạo Customer/Contact/Deal.
@@ -356,13 +836,12 @@ export function LeadDetailDrawer({
     setError('');
     setSavedOk('');
     try {
+      const formSnapshot = form;
+      const teamIdSnapshot = teamId;
       const payload: Record<string, unknown> = overrideStatus
-        ? { status: overrideStatus }
+        ? { ...buildQualificationPayload(), status: overrideStatus }
         : buildQualificationPayload();
-      if (!overrideStatus) {
-        if (isReady) payload.status = 'qualified';
-        else if (lead.status === 'new_lead') payload.status = 'qualifying';
-      }
+      if (!overrideStatus && (lead.status === 'mql' || lead.status === 'new_lead' || lead.status === 'qualifying')) payload.status = 'mql';
       const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
         method: 'PUT',
         credentials: 'include',
@@ -371,8 +850,15 @@ export function LeadDetailDrawer({
       });
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được thông tin xác minh.');
-      onSaved(mapLead(body.data));
-      setSavedOk(overrideStatus ? 'Đã chuyển Lead sang "Theo dõi sau".' : 'Đã lưu xác minh. Chưa tạo Cơ hội/Khách hàng nào.');
+      const updatedLead = mapLead(body.data);
+      if (formSnapshot.project) updatedLead.projectName = formSnapshot.project;
+      if (formSnapshot.projectId) updatedLead.projectId = formSnapshot.projectId;
+      if (teamIdSnapshot) updatedLead.teamId = teamIdSnapshot;
+      if (formSnapshot.dealStage) updatedLead.dealStage = formSnapshot.dealStage;
+      setFreshLead(updatedLead);
+      onSaved(updatedLead);
+      syncFormFromSavedLead(updatedLead);
+      setSavedOk(overrideStatus ? 'Đã chốt kết quả xác minh.' : 'Đã lưu xác minh. Chưa tạo Cơ hội/Khách hàng nào.');
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không lưu được thông tin xác minh.');
@@ -382,26 +868,97 @@ export function LeadDetailDrawer({
     }
   }
 
-  async function markNurture() {
-    if (!window.confirm('Chuyển Lead này sang "Chưa phù hợp · theo dõi sau"? Lead sẽ ra khỏi luồng xác minh nhưng vẫn giữ lại để theo dõi.')) return;
-    await saveVerification('nurture');
+  async function submitNurturing() {
+    if (!nurtureReason.trim()) {
+      setError('Nuôi dưỡng cần chọn lý do nuôi dưỡng.');
+      return;
+    }
+    if (!form.nextStepAt) {
+      setError('Nuôi dưỡng cần chọn ngày chăm sóc lại.');
+      return;
+    }
+    const payload = buildQualificationPayload();
+    payload.status = 'nurturing';
+    payload.next_step = nurtureReason.trim();
+    payload.note = noteWithVerification(
+      'Kết quả xác minh: Nuôi dưỡng',
+      [nurtureReason.trim(), form.followUpChannel ? `Kênh chăm sóc: ${form.followUpChannel}` : ''].filter(Boolean).join('\n'),
+    );
+    await saveVerificationWithPayload(payload, 'Đã lưu Lead vào Nuôi dưỡng.');
+  }
+
+  async function submitUnqualified() {
+    if (!unqualifiedReason) {
+      setError('Vui lòng chọn lý do Không đạt chuẩn.');
+      return;
+    }
+    const payload = buildQualificationPayload();
+    payload.status = 'unqualified';
+    payload.note = noteWithVerification('Kết quả xác minh: Không đạt chuẩn', unqualifiedReason);
+    await saveVerificationWithPayload(payload, 'Đã xác nhận Lead Không đạt chuẩn.');
+  }
+
+  async function saveVerificationWithPayload(payload: Record<string, unknown>, okMessage: string) {
+    if (!lead) return false;
+    setSaving(true);
+    setError('');
+    setSavedOk('');
+    try {
+      const formSnapshot = form;
+      const teamIdSnapshot = teamId;
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không lưu được kết quả xác minh.');
+      const updatedLead = mapLead(body.data);
+      if (formSnapshot.project) updatedLead.projectName = formSnapshot.project;
+      if (formSnapshot.projectId) updatedLead.projectId = formSnapshot.projectId;
+      if (teamIdSnapshot) updatedLead.teamId = teamIdSnapshot;
+      if (formSnapshot.dealStage) updatedLead.dealStage = formSnapshot.dealStage;
+      setFreshLead(updatedLead);
+      onSaved(updatedLead);
+      syncFormFromSavedLead(updatedLead);
+      setSavedOk(okMessage);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không lưu được kết quả xác minh.');
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleConvert() {
     if (!lead || converting) return;
+    if (parseDocLinks(docLinksText).invalid.length) {
+      setConvertError('Link tài liệu không hợp lệ — cần http:// hoặc https://.');
+      return;
+    }
     setConverting(true);
     setConvertError('');
     try {
       const dealPayload: Record<string, unknown> = {};
+      dealPayload.deal_stage = form.dealStage || 'dealing';
       if (form.aeId) dealPayload.sdr_id = form.aeId;
       if (form.nextStep.trim()) dealPayload.next_step = form.nextStep.trim();
       if (form.nextStepAt) dealPayload.follow_up_date = new Date(form.nextStepAt).toISOString();
-      if (form.estimatedValue.trim()) dealPayload.estimated_budget = parseMoney(form.estimatedValue);
+      if (form.estimatedValue != null) dealPayload.estimated_budget = form.estimatedValue;
+      // "Dự án" (feedback leader) - go TEN moi, backend tu tao Project that
+      // sau khi convert xong (xem crm_lead_service.convert_lead(), migration
+      // 153). Man Xac minh Lead chua co ProjectPicker chon Du an co san.
+      if (form.project.trim()) dealPayload.project_name = form.project.trim();
+      if (form.projectId) dealPayload.project_id = form.projectId;
 
       const payload: Record<string, unknown> = {
         deal: dealPayload,
         update_customer: false,
         idempotency_key: idempotencyKeyRef.current,
+        // GD3: link Doc/Sheet + gui email cho nguoi nhan (tu xu ly thi backend bo qua, khong gui cho chinh minh)
+        handover: { doc_links: parseDocLinks(docLinksText).valid, send_email: sendEmail && !isSelfHandling, idempotency_key: idempotencyKeyRef.current },
         contact: {
           name: contact.name.trim() || lead.leadName,
           phone: contact.phone.trim() || null,
@@ -412,8 +969,19 @@ export function LeadDetailDrawer({
       };
       if (customerChoice === 'new') {
         payload.customer = {
-          customer_name: lead.leadName,
+          // BUG THAT DA GAP: truoc day luon dung lead.leadName (ten CA NHAN)
+          // lam customer_name - Khach hang (crm_customers) la TO CHUC/CONG TY
+          // trong mo hinh B2B nay (company_name la field rieng, contact.name
+          // moi la nguoi), nen tieu de Khach hang (CrmCustomerDetailPage/
+          // CrmCustomersDirectory deu hien thi customer_name lam <h1> chinh)
+          // bi doi lot thanh ten nguoi. Uu tien company_name neu Lead co cong
+          // ty - dung CHINH pattern fallback da dung san o hien thi dropdown
+          // "Doanh nghiep" ngay ben duoi (dong ~624/632: lead.companyName ||
+          // lead.leadName) - chi Lead ca nhan/khong co cong ty moi fallback
+          // ve leadName (customer_name NOT NULL, khong the de rong).
+          customer_name: lead.companyName || lead.leadName,
           company_name: lead.companyName || null,
+          tax_code: lead.taxCode || null,
           position_category_id: lead.positionCategoryId || null,
           phone: lead.phone || null,
           email: lead.email || null,
@@ -436,14 +1004,31 @@ export function LeadDetailDrawer({
       const body = await res.json();
       if (!res.ok || body.success === false) throw new Error(body?.message || 'Tạo cơ hội thất bại.');
       const result = body.data || {};
+      const newCustomerId = result.customer?.id || result.customer_id || '';
+      const newContactId = result.contact?.id || result.contact_id || '';
+      const newDealId = result.deal?.id || result.deal_id || '';
       onSaved({
         ...lead,
-        status: 'converted',
-        convertedCustomerId: result.customer?.id || result.customer_id || '',
-        convertedContactId: result.contact?.id || result.contact_id || '',
-        convertedDealId: result.deal?.id || result.deal_id || '',
+        status: 'sql',
+        convertedCustomerId: newCustomerId,
+        convertedContactId: newContactId,
+        convertedDealId: newDealId,
       });
       setConvertOpen(false);
+      if (suppressNavigation) {
+        // Nhung vao 1 wizard khac (vd QuickCreateOpportunityFromInbox) - KHONG tu dong/
+        // dieu huong, de wizard cha tu quyet dinh buoc tiep theo.
+        onConverted?.({ customerId: newCustomerId, contactId: newContactId, dealId: newDealId });
+        return;
+      }
+      // Feedback 2026-09-26: "xác minh lead xong thì tự trỏ về đúng trang chi
+      // tiết khách hàng" - truoc day chi hien man "Da tao co hoi" tinh, phai
+      // tu bam link "Xem Khách hàng" moi qua duoc. Dong drawer + dieu huong
+      // thang, khong can cho user bam them.
+      if (newCustomerId) {
+        onClose();
+        router.push(`/all-platform/crm/customers/${newCustomerId}?tab=quotes`);
+      }
     } catch (err) {
       setConvertError(err instanceof Error ? err.message : 'Tạo cơ hội thất bại.');
     } finally {
@@ -455,43 +1040,292 @@ export function LeadDetailDrawer({
    * nhận cũ, không dựng lại) — để dữ liệu vừa nhập chắc chắn đã nằm trên lead
    * trước khi RPC đọc nó. */
   async function openConvertConfirm() {
+    if (!isReady) {
+      setError('SQL cần hoàn thành đủ Mức sẵn sàng tạo cơ hội.');
+      readinessRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+    if (!teamId) {
+      setError('SQL bắt buộc chọn Team Sale.');
+      return;
+    }
+    if (!form.aeId) {
+      setError('SQL bắt buộc chọn Sale nhận bàn giao.');
+      return;
+    }
     const ok = await saveVerification();
     if (ok) setConvertOpen(true);
   }
 
-  const selectedMatch = companyMatches.find(m => m.id === customerChoice);
-  const timelineOptions =
-    form.timeline && !TIMELINE_OPTIONS.some(o => o.value === form.timeline)
-      ? [{ value: form.timeline, label: form.timeline }, ...TIMELINE_OPTIONS]
-      : TIMELINE_OPTIONS;
+  async function loadHandoverHistory(leadId: string) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(leadId)}/handovers`, { credentials: 'include', headers: headers() });
+      const body = await res.json();
+      if (res.ok && body.success !== false && Array.isArray(body.data)) setHandoverHistory(body.data);
+    } catch { /* lich su chi de tham khao */ }
+  }
+
+  /** "Bàn giao xử lý" / "Re-assign": lưu thông tin xác minh đã nhập (GIỮ nguyên người phụ trách hiện tại để lịch sử ghi đúng
+   * người trước/sau), rồi giao cho người nhận + gửi email (nếu tick). Khoá idempotency chống gửi trùng khi reload/retry. */
+  async function submitHandover() {
+    if (!lead || !canHandover || handoverBusy || saving) return;
+    const { valid, invalid } = parseDocLinks(docLinksText);
+    if (invalid.length) {
+      setError('Link tài liệu không hợp lệ — cần http:// hoặc https://.');
+      return;
+    }
+    const recipient = recipientId;
+    const recipientLabel = aeName(recipient);
+    const previousCanWrite = lead.canWrite;
+    setHandoverBusy(true);
+    setError('');
+    setSavedOk('');
+    try {
+      const payload = buildQualificationPayload();
+      payload.qualification_ae_id = lead.qualificationAeId || null;
+      payload.team_id = lead.teamId || null;
+      if (lead.status === 'mql' || lead.status === 'new_lead' || lead.status === 'qualifying') payload.status = 'mql';
+      const saved = await saveVerificationWithPayload(payload, '');
+      if (!saved) return;
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}/handover`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({
+          to_user_id: recipient,
+          crm_team_id: teamId || undefined,
+          doc_links: valid,
+          send_email: sendEmail,
+          missing_items: missingForVerify,
+          idempotency_key: handoverKeyRef.current,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Bàn giao thất bại.');
+      const result = body.data || {};
+      const updated = { ...mapLead(result.lead), canWrite: previousCanWrite };
+      setFreshLead(updated);
+      onSaved(updated);
+      syncFormFromSavedLead(updated);
+      setDocLinksText((updated.handoverLinks || []).map(link => link.url).join('\n'));
+      handoverKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `lead-handover-${lead.id}-${Date.now()}`;
+      const emailStatus = result.emailStatus as string | undefined;
+      setSavedOk(
+        `Đã ${handoverMode === 'reassign' ? 're-assign' : 'bàn giao'} cho ${recipientLabel}.` +
+          (emailStatus === 'sent' ? ' Đã gửi email thông báo.' : emailStatus === 'dry_run' ? ' (Email thử nghiệm — không gửi thật.)' : emailStatus === 'failed' ? ' Không gửi được email — vui lòng báo người nhận.' : ''),
+      );
+      void loadHandoverHistory(lead.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Bàn giao thất bại.');
+    } finally {
+      setHandoverBusy(false);
+    }
+  }
+
+  async function resendHandoverEmail(handoverId: string) {
+    if (!lead) return;
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}/handovers/${encodeURIComponent(handoverId)}/resend-email`, { method: 'POST', credentials: 'include', headers: headers() });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Không gửi lại được email.');
+      setSavedOk('Đã gửi lại email thông báo.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không gửi lại được email.');
+    } finally {
+      void loadHandoverHistory(lead.id);
+    }
+  }
+
+  /** Re-assign Lead DA CONVERT: doi nguoi phu trach (Sale/Presale) + team, backend dong bo Co hoi/Khach hang; luu lich su + email. */
+  async function submitReassignConverted() {
+    if (!lead || !isConverted || !canWrite || handoverBusy || !reassignAeId) return;
+    const { valid, invalid } = parseDocLinks(docLinksText);
+    if (invalid.length) {
+      setError('Link tài liệu không hợp lệ — cần http:// hoặc https://.');
+      return;
+    }
+    const previousCanWrite = lead.canWrite;
+    const recipientLabel = aeName(reassignAeId);
+    setHandoverBusy(true);
+    setError('');
+    setSavedOk('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/all-platform/crm/leads/${encodeURIComponent(lead.id)}/handover`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: headers(),
+        body: JSON.stringify({ to_user_id: reassignAeId, doc_links: valid, send_email: sendEmail, idempotency_key: handoverKeyRef.current }),
+      });
+      const body = await res.json();
+      if (!res.ok || body.success === false) throw new Error(body?.message || 'Re-assign thất bại.');
+      const result = body.data || {};
+      const updated = { ...mapLead(result.lead), canWrite: previousCanWrite };
+      setFreshLead(updated);
+      onSaved(updated);
+      syncFormFromSavedLead(updated);
+      setReassignAeId('');
+      handoverKeyRef.current = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `lead-handover-${lead.id}-${Date.now()}`;
+      const emailStatus = result.emailStatus as string | undefined;
+      setSavedOk(`Đã re-assign cho ${recipientLabel}.` + (emailStatus === 'sent' ? ' Đã gửi email thông báo.' : emailStatus === 'failed' ? ' Chưa gửi được email (có thể gửi lại trong lịch sử bàn giao).' : ''));
+      void loadHandoverHistory(lead.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Re-assign thất bại.');
+    } finally {
+      setHandoverBusy(false);
+    }
+  }
+
+  async function submitFinalOutcome() {
+    // 'pending' = chua du du lieu de he thong ket luan - nut submit da bi
+    // disable o footer, day chi la guard phong thu (khong duoc rot vao
+    // nhanh Khong dat chuan mac dinh nhu truoc khi tach rieng 'pending').
+    if (verificationOutcome === 'pending') return;
+    if (verificationOutcome === 'sql') {
+      await openConvertConfirm();
+      return;
+    }
+    if (verificationOutcome === 'nurturing') {
+      await submitNurturing();
+      return;
+    }
+    await submitUnqualified();
+  }
+
+  const finalHelpText =
+    verificationOutcome === 'sql'
+      ? 'Xác minh đạt chuẩn: Lead đủ điều kiện SQL. Hệ thống tạo Khách hàng và Cơ hội, giữ nguyên Mã LH, sinh Mã KH, rồi giao cho Sale phụ trách (gửi email thông báo nếu bạn để bật). Bước này không hoàn tác được.'
+      : verificationOutcome === 'nurturing'
+        ? 'Lưu vào Nuôi dưỡng: Lead chưa sẵn sàng mua. Hệ thống lưu lý do nuôi dưỡng, chưa tạo Khách hàng/Cơ hội. Có thể xác minh lại khi Lead đủ điều kiện.'
+        : 'Xác nhận không đạt chuẩn: Lead không phù hợp. Hệ thống ghi lý do và đánh dấu Lead là Không đạt chuẩn, không tạo Khách hàng/Cơ hội.';
+  const renderHelp = (key: string, text: string) => (
+    <>
+      <button
+        type="button"
+        className="crm-footer-help"
+        aria-label="Giải thích nút này"
+        aria-expanded={footerHelp === key}
+        data-testid={`footer-help-${key}`}
+        onClick={() => setFooterHelp(current => (current === key ? null : key))}
+      >
+        ?
+      </button>
+      {footerHelp === key ? <div className="crm-footer-help-pop" role="dialog" data-testid={`footer-help-pop-${key}`}>{text}</div> : null}
+    </>
+  );
+
+  // Ly do nut 'Xac minh' chua bam duoc - noi dung dung dieu kien con thieu (khong doi logic).
+  const footerReason =
+    verificationOutcome === 'pending'
+      ? 'Chưa đủ dữ liệu để phân loại Lead — bổ sung thông tin ở trên.'
+      : verificationOutcome === 'sql' && !isReady
+        ? 'Hoàn tất checklist “Mức sẵn sàng tạo cơ hội” để xác minh.'
+        : verificationOutcome !== 'sql' && verificationOutcome !== 'unqualified' && missingForVerify.length
+          ? `Chưa thể xác minh đạt chuẩn — còn thiếu: ${missingForVerify.join(', ')}.`
+          : '';
+
+  const finalSubmitLabel =
+    verificationOutcome === 'sql'
+      ? verifyLabel
+      : verificationOutcome === 'nurturing'
+        ? 'Lưu vào Nuôi dưỡng'
+        : verificationOutcome === 'unqualified'
+          ? 'Xác nhận không đạt chuẩn'
+          : 'Chưa đủ dữ liệu để lưu kết quả';
+
+  // "Tóm tắt quyết định" — cot phai KHONG con la checklist ky thuat (chi
+  // dung/sai) ma hien gia tri that de SDR/Sale ra quyet dinh nhanh, dung thu
+  // tu da chot: Nhu cau -> Gia tri -> ICP -> Thoi gian trien khai -> Viec tiep
+  // theo -> Sale nhan ban giao -> Check trung.
+  const decisionRows = [
+    { key: 'need', label: 'Nhu cầu', value: form.interest.trim() || '—', ok: Boolean(form.interest.trim()) },
+    {
+      key: 'value',
+      label: 'Giá trị ước tính',
+      value: formatEstimatedValue(form.estimatedValue),
+      ok: form.estimatedValue != null,
+    },
+    {
+      key: 'icp',
+      label: 'ICP',
+      value: ICP_OPTIONS.find(o => o.value === icpFit)?.label || '—',
+      ok: icpFit !== 'unknown',
+    },
+    { key: 'timeline', label: 'Thời gian triển khai', value: form.timeline || '—', ok: Boolean(form.timeline) },
+    {
+      key: 'next',
+      label: 'Tiếp theo',
+      value: form.nextStep.trim()
+        ? `${form.nextStep}${form.nextStepAt ? ' · ' + new Date(form.nextStepAt).toLocaleString('vi-VN') : ''}`
+        : '—',
+      ok: Boolean(form.nextStep.trim()) && Boolean(form.nextStepAt),
+    },
+    { key: 'ae', label: 'Sale nhận bàn giao', value: form.aeId ? aeName(form.aeId) : '—', ok: Boolean(form.aeId) },
+    { key: 'stage', label: 'Giai đoạn', value: DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage, ok: true },
+    {
+      key: 'dup',
+      label: 'Check trùng doanh nghiệp',
+      value: dupChecked ? (companyMatches.length ? `${companyMatches.length} khả năng trùng` : 'Không trùng') : 'Chưa kiểm tra',
+      ok: dupChecked,
+    },
+  ];
+
+  const ShellTag = (embedded ? 'div' : 'aside') as 'aside';
 
   return (
     <>
-      <div className="crm-drawer-backdrop" onClick={onClose} />
-      <aside className="crm-drawer crm-lead-detail-drawer crm-verify-drawer">
-        <header className="crm-lead-drawer-header crm-verify-header">
+      {/* Visual-only layer: LeadsDirectory handles click-away so the lead list stays interactive. */}
+      {embedded ? null : <div className="crm-drawer-backdrop crm-lead-verify-backdrop crm-lead-verify-backdrop--passive" />}
+      <ShellTag className={`crm-drawer crm-lead-detail-drawer crm-verify-drawer${embedded ? ' crm-verify-drawer--embedded' : ''}`}>
+        <header className={`crm-lead-drawer-header crm-verify-header${embedded ? ' crm-verify-header--embedded' : ''}`}>
+          {embedded ? null : (
           <div className="crm-verify-header-text">
-            <h2>Xác minh Lead</h2>
-            <p>SDR chỉ cần xác nhận vài thông tin then chốt — hệ thống tự chấm điểm và chuẩn bị dữ liệu bàn giao cho Sale.</p>
+            {onBack ? (
+              <button type="button" className="crm-drawer-backlink" onClick={onBack}>← {parentLabel || 'Quay lại'} / Xác minh Lead</button>
+            ) : null}
+            <h2>
+              Xác minh Lead
+              <span
+                className="crm-help-icon"
+                tabIndex={0}
+                title="SDR chỉ cần xác nhận vài thông tin then chốt. Hệ thống tự chấm điểm Lead và dùng nội dung trao đổi, nguồn Lead, thông tin doanh nghiệp để gợi ý nhu cầu, mức phù hợp, giá trị và việc tiếp theo."
+              >
+                <HelpCircle className="crm-icon" />
+              </span>
+            </h2>
           </div>
+          )}
           <div className="crm-lead-drawer-header-actions">
-            {onEdit ? (
+            {!readOnly && isConverted && canWrite ? (
+              <button
+                type="button"
+                className="crm-secondary-button crm-button-sm"
+                data-testid="lead-detail-edit-qualification"
+                onClick={() => setQualificationEditOpen(open => !open)}
+              >
+                {qualificationEditOpen ? 'Xem (khoá sửa)' : 'Chỉnh sửa thông tin xác minh'}
+              </button>
+            ) : null}
+            {!readOnly && onEdit ? (
               <button
                 type="button"
                 className="crm-secondary-button crm-button-sm"
                 data-testid="lead-detail-edit"
                 onClick={() => onEdit(lead)}
               >
-                Chỉnh sửa
+                Sửa thông tin Lead
               </button>
             ) : null}
-            <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
-              <X className="crm-icon" />
-            </button>
+            {embedded ? null : (
+              <button type="button" className="crm-drawer-close" onClick={onClose} aria-label="Đóng">
+                <X className="crm-icon" />
+              </button>
+            )}
           </div>
         </header>
 
         <div className="crm-drawer-body crm-lead-drawer-body crm-verify-body" ref={bodyRef}>
+          <fieldset disabled={readOnly} className="crm-verify-fieldset">
           {error ? <p className="crm-error">{error}</p> : null}
           {savedOk ? <p className="crm-verify-ok">{savedOk}</p> : null}
 
@@ -503,14 +1337,28 @@ export function LeadDetailDrawer({
                 {[lead.positionLabelSnapshot || lead.position, lead.companyName].filter(Boolean).join(' · ') || 'Chưa có chức vụ/công ty'}
               </p>
               <p className="crm-verify-sub">
-                {lead.phone ? <a href={`tel:${lead.phone}`}>{lead.phone}</a> : <span>Chưa có SĐT</span>}
+                {lead.phone ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <a href={`tel:${lead.phone}`}>{lead.phone}</a>
+                    <a
+                      href={getZaloChatUrl(lead.phone || lead.zalo)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0068ff] hover:bg-blue-100 transition-colors"
+                      title="Nhắn Zalo trên hệ thống"
+                    >
+                      <MessageCircle size={12} className="text-[#0068ff]" />
+                      <span>Nhắn Zalo</span>
+                    </a>
+                  </span>
+                ) : <span>Chưa có SĐT</span>}
                 <span className="crm-verify-dot">·</span>
                 {lead.email ? <a href={`mailto:${lead.email}`}>{lead.email}</a> : <span>Chưa có email</span>}
               </p>
               <p className="crm-verify-sub">Công ty: {lead.companyName || 'Chưa có'} <span className="crm-verify-dot">·</span> SDR: {aeName(lead.sdrId)}</p>
             </div>
             <div className="crm-verify-score">
-              <b>{lead.score == null ? '—' : lead.score}</b>
+              <b>{displayScore == null ? '—' : displayScore}</b>
               <span>ĐIỂM LEAD</span>
             </div>
           </section>
@@ -525,53 +1373,50 @@ export function LeadDetailDrawer({
                 ) : null}
               </div>
             </section>
-          ) : convertOpen ? (
+          ) : null}
+
+          {convertOpen ? (
             <section className="crm-form-section crm-lead-convert-section" id="crm-lead-convert">
               <p className="crm-form-title">Xác nhận tạo cơ hội &amp; bàn giao Sale</p>
               <div className="crm-lead-convert-confirm">
                 {convertError ? <p className="crm-error">{convertError}</p> : null}
-                <div className="crm-lead-convert-row">
-                  <b>Doanh nghiệp:</b>
-                  {companyMatches.length ? (
-                    <select value={customerChoice} onChange={e => setCustomerChoice(e.target.value)}>
-                      <option value="new">Tạo doanh nghiệp mới ({lead.companyName || lead.leadName})</option>
-                      {companyMatches.map(match => (
-                        <option key={match.id} value={match.id}>
-                          Liên kết: {match.customer_name || match.company_name} ({match.match_reason})
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span>Tạo doanh nghiệp mới — {lead.companyName || lead.leadName}</span>
-                  )}
-                </div>
-                {selectedMatch ? <p className="crm-ai-fill-hint">Deal/Customer sẽ gắn vào hồ sơ đã có, không tạo trùng.</p> : null}
-
-                <div className="crm-lead-convert-row crm-lead-convert-contact">
-                  <b>Contact (tạo mới, có thể sửa):</b>
-                  <div className="crm-form-grid">
-                    <Field label="Tên"><input value={contact.name} onChange={e => setContact(c => ({ ...c, name: e.target.value }))} /></Field>
-                    <Field label="Chức vụ">
-                      <PositionSelect
-                        value={contact.positionCategoryId}
-                        labelSnapshot={contact.positionLabel}
-                        onChange={(id, label) => setContact(c => ({ ...c, positionCategoryId: id, positionLabel: label }))}
-                      />
-                    </Field>
-                    <Field label="SĐT"><input value={contact.phone} onChange={e => setContact(c => ({ ...c, phone: e.target.value }))} /></Field>
-                    <Field label="Email"><input value={contact.email} onChange={e => setContact(c => ({ ...c, email: e.target.value }))} /></Field>
-                  </div>
-                </div>
 
                 <div className="crm-lead-convert-summary">
                   <b>Deal sẽ được tạo với:</b>
-                  <ul>
-                    <li>Sale nhận bàn giao: {aeName(form.aeId || lead.sdrId)}</li>
-                    <li>Nhu cầu: {form.interest || 'Chưa có'}</li>
-                    <li>Giá trị dự kiến: {form.estimatedValue ? (formatVND(parseMoney(form.estimatedValue)) || form.estimatedValue) : 'Chưa có'}</li>
-                    <li>Việc tiếp theo: {form.nextStep || 'Chưa có'}</li>
-                    <li>Khi nào làm: {form.nextStepAt ? new Date(form.nextStepAt).toLocaleString('vi-VN') : 'Chưa có'}</li>
-                  </ul>
+                  <div className="crm-convert-kpi-grid">
+                    <div className="crm-convert-kpi-card">
+                      <span>Tên cơ hội</span>
+                      <b>{[lead.companyName || lead.leadName, form.interest].filter(Boolean).join(' - ')}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Giá trị dự kiến</span>
+                      <b>{formatEstimatedValue(form.estimatedValue)}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Giai đoạn</span>
+                      <b>{DEAL_STAGE_META[form.dealStage as keyof typeof DEAL_STAGE_META]?.label || form.dealStage}</b>
+                    </div>
+                    <div className="crm-convert-kpi-card">
+                      <span>Mức quan tâm</span>
+                      <b>{INTEREST_LEVEL_OPTIONS.find(o => o.value === form.interestLevel)?.label || 'Chưa có'}</b>
+                    </div>
+                  </div>
+                  <div className="crm-convert-columns">
+                    <div className="crm-convert-column">
+                      <p className="crm-convert-column-title">Sale cần xử lý</p>
+                      <div className="crm-convert-row"><span>Sale nhận bàn giao</span><b>{aeName(form.aeId || lead.sdrId)}</b></div>
+                      <div className="crm-convert-row"><span>Việc tiếp theo</span><b>{form.nextStep || 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Hạn follow-up</span><b>{form.nextStepAt ? new Date(form.nextStepAt).toLocaleString('vi-VN') : 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Người liên hệ</span><b>{contact.name || lead.leadName}</b></div>
+                    </div>
+                    <div className="crm-convert-column">
+                      <p className="crm-convert-column-title">Khách hàng</p>
+                      <div className="crm-convert-row"><span>Tên khách hàng</span><b>{lead.companyName || lead.leadName}</b></div>
+                      <div className="crm-convert-row"><span>SĐT</span><b>{lead.phone || 'Chưa có'}</b></div>
+                      <div className="crm-convert-row"><span>Nguồn</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
+                      <div className="crm-convert-row"><span>Marketing</span><b>{aeName(lead.createdBy)}</b></div>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="crm-lead-qualification-actions">
@@ -586,159 +1431,237 @@ export function LeadDetailDrawer({
             </section>
           ) : (
             <>
-              <section className="crm-verify-suggest">
-                <div className="crm-verify-suggest-head">
-                  <p className="crm-form-title">Gợi ý từ dữ liệu Lead</p>
-                  <span className={`crm-verify-suggest-pill ${suggestionUsed ? 'is-used' : ''}`}>
-                    {suggestionUsed ? 'Đã dùng gợi ý' : 'Chưa dùng gợi ý'}
-                  </span>
-                </div>
-                <p className="crm-verify-suggest-text">
-                  CRM có thể dùng nội dung trao đổi, nguồn Lead và công ty để gợi ý nhu cầu, mức độ phù hợp, giá trị
-                  và việc tiếp theo. SDR chỉ cần kiểm tra lại.
-                </p>
-                <div className="crm-verify-suggest-actions">
-                  <button type="button" className="crm-secondary-button" disabled={!canWrite} onClick={applySuggestion}>
-                    Dùng gợi ý
-                  </button>
-                  <button type="button" className="crm-ghost-button" disabled={!canWrite} onClick={resetSuggestion}>
-                    Đặt lại
-                  </button>
-                </div>
-              </section>
+              {!isConverted ? (
+                <>
+                  <div className="crm-verify-kpi-strip">
+                    <div><span>Nguồn Lead</span><b>{getSourceLabel(lead.source || 'Manual')}</b></div>
+                    <div><span>Trạng thái</span><b>{lead.status || 'MQL'}</b></div>
+                    <div><span>Owner</span><b>{aeName(lead.sdrId)}</b></div>
+                    <div className="crm-verify-kpi-suggest">
+                      <span>
+                        Gợi ý
+                        <i
+                          className="crm-help-icon"
+                          tabIndex={0}
+                          title="Gợi ý theo quy tắc từ ghi chú, nguồn Lead và công ty đang có — không phải AI. Chỉ điền vào ô đang trống, không ghi đè dữ liệu đã nhập."
+                        >
+                          <HelpCircle className="crm-icon" />
+                        </i>
+                      </span>
+                      <b>
+                        <span className={`crm-verify-suggest-pill ${suggestionUsed ? 'is-used' : ''}`}>{suggestionUsed ? 'Đã dùng' : 'Chưa dùng'}</span>
+                        <button type="button" className="crm-link-button" disabled={!canWrite} onClick={applySuggestion}>Dùng</button>
+                        <button type="button" className="crm-link-button" disabled={!canWrite} onClick={resetSuggestion}>Đặt lại</button>
+                      </b>
+                    </div>
+                  </div>
+                </>
+              ) : null}
 
-              <ol className="crm-verify-stepper">
-                {STEPS.map((step, index) => (
-                  <li
-                    key={step}
-                    className={`crm-verify-step ${index + 1 === currentStep ? 'is-current' : ''} ${index + 1 < currentStep ? 'is-done' : ''}`}
-                  >
-                    <span className="crm-verify-step-index">{index + 1}</span>
-                    <span className="crm-verify-step-label">{step}</span>
-                  </li>
-                ))}
-              </ol>
-
-              <section className="crm-form-section crm-verify-section" id="crm-verify-quick">
-                <p className="crm-form-title">Xác nhận nhanh</p>
-                <div className="crm-form-grid">
-                  <Field full label="Khách đang quan tâm gì?" hint="Chọn từ danh mục Sản phẩm/Dịch vụ (Danh mục CRM → Danh mục sản phẩm).">
-                    <CrmCategorySelect
-                      categoryType="crm_service_package"
-                      value={form.interest}
-                      disabled={!canWrite}
-                      placeholder="-- Chọn sản phẩm/dịch vụ --"
-                      onChange={label => setField('interest', label)}
-                    />
-                  </Field>
-                  <Field label="Có đúng nhóm khách hàng mục tiêu?">
-                    <select disabled={!canWrite} value={form.icpFit} onChange={e => setField('icpFit', e.target.value as IcpFit)}>
-                      {ICP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </Field>
-                  <Field label="Dự kiến triển khai khi nào?">
-                    <select disabled={!canWrite} value={form.timeline} onChange={e => setField('timeline', e.target.value)}>
-                      {timelineOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                  </Field>
-                  <Field full label="Giá trị ước tính (VND)" hint="Tự thêm dấu chấm ngăn nghìn khi gõ.">
-                    <input
-                      disabled={!canWrite}
-                      value={form.estimatedValue}
-                      onChange={e => setField('estimatedValue', formatMoneyInput(e.target.value))}
-                      inputMode="numeric"
-                      placeholder="VD: 50.000.000"
-                    />
-                  </Field>
-                </div>
-              </section>
-
-              <section className="crm-form-section crm-verify-section" id="crm-verify-handoff">
-                <p className="crm-form-title">Việc tiếp theo và bàn giao</p>
-                <div className="crm-form-grid">
-                  <Field label="SDR/Sale cần làm gì tiếp">
-                    <CrmCategorySelect
-                      categoryType="crm_next_step"
-                      value={form.nextStep}
-                      disabled={!canWrite}
-                      placeholder="-- Chọn việc tiếp theo --"
-                      fallbackLabels={NEXT_STEP_FALLBACK}
-                      onChange={label => setField('nextStep', label)}
-                    />
-                  </Field>
-                  <Field label="Khi nào làm">
-                    <input
-                      disabled={!canWrite}
-                      type="datetime-local"
-                      value={form.nextStepAt}
-                      onChange={e => setField('nextStepAt', e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Sale nhận bàn giao">
-                    <select disabled={!canWrite} value={form.aeId} onChange={e => setField('aeId', e.target.value)}>
-                      <option value="">-- Chưa chọn --</option>
-                      {aeOptions.map(m => (
-                        <option key={m.id} value={selectionKeyOf(m)}>{m.display_name}</option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label="Ghi chú ngắn">
-                    <input disabled={!canWrite} value={form.note} onChange={e => setField('note', e.target.value)} placeholder="VD: khách đang so sánh 2 nhà cung cấp" />
-                  </Field>
-                </div>
-                {nextStepWarning ? (
-                  <p className="crm-verify-warning">
-                    <AlertTriangle className="crm-line-icon" />
-                    Deal không nên được tạo nếu chưa có Việc tiếp theo.
-                  </p>
-                ) : null}
-              </section>
-
-              <section className="crm-form-section crm-verify-section" id="crm-verify-readiness" ref={readinessRef}>
-                <div className="crm-verify-suggest-head">
-                  <p className="crm-form-title">Mức sẵn sàng tạo cơ hội</p>
-                  <span className={`crm-verify-readiness-pill crm-verify-readiness-pill--${readinessTone}`}>{readinessLabel}</span>
-                </div>
-                <ul className="crm-verify-checklist">
-                  {checks.map(check => (
-                    <li key={check.key} className={check.ok ? 'is-ok' : ''}>
-                      {check.ok ? <CheckCircle2 className="crm-line-icon" /> : <XCircle className="crm-line-icon" />}
-                      <span>{check.label}</span>
-                    </li>
-                  ))}
-                </ul>
-                {companyMatches.length ? (
+              {/* Lead đã convert - hiện lại đủ 3 khối Thông tin then chốt/
+               * Bàn giao Sale/Tóm tắt quyết định ở dạng READ-ONLY (feedback:
+               * "cái này cho hiển thị full... phần này chưa làm này" - trước
+               * đây bị ẩn trắng hết, chỉ còn mỗi banner xanh) - canWrite ép
+               * về false dù lead.canWrite là gì, vì sửa ở đây KHÔNG tự đồng
+               * bộ ngược lại Deal/Khách hàng thật đã tạo (muốn sửa thật phải
+               * qua đúng trang Khách hàng/Cơ hội). */}
+              <LeadDealQualificationPanel
+                canWrite={canWrite && (!isConverted || qualificationEditOpen)}
+                interest={form.interest}
+                onInterestChange={value => setField('interest', value)}
+                estimatedValue={form.estimatedValue}
+                onEstimatedValueChange={value => setField('estimatedValue', value)}
+                interestLevel={form.interestLevel}
+                onInterestLevelChange={setInterestLevel}
+                timeline={form.timeline}
+                onTimelineChange={value => setField('timeline', value)}
+                project={form.project}
+                projectOptions={projectOptions}
+                onPickProject={p => setForm(prev => ({ ...prev, project: p.name, projectId: p.id }))}
+                onProjectChange={value => setForm(prev => ({ ...prev, project: value, projectId: '' }))}
+                note={form.note}
+                onNoteChange={value => setField('note', value)}
+                teamId={teamId}
+                onTeamIdChange={handleTeamIdChange}
+                teamOptions={teamOptionsForSelect}
+                teamActions={teamActions}
+                aeId={form.aeId}
+                onAeIdChange={handleAeIdChange}
+                aeOptions={aeOptions}
+                contactName={contact.name}
+                onContactNameChange={value => setContact(c => ({ ...c, name: value }))}
+                nextStep={form.nextStep}
+                onNextStepChange={value => setField('nextStep', value)}
+                nextStepAt={form.nextStepAt}
+                onNextStepAtChange={value => setField('nextStepAt', value)}
+                dealStage={form.dealStage}
+                onDealStageChange={value => setField('dealStage', value)}
+                verificationOutcome={verificationOutcome}
+                ruleConditions={ruleConditions}
+                outcomeReasons={outcomeReasons}
+                outcomeMissing={outcomeMissing}
+                sqlProgress={sqlProgress}
+                nurtureReason={nurtureReason}
+                onNurtureReasonChange={setNurtureReason}
+                unqualifiedReason={unqualifiedReason}
+                onUnqualifiedReasonChange={setUnqualifiedReason}
+                followUpChannel={form.followUpChannel}
+                onFollowUpChannelChange={value => setField('followUpChannel', value)}
+                nextStepWarning={nextStepWarning}
+                decisionRows={decisionRows}
+                readinessLabel={readinessLabel}
+                readinessTone={readinessTone}
+                extraHint={companyMatches.length ? (
                   <p className="crm-ai-fill-hint">
-                    Tìm thấy {companyMatches.length} doanh nghiệp có thể trùng — chọn liên kết ở bước xác nhận thay vì tạo mới.
+                    Tìm thấy {companyMatches.length} doanh nghiệp có thể trùng — hệ thống vẫn sẽ tạo doanh nghiệp mới khi bấm xác nhận.
                   </p>
                 ) : null}
-              </section>
+                readinessRef={readinessRef}
+              />
+              {canWrite ? (
+                <details
+                  className="crm-handover-details"
+                  data-testid="lead-handover-details"
+                  open={handoverOpen || isConverted}
+                  onToggle={event => setHandoverOpen((event.currentTarget as HTMLDetailsElement).open)}
+                >
+                  <summary>
+                    <span>{isConverted ? 'Đổi người phụ trách & tài liệu bàn giao' : 'Bàn giao & tài liệu báo giá'}</span>
+                    <small>
+                      {handoverHistory.length ? `Lịch sử (${handoverHistory.length})` : 'Chưa có lịch sử'}
+                      {parseDocLinks(docLinksText).valid.length ? ` · ${parseDocLinks(docLinksText).valid.length} tài liệu` : ''}
+                    </small>
+                  </summary>
+                  {!isConverted && canWrite ? (
+                    <LeadHandoverSection
+                      mode={handoverMode}
+                      recipientName={recipientId ? aeName(recipientId) : null}
+                      actorName={currentUser?.name || currentUser?.email || 'Bạn'}
+                      teamName={teamOptions.find(team => team.id === teamId)?.name || null}
+                      docLinksText={docLinksText}
+                      onDocLinksChange={setDocLinksText}
+                      sendEmail={sendEmail}
+                      onSendEmailChange={setSendEmail}
+                      missing={sqlOk ? [] : missingForVerify}
+                      history={handoverHistory}
+                      onResend={id => void resendHandoverEmail(id)}
+                    />
+                  ) : null}
+                  {isConverted && canWrite ? (
+                    <LeadHandoverSection
+                      mode="reassign"
+                      converted
+                      recipientName={reassignAeId ? aeName(reassignAeId) : (lead.qualificationAeId ? aeName(lead.qualificationAeId) : null)}
+                      actorName={currentUser?.name || currentUser?.email || 'Bạn'}
+                      teamName={teamOptions.find(team => team.id === teamId)?.name || null}
+                      docLinksText={docLinksText}
+                      onDocLinksChange={setDocLinksText}
+                      sendEmail={sendEmail}
+                      onSendEmailChange={setSendEmail}
+                      missing={[]}
+                      history={handoverHistory}
+                      onResend={id => void resendHandoverEmail(id)}
+                    >
+                      <div className="crm-handover-reassign" data-testid="lead-reassign-block">
+                        <span className="crm-handover-label">Đổi người phụ trách</span>
+                        <SearchableSelect testId="lead-reassign-select" value={reassignAeId} onChange={setReassignAeId} options={reassignOptions.filter(option => option.value !== lead.qualificationAeId)} placeholder="Chọn Sale/Presale mới…" hideClearOption />
+                        <button type="button" className="crm-secondary-button" data-testid="lead-reassign-converted" disabled={!reassignAeId || handoverBusy} onClick={() => void submitReassignConverted()}>
+                          {handoverBusy ? <Loader2 className="crm-save-spinner" /> : null} Re-assign
+                        </button>
+                      </div>
+                    </LeadHandoverSection>
+                  ) : null}
+
+                </details>
+              ) : null}
             </>
           )}
+          </fieldset>
         </div>
 
-        {!isConverted && canWrite && !convertOpen ? (
+        {!readOnly && !isConverted && canWrite && !convertOpen ? (
           <footer className="crm-drawer-footer crm-verify-footer">
-            <button type="button" className="crm-ghost-button crm-verify-footer-nurture" disabled={saving} onClick={() => void markNurture()}>
-              Chưa phù hợp · theo dõi sau
-            </button>
+            {footerReason ? <p className="crm-footer-reason" data-testid="lead-footer-reason">{footerReason}</p> : null}
             <div className="crm-footer-actions">
+              <span className="crm-footer-btn-wrap">
               <button type="button" className="crm-secondary-button" disabled={saving} onClick={() => void saveVerification()}>
-                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu xác minh
+                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu nháp
+              </button>
+              </span>
+              {canHandover ? (
+                <span className="crm-footer-btn-wrap">
+                <button
+                  type="button"
+                  className="crm-secondary-button crm-handover-cta"
+                  data-testid="lead-handover-cta"
+                  disabled={saving || handoverBusy}
+                  onClick={() => void submitHandover()}
+                >
+                  {handoverBusy ? <Loader2 className="crm-save-spinner" /> : null} {handoverLabel}
+                </button>
+                {renderHelp('handover', 'Giao Lead cho người phụ trách đã chọn để họ bổ sung thông tin còn thiếu rồi tự xác minh. Hệ thống lưu lịch sử bàn giao và gửi email thông báo (nếu bạn để bật). Chỉ hiện khi Lead chưa đủ điều kiện SQL và bạn giao cho người khác.')}
+                </span>
+              ) : null}
+              {verificationOutcome !== 'pending' ? (
+              <span className="crm-footer-btn-wrap">
+              <button
+                type="button"
+                className="crm-primary-button"
+                data-testid="lead-final-submit"
+                disabled={saving}
+                title={verificationOutcome === 'sql' && !isReady ? 'Hoàn tất checklist "Mức sẵn sàng tạo cơ hội" trước' : undefined}
+                onClick={() => void submitFinalOutcome()}
+              >
+                {finalSubmitLabel}
+              </button>
+              {renderHelp('final', finalHelpText)}
+              </span>
+              ) : null}
+            </div>
+          </footer>
+        ) : null}
+
+        {/* Lead da convert, dang mo khoa sua (qualificationEditOpen) - CHI
+         * Luu thay doi thuong vao dung Lead (saveVerification(), giong het
+         * nut "Lưu nháp" cua nhanh chua convert) - KHONG dung
+         * submitFinalOutcome/handleConvert o day vi se tao trung Deal/
+         * Customer moi hoac doi status ngoai y muon. */}
+        {!readOnly && isConverted && canWrite && qualificationEditOpen ? (
+          <footer className="crm-drawer-footer crm-verify-footer">
+            <div className="crm-footer-actions">
+              <button type="button" className="crm-secondary-button" disabled={saving} onClick={() => setQualificationEditOpen(false)}>
+                Huỷ
               </button>
               <button
                 type="button"
                 className="crm-primary-button"
-                disabled={saving || !isReady}
-                title={isReady ? undefined : 'Hoàn tất checklist "Mức sẵn sàng tạo cơ hội" trước'}
-                onClick={() => void openConvertConfirm()}
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await saveVerification();
+                  if (ok) setQualificationEditOpen(false);
+                }}
               >
-                Tạo cơ hội &amp; bàn giao Sale
+                {saving ? <Loader2 className="crm-save-spinner" /> : null} Lưu thay đổi
               </button>
             </div>
           </footer>
         ) : null}
-      </aside>
+      </ShellTag>
+
+      <CrmTeamFormModal
+        open={addTeamOpen}
+        editingId={null}
+        initialTeam={null}
+        leaders={teamLeaders}
+        allUsers={teamAllUsers}
+        allowAddMembersAfterCreate
+        onClose={() => setAddTeamOpen(false)}
+        onSaved={newTeam => {
+          setAddTeamOpen(false);
+          setTeamOptions(prev => [...prev, newTeam]);
+          handleTeamIdChange(newTeam.id);
+        }}
+      />
     </>
   );
 }
@@ -747,16 +1670,18 @@ function Field({
   label,
   full,
   hint,
+  required,
   children,
 }: {
   label: string;
   full?: boolean;
   hint?: string;
+  required?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <label className={`crm-field ${full ? 'crm-field--full' : ''}`}>
-      <span>{label}</span>
+      <span>{label}{required ? ' *' : ''}</span>
       {children}
       {hint ? <small className="crm-verify-hint">{hint}</small> : null}
     </label>

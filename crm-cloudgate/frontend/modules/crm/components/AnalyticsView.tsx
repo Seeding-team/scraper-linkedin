@@ -17,7 +17,7 @@ import {
   Trophy,
   Wallet,
 } from './icons';
-import { formatCompactVND, formatVND } from '../constants/crmConfig';
+import { formatCompactVND, formatVND, hasFullCrmAccess } from '../constants/crmConfig';
 import { seedingCrmRepository } from '../repositories/SeedingCrmRepository';
 import type { AnalyticsFilters, CrmAnalytics, CrmUserOption } from '../types';
 
@@ -45,7 +45,7 @@ export function AnalyticsView() {
   // duoc so lieu tong hop toan team/cong ty o day. Mo rong cho Sale
   // (team_type='sale', migration 049) - phai khop voi CrmAnalyticsGuard,
   // neu khong Sale se bi guard cho vao roi lai bi chan oan o day.
-  const canView = user?.role === 'admin' || user?.role === 'leader' || Boolean(user?.is_sale);
+  const canView = hasFullCrmAccess(user);
 
   const [analytics, setAnalytics] = useState<CrmAnalytics>(emptyAnalytics);
   const [agents, setAgents] = useState<CrmUserOption[]>([]);

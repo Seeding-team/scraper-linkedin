@@ -39,6 +39,8 @@ export function mergeCategoryOptions(defaults: CrmSelectOption[], dynamic?: Arra
   return [...merged, ...extra];
 }
 
+import { useDealsChanged } from '../utils/dealSync';
+
 export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [agents, setAgents] = useState<CrmUserOption[]>([]);
@@ -46,6 +48,7 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   const [servicePackageOptions, setServicePackageOptions] = useState<CrmSelectOption[]>(SERVICE_PACKAGE_OPTIONS);
   const [packageOptions, setPackageOptions] = useState<CrmSelectOption[]>(CRM_PACKAGE_OPTIONS);
   const [industryOptions, setIndustryOptions] = useState<CrmSelectOption[]>(INDUSTRY_SELECT_OPTIONS);
+  const [cityOptions, setCityOptions] = useState<CrmSelectOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -70,6 +73,9 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
     void loadDeals();
   }, [loadDeals]);
 
+  // Backend vua tu dong doi stage Deal (bao gia/hop dong) -> tai lai tu du lieu that, khong F5.
+  useDealsChanged(useCallback(() => { void loadDeals(); }, [loadDeals]));
+
   const loadAgents = useCallback(async () => {
     try {
       setAgents(await repository.getAgents());
@@ -84,16 +90,21 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
 
   const loadCrmCategoryOptions = useCallback(async () => {
     try {
-      const [sourceRes, servicePackageRes, packageRes, industryRes] = await Promise.all([
+      const [sourceRes, servicePackageRes, packageRes, industryRes, cityRes] = await Promise.all([
         allPlatformCategoriesService.getAll('crm_source'),
         allPlatformCategoriesService.getAll('crm_service_package'),
         allPlatformCategoriesService.getAll('crm_package'),
         allPlatformCategoriesService.getAll('crm_industry'),
+        allPlatformCategoriesService.getAll('crm_city'),
       ]);
       setSourceOptions(mergeCategoryOptions(SOURCE_OPTIONS, sourceRes.data));
       setServicePackageOptions(mergeCategoryOptions(SERVICE_PACKAGE_OPTIONS, servicePackageRes.data));
       setPackageOptions(mergeCategoryOptions(CRM_PACKAGE_OPTIONS, packageRes.data));
       setIndustryOptions(mergeCategoryOptions(INDUSTRY_SELECT_OPTIONS, industryRes.data));
+      setCityOptions((cityRes.data || []).map(item => {
+        const label = item.name || item.code;
+        return { value: label, label };
+      }));
     } catch {
       // Giữ nguyên danh sách mặc định nếu tải danh mục mở rộng thất bại.
     }
@@ -137,10 +148,10 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
   );
 
   const deleteDeal = useCallback(
-    async (id: string) => {
+    async (id: string, confirmCascade = false) => {
       setSaving(true);
       try {
-        await repository.deleteDeal(id);
+        await repository.deleteDeal(id, confirmCascade);
         await loadDeals();
       } finally {
         setSaving(false);
@@ -191,6 +202,7 @@ export function useCrm(repository: CrmRepository = seedingCrmRepository) {
     servicePackageOptions,
     packageOptions,
     industryOptions,
+    cityOptions,
     loading,
     saving,
     error,

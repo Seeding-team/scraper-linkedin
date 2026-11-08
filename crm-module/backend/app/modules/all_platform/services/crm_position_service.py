@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.config import settings
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 
 CATEGORY_TYPE = "crm_position"
@@ -25,7 +24,6 @@ def _fetch_category(category_id: str) -> dict[str, Any] | None:
         lambda: supabase.table("categories")
         .select("id, category_type, name, is_active")
         .eq("id", category_id)
-        .eq("instance", settings.crm_instance)
         .execute()
     )
     rows = res.data or []

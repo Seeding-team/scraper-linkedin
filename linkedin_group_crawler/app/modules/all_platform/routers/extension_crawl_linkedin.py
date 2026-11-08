@@ -17,6 +17,7 @@ from app.core.logger import get_logger
 from app.modules.all_platform.services.supabase_linkedin_extension_crawl_service import (
     save_extension_crawl_batch,
 )
+from app.modules.all_platform.services.lead_score_service import score_and_save_posts
 
 logger = get_logger(__name__)
 
@@ -25,16 +26,27 @@ router = APIRouter()
 EXTENSION_API_KEY = "markee-extension-key-2024"
 
 
+class LinkedInExtensionCommentItem(BaseModel):
+    author_name: Optional[str] = ""
+    author_url: Optional[str] = ""
+    content: Optional[str] = ""
+    likes: Optional[int] = 0
+
+
 class LinkedInExtensionPost(BaseModel):
     post_url: str
     author: Optional[str] = ""
     content: Optional[str] = ""
     posted_at_raw: Optional[str] = ""
+    posted_at: Optional[str] = None
+    post_time: Optional[str] = None
     likes: Optional[int] = 0
     comments: Optional[int] = 0
     reposts: Optional[int] = None
     shares: Optional[int] = None
     crawled_at: Optional[str] = None
+    comments_list: Optional[List[LinkedInExtensionCommentItem]] = None
+    likers: Optional[List[str]] = None
 
 
 class LinkedInExtensionCrawlRequest(BaseModel):
@@ -65,9 +77,12 @@ async def save_posts(
             "author": p.author,
             "content": p.content,
             "posted_at_raw": p.posted_at_raw,
+            "posted_at": p.posted_at or p.post_time,
             "likes": p.likes,
             "comments": p.comments,
             "shares": (p.reposts if p.reposts is not None else p.shares) or 0,
+            "comments_detail": [c.model_dump() for c in (p.comments_list or [])],
+            "likers": p.likers or [],
         }
         for p in payload.posts
     ]
@@ -79,4 +94,15 @@ async def save_posts(
         group_name=payload.group_name,
         id_member=payload.id_member,
     )
+
+    # Cham diem "tiem nang seeding" (LLM) CHAY NEN - xem lead_score_service.py. Field noi
+    # bo, khong duoc tra ve qua HTTP cho extension.
+    inserted_rows = result.pop("_inserted_rows", [])
+    if inserted_rows:
+        # id_member/group_name can cho bot auto-seeding (lead_score_service.py, migration 174)
+        # ghi dung nguoi cao + ten nhom vao nhiem vu comment tu dong - giong het Facebook.
+        asyncio.create_task(
+            score_and_save_posts("linkedin_posts", inserted_rows, id_member=payload.id_member, group_name=payload.group_name)
+        )
+
     return result

@@ -5,8 +5,10 @@ import { useEffect, useState } from 'react';
 import { seedingQuoteRepository } from '../repositories/SeedingQuoteRepository';
 import { internalQuoteStatusClass, internalQuoteStatusLabel } from '../constants/quoteConfig';
 import { formatVnd } from '../utils/quoteCalculations';
+import { buildPublicQuoteUrl } from '../utils/publicQuoteUrl';
 import type { Quote } from '../types';
 import { ActionMenu } from '../../crm/components/ActionMenu';
+import { formatQuoteAmountOr, quoteCurrencyToVnd } from '@/lib/currency';
 
 function formatDate(value?: string) {
   if (!value) return '';
@@ -59,9 +61,7 @@ export function QuoteHistoryPage() {
   }, []);
 
   async function copyLink(quote: Quote) {
-    const link = quote.publicUrl
-      ? `${window.location.origin}${quote.publicUrl}`
-      : `${window.location.origin}/all-platform/quotes/${quote.id}`;
+    const link = buildPublicQuoteUrl(quote.publicUrl) || `${window.location.origin}/all-platform/quotes/${quote.id}`;
     await navigator.clipboard.writeText(link);
   }
 
@@ -109,7 +109,7 @@ export function QuoteHistoryPage() {
                       <td className="qh-col-number" data-label="Số báo giá" title={quote.quoteNumber}>{quote.quoteNumber}</td>
                       <td className="qh-col-customer" data-label="Khách hàng" title={customerName}>{customerName}</td>
                       <td className="qh-col-issuer" data-label="Đơn vị phát hành" title={issuerName}>{issuerName}</td>
-                      <td className="qh-col-amount money-cell" data-label="Tổng tiền">{formatVnd(quote.totalAmount)}</td>
+                      <td className="qh-col-amount money-cell" data-label="Tổng tiền">{formatQuoteAmountOr(quote.totalAmount, quote.currency, formatVnd)}</td>
                       <td className="qh-col-date" data-label="Ngày tạo">{formatDate(quote.issuedAt || quote.createdAt)}</td>
                       <td className="qh-col-status" data-label="Trạng thái">
                         <span className={`quote-badge ${internalQuoteStatusClass(quote.status)}`}>

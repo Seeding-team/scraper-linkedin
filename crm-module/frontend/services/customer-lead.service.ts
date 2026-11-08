@@ -68,20 +68,23 @@ export type DealStage =
  *   sang `proposal_sent`. `requirement` vẫn là stage hợp lệ nếu khách
  *   thực sự cần thu thập brief (kéo từ qualified sang requirement như cũ).
  */
+const ALL_STAGES: DealStage[] = [
+  "new_lead", "contacted", "qualified", "requirement",
+  "proposal_sent", "negotiation", "contract_sent",
+  "on_hold", "won", "lost"
+];
+
 export const DEAL_STAGE_TRANSITIONS: Record<DealStage, DealStage[]> = {
-  new_lead:       ["contacted", "lost"],
-  // Contacted → qualified (gặp khách, lấy info cơ bản) HOẶC nhảy thẳng proposal
-  // nếu khách chốt gói tiêu chuẩn qua điện thoại.
-  contacted:      ["qualified", "proposal_sent", "on_hold", "lost"],
-  // Qualified → requirement (brief riêng) HOẶC nhảy thẳng proposal (gói có sẵn).
-  qualified:      ["requirement", "proposal_sent", "on_hold", "lost"],
-  requirement:    ["proposal_sent", "on_hold", "lost"],
-  proposal_sent:  ["negotiation", "on_hold", "lost"],
-  negotiation:    ["contract_sent", "on_hold", "lost"],
-  contract_sent:  ["won", "lost"],
-  on_hold:        ["lost"], // quay lại stage trước xử lý riêng qua prev_stage
-  won:            [],
-  lost:           [],
+  new_lead:       ALL_STAGES.filter(s => s !== "new_lead"),
+  contacted:      ALL_STAGES.filter(s => s !== "contacted"),
+  qualified:      ALL_STAGES.filter(s => s !== "qualified"),
+  requirement:    ALL_STAGES.filter(s => s !== "requirement"),
+  proposal_sent:  ALL_STAGES.filter(s => s !== "proposal_sent"),
+  negotiation:    ALL_STAGES.filter(s => s !== "negotiation"),
+  contract_sent:  ALL_STAGES.filter(s => s !== "contract_sent"),
+  on_hold:        ALL_STAGES.filter(s => s !== "on_hold"),
+  won:            [], // terminal
+  lost:           [], // terminal
 };
 
 /** Stage terminal — không cho phép đổi tiếp bằng drag thường, chỉ "reopen" qua quy trình riêng. */
@@ -145,8 +148,8 @@ export const DEAL_STAGE_META: Record<
   { label: string; description: string; color: string; ringClass: string; headerClass: string; badgeClass: string; order: number }
 > = {
   new_lead: {
-    label: "New Lead",
-    description: "Deal mới — chưa có tương tác",
+    label: "Khách mới",
+    description: "Deal mới - chưa có tương tác",
     color: "#3b82f6",
     ringClass: "ring-blue-500/40",
     headerClass: "bg-blue-500",
@@ -154,7 +157,7 @@ export const DEAL_STAGE_META: Record<
     order: 1,
   },
   contacted: {
-    label: "Contacted",
+    label: "Đã liên hệ",
     description: "Đã liên hệ ít nhất 1 lần",
     color: "#6366f1",
     ringClass: "ring-indigo-500/40",
@@ -163,8 +166,8 @@ export const DEAL_STAGE_META: Record<
     order: 2,
   },
   qualified: {
-    label: "Qualified",
-    description: "Có nhu cầu, ngân sách, decision-maker",
+    label: "Đủ điều kiện",
+    description: "Có nhu cầu, ngân sách, người quyết định",
     color: "#8b5cf6",
     ringClass: "ring-violet-500/40",
     headerClass: "bg-violet-500",
@@ -172,7 +175,7 @@ export const DEAL_STAGE_META: Record<
     order: 3,
   },
   requirement: {
-    label: "Requirement Gathering",
+    label: "Lấy yêu cầu",
     description: "Đang thu thập brief/yêu cầu",
     color: "#a855f7",
     ringClass: "ring-purple-500/40",
@@ -181,7 +184,7 @@ export const DEAL_STAGE_META: Record<
     order: 4,
   },
   proposal_sent: {
-    label: "Proposal Sent",
+    label: "Đã báo giá",
     description: "Đã gửi báo giá chính thức",
     color: "#f59e0b",
     ringClass: "ring-amber-500/40",
@@ -190,7 +193,7 @@ export const DEAL_STAGE_META: Record<
     order: 5,
   },
   negotiation: {
-    label: "Negotiation",
+    label: "Đàm phán",
     description: "Đang đàm phán điều khoản",
     color: "#ea580c",
     ringClass: "ring-orange-500/40",
@@ -199,7 +202,7 @@ export const DEAL_STAGE_META: Record<
     order: 6,
   },
   contract_sent: {
-    label: "Contract Sent",
+    label: "Đã gửi hợp đồng",
     description: "Đã gửi hợp đồng chờ ký",
     color: "#0ea5e9",
     ringClass: "ring-sky-500/40",
@@ -208,8 +211,8 @@ export const DEAL_STAGE_META: Record<
     order: 7,
   },
   on_hold: {
-    label: "On Hold",
-    description: "Tạm dừng — không phải step chính",
+    label: "Tạm dừng",
+    description: "Tạm dừng - không phải step chính",
     color: "#64748b",
     ringClass: "ring-slate-500/40",
     headerClass: "bg-slate-500",
@@ -217,8 +220,8 @@ export const DEAL_STAGE_META: Record<
     order: 8,
   },
   won: {
-    label: "Won",
-    description: "Đã ký hợp đồng — terminal",
+    label: "Hoàn thành",
+    description: "Đã ký hợp đồng - terminal",
     color: "#16a34a",
     ringClass: "ring-green-500/40",
     headerClass: "bg-green-600",
@@ -226,8 +229,8 @@ export const DEAL_STAGE_META: Record<
     order: 9,
   },
   lost: {
-    label: "Lost",
-    description: "Rớt — terminal, không đổi tiếp",
+    label: "Từ chối",
+    description: "Rớt - terminal, không đổi tiếp",
     color: "#dc2626",
     ringClass: "ring-red-500/40",
     headerClass: "bg-red-600",
@@ -247,6 +250,12 @@ export const PIPELINE_COLUMNS: DealStage[] = [
   "contract_sent",
   "on_hold",
 ];
+
+/** 1 dòng hợp đồng/báo giá — Vấn đề 2: nhiều link mua/bán cho 1 deal. */
+export interface ContractLink {
+  name: string;
+  url: string;
+}
 
 /** Một dòng activity log (audit trail). */
 export interface ActivityLogEntry {
@@ -282,6 +291,24 @@ export interface StageTransitionPayload {
 
 export interface Customer {
   id: string;
+  /** FK sang crm_customers (khách hàng canonical) — migration 077. */
+  customer_id?: string | null;
+  /** FK sang projects (migration 097/125) — null/undefined = chưa gắn Dự án. */
+  project_id?: string | null;
+  /** Người liên hệ chính của Deal (migration 134/135, FK sang crm_contacts) —
+   * null/undefined = chưa chọn. */
+  primary_contact_id?: string | null;
+  quote_id?: string | null;
+  /** Quote canonical đang gắn chính thức (BE flatten từ JOIN quote:quote_id(...)
+   * trong customer_lead_service.py _normalize_row() — KHÔNG phải object lồng
+   * nhau). null/undefined = chưa có quote nào gắn chính thức. Dùng GET
+   * /quotes?deal_id= cho toàn bộ danh sách quote của deal, không chỉ cái này. */
+  quote_number?: string | null;
+  quote_total_amount?: number | null;
+  quote_public_url?: string | null;
+  quote_status?: string | null;
+  quote_version_number?: number | null;
+  quote_version_chain_id?: string | null;
   customer_name: string;
   company_name: string | null;
   phone: string | null;
@@ -309,6 +336,14 @@ export interface Customer {
   decision_maker?: string | null;
   /** Ngân sách dự kiến (qualified). */
   estimated_budget?: number | null;
+  /** Mức độ quan tâm. */
+  interest_level?: string | null;
+  /** Dự kiến triển khai. */
+  implementation_timeline?: string | null;
+  /** Dự kiến chốt. */
+  expected_close_date?: string | null;
+  /** Fit khách hàng. */
+  customer_fit?: string | null;
   /** Ngày vào stage hiện tại (track time-in-stage). */
   stage_entered_at?: string | null;
   /** Số ngày đã nằm ở stage hiện tại (server-side tính hoặc fallback client). */
@@ -327,6 +362,10 @@ export interface Customer {
   payment_status?: PaymentStatus | null;
   last_attachment_url?: string | null;
   last_attachment_name?: string | null;
+  /** Hợp đồng báo giá MUA (Phase 1) — nhiều link, thay cho last_attachment_url cũ trong form sửa KH. */
+  purchase_contract_links?: ContractLink[] | null;
+  /** Hợp đồng báo giá BÁN (Phase 2) — nhiều link. */
+  sale_contract_links?: ContractLink[] | null;
   tags: string[];
   has_budget: boolean;
   note: string | null;
@@ -337,6 +376,8 @@ export interface Customer {
   updated_at: string;
   leader_name?: string | null;
   sdr_name?: string | null;
+  team_name?: string | null;
+  team_type?: string | null;
 }
 
 export interface CustomerListResponse {
@@ -578,6 +619,18 @@ export const customerLeadService = {
     return data?.data ?? null;
   },
 
+  /** 1 deal đầy đủ theo id — dùng để mở Deal Workspace (DealDetailDrawer)
+   * làm overlay từ 1 nơi KHÔNG có sẵn cả list (vd Customer 360's Cơ hội tab),
+   * khác `getAll()` (list) — cùng shape hàng trả về (BE dùng chung
+   * BASE_COLUMNS + _normalize_row cho cả 2 endpoint). */
+  getById: async (id: string): Promise<Customer> => {
+    const data = await apiFetch(`/api/all-platform/customer-leads/${encodeURIComponent(id)}`);
+    if (data?.success === false || !data?.data) {
+      throw new Error(data?.message || "Không tải được cơ hội này");
+    }
+    return data.data as Customer;
+  },
+
   getSdrs: async (): Promise<SDRUser[]> => {
     const data = await apiFetch(`/api/all-platform/customer-leads/sdrs`);
     return (data?.data as SDRUser[]) ?? [];
@@ -597,8 +650,24 @@ export const customerLeadService = {
     });
   },
 
-  delete: async (id: string): Promise<any> => {
-    return apiFetch(`/api/all-platform/customer-leads/${id}`, {
+  /** Chuyển nốt purchase_contract_links/sale_contract_links cũ (tạo trước
+   * fix 2026-10-03) sang contracts canonical - xem
+   * customer_lead_service.migrate_legacy_deal_phase_contracts(). */
+  migrateLegacyContracts: async (id: string): Promise<{ migrated: number }> => {
+    const data = await apiFetch(`/api/all-platform/customer-leads/${id}/migrate-legacy-contracts`, {
+      method: "POST",
+    });
+    if (data?.success === false) {
+      throw new Error(data?.message || "Không chuyển được hợp đồng cũ");
+    }
+    return data?.data ?? { migrated: 0 };
+  },
+
+  /** confirmCascade=true CHI gui sau khi nguoi dung da xac nhan xoa kem Bao
+   * gia/Hop dong lien quan - lan goi dau con lien ket thi backend tra
+   * success:false + data.requiresCascadeConfirm (xem utils/cascadeDelete.ts). */
+  delete: async (id: string, confirmCascade: boolean = false): Promise<{ success?: boolean; message?: string; data?: unknown }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}${confirmCascade ? "?confirm_cascade=true" : ""}`, {
       method: "DELETE",
     });
   },
@@ -664,4 +733,15 @@ export const customerLeadService = {
     const data = await apiFetch(`/api/all-platform/customer-leads/${id}/activity-log${qs}`);
     return data?.data ?? { items: [], total: 0 };
   },
+
+  /** Thêm 1 ghi chú độc lập vào activity log — không gắn với đổi stage
+   * (feedback leader: man "Sửa cơ hội" trước đây chỉ ghi note kèm theo lúc
+   * chuyển stage, không có cách ghi chú độc lập bất cứ lúc nào). */
+  addNote: async (id: string, note: string): Promise<{ success: boolean; message?: string }> => {
+    return apiFetch(`/api/all-platform/customer-leads/${id}/notes`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    });
+  },
 };
+

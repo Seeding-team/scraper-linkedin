@@ -1,3 +1,6 @@
+import { formatCurrencyDisplay } from '@/lib/currency';
+import { customerPriceFromMarkup } from './pricing-math';
+
 /** Preview cong thuc phia FE - CHI de hien thi truoc khi Luu, KHONG phai
  * nguon tinh chinh thuc (backend luon tinh lai bang Decimal khi luu, xem
  * price_book_service.compute_item_pricing() o backend - phai giu 2 ham nay
@@ -52,7 +55,7 @@ export function previewPriceBookItem(input: PriceBookPreviewInput): PriceBookPre
   const vatInAmount = costTotal != null ? (costTotal * vatIn) / 100 : null;
   const inAfterVat = costTotal != null && vatInAmount != null ? costTotal + vatInAmount : null;
 
-  const unitPrice = costUnit != null ? costUnit * (1 + rate / 100) : null;
+  const unitPrice = costUnit != null ? customerPriceFromMarkup(costUnit, rate) : null;
   const amountBeforeVat = unitPrice != null ? qty * unitPrice : null;
   const vatEuAmount = amountBeforeVat != null ? (amountBeforeVat * vatEu) / 100 : null;
   const totalAmount = amountBeforeVat != null && vatEuAmount != null ? amountBeforeVat + vatEuAmount : null;
@@ -78,9 +81,11 @@ export function previewPriceBookItem(input: PriceBookPreviewInput): PriceBookPre
   };
 }
 
+// Wrapper mong quanh formatCurrencyDisplay() dung chung (lib/currency.ts) -
+// khong tu goi toLocaleString rieng nua.
 export function formatVnd(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—';
-  return `${Math.round(value).toLocaleString('vi-VN')}đ`;
+  return `${formatCurrencyDisplay(value)} đ`;
 }
 
 export function formatPercent(value: number | null | undefined): string {

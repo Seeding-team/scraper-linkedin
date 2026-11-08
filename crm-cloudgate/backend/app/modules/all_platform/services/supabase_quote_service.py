@@ -6,7 +6,10 @@ QuoteReference phía frontend (modules/quotes) — tránh phải map lại 2 l�
 
 from __future__ import annotations
 
+import logging
+import re
 import secrets
+import copy
 from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
@@ -14,8 +17,15 @@ from typing import Any
 from postgrest.exceptions import APIError
 from supabase import Client
 
+from app.core.config import settings
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
+from app.modules.all_platform.services.crm_position_service import resolve_position_category
+from app.modules.all_platform.services.supabase_user_service import get_member_option_by_id
+from app.modules.all_platform.services import quote_currency as qc
+from app.modules.all_platform.services.quote_exchange_rate_service import default_usd_vnd_rate
+
+logger = logging.getLogger(__name__)
 
 
 class QuoteNotFoundError(ValueError):
@@ -40,6 +50,50 @@ ISSUER_COMPANIES_TABLE = "quote_issuer_companies"
 VN_TZ = timezone(timedelta(hours=7))
 
 
+def _crm_instance() -> str:
+    instance = (settings.crm_instance or "").strip()
+    if not instance:
+        raise RuntimeError("CRM_INSTANCE is required for quote tenant scoping.")
+    return instance
+
+
+def _ensure_quote_in_instance(quote_id: str, include_deleted: bool = False) -> dict:
+    return get_quote(quote_id, include_deleted=include_deleted)
+
+
+def _optional_uuid(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
+
+
+def _normalize_optional_uuid_fields(payload: dict, fields: tuple[str, ...]) -> dict:
+    for field in fields:
+        if field in payload:
+            payload[field] = _optional_uuid(payload.get(field))
+    return payload
+
+
+def _normalize_quote_item_uuid_fields(items: list[dict] | None) -> list[dict] | None:
+    if items is None:
+        return None
+    uuid_fields = (
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+    )
+    for item in items:
+        _normalize_optional_uuid_fields(item, uuid_fields)
+        children = item.get("children")
+        if isinstance(children, list):
+            _normalize_quote_item_uuid_fields(children)
+    return items
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -55,8 +109,26 @@ def _count_fields(sections: list[dict]) -> int:
     return total
 
 
+def _normalize_quote_schema(schema: dict | None) -> dict:
+    """Normalize legacy display labels without mutating the DB row payload."""
+    normalized = copy.deepcopy(schema or {})
+    for section in normalized.get("sections") or []:
+        for field in section.get("fields") or []:
+            if field.get("key") == "amountAfterDiscount":
+                field["label"] = "Thành tiền (Chưa VAT)"
+            elif field.get("key") == "total":
+                field["label"] = "Thành tiền (gồm VAT)"
+            config = field.get("config") or {}
+            for column in config.get("columns") or []:
+                if column.get("key") == "amountAfterDiscount":
+                    column["label"] = "Thành tiền (Chưa VAT)"
+                elif column.get("key") == "total":
+                    column["label"] = "Thành tiền (gồm VAT)"
+    return normalized
+
+
 def _row_to_form(row: dict) -> dict:
-    schema_json = row.get("schema_json") or {}
+    schema_json = _normalize_quote_schema(row.get("schema_json") or {})
     sections = schema_json.get("sections") or []
     return {
         "id": row["id"],
@@ -78,6 +150,19 @@ def _row_to_form(row: dict) -> dict:
     }
 
 
+def _item_billing_term_multiplier(row: dict) -> float:
+    """Giá vốn định kỳ phải tính đủ thời gian sử dụng (2026-10-14) - dùng CHUNG
+    hệ số với doanh thu (_calculate_item's `bt`): billing_cycle='annual' +
+    billing_term_months>1 thì nhân thêm, ngược lại he so 1 (giu NGUYEN hanh vi
+    cu cho moi hang muc khong co Chu ky). Khong doc billing_term_months khi
+    billing_cycle != 'annual' de tranh nham voi quantity (SL van la truc rieng,
+    KHONG phai so thang)."""
+    if row.get("billing_cycle") != "annual":
+        return 1.0
+    months = row.get("billing_term_months")
+    return float(months) if months and float(months) > 1 else 1.0
+
+
 def _row_to_item(row: dict) -> dict:
     return {
         "id": row["id"],
@@ -90,6 +175,7 @@ def _row_to_item(row: dict) -> dict:
         "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        "warrantyScope": row.get("warranty_scope"),
         # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
         # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
         # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
@@ -98,9 +184,10 @@ def _row_to_item(row: dict) -> dict:
         "note": row.get("note") or "",
         "unit": row.get("unit"),
         "quantity": float(row.get("quantity") or 0),
-        "unitPrice": float(row.get("unit_price") or 0),
+        "unitPrice": (float(row["unit_price"]) if row.get("unit_price") is not None else None),
         "discountPercent": float(row.get("discount_percent") or 0),
         "discountAmount": float(row.get("discount_amount") or 0),
+        "discountType": row.get("discount_type") or row.get("discountType"),
         "amountAfterDiscount": float(row.get("amount_after_discount") or 0),
         "vatRate": float(row.get("vat_rate") or 0),
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
@@ -119,9 +206,12 @@ def _row_to_item(row: dict) -> dict:
         # thua ham nay) nen an toan them truc tiep o day.
         "costPrice": (float(row["cost_price"]) if row.get("cost_price") is not None else None),
         "markupPercent": (float(row["markup_percent"]) if row.get("markup_percent") is not None else None),
+        # Gia von GOC bang VND (migration 169) - chi co o bao gia USD, de doi lai
+        # VND khong troi do lam tron.
+        "costPriceVnd": (float(row["cost_price_vnd"]) if row.get("cost_price_vnd") is not None else None),
         "costNotApplicable": bool(row.get("cost_not_applicable") or False),
         "costTotal": (
-            float(row["cost_price"]) * float(row.get("quantity") or 0)
+            float(row["cost_price"]) * float(row.get("quantity") or 0) * _item_billing_term_multiplier(row)
             if row.get("cost_price") is not None
             else None
         ),
@@ -137,6 +227,21 @@ def _row_to_item(row: dict) -> dict:
         "costOverrideAt": row.get("cost_override_at"),
         "costPriceOriginal": (
             float(row["cost_price_original"]) if row.get("cost_price_original") is not None else None
+        ),
+        # Chu ky (migration 189) - tra thang/nam cho hang muc co ca 2 gia tu
+        # danh muc (vd Markee Chat MCHAT-AGENT). NULL het = hang muc 1 gia
+        # hoac bao gia tao truoc tinh nang nay, khong anh huong tinh tien.
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
+        "catalogMonthlyPriceVnd": (
+            float(row["catalog_monthly_price_vnd"]) if row.get("catalog_monthly_price_vnd") is not None else None
+        ),
+        "catalogAnnualCommitMonthlyPriceVnd": (
+            float(row["catalog_annual_commit_monthly_price_vnd"])
+            if row.get("catalog_annual_commit_monthly_price_vnd") is not None
+            else None
         ),
         "children": [],
     }
@@ -185,7 +290,7 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     if not has_cost_data:
         return {"hasCostData": False, "costTotal": None, "netRevenue": net_revenue, "grossProfit": None, "grossMarginPercent": None}
     cost_total = sum(
-        float(item["cost_price"]) * float(item.get("quantity") or 0)
+        float(item["cost_price"]) * float(item.get("quantity") or 0) * _item_billing_term_multiplier(item)
         for item in real_items
         if item.get("cost_price") is not None
     )
@@ -200,7 +305,42 @@ def _quote_cost_summary(row: dict, raw_items: list[dict] | None) -> dict:
     }
 
 
+
+def _lost_reason_label(code: str | None) -> str | None:
+    from app.modules.all_platform.services.quote_outcome_service import lost_reason_label
+
+    return lost_reason_label(code)
+
+
 def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
+    data = row.get("data") or {}
+    item_discount_types = data.get("itemDiscountTypes") or {}
+    quote_items = _quote_item_tree(items or [])
+    def _apply_discount_type(nodes: list[dict]):
+        for node in nodes:
+            node_id = node.get("id")
+            if node_id and node_id in item_discount_types:
+                node["discountType"] = item_discount_types[node_id]
+            elif not node.get("discountType"):
+                pct = node.get("discountPercent")
+                amt = node.get("discountAmount")
+                if pct is not None and float(pct) > 0 and amt is not None and float(amt) > 0:
+                    if float(pct) % 1 != 0:
+                        node["discountType"] = "amount"
+            _apply_discount_type(node.get("children") or [])
+    _apply_discount_type(quote_items)
+    overall_discount_type = data.get("overallDiscountType")
+    overall_discount_amount = data.get("overallDiscountAmount")
+    overall_discount_pct = row.get("overall_discount_percent")
+    if (
+        overall_discount_type != "amount"
+        and overall_discount_amount is not None
+        and float(overall_discount_amount) > 0
+        and overall_discount_pct is not None
+        and float(overall_discount_pct) % 1 != 0
+    ):
+        overall_discount_type = "amount"
+        data["overallDiscountType"] = "amount"
     return {
         "id": row["id"],
         "dealId": row.get("deal_id"),
@@ -209,13 +349,21 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "quoteNumber": row["quote_number"],
         "status": row["status"],
         "formSchemaVersion": row["form_schema_version"],
-        "formSnapshot": row.get("form_snapshot") or {},
-        "data": row.get("data") or {},
-        "items": _quote_item_tree(items or []),
+        "formSnapshot": _normalize_quote_schema(row.get("form_snapshot") or {}),
+        "data": data,
+        "items": quote_items,
+        "overallDiscountType": overall_discount_type,
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
         "currency": row.get("currency") or "VND",
+        # Ty gia (VND / 1 USD) DONG BANG luc tao/chuyen currency (migration 169) -
+        # NULL voi bao gia VND/bao gia cu. Khong bao gio doc lai ty gia he thong.
+        "exchangeRate": (float(row["exchange_rate"]) if row.get("exchange_rate") is not None else None),
+        "currencySnapshot": row.get("currency_snapshot"),
+        # "Gia da gom VAT" (migration 204) - row.get() an toan voi DB chua
+        # chay migration (cot khong ton tai -> KeyError neu dung row["..."]).
+        "priceMode": row.get("price_mode") or "exclusive",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdById": row.get("created_by"),
@@ -227,6 +375,12 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "publicToken": row.get("public_token"),
         "publicUrl": f"/public/quotes/{row['public_token']}" if row.get("public_token") else None,
         "publicEnabled": row.get("public_enabled") if row.get("public_enabled") is not None else True,
+        # "Giới hạn xem link theo email" (migration 116) - NOI BO, khong bao
+        # gio lo qua _row_to_public_quote (danh sach email khong phai du lieu
+        # cho khach xem link cong khai thay).
+        "publicAccessMode": row.get("public_access_mode") or "none",
+        "publicAllowedEmails": row.get("public_allowed_emails") or [],
+        "publicAllowedPhones": row.get("public_allowed_phones") or [],
         "versionChainId": row.get("version_chain_id"),
         "versionNumber": row.get("version_number") or 1,
         "parentQuoteId": row.get("parent_quote_id"),
@@ -236,12 +390,26 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
         "processingStage": row.get("processing_stage") or "request",
         "technicalOwnerId": row.get("technical_owner_id"),
         "quoteOwnerId": row.get("quote_owner_id"),
+        # "Người liên hệ" tren tai lieu bao gia PHAI la ten Sale dang duoc gan
+        # (khong phai field tu do sellerContactName voi defaultValue cung "Lan
+        # Anh" - dung bug "ten mac dinh" nguoi dung bao). Tra ten THAT qua
+        # embed, KHONG bat FE tu query rieng (tranh 2 nguon lech nhau).
+        "quoteOwnerName": (row.get("quote_owner") or {}).get("name"),
         # Phase 1/3 lifecycle that (migration 087) - noi bo, khong bao gio
         # loi qua _row_to_public_quote.
         "deletedAt": row.get("deleted_at"),
         "cancellationReason": row.get("cancellation_reason"),
         "cancelledAt": row.get("cancelled_at"),
         "cancelledById": row.get("cancelled_by"),
+        # Ket qua bao gia sau phat hanh (migration 179): None = dang cho khach phan hoi; 'lost' = Khong chot / OUT.
+        "customerOutcome": row.get("customer_outcome"),
+        "lostReason": row.get("lost_reason"),
+        "lostReasonLabel": _lost_reason_label(row.get("lost_reason")),
+        "lostReasonOther": row.get("lost_reason_other"),
+        "lostNote": row.get("lost_note"),
+        "lostById": row.get("lost_by"),
+        "lostByName": row.get("lost_by_name"),
+        "lostAt": row.get("lost_at"),
         "publishedAt": row.get("published_at"),
         "publishedById": row.get("published_by"),
         "sentAt": row.get("sent_at"),
@@ -298,7 +466,7 @@ def _row_to_quote(row: dict, items: list[dict] | None = None) -> dict:
 _QUOTE_COST_KEYS = ("costTotal", "hasCostData")
 _QUOTE_PRICING_KEYS: tuple[str, ...] = ()  # markupPercent chi o item-level, khong co field quote-level rieng
 _QUOTE_PROFIT_KEYS = ("grossProfit", "grossMarginPercent")
-_ITEM_COST_KEYS = ("costPrice", "costNotApplicable", "costTotal")
+_ITEM_COST_KEYS = ("costPrice", "costPriceVnd", "costNotApplicable", "costTotal")
 _ITEM_PRICING_KEYS = ("markupPercent",)
 
 
@@ -378,10 +546,16 @@ def apply_quote_field_permissions(quote: dict, user: dict | None) -> dict:
 # bat ky cot noi bo nao sau nay) MAC DINH KHONG xuat hien tren API cong khai,
 # tru khi co ai do CHU DONG them dung ten vao dict duoi day.
 _PUBLIC_ITEM_KEYS = (
-    "id", "parentItemId", "rowType", "description", "serviceDescription", "note", "unit", "quantity",
+    "id", "parentItemId", "rowType", "description", "serviceDescription", "warrantyScope", "note", "unit", "quantity",
     "unitPrice", "discountPercent", "discountAmount", "amountAfterDiscount", "vatRate",
     "subtotalAmount", "vatAmount", "totalAmount", "sortOrder",
     "catalogItemId", "bundleSnapshot", "listPriceUsd", "unitPriceUsd", "exchangeRate", "unitPriceVnd",
+    # Chu ky (migration 189) - CAN cong khai de QuoteDocumentRenderer ghi chu
+    # "Cam kết N tháng"/"trả năm" canh Don gia/Thanh tien, tranh khach hieu
+    # nham tinh sai (SL x Don gia khong khop Thanh tien da nhan them so thang).
+    # KHONG them 2 field snapshot catalogMonthlyPriceVnd/catalogAnnualCommit...
+    # (chi Sale can de doi qua lai Chu ky, khach khong can biet gia gon kia).
+    "billingCycle", "billingTermMonths",
 )
 
 
@@ -395,6 +569,7 @@ def _row_to_public_item(row: dict) -> dict:
         "rowType": row.get("row_type") or "item",
         "description": row.get("description") or "",
         "serviceDescription": row.get("service_description") or "",
+        "warrantyScope": row.get("warranty_scope"),
         # Ghi chu RIENG cho tung hang muc (migration 105, vd "Giảm giá 15%
         # theo chính sách ưu đãi khách hàng đầu tiên") - khac han
         # internalRequestNote/customBlocks (ghi chu CHUNG ca bao gia) - CONG
@@ -418,6 +593,10 @@ def _row_to_public_item(row: dict) -> dict:
         "unitPriceUsd": row.get("unit_price_usd"),
         "exchangeRate": row.get("exchange_rate"),
         "unitPriceVnd": row.get("unit_price_vnd"),
+        "billingCycle": row.get("billing_cycle"),
+        "billingTermMonths": (
+            float(row["billing_term_months"]) if row.get("billing_term_months") is not None else None
+        ),
         "children": [],
     }
 
@@ -427,7 +606,7 @@ def _public_item_tree(rows: list[dict]) -> list[dict]:
     co the trung lap logic voi ham noi bo, CHU Y: co tinh, de nhanh public
     khong bao gio phu thuoc vao nhanh noi bo (sua/them field o _row_to_item
     khong the vo tinh lam lo field moi qua duong nay)."""
-    mapped = [_row_to_public_item(row) for row in rows]
+    mapped = _infer_missing_parent_ids([_row_to_public_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
     for item in mapped:
@@ -459,7 +638,20 @@ def _public_data_allowlist(data: dict, form_snapshot: dict) -> dict:
             key = field.get("key")
             if key:
                 schema_keys.add(key)
-    allowed = schema_keys | {"customBlocks"}
+    # "printLayoutPrefs" (huong giay + do rong cot da "Luu" tu QuoteDetailPage
+    # noi bo) la thuan tuy hien thi/in an - khong chua gia/khach hang/margin
+    # gi - an toan cho qua de trang public /baogia/[token] gieo san dung ban
+    # Sale da can chinh khi khach mo link (xem PublicQuotePage.tsx).
+    allowed = schema_keys | {
+        "customBlocks",
+        "visibleColumns",
+        "visibleSummaryFields",
+        "visibleCustomerFields",
+        "printLayoutPrefs",
+        "overallDiscountAmount",
+    }
+    if form_snapshot.get("enableDynamicPaymentPlan"):
+        allowed.add("paymentPlan")
     return {key: value for key, value in (data or {}).items() if key in allowed}
 
 
@@ -470,7 +662,7 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
     vay se vo tinh ke thua moi field noi bo _row_to_quote co the them trong
     tuong lai (processingStage/technicalOwnerId/quoteOwnerId da la vi du
     thuc te)."""
-    form_snapshot = row.get("form_snapshot") or {}
+    form_snapshot = _normalize_quote_schema(row.get("form_snapshot") or {})
     return {
         "id": row.get("id"),
         "dealId": row.get("deal_id"),
@@ -485,7 +677,13 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
         "subtotalAmount": float(row.get("subtotal_amount") or 0),
         "vatAmount": float(row.get("vat_amount") or 0),
         "totalAmount": float(row.get("total_amount") or 0),
+        "overallDiscountPercent": (
+            float(row["overall_discount_percent"]) if row.get("overall_discount_percent") is not None else None
+        ),
         "currency": row.get("currency") or "VND",
+        # "Gia da gom VAT" (migration 204) - bao gia cong khai/PDF khach PHAI
+        # biet mode nay de tinh dung tong (giong het currency ben tren).
+        "priceMode": row.get("price_mode") or "exclusive",
         "issuedAt": row.get("issued_at"),
         "validUntil": row.get("valid_until"),
         "createdAt": row.get("created_at"),
@@ -497,6 +695,10 @@ def _row_to_public_quote(row: dict, raw_items: list[dict] | None = None) -> dict
         "versionChainId": row.get("version_chain_id"),
         "versionNumber": row.get("version_number") or 1,
         "parentQuoteId": row.get("parent_quote_id"),
+        # Chi ten Sale (khong phai id noi bo) - an toan de lo cho khach, dung
+        # de hien "Người liên hệ" tren ban cong khai/PDF (xem QuoteDocumentRenderer
+        # contactPersonName). KHONG dua quoteOwnerId vao day (id noi bo).
+        "quoteOwnerName": (row.get("quote_owner") or {}).get("name"),
     }
 
 
@@ -508,6 +710,8 @@ def _row_to_issuer_company(row: dict) -> dict:
         "brandName": row.get("brand_name"),
         "address": row.get("address"),
         "contactName": row.get("contact_name"),
+        "positionCategoryId": row.get("position_category_id"),
+        "positionLabel": row.get("position_label_snapshot"),
         "phone": row.get("phone"),
         "email": row.get("email"),
         "website": row.get("website"),
@@ -515,6 +719,10 @@ def _row_to_issuer_company(row: dict) -> dict:
         "logoUrl": row.get("logo_url"),
         "defaultQuoteFormId": row.get("default_quote_form_id"),
         "status": row.get("status") or "active",
+        "paymentTerms": row.get("payment_terms"),
+        # Nội bộ (không phải field nghiệp vụ mới) - để _issuer_of_quote() quyết định fallback có nên tự chọn công ty này cho
+        # workspace hiện tại hay không (KHÔNG tự lấy công ty của workspace khác khi quote chưa chọn issuer tường minh).
+        "instance": row.get("instance"),
     }
 
 
@@ -532,20 +740,26 @@ def list_issuer_companies(include_inactive: bool = False) -> list[dict]:
 
 def create_issuer_company(payload: dict) -> dict:
     supabase: Client = get_supabase_client()
+    position_id, position_label = resolve_position_category(payload.get("position_category_id"), require_active=True)
     insert_data = {
         "code": payload["code"],
         "legal_name": payload["legal_name"],
         "brand_name": payload.get("brand_name"),
         "address": payload.get("address"),
         "contact_name": payload.get("contact_name"),
+        "position_category_id": position_id,
+        "position_label_snapshot": position_label,
         "phone": payload.get("phone"),
         "email": payload.get("email"),
         "website": payload.get("website"),
         "tax_code": payload.get("tax_code"),
         "logo_url": payload.get("logo_url"),
-        "default_quote_form_id": payload.get("default_quote_form_id"),
+        # FE gui "" khi chua chon mau mac dinh - cot UUID khong nhan "" (loi
+        # 22P02 lam form Don vi phat hanh khong luu duoc), luu NULL.
+        "default_quote_form_id": payload.get("default_quote_form_id") or None,
         "status": payload.get("status") or "active",
         "sort_order": payload.get("sort_order") or 0,
+        "payment_terms": payload.get("payment_terms"),
     }
     result = supabase.table(ISSUER_COMPANIES_TABLE).insert(insert_data).execute()
     return _row_to_issuer_company(result.data[0])
@@ -558,11 +772,28 @@ def update_issuer_company(company_id: str, payload: dict) -> dict:
         "address": "address", "contact_name": "contact_name", "phone": "phone",
         "email": "email", "website": "website", "tax_code": "tax_code",
         "logo_url": "logo_url", "default_quote_form_id": "default_quote_form_id",
-        "status": "status", "sort_order": "sort_order",
+        "status": "status", "sort_order": "sort_order", "payment_terms": "payment_terms",
     }
     update_data = {field_map[k]: v for k, v in payload.items() if k in field_map and v is not None}
+    if "default_quote_form_id" in payload:
+        update_data["default_quote_form_id"] = payload.get("default_quote_form_id")
+    # "position_category_id" rieng: co the la None (bo chon Chuc vu) nen khong qua loc "v is not None" o tren - chi
+    # resolve khi key THAT SU co trong payload (sua truong khac khong duoc dong cham Chuc vu dang luu). require_active
+    # chi bat buoc khi gia tri THAY DOI so voi ban ghi hien co - sua truong khac cua 1 ban ghi dang gan Chuc vu da bi
+    # ngung dung (is_active=false) khong duoc bao loi vo ly (dung khuon resolve_position_category() da dung cho CRM).
+    if "position_category_id" in payload:
+        current = supabase.table(ISSUER_COMPANIES_TABLE).select("position_category_id").eq("id", company_id).execute()
+        current_id = (current.data or [{}])[0].get("position_category_id")
+        incoming_id = str(payload.get("position_category_id") or "").strip() or None
+        position_id, position_label = resolve_position_category(incoming_id, require_active=(incoming_id != current_id))
+        update_data["position_category_id"] = position_id
+        update_data["position_label_snapshot"] = position_label
     # logo_url/website/... rong "" (xoa logo/field) van phai ap dung duoc - chi
     # loai None (khong gui field do len), khong loai chuoi rong.
+    # Rieng default_quote_form_id la cot UUID: "" (bo chon mau mac dinh) phai
+    # thanh NULL, neu khong DB bao 22P02 va form Don vi phat hanh khong luu duoc.
+    if update_data.get("default_quote_form_id") == "":
+        update_data["default_quote_form_id"] = None
     result = supabase.table(ISSUER_COMPANIES_TABLE).update(update_data).eq("id", company_id).execute()
     return _row_to_issuer_company(result.data[0])
 
@@ -579,8 +810,35 @@ def _quote_items(quote_id: str) -> list[dict]:
     return result.data or []
 
 
+def _infer_missing_parent_ids(mapped: list[dict]) -> list[dict]:
+    """Doc-time normalize cho hang muc CU luu tu TRUOC khi FE co fix
+    trailingParentItemId() (xem comment tren `normalizeLoadedParentIds()` trong
+    QuoteWorkspaceModal.tsx - day la ban tuong duong o phia backend, cho 2
+    duong render KHONG di qua itemsDraft cua FE: PublicQuotePage/QuoteDetailPage/
+    PDF, von lay `items` dang cay THANG tu day (_quote_item_tree/_public_item_tree)
+    ma khong bao gio load qua QuoteWorkspaceModal). Cac hang muc nay co
+    parent_item_id=NULL trong DB nhung NAM DUNG VI TRI (theo sort_order) ngay
+    sau 1 Section - _quote_item_tree() truoc day loc CHINH XAC theo
+    parentItemId nen coi nham la hang muc DOC LAP (root), lam Section do
+    tong tien = 0 tren ca Preview/Public/PDF giong het bug o FE. Suy luan
+    THUAN DOC (khong ghi DB) - danh sach `rows` da duoc goi noi (.order(
+    "sort_order")) truoc do nen chi can quet xuoi 1 lan, gan lai parentItemId
+    cho hang muc dang thieu bang parentItemId cua Section/hang muc LIEN KE
+    truoc no gan nhat - dung nguyen tac voi trailingParentItemId() ben FE."""
+    current_section_id: str | None = None
+    for item in mapped:
+        if item.get("rowType") == "section":
+            current_section_id = item.get("id")
+            continue
+        if not item.get("parentItemId") and current_section_id:
+            item["parentItemId"] = current_section_id
+        # Hang muc CO san parentItemId (kha nang do 1 lan luu that su co gia
+        # tri khac 0) giu nguyen, khong ghi de - tranh sai du lieu dung.
+    return mapped
+
+
 def _quote_item_tree(rows: list[dict]) -> list[dict]:
-    mapped = [_row_to_item(row) for row in rows]
+    mapped = _infer_missing_parent_ids([_row_to_item(row) for row in rows])
     by_id = {item["id"]: item for item in mapped if item.get("id")}
     roots: list[dict] = []
     for item in mapped:
@@ -592,6 +850,21 @@ def _quote_item_tree(rows: list[dict]) -> list[dict]:
     for item in mapped:
         item["children"] = sorted(item.get("children") or [], key=lambda child: child.get("sortOrder") or 0)
     return sorted(roots, key=lambda item: item.get("sortOrder") or 0)
+
+
+def flatten_quote_items(items: list[dict] | None) -> list[dict]:
+    """Nghich dao cua _quote_item_tree(): quote["items"] tra ve tu get_quote() la CAY long nhau
+    (hang muc that nam trong item["children"] cua Section). Module nao doc quote["items"] de tinh
+    toan/hien thi (AI contract context, bang Word hop dong, rule engine margin/discount, so sanh
+    quyen sua items...) PHAI flatten truoc, neu khong hang muc trong children bi bo sot hoan toan
+    (bug thuc te 2026-10-10: bao gia gom het hang muc vao 1 Section -> noi doc truc tiep quote["items"]
+    chi thay dung 1 dong Section rong, mat sach du lieu that). Giu NGUYEN THU TU: moi item roi toi
+    children cua no."""
+    out: list[dict] = []
+    for item in items or []:
+        out.append(item)
+        out.extend(flatten_quote_items(item.get("children") or []))
+    return out
 
 
 def _slug_code(name: str) -> str:
@@ -630,6 +903,7 @@ def _next_quote_number() -> str:
     result = (
         supabase.table(QUOTES_TABLE)
         .select("quote_number")
+        .eq("instance", _crm_instance())
         .or_(f"quote_number.eq.{base},quote_number.like.{base}-%")
         .execute()
     )
@@ -666,32 +940,76 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal(0)
 
 
-def _round_vnd(value: Decimal) -> float:
-    """VNĐ khong co phan thap phan - lam tron ve DONG NGUYEN (ROUND_HALF_UP)
-    truoc khi tra ra float de luu DB. Sua bug that phat hien qua UI (VD:
-    unitPrice tinh nguoc tu Margin muc tieu ra so co qua nhieu chu so thap
-    phan nhu 1428571.4285714286 - dung Decimal + quantize o day de moi so
-    tien server luu/tra ve LUON la dong nguyen, khong chi lam tron o tang
-    hien thi FE roi van luu so sai xuong DB)."""
-    return float(value.quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+def _round_vnd(value: Decimal, currency: str = "VND") -> float:
+    """Lam tron theo TIEN TE CUA QUOTE: VND khong co phan thap phan - lam tron
+    ve DONG NGUYEN (ROUND_HALF_UP); USD (va tien te khac) giu 2 chu so thap phan.
+    Sua bug that phat hien qua UI (VD: unitPrice tinh nguoc tu Margin muc tieu ra
+    so co qua nhieu chu so thap phan nhu 1428571.4285714286 - dung Decimal +
+    quantize o day de moi so tien server luu/tra ve LUON dung quy uoc tien te,
+    khong chi lam tron o tang hien thi FE roi van luu so sai xuong DB)."""
+    return qc.round_money(value, currency)
 
 
-def _calculate_item(quantity: float, unit_price: float, vat_rate: float, discount_percent: float = 0) -> tuple[float, float, float, float, float]:
+def _calculate_item(
+    quantity: float,
+    unit_price: float,
+    vat_rate: float,
+    discount_percent: float = 0,
+    currency: str = "VND",
+    billing_term_months: float | None = None,
+    discount_amount: float | None = None,
+    discount_type: str | None = None,
+    vat_amount: float | None = None,
+    price_mode: str = "exclusive",
+) -> tuple[float, float, float, float, float]:
+    """billing_term_months (migration 189): he so nhan them vao subtotal khi
+    hang muc chon "Tra nam" (thuong la 12) - dung Gia tra nam/thang (da UU
+    DAI theo thang) nhung tinh tien ca nam. None/<=1 = khong nhan them, giong
+    het hanh vi cu (hang muc 1 gia, hoac bao gia tao truoc tinh nang nay).
+
+    price_mode (migration 204, 2026-11-04): 'exclusive' (mac dinh, HANH VI
+    CU) - unit_price la gia CHUA gom VAT, VAT cong them o duoi. 'inclusive' -
+    unit_price la gia DA gom VAT, tach nguoc VAT ra khoi gross truoc khi chay
+    tiep pipeline discount/vat/total y HET cu (chi 1 nhanh logic nay, cac
+    buoc sau khong doi gi ca - mirror dung Python/FE
+    quoteCalculations.ts::calculateItemSubtotal)."""
     q = _to_decimal(quantity)
     u = _to_decimal(unit_price)
     d_pct = _to_decimal(discount_percent)
     v_pct = _to_decimal(vat_rate)
-    subtotal = q * u
-    discount = subtotal * d_pct / 100
+    bt = _to_decimal(billing_term_months) if billing_term_months and billing_term_months > 1 else _to_decimal(1)
+    gross = q * u * bt
+    if price_mode == "inclusive":
+        subtotal = gross / (1 + v_pct / 100)
+    else:
+        subtotal = gross
+    if discount_type == "amount":
+        if discount_amount is not None and discount_amount >= 0:
+            discount = min(subtotal, _to_decimal(discount_amount))
+        else:
+            discount = _to_decimal(0)
+    elif discount_type == "percent":
+        discount = subtotal * d_pct / 100
+    elif discount_amount is not None:
+        d_amt = _to_decimal(discount_amount)
+        if d_amt >= 0 and not (d_amt == 0 and d_pct > 0):
+            discount = min(subtotal, d_amt)
+        else:
+            discount = subtotal * d_pct / 100
+    else:
+        discount = subtotal * d_pct / 100
     after_discount = subtotal - discount
-    vat = after_discount * v_pct / 100
+    if vat_amount is not None and vat_amount >= 0 and not (vat_amount == 0 and v_pct > 0):
+        vat = _to_decimal(vat_amount)
+    else:
+        vat = after_discount * v_pct / 100
     total = after_discount + vat
     return (
-        _round_vnd(subtotal),
-        _round_vnd(discount),
-        _round_vnd(after_discount),
-        _round_vnd(vat),
-        _round_vnd(total),
+        _round_vnd(subtotal, currency),
+        _round_vnd(discount, currency),
+        _round_vnd(after_discount, currency),
+        _round_vnd(vat, currency),
+        _round_vnd(total, currency),
     )
 
 
@@ -701,7 +1019,107 @@ def _calculate_totals(items: list[dict]) -> tuple[float, float, float]:
     return subtotal, vat, subtotal + vat
 
 
-def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, float, float]:
+def _bundle_snapshot_from_catalog_components(components: list[dict]) -> list[dict]:
+    return [
+        {
+            "componentId": component.get("componentId"),
+            "sku": component.get("sku"),
+            "name": component.get("name"),
+            "description": component.get("description"),
+            "unit": component.get("unit"),
+            "quantity": component.get("quantity"),
+            "computedQuantity": component.get("computedQuantity"),
+            "displayText": component.get("displayText"),
+            "unitPriceVnd": component.get("unitPriceVnd"),
+            "defaultCostPriceVnd": component.get("defaultCostPriceVnd"),
+            "defaultMarkupPercent": component.get("defaultMarkupPercent"),
+            "defaultCustomerPriceVnd": component.get("defaultCustomerPriceVnd"),
+            "quota": component.get("quota"),
+            "customerDisplayName": component.get("customerDisplayName"),
+            "crmNote": component.get("crmNote"),
+            "quotaPoolKey": component.get("quotaPoolKey"),
+            "quotaPoolName": component.get("quotaPoolName"),
+            "quotaPoolQuota": component.get("quotaPoolQuota"),
+            "quotaPoolLimit": component.get("quotaPoolLimit"),
+            "required": component.get("required"),
+            "overagePolicy": component.get("overagePolicy"),
+            "showOnQuote": component.get("showOnQuote"),
+            "sortOrder": component.get("sortOrder"),
+        }
+        for component in components
+    ]
+
+
+def _enrich_bundle_catalog_quote_item(item: dict, currency: str = "VND", exchange_rate: Any = None) -> dict:
+    """Server-side fallback for catalog bundle quote rows.
+
+    The UI normally sends description + full bundle_snapshot. This keeps API/RPC
+    writes correct when a caller only sends catalog_item_id, and uses
+    render_bundle_description() so show_on_quote=false never leaks to
+    customer-facing quote text while full components remain in CRM snapshot.
+    """
+    catalog_item_id = item.get("catalog_item_id") or item.get("catalogItemId")
+    if not catalog_item_id or item.get("row_type") == "section":
+        return item
+    from app.modules.all_platform.services.supabase_service_catalog_service import (
+        get_service_catalog_item,
+        render_bundle_description,
+    )
+    try:
+        catalog_item = get_service_catalog_item(catalog_item_id)
+    except Exception:
+        logger.exception("quote bundle enrich: khong doc duoc catalog_item_id=%s", catalog_item_id)
+        return item
+    if catalog_item.get("itemType") != "bundle":
+        next_item = dict(item)
+    else:
+        next_item = dict(item)
+        components = catalog_item.get("components") or []
+        if not next_item.get("bundle_snapshot"):
+            next_item["bundle_snapshot"] = _bundle_snapshot_from_catalog_components(components)
+
+        if not str(next_item.get("description") or "").strip():
+            included = render_bundle_description(catalog_item_id)
+            description_parts = [
+                catalog_item.get("quoteDescription") or catalog_item.get("description"),
+                catalog_item.get("quoteCta"),
+                f"Bao gồm:\n{included}" if included else None,
+            ]
+            next_item["description"] = "\n\n".join(str(part) for part in description_parts if part)
+
+    if not next_item.get("service_description"):
+        next_item["service_description"] = catalog_item.get("quoteDisplayName") or catalog_item.get("name")
+    if next_item.get("cost_price") is None and catalog_item.get("defaultCostPriceVnd") is not None:
+        next_item["cost_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCostPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["cost_price_vnd"] = catalog_item.get("defaultCostPriceVnd")
+        next_item["cost_not_applicable"] = False
+    if next_item.get("markup_percent") is None and catalog_item.get("defaultMarkupPercent") is not None:
+        next_item["markup_percent"] = catalog_item.get("defaultMarkupPercent")
+    if next_item.get("unit_price") is None and catalog_item.get("defaultCustomerPriceVnd") is not None:
+        next_item["unit_price"] = qc.vnd_to_quote_currency(catalog_item.get("defaultCustomerPriceVnd"), currency, exchange_rate)
+        if currency != "VND":
+            next_item["unit_price_vnd"] = catalog_item.get("defaultCustomerPriceVnd")
+    if next_item.get("unit_price") is None and next_item.get("cost_price") is not None and next_item.get("markup_percent") is not None:
+        multiplier = 1 + float(next_item["markup_percent"]) / 100
+        next_item["unit_price"] = float(next_item["cost_price"]) * multiplier if multiplier >= 0 else 0
+    return next_item
+
+
+def _enrich_bundle_catalog_quote_items(items: list[dict], currency: str = "VND", exchange_rate: Any = None) -> list[dict]:
+    enriched: list[dict] = []
+    for item in items:
+        next_item = _enrich_bundle_catalog_quote_item(item, currency, exchange_rate)
+        if next_item.get("children"):
+            next_item = {
+                **next_item,
+                "children": _enrich_bundle_catalog_quote_items(next_item.get("children") or [], currency, exchange_rate),
+            }
+        enriched.append(next_item)
+    return enriched
+
+
+def _flatten_computed_items(raw_items: list[dict], currency: str = "VND", price_mode: str = "exclusive") -> tuple[list[dict], float, float, float]:
     flattened: list[dict] = []
     subtotal = 0.0
     vat = 0.0
@@ -716,16 +1134,30 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             # khong tin gia tri client gui len cho dong nay.
             item = {
                 **item,
-                "quantity": 0, "unit_price": 0, "discount_percent": 0, "vat_rate": 0,
+                "quantity": 0, "unit_price": 0, "discount_percent": 0, "discount_amount": 0, "vat_rate": 0,
                 "cost_price": None, "markup_percent": None, "cost_not_applicable": False,
             }
-        discount_percent = _validate_percent(item.get("discount_percent"), "discount_percent")
+        # Chuẩn hoá dữ liệu lưu, không chỉ format ở UI: phép quy đổi tiền giảm
+        # sang % có thể tạo float rất dài. Báo giá cũ/mọi entry point đều đi
+        # qua đây nên luôn lưu tối đa 2 chữ số sau dấu thập phân.
+        discount_percent = round(_validate_percent(item.get("discount_percent"), "discount_percent"), 2)
         vat_rate = _validate_percent(item.get("vat_rate"), "vat_rate")
+        raw_discount_amount = item.get("discount_amount") if item.get("discount_amount") is not None else item.get("discountAmount")
+        discount_type = item.get("discount_type") or item.get("discountType")
+        raw_vat_amount = item.get("vat_amount") if item.get("vat_amount") is not None else item.get("vatAmount")
         item_subtotal, item_discount, item_after_discount, item_vat, item_total = _calculate_item(
             float(item.get("quantity") or 0),
-            float(item.get("unit_price") or 0),
+            float(item.get("unit_price") if item.get("unit_price") is not None else (item.get("unitPrice") or 0)),
             vat_rate,
             discount_percent,
+            currency,
+            billing_term_months=(
+                float(item["billing_term_months"]) if item.get("billing_term_months") is not None else None
+            ),
+            discount_amount=float(raw_discount_amount) if raw_discount_amount is not None else None,
+            discount_type=discount_type,
+            vat_amount=float(raw_vat_amount) if raw_vat_amount is not None else None,
+            price_mode=price_mode,
         )
         row = {
             **item,
@@ -733,6 +1165,7 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             "parent_temp_index": parent_temp_index,
             "sort_order": sort_order,
             "discount_percent": discount_percent,
+            "discount_type": discount_type,
             "vat_rate": vat_rate,
             "subtotal": item_subtotal,
             "discount": item_discount,
@@ -752,6 +1185,12 @@ def _flatten_computed_items(raw_items: list[dict]) -> tuple[list[dict], float, f
             append_item(child, parent_flat_index, child_index)
 
     return flattened, subtotal, vat, total
+
+
+def _nullable_float(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    return float(value)
 
 
 def _clamp_discount_percent(value: Any) -> float:
@@ -856,6 +1295,8 @@ def create_quote_form(payload: dict) -> dict:
 def update_quote_form(form_id: str, payload: dict) -> dict:
     supabase: Client = get_supabase_client()
     update_data = {k: v for k, v in payload.items() if v is not None}
+    if "issuer_company_id" in payload:
+        update_data["issuer_company_id"] = payload.get("issuer_company_id")
     if "layout_type" in update_data and not update_data["layout_type"]:
         update_data.pop("layout_type")
     update_data["updated_at"] = _now_iso()
@@ -866,7 +1307,11 @@ def update_quote_form(form_id: str, payload: dict) -> dict:
 def delete_quote_form(form_id: str) -> dict:
     supabase: Client = get_supabase_client()
     has_quotes = (
-        supabase.table(QUOTES_TABLE).select("id").eq("quote_form_id", form_id).limit(1).execute()
+        supabase.table(QUOTES_TABLE)
+        .select("id")
+        .eq("quote_form_id", form_id)
+        .limit(1)
+        .execute()
     )
     if has_quotes.data:
         result = (
@@ -891,6 +1336,7 @@ def duplicate_quote_form(form_id: str) -> dict:
         "layout_type": source["layout_type"],
         "schema_version": source["schema_version"],
         "schema_json": source["schema_json"],
+        "issuer_company_id": source.get("issuer_company_id"),
     }
     result = supabase.table(FORMS_TABLE).insert(insert_data).execute()
     return _row_to_form(result.data[0])
@@ -913,7 +1359,7 @@ def share_quote_form(form_id: str, enabled: bool = True) -> dict:
 
 def list_quotes(deal_id: str | None = None, include_deleted: bool = False) -> list[dict]:
     supabase: Client = get_supabase_client()
-    query = supabase.table(QUOTES_TABLE).select("*")
+    query = supabase.table(QUOTES_TABLE).select("*").eq("instance", _crm_instance())
     if deal_id:
         query = query.eq("deal_id", deal_id)
     if not include_deleted:
@@ -1017,6 +1463,7 @@ def list_quotes_by_phase(
     quote_owner_id: str | None = None,
     owner_id: str | None = None,
     mine_user_id: str | None = None,
+    scope_user_ids: set[str] | None = None,
     team_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -1055,6 +1502,7 @@ def list_quotes_by_phase(
             "sent_at, published_at, approved_at, issued_at, created_at, updated_at, "
             "sla_due_at, completed_at, quote_type_codes"
         )
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
         .execute()
     )
@@ -1078,12 +1526,13 @@ def list_quotes_by_phase(
     # thua khi khong loc gi ca. (Da REVERT viec fetch luon de sap xep theo
     # customerId - xem ghi chu o sort ben duoi.)
     deals_by_id: dict[str, dict] = {}
-    if customer_id or team_id or mine_user_id:
+    if customer_id or team_id or mine_user_id or scope_user_ids is not None:
         deal_ids = list({r["deal_id"] for r in current_rows if r.get("deal_id")})
         if deal_ids:
             deal_result = (
                 supabase.table("customer_leads")
                 .select("id, customer_id, team_id, sdr_id, leaded_by")
+                .eq("instance", _crm_instance())
                 .in_("id", deal_ids)
                 .execute()
             )
@@ -1140,6 +1589,19 @@ def list_quotes_by_phase(
                 if deal.get("sdr_id") != mine_user_id and deal.get("leaded_by") != mine_user_id:
                     return False
             elif row.get("created_by") != mine_user_id:
+                return False
+        # "Nhom quyen" (migration 155, OPT-IN theo tung user): gioi han THEM
+        # theo Team CRM/Ca nhan cua nguoi goi - dung CHINH xac cung tieu chi
+        # voi mine_user_id o tren (deal.sdr_id/leaded_by, hoac created_by neu
+        # bao gia chua gan deal nao) nhung kiem tra thuoc 1 TAP nhieu user_id
+        # (Team CRM) thay vi 1 id duy nhat. None = khong gioi han them (user
+        # chua duoc gan Nhom quyen nao, hoac scope hieu luc la 'system'/
+        # 'workspace' - giu nguyen hanh vi cu).
+        if scope_user_ids is not None:
+            if deal:
+                if deal.get("sdr_id") not in scope_user_ids and deal.get("leaded_by") not in scope_user_ids:
+                    return False
+            elif row.get("created_by") not in scope_user_ids:
                 return False
         date_key = _quote_row_date_key(row)
         if date_from and (not date_key or date_key < date_from):
@@ -1201,14 +1663,23 @@ def list_quotes_by_phase(
     page_ids = [r["id"] for _, r in page_slice]
     items: list[dict] = []
     if page_ids:
-        full_result = supabase.table(QUOTES_TABLE).select("*").in_("id", page_ids).execute()
+        full_result = (
+            supabase.table(QUOTES_TABLE)
+            .select("*")
+            .eq("instance", _crm_instance())
+            .in_("id", page_ids)
+            .execute()
+        )
         full_by_id = {r["id"]: r for r in (full_result.data or [])}
 
         page_project_ids = list({r.get("project_id") for _, r in page_slice if r.get("project_id")})
         projects_by_id: dict[str, dict] = {}
         if page_project_ids:
             proj_result = (
-                supabase.table("projects").select("id, project_code, name, status").in_("id", page_project_ids).execute()
+                supabase.table("projects")
+                .select("id, project_code, name, status")
+                .in_("id", page_project_ids)
+                .execute()
             )
             projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
 
@@ -1255,6 +1726,37 @@ def list_quotes_by_phase(
     }
 
 
+def _apply_default_phone_access(row: dict) -> dict:
+    """"báo giá cũ chưa được set mặc định giới hạn SĐT" (feedback 2026-09-24):
+    ap DUNG quy tac cua migration 149 ngay luc doc - khong phai cho migration
+    duoc chay tay len DB. Quote dang 'none' ma Sale CHUA TUNG chu dong chon
+    "Không giới hạn" (khong co log public_access_restriction_updated voi
+    mode='none') va CO SDT de doi chieu (danh sach da luu hoac
+    data.customerPhone) -> coi nhu 'phone'. Quote khong co SDT nao giu 'none'
+    de khong khoa han link da gui khach. Sau khi migration 149 chay, cot da la
+    'phone' nen ham nay khong con doi gi."""
+    if (row.get("public_access_mode") or "none") != "none":
+        return row
+    has_phone = bool(row.get("public_allowed_phones")) or bool(
+        str((row.get("data") or {}).get("customerPhone") or "").strip()
+    )
+    if not has_phone or not row.get("id"):
+        return row
+    logs = (
+        get_supabase_client()
+        .table("quote_activity_log")
+        .select("changes")
+        .eq("quote_id", row["id"])
+        .eq("action", "public_access_restriction_updated")
+        .execute()
+        .data
+        or []
+    )
+    if any(((log.get("changes") or {}).get("mode")) == "none" for log in logs):
+        return row
+    return {**row, "public_access_mode": "phone"}
+
+
 def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     """Xoa mem (deleted_at khong NULL) mac dinh KHONG duoc coi la quote dang
     hoat dong - endpoint thuong (khong truyen include_deleted=True) se nhan
@@ -1263,7 +1765,12 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
     CHI loi zero-rows (PGRST116) moi duoc map sang QuoteNotFoundError - loi
     ket noi/permission/DB khac deu duoc RE-RAISE nguyen ven, khong nuot."""
     supabase: Client = get_supabase_client()
-    query = supabase.table(QUOTES_TABLE).select("*").eq("id", quote_id)
+    query = (
+        supabase.table(QUOTES_TABLE)
+        .select("*, quote_owner:quote_owner_id(name)")
+        .eq("id", quote_id)
+        .eq("instance", _crm_instance())
+    )
     if not include_deleted:
         query = query.is_("deleted_at", "null")
     try:
@@ -1272,31 +1779,454 @@ def get_quote(quote_id: str, include_deleted: bool = False) -> dict:
         if _is_zero_rows_error(exc):
             raise QuoteNotFoundError("Không tìm thấy báo giá.") from exc
         raise
-    return _row_to_quote(row, _quote_items(quote_id))
+    return _row_to_quote(_apply_default_phone_access(row), _quote_items(quote_id))
 
 
-def get_public_quote(token: str) -> dict:
+def get_access_suggestions(quote_id: str) -> list[dict]:
+    """Goi y Email/SDT cho "Giới hạn theo Email/SĐT" (man Thong tin phat
+    hanh) - lay THAT tu CRM thay vi Sale phai go tay: khach hang cua bao
+    gia, Nguoi lien he thuoc khach hang do, Sale/Presale phu trach. CHI
+    trong pham vi dung 1 Khach hang + dung instance cua quote nay (khong
+    bao gio tra Nguoi lien he/Khach hang workspace khac) - dung
+    customer_id suy tu quotes.deal_id -> customer_leads.customer_id, KHONG
+    nhan client tu truyen customer_id rieng (tranh do tron tenant). Trung
+    email+sdt chi giu 1 dong dau tien gap."""
+    quote = get_quote(quote_id)
+    supabase: Client = get_supabase_client()
+    instance = _crm_instance()
+    results: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: str | None, role: str, email: str | None, phone: str | None) -> None:
+        email = (email or "").strip()
+        phone = (phone or "").strip()
+        if not email and not phone:
+            return
+        key = (email.lower(), phone)
+        if key in seen:
+            return
+        seen.add(key)
+        results.append({"name": (name or "").strip() or role, "role": role, "email": email or None, "phone": phone or None})
+
+    deal_id = quote.get("dealId")
+    customer_id = None
+    if deal_id:
+        deal_rows = (
+            supabase.table("customer_leads")
+            .select("customer_id")
+            .eq("id", deal_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if deal_rows:
+            customer_id = deal_rows[0].get("customer_id")
+
+    if customer_id:
+        customer_rows = (
+            supabase.table("crm_customers")
+            .select("customer_name, phone, email")
+            .eq("id", customer_id)
+            .eq("instance", instance)
+            .limit(1)
+            .execute()
+            .data
+            or []
+        )
+        if customer_rows:
+            c = customer_rows[0]
+            add(c.get("customer_name"), "Khách hàng", c.get("email"), c.get("phone"))
+        contact_rows = (
+            supabase.table("crm_contacts")
+            .select("name, phone, email")
+            .eq("customer_id", customer_id)
+            .eq("instance", instance)
+            .execute()
+            .data
+            or []
+        )
+        for contact in contact_rows:
+            add(contact.get("name"), "Người liên hệ", contact.get("email"), contact.get("phone"))
+
+    owner_specs = [(quote.get("quoteOwnerId"), "Sale phụ trách"), (quote.get("technicalOwnerId"), "Presale phụ trách")]
+    owner_ids = [uid for uid, _ in owner_specs if uid]
+    if owner_ids:
+        user_rows = supabase.table("app_users").select("id, name, email").in_("id", owner_ids).execute().data or []
+        users_by_id = {row["id"]: row for row in user_rows}
+        for uid, role in owner_specs:
+            if not uid:
+                continue
+            u = users_by_id.get(uid)
+            if u:
+                add(u.get("name"), role, u.get("email"), None)
+
+    return results
+
+
+class PublicQuoteVerificationRequiredError(Exception):
+    """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
+    118, thay the PublicQuoteEmailRequiredError cu chi ho tro email). Nem loi
+    nay (KHONG phai ValueError thuong) de router phan biet duoc voi loi "chua
+    phat hanh"/"khong tim thay" thong thuong, tra ve them `method` +
+    `invalid` cho FE biet CHINH XAC dang can xac minh gi (dung DUNG 1
+    phuong thuc dang duoc chon, khong bao gio hoi ca 2)."""
+
+    def __init__(self, method: str, invalid: bool = False):
+        self.method = method
+        self.invalid = invalid
+        super().__init__(f"quote_public_{method}_required" if not invalid else f"quote_public_{method}_not_allowed")
+
+
+def normalize_public_access_email(raw: str) -> str:
+    return raw.strip().lower()
+
+
+def normalize_public_access_phone(raw: str) -> str:
+    """Chuan hoa SDT truoc khi so sanh/luu: bo khoang trang/dau gach ngang,
+    quy ve dang +84xxxxxxxxx (VN) neu nhap dang 0xxxxxxxxx trong nuoc - KHONG
+    doan quoc gia khac neu da co dau + san (giu nguyen, chi bo ky tu thua)."""
+    digits_and_plus = re.sub(r"[^0-9+]", "", raw.strip())
+    if digits_and_plus.startswith("0"):
+        return "+84" + digits_and_plus[1:]
+    if digits_and_plus and not digits_and_plus.startswith("+"):
+        # Nhap thieu ma vung, khong co so 0 dau (vd "912345678") - gia dinh
+        # VN, day la truong hop pho bien nhat cua he thong nay.
+        return "+84" + digits_and_plus
+    return digits_and_plus
+
+
+def get_public_quote(token: str, email: str | None = None, phone: str | None = None) -> dict:
+    """BUG THAT DA GAP ("khóa link rồi mà vào lại link thì hiển thị tbao
+    nha"): ban truoc loc thang `.eq("public_enabled", True)` NGAY TRONG cau
+    truy van - khi link da bi KHOA (Khoá link, revoke_public_quote), token
+    van dung nhung row khong khop dieu kien nay nen tra ve y het TRUONG HOP
+    token sai/khong ton tai, ca 2 deu roi vao chung 1 thong bao chung chung
+    "Báo giá chưa được phát hành." - sai nghia thuc te (bao gia NAY that ra
+    DA tung phat hanh, chi la bi khoa lai) va khong ro rang cho khach hang.
+    Tach lam 2 buoc: (1) tim row CHI theo token/deleted_at (khong loc
+    public_enabled) de biet CHINH XAC ly do - khong tim thay token nao vs
+    tim thay nhung dang bi khoa; (2) tra thong bao rieng cho tung truong hop."""
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
-        .select("*")
+        .select("*, quote_owner:quote_owner_id(name)")
         .eq("public_token", token)
-        .eq("public_enabled", True)
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
-        .single()
+        .maybe_single()
         .execute()
     )
-    row = result.data
+    row = result.data if result else None
+    if not row:
+        raise ValueError("Không tìm thấy báo giá — link không hợp lệ hoặc đã bị xoá.")
+    if not row.get("public_enabled"):
+        raise ValueError("Link báo giá này đã bị khoá.")
     # 'confirmed' = quote tao truoc migration 053 (luon duoc coi la da chot/cong khai
     # nhu cu, khong hoi to) - 'draft'/'cancelled' thi CHUA duoc xem cong khai, phai
     # qua approve_quote() truoc.
-    if not row or row.get("status") not in ("approved", "confirmed"):
+    if row.get("status") not in ("approved", "confirmed"):
         raise ValueError("Báo giá chưa được phát hành.")
+
+    row = _apply_default_phone_access(row)
+    access_mode = row.get("public_access_mode") or "none"
+    if access_mode == "email":
+        allowed = {normalize_public_access_email(e) for e in (row.get("public_allowed_emails") or []) if e}
+        normalized_email = normalize_public_access_email(email or "")
+        if not normalized_email:
+            raise PublicQuoteVerificationRequiredError(method="email", invalid=False)
+        if normalized_email not in allowed:
+            raise PublicQuoteVerificationRequiredError(method="email", invalid=True)
+    elif access_mode == "phone":
+        allowed_phones = {normalize_public_access_phone(p) for p in (row.get("public_allowed_phones") or []) if p}
+        # Mac dinh 'phone' tu migration 149 - quote Sale chua tung tu nhap
+        # danh sach SDT thi dung SDT khach hang dang hien tren bao gia
+        # (data.customerPhone), khong khoa han link voi 1 danh sach rong.
+        if not allowed_phones:
+            customer_phone = str((row.get("data") or {}).get("customerPhone") or "").strip()
+            if customer_phone:
+                allowed_phones = {normalize_public_access_phone(customer_phone)}
+        normalized_phone = normalize_public_access_phone(phone or "") if phone else ""
+        if not normalized_phone:
+            raise PublicQuoteVerificationRequiredError(method="phone", invalid=False)
+        if normalized_phone not in allowed_phones:
+            raise PublicQuoteVerificationRequiredError(method="phone", invalid=True)
+    # access_mode == "none" -> khong kiem tra gi ca, khach mo link la xem duoc
+    # ngay (BUG THAT DA GAP: ban cu dung 1 cot boolean rieng
+    # `public_email_gate_enabled` song song voi danh sach email - khi "tat
+    # gioi han" chi xoa/false cot boolean nhung code khac lo doc nham hoac
+    # quen cap nhat se van hoi Email. Gio CHI CON 1 cot enum duy nhat quyet
+    # dinh toan bo nhanh re, khong con truong hop "tat roi ma van hoi").
+
     return _row_to_public_quote(row, _quote_items(row["id"]))
+
+
+def set_public_access_restriction(
+    quote_id: str,
+    actor_id: str | None,
+    mode: str,
+    emails: list[str] | None = None,
+    phones: list[str] | None = None,
+) -> dict:
+    """Doi che do gioi han xem link cong khai cua 1 quote: 'none' / 'email' /
+    'phone' (migration 118, thay the set_public_email_gate cu). CHI 1 cot
+    enum duy nhat quyet dinh - khong con boolean rieng de tranh bug "tat roi
+    ma van hoi Email" da gap truoc do. KHONG qua RPC (UPDATE metadata don
+    gian, khong dung logic nghiep vu phuc tap nhu cac RPC vong doi khac)."""
+    _ensure_quote_in_instance(quote_id)
+    if mode not in ("none", "email", "phone"):
+        raise ValueError("Che do gioi han khong hop le (phai la none/email/phone).")
+    supabase: Client = get_supabase_client()
+    normalized_emails = sorted({normalize_public_access_email(e) for e in (emails or []) if e and e.strip()})
+    normalized_phones = sorted({normalize_public_access_phone(p) for p in (phones or []) if p and p.strip()})
+    update_payload: dict = {"public_access_mode": mode, "updated_by": actor_id}
+    if mode == "email":
+        update_payload["public_allowed_emails"] = normalized_emails
+    elif mode == "phone":
+        update_payload["public_allowed_phones"] = normalized_phones
+    # mode == "none": giu nguyen danh sach email/phone da luu truoc do (chi
+    # doi cot mode) de neu bat lai cung che do thi khong mat du lieu da nhap.
+    supabase.table(QUOTES_TABLE).update(update_payload).eq("id", quote_id).eq("instance", _crm_instance()).is_("deleted_at", "null").execute()
+    supabase.table("quote_activity_log").insert({
+        "quote_id": quote_id,
+        "actor_id": actor_id,
+        "action": "public_access_restriction_updated",
+        "changes": {"mode": mode, "allowed_emails": normalized_emails, "allowed_phones": normalized_phones},
+    }).execute()
+    return get_quote(quote_id)
+
+
+def set_print_layout_prefs(
+    quote_id: str,
+    actor_id: str | None,
+    orientation: str,
+    column_widths: dict[str, float] | None,
+) -> dict:
+    """Nut "Lưu" o toolbar in (huong giay + do rong cot keo tay) tren
+    QuoteDetailPage - trang NOI BO da dang nhap, router da gac quyen bang
+    can_edit_quote truoc khi goi ham nay (khong danh cho trang public khong
+    xac thuc /baogia/[token], xem thao luan trong PublicQuotePage.tsx).
+    MERGE PATCH DUY NHAT 1 khoa `data.printLayoutPrefs` - UPDATE THANG cot
+    `data` (khong qua RPC quote_update, RPC do luon recompute lai toan bo
+    p_items/tong tien tu p_items nen dung cho thao tac chi luu 1 tuy chinh
+    hien thi nay la thua va co nguy co dung sai items neu quen truyen lai
+    items hien co - giong het ly do set_public_access_restriction ben tren
+    cung khong di qua RPC)."""
+    if orientation not in ("portrait", "landscape"):
+        raise ValueError("Hướng giấy không hợp lệ (phải là portrait/landscape).")
+    supabase: Client = get_supabase_client()
+    try:
+        current = (
+            supabase.table(QUOTES_TABLE)
+            .select("data")
+            .eq("id", quote_id)
+            .eq("instance", _crm_instance())
+            .is_("deleted_at", "null")
+            .single()
+            .execute()
+            .data
+        )
+    except APIError as exc:
+        if _is_zero_rows_error(exc):
+            raise QuoteNotFoundError("Không tìm thấy báo giá.") from exc
+        raise
+    new_data = dict((current or {}).get("data") or {})
+    new_data["printLayoutPrefs"] = {
+        "orientation": orientation,
+        "columnWidths": column_widths or {},
+    }
+    supabase.table(QUOTES_TABLE).update({"data": new_data, "updated_by": actor_id}).eq(
+        "id", quote_id
+    ).eq("instance", _crm_instance()).execute()
+    return get_quote(quote_id)
+
+
+def _resolve_quote_fx(currency: str, requested_rate: Any) -> tuple[float | None, dict | None]:
+    """(exchange_rate, currency_snapshot) cho 1 quote. VND -> (None, None). Ngoai te:
+    uu tien ty gia client gui (nguoi dung nhap/xac nhan), neu khong thi ty gia he
+    thong; khong co ca 2 -> loi (KHONG bia ty gia)."""
+    if currency == "VND":
+        return None, None
+    rate = qc.to_rate(requested_rate) or qc.to_rate(default_usd_vnd_rate())
+    if rate is None:
+        raise ValueError("Chưa có tỷ giá USD→VND. Vui lòng nhập tỷ giá trước khi chuyển báo giá sang USD.")
+    qc.assert_plausible_usd_vnd_rate(rate)
+    return float(rate), qc.build_snapshot(currency, rate)
+
+
+def _apply_quote_currency_change(quote_id: str, current_quote: dict, payload: dict) -> dict | None:
+    """Doi currency cua quote DRAFT (neu payload yeu cau) TRUOC khi goi RPC quote_update
+    (RPC doc quotes.currency de lam tron). Tra ve gia tri cu de rollback neu RPC loi,
+    hoac None neu khong doi gi. Cung currency -> GIU NGUYEN snapshot (khong doi ty gia
+    khi reload/save/approve). Bao gia da duyet: bo qua - RPC se tu choi chinh sua."""
+    # CHI doi currency khi client gui RO `currency` - data.currency la field text tu do
+    # (co the la "VNĐ"...) nen khong duoc coi la yeu cau doi tien te.
+    requested = payload.get("currency")
+    if requested is None or current_quote.get("status") == "approved":
+        return None
+    target = qc.normalize_currency(requested)
+    current = current_quote.get("currency") or "VND"
+    if target == current:
+        if isinstance(payload.get("data"), dict):
+            payload["data"]["currency"] = current
+        return None
+    if payload.get("items") is None:
+        raise ValueError("Đổi tiền tệ báo giá phải gửi kèm toàn bộ hạng mục đã quy đổi.")
+    rate, snapshot = _resolve_quote_fx(target, payload.get("exchange_rate"))
+    previous = {
+        "currency": current,
+        "exchange_rate": current_quote.get("exchangeRate"),
+        "currency_snapshot": current_quote.get("currencySnapshot"),
+    }
+    get_supabase_client().table(QUOTES_TABLE).update({
+        "currency": target, "exchange_rate": rate, "currency_snapshot": snapshot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+    if isinstance(payload.get("data"), dict):
+        payload["data"]["currency"] = target
+    return previous
+
+
+def _rollback_quote_currency(quote_id: str, previous: dict | None) -> None:
+    if previous:
+        get_supabase_client().table(QUOTES_TABLE).update(previous).eq("id", quote_id).eq(
+            "instance", _crm_instance()
+        ).execute()
+
+
+
+def _apply_contact_to_quote_data(data: dict, deal_id: str | None) -> None:
+    """Luc tao bao gia: "Kinh gui"/"Nguoi lien he" PHAI la nguoi lien he THAT (crm_contacts), khong bao gio la ten
+    cong ty. Neu FE khong gui duoc ten nguoi (hoac chi roi ve ten cong ty cua co hoi) -> dung Lien he chinh cua co hoi.
+    Chi dien khi thieu/trung ten cong ty; khong ghi de ten ngoi dung da nhap tay khac."""
+    try:
+        supabase: Client = get_supabase_client()
+        deal = None
+        if deal_id:
+            deal = (supabase.table("customer_leads").select("customer_name, company_name, primary_contact_id")
+                    .eq("id", deal_id).limit(1).execute().data or [None])[0]
+        contact_id = data.get("customerContactId") or (deal or {}).get("primary_contact_id")
+        if not contact_id:
+            return
+        contact = (supabase.table("crm_contacts").select("id, name, phone, email").eq("id", contact_id).limit(1).execute().data or [None])[0]
+        if not contact or not (contact.get("name") or "").strip():
+            return
+        company_like = {str(v).strip() for v in (
+            data.get("customerCompanyName"), (deal or {}).get("customer_name"), (deal or {}).get("company_name")) if v}
+        recipient = str(data.get("customerRecipient") or "").strip()
+        if not recipient or recipient in company_like:
+            data["customerRecipient"] = contact["name"].strip()
+            data["customerContactName"] = contact["name"].strip()
+            data["customerContactId"] = contact["id"]
+            if contact.get("phone") and not data.get("customerPhone"):
+                data["customerPhone"] = contact["phone"]
+            if contact.get("email") and not data.get("customerEmail"):
+                data["customerEmail"] = contact["email"]
+    except Exception as exc:  # noqa: BLE001 - phu tro, khong chan tao bao gia
+        logger.warning("_apply_contact_to_quote_data failed: %s", exc)
+
+
+def sync_contact_snapshot_to_quotes(contact_row: dict | None, old_row: dict | None = None) -> int:
+    """Sua Nguoi lien he (crm_contacts) -> dong bo "Kinh gui"/SDT/Email trong snapshot cua cac bao gia da chon nguoi
+    lien he do (data.customerContactId) HOAC thuoc co hoi co lien he chinh la nguoi nay. Neu co `old_row`, chi ghi de
+    truong con la ban sao cua gia tri cu (hoac rong) - ten go tay rieng tren bao gia duoc giu nguyen.
+    Loi chi log, khong chan thao tac goc. Tra ve so bao gia da cap nhat."""
+    try:
+        row = contact_row or {}
+        old = old_row or {}
+        cid = row.get("id")
+        if not cid:
+            return 0
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        new_vals = {snap: str(row.get(col) or "").strip() for snap, col in pairs}
+        if not any(new_vals.values()):
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        by_id = {
+            q["id"]: q for q in (
+                supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                .eq("data->>customerContactId", str(cid)).is_("deleted_at", "null").execute().data or []
+            )
+        }
+        deal_ids = [d["id"] for d in (
+            supabase.table("customer_leads").select("id").eq("primary_contact_id", cid).eq("instance", instance).execute().data or []
+        )]
+        if deal_ids:
+            for q in (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", instance)
+                      .in_("deal_id", deal_ids).is_("deleted_at", "null").execute().data or []):
+                if not (q.get("data") or {}).get("customerContactId"):
+                    by_id.setdefault(q["id"], q)
+        changed = 0
+        for q in by_id.values():
+            data = dict(q.get("data") or {})
+            data_changed = False
+            for snap, col in pairs:
+                new_val = new_vals[snap]
+                if not new_val or data.get(snap) == new_val:
+                    continue
+                cur = str(data.get(snap) or "").strip()
+                old_val = str(old.get(col) or "").strip()
+                if old_row is not None and cur and cur != old_val:
+                    continue  # nguoi dung da go tay gia tri rieng tren bao gia nay
+                data[snap] = new_val
+                data_changed = True
+            if data_changed:
+                data["customerContactId"] = str(cid)
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_contact_snapshot_to_quotes failed: %s", exc)
+        return 0
+
+
+def sync_deal_primary_contact_to_quotes(deal_id: str, new_contact: dict | None, old_contact: dict | None = None) -> int:
+    """Doi lien he chinh cua Co hoi -> cac bao gia cua co hoi do doi "Kinh gui"/SDT/Email sang nguoi moi
+    (chi khi gia tri hien tai la cua nguoi cu, ten cong ty hoac rong; ten go tay khac duoc giu)."""
+    try:
+        new = new_contact or {}
+        if not (deal_id and new.get("id")):
+            return 0
+        old = old_contact or {}
+        pairs = (("customerRecipient", "name"), ("customerContactName", "name"),
+                 ("customerPhone", "phone"), ("customerEmail", "email"))
+        supabase: Client = get_supabase_client()
+        quotes = (supabase.table(QUOTES_TABLE).select("id, data").eq("instance", _crm_instance())
+                  .eq("deal_id", deal_id).is_("deleted_at", "null").execute().data or [])
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            company_like = {str(data.get("customerCompanyName") or "").strip()} - {""}
+            data_changed = False
+            for snap, col in pairs:
+                new_val = str(new.get(col) or "").strip()
+                cur = str(data.get(snap) or "").strip()
+                if not new_val or cur == new_val:
+                    continue
+                if cur and cur != str(old.get(col) or "").strip() and cur not in company_like:
+                    continue
+                data[snap] = new_val
+                data_changed = True
+            if data_changed or data.get("customerContactId") != str(new["id"]):
+                data["customerContactId"] = str(new["id"])
+                supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+                changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sync_deal_primary_contact_to_quotes failed: %s", exc)
+        return 0
 
 
 def create_quote(payload: dict, created_by: str | None) -> dict:
     supabase: Client = get_supabase_client()
+    _normalize_optional_uuid_fields(payload, ("deal_id", "quote_form_id", "issuer_company_id", "project_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
+    if not payload.get("quote_form_id"):
+        raise ValueError("Vui lòng chọn mẫu báo giá.")
+    if not payload.get("deal_id"):
+        raise ValueError("Vui lòng chọn cơ hội trước khi tạo báo giá.")
     form = supabase.table(FORMS_TABLE).select("*").eq("id", payload["quote_form_id"]).single().execute().data
     if not form or form["status"] != "active":
         raise ValueError("Mẫu báo giá không còn hoạt động.")
@@ -1305,17 +2235,36 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
 
     is_villa = form["layout_type"] == "villa_solution_package"
     data = dict(payload.get("data") or {})
-    raw_items = payload.get("items") or []
+    _apply_contact_to_quote_data(data, payload.get("deal_id"))
+    # Tien te CAP QUOTE + dong bang ty gia (migration 169). Quote cu / khong gui
+    # currency -> VND, exchange_rate=NULL, hanh vi y het truoc day.
+    # CHI tin `currency` gui RO (data.currency la text go tay, KHONG phai nguon tien te he thong).
+    currency = qc.normalize_currency(payload["currency"]) if payload.get("currency") else "VND"
+    exchange_rate, currency_snapshot = _resolve_quote_fx(currency, payload.get("exchange_rate"))
+    data["currency"] = currency
+    # "Gia da gom VAT" (migration 204) - gia tri quote-level, mac dinh
+    # 'exclusive' (hanh vi cu). CHI tin payload["price_mode"] gui RO (khong
+    # phai data.priceMode - theo dung quy uoc currency o tren: field anh
+    # huong cong thuc tinh tien phai la cot THAT, khong phai JSON tu do).
+    price_mode = payload.get("price_mode") if payload.get("price_mode") in ("exclusive", "inclusive") else "exclusive"
+    raw_items = _enrich_bundle_catalog_quote_items(payload.get("items") or [], currency, exchange_rate)
 
     if is_villa:
         subtotal, vat, total = _calculate_villa_totals(data.get("solutionItems") or [])
         items_to_insert: list[dict] = []
     else:
-        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items)
+        items_to_insert, subtotal, vat, total = _flatten_computed_items(raw_items, currency, price_mode)
+        overall_disc = _to_decimal(0)
+        if data.get("overallDiscountType") == "amount" or (data.get("overallDiscountAmount") is not None and float(data.get("overallDiscountAmount") or 0) > 0):
+            overall_disc = min(_to_decimal(subtotal), _to_decimal(data.get("overallDiscountAmount") or 0))
+        elif payload.get("overall_discount_percent"):
+            overall_disc = _round_vnd(_to_decimal(subtotal) * _to_decimal(payload.get("overall_discount_percent") or 0) / 100, currency)
+        total = _round_vnd((_to_decimal(subtotal) - overall_disc) + _to_decimal(vat), currency)
 
     quote_number = _next_quote_number()
     now = _now_iso()
     insert_data = {
+        "instance": _crm_instance(),
         "deal_id": payload.get("deal_id"),
         "quote_form_id": form["id"],
         "issuer_company_id": payload.get("issuer_company_id"),
@@ -1333,7 +2282,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         "subtotal_amount": subtotal,
         "vat_amount": vat,
         "total_amount": total,
-        "currency": str(data.get("currency") or "VND"),
+        "currency": currency,
         "issued_at": now,
         "public_token": None,
         "public_enabled": False,
@@ -1349,6 +2298,21 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # khong doi update_quote() duy nhat.
         "quote_type_codes": payload.get("quote_type_codes") or [],
     }
+    if currency != "VND":
+        # Chi them khi that su la ngoai te: DB chua chay migration 169 van tao duoc
+        # bao gia VND nhu cu (PostgREST bao loi neu gui cot khong ton tai).
+        insert_data["exchange_rate"] = exchange_rate
+        insert_data["currency_snapshot"] = currency_snapshot
+    if price_mode != "exclusive":
+        # Cung quy uoc: chi them cot price_mode khi that su 'inclusive', de
+        # DB chua chay migration 204 (chua co cot nay) van tao duoc bao gia
+        # 'exclusive' (mac dinh) nhu cu, khong bi PostgREST bao loi cot la.
+        insert_data["price_mode"] = price_mode
+    logger.info(
+        "tenant_write table=quotes operation=insert settings.crm_instance=%s resolved_instance=%s",
+        _crm_instance(),
+        insert_data["instance"],
+    )
     quote_row = supabase.table(QUOTES_TABLE).insert(insert_data).execute().data[0]
 
     inserted_items = []
@@ -1361,9 +2325,10 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "row_type": item.get("row_type") or "item",
             "description": item.get("description") or "",
             "service_description": item.get("service_description") or None,
+            "warranty_scope": item.get("warranty_scope") or None,
             "unit": item.get("unit"),
             "quantity": float(item.get("quantity") or 0),
-            "unit_price": float(item.get("unit_price") or 0),
+            "unit_price": _nullable_float(item.get("unit_price")),
             "discount_percent": item["discount_percent"],
             "discount_amount": item["discount"],
             "amount_after_discount": item["after_discount"],
@@ -1378,6 +2343,13 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
             "unit_price_usd": item.get("unit_price_usd"),
             "exchange_rate": item.get("exchange_rate"),
             "unit_price_vnd": item.get("unit_price_vnd"),
+            "price_book_item_id": item.get("price_book_item_id") or None,
+            "price_book_version_id": item.get("price_book_version_id") or None,
+            "price_book_snapshot": item.get("price_book_snapshot"),
+            "cost_override_reason": item.get("cost_override_reason"),
+            "cost_override_by": item.get("cost_override_by") or None,
+            "cost_override_at": item.get("cost_override_at"),
+            "cost_price_original": item.get("cost_price_original"),
         }
         # Chi them cost_price/markup_percent (migration 086) vao payload INSERT
         # khi THAT SU co gia tri - neu luon them ca key voi gia tri None,
@@ -1386,6 +2358,18 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         if item.get("cost_price") is not None:
             row["cost_price"] = item["cost_price"]
             row["markup_percent"] = item.get("markup_percent")
+        if item.get("cost_price_vnd") is not None:
+            row["cost_price_vnd"] = item["cost_price_vnd"]
+        # Chu ky (migration 189) - chi them key khi THAT SU co gia tri, dung
+        # pattern voi cost_price o tren: tranh loi "column does not exist" tren
+        # DB CHUA chay migration 189 cho hang muc KHONG dung tinh nang nay.
+        if item.get("billing_cycle") is not None:
+            row["billing_cycle"] = item["billing_cycle"]
+            row["billing_term_months"] = item.get("billing_term_months")
+        if item.get("catalog_monthly_price_vnd") is not None:
+            row["catalog_monthly_price_vnd"] = item["catalog_monthly_price_vnd"]
+        if item.get("catalog_annual_commit_monthly_price_vnd") is not None:
+            row["catalog_annual_commit_monthly_price_vnd"] = item["catalog_annual_commit_monthly_price_vnd"]
         inserted = supabase.table(ITEMS_TABLE).insert(row).execute().data[0]
         inserted_items.append(inserted)
         inserted_ids_by_flat_index[index] = inserted["id"]
@@ -1398,7 +2382,7 @@ def create_quote(payload: dict, created_by: str | None) -> dict:
         # Chua duyet -> chi gan FK quote_id de Deal card thay ngay bao gia "Chua
         # duyet", KHONG ghi last_attachment_url/estimated_budget (chua co public
         # url that, chua chac chan gia da chot).
-        supabase.table("customer_leads").update({"quote_id": quote_row["id"]}).eq("id", quote_row["deal_id"]).execute()
+        supabase.table("customer_leads").update({"quote_id": quote_row["id"]}).eq("id", quote_row["deal_id"]).eq("instance", _crm_instance()).execute()
 
     return _row_to_quote(quote_row, inserted_items)
 
@@ -1422,10 +2406,11 @@ _RPC_ERROR_MESSAGES = {
     "quote_item_invalid_cost_price": "Có hạng mục với giá vốn không hợp lệ (không được âm).",
     "quote_item_missing_cost_price": "Có hạng mục chưa nhập giá vốn — nhập giá vốn hoặc đánh dấu \"Không áp dụng giá vốn\" trước khi bàn giao.",
     "quote_handoff_checklist_incomplete": "Checklist bàn giao (Scope/Cost/Timeline/Assumption) chưa đủ 4 mục.",
-    "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (phải > 0).",
-    "quote_item_invalid_markup": "Có hạng mục với markup không hợp lệ (thấp hơn -100%).",
+    "quote_item_invalid_unit_price": "Có hạng mục với giá bán không hợp lệ (không được âm hoặc để trống).",
+    "quote_item_invalid_markup": "Có hạng mục với Markup không hợp lệ (nếu nhập thì không được thấp hơn -100%).",
     "quote_missing_payment_terms": "Chưa chọn Điều khoản thanh toán — vào mục \"Thanh toán\" (dropdown số ngày) để chọn, không phải \"+ Ghi chú bổ sung\".",
     "quote_invalid_total_amount": "Tổng tiền tính lại không hợp lệ.",
+    "quote_not_published": "Báo giá chưa từng được phát hành, không thể mở lại link — hãy Phát hành trước.",
 }
 
 
@@ -1443,18 +2428,33 @@ def _validate_deal_project_consistency(deal_id: str | None, project_id: str | No
     (1) Du an (neu co) phai thuoc DUNG khach hang cua Co hoi dang gan; (2) neu
     Co hoi do da tu thuoc san 1 Du an KHAC (customer_leads.project_id) thi
     Du an dang chon phai TRUNG voi Du an do, khong duoc chon lech.
-    Bo qua (khong chan) khi thieu du lieu de so sanh - an toan hon doan sai,
-    dung tinh than "_validate_project_matches_quote_customer" cu."""
-    if not deal_id or not project_id:
+    Neu co deal_id thi deal phai nam trong dung instance hien tai; project_id
+    (neu co) phai khop customer cua deal."""
+    if not deal_id:
         return
     supabase = get_supabase_client()
-    deal_row = supabase.table("customer_leads").select("customer_id, project_id").eq("id", deal_id).maybe_single().execute()
+    deal_row = (
+        supabase.table("customer_leads")
+        .select("customer_id, project_id")
+        .eq("id", deal_id)
+        .eq("instance", _crm_instance())
+        .maybe_single()
+        .execute()
+    )
     deal_data = deal_row.data if deal_row else None
     if not deal_data:
+        raise ValueError("Không tìm thấy cơ hội CRM trong instance hiện tại.")
+    if not project_id:
         return
     deal_customer_id = deal_data.get("customer_id")
     if deal_customer_id:
-        project_row = supabase.table("projects").select("customer_id").eq("id", project_id).maybe_single().execute()
+        project_row = (
+            supabase.table("projects")
+            .select("customer_id")
+            .eq("id", project_id)
+            .maybe_single()
+            .execute()
+        )
         if not project_row or not project_row.data:
             raise ValueError("Không tìm thấy dự án.")
         if project_row.data.get("customer_id") != deal_customer_id:
@@ -1469,7 +2469,14 @@ def _validate_project_matches_quote_customer(quote_id: str, project_id: str) -> 
     cho _validate_deal_project_consistency() (dung 1 nguon logic voi
     create_quote, tranh lech quy tac giua tao moi/cap nhat)."""
     supabase = get_supabase_client()
-    quote_row = supabase.table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).maybe_single().execute()
+    quote_row = (
+        supabase.table(QUOTES_TABLE)
+        .select("deal_id")
+        .eq("id", quote_id)
+        .eq("instance", _crm_instance())
+        .maybe_single()
+        .execute()
+    )
     deal_id = quote_row.data.get("deal_id") if quote_row else None
     _validate_deal_project_consistency(deal_id, project_id)
 
@@ -1493,6 +2500,87 @@ def _raw_items_for_rpc(raw_items: list[dict]) -> list[dict]:
     return roots
 
 
+def _sync_computed_item_discounts_and_totals(
+    quote_id: str,
+    rpc_items: list[dict],
+    effective_currency: str,
+    quote_data: dict | None = None,
+    overall_discount_pct: float | None = None,
+    price_mode: str = "exclusive",
+) -> None:
+    """RPC quote_update (SQL) tính discount_amount = ROUND(subtotal * discount_percent / 100).
+    Khi người dùng nhập giảm giá bằng số tiền cố định (VNĐ/USD) hoặc có giảm giá toàn báo giá,
+    discount_percent đã bị làm tròn nên phép nhân ngược trong SQL bị lệch. Hàm này ghi đè lại chính xác
+    discount_amount, amount_after_discount, vat_amount, total_amount của từng dòng và subtotal_amount,
+    vat_amount, total_amount của báo giá.
+
+    price_mode (migration 204): RPC quote_update (SQL) KHONG biet "gia da gom
+    VAT" - no luon tinh subtotal = qty*unit_price (exclusive-only). Khi
+    price_mode='inclusive', ket qua RPC luon SAI nen BAT BUOC phai chay lai
+    pass Python nay de ghi de - ep has_fixed_diff=True vo dieu kien, khong
+    phu thuoc cac check discount/vat o duoi (nhung check do van giu nguyen,
+    chi la 1 nguyen nhan KHAC co the cung lam has_fixed_diff=True)."""
+    if not rpc_items:
+        return
+    computed_flat, calc_sub, calc_vat, calc_tot = _flatten_computed_items(rpc_items, effective_currency, price_mode)
+    has_fixed_diff = price_mode == "inclusive"
+    for comp_row in computed_flat:
+        if comp_row.get("row_type") == "section":
+            continue
+        if comp_row.get("discount_type") == "amount" or comp_row.get("discountType") == "amount":
+            has_fixed_diff = True
+            break
+        if comp_row.get("vat_amount") is not None or comp_row.get("vatAmount") is not None:
+            has_fixed_diff = True
+            break
+        if comp_row.get("discount_amount") is not None or comp_row.get("discountAmount") is not None:
+            pct_discount = _round_vnd(
+                _to_decimal(comp_row.get("subtotal") or 0) * _to_decimal(comp_row.get("discount_percent") or 0) / 100,
+                effective_currency,
+            )
+            if float(comp_row.get("discount") or 0) != float(pct_discount or 0):
+                has_fixed_diff = True
+                break
+
+    overall_disc = _to_decimal(0)
+    if quote_data and (quote_data.get("overallDiscountType") == "amount" or (quote_data.get("overallDiscountAmount") is not None and float(quote_data.get("overallDiscountAmount") or 0) > 0)):
+        has_fixed_diff = True
+        overall_disc = min(_to_decimal(calc_sub), _to_decimal(quote_data.get("overallDiscountAmount") or 0))
+    elif overall_discount_pct is not None and float(overall_discount_pct) > 0:
+        has_fixed_diff = True
+        overall_disc = _round_vnd(_to_decimal(calc_sub) * _to_decimal(overall_discount_pct) / 100, effective_currency)
+
+    calc_tot = _round_vnd((_to_decimal(calc_sub) - overall_disc) + _to_decimal(calc_vat), effective_currency)
+
+    if not has_fixed_diff:
+        return
+
+    supabase: Client = get_supabase_client()
+    db_tree = _raw_items_for_rpc(_quote_items(quote_id))
+    db_flat = [node for root in db_tree for node in (root, *(root.get("children") or []))]
+    for db_row, comp_row in zip(db_flat, computed_flat):
+        if comp_row.get("row_type") == "section":
+            continue
+        if (
+            float(db_row.get("discount_amount") or 0) != float(comp_row.get("discount") or 0)
+            or float(db_row.get("amount_after_discount") or 0) != float(comp_row.get("after_discount") or 0)
+            or float(db_row.get("vat_amount") or 0) != float(comp_row.get("vat") or 0)
+            or float(db_row.get("total_amount") or 0) != float(comp_row.get("total") or 0)
+        ):
+            supabase.table(ITEMS_TABLE).update({
+                "discount_amount": comp_row["discount"],
+                "amount_after_discount": comp_row["after_discount"],
+                "vat_amount": comp_row["vat"],
+                "total_amount": comp_row["total"],
+            }).eq("id", db_row["id"]).execute()
+
+    supabase.table(QUOTES_TABLE).update({
+        "subtotal_amount": calc_sub,
+        "vat_amount": calc_vat,
+        "total_amount": calc_tot,
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+
+
 def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     """CHU Y AN TOAN (bug that da gay MAT TOAN BO hang muc + tong tien mot
     quote that trong phien nay, phat hien qua "GIA KHACH ve 0"): RPC
@@ -1502,11 +2590,40 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
     (vd chi doi `data`/`issuer_company_id`) - VO TINH xoa sach hang muc that
     su cua quote. Gio PHAI truy lai items HIEN CO va truyen nguyen ven cho
     RPC trong truong hop nay, KHONG duoc mac dinh ve []."""
+    current_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
+    # Villa keeps its commercial rows in data.solutionItems, not quote_items.
+    # quote_update is shared and recomputes totals from p_items, therefore a
+    # metadata-only Villa save would otherwise persist 0 when p_items is empty.
+    # Calculate from the effective snapshot and restore those canonical totals
+    # after the shared RPC. Standard quotes remain entirely RPC-calculated.
+    is_villa = current_quote.get("formSnapshot", {}).get("layoutType") == "villa_solution_package"
+    villa_totals: tuple[float, float, float] | None = None
+    if is_villa:
+        effective_data = dict(current_quote.get("data") or {})
+        if payload.get("data") is not None:
+            effective_data.update(payload["data"])
+        villa_totals = _calculate_villa_totals(effective_data.get("solutionItems") or [])
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
+    effective_currency = current_quote.get("currency") or "VND"
+    effective_rate = current_quote.get("exchangeRate")
+    # "Gia da gom VAT" (migration 204) - khong can buoc "resend items" nhu
+    # currency (khong rescale unitPrice gi ca, chi doi cach dien giai), nen
+    # chi can lay gia tri hien tai/moi, KHONG can ham _apply_*_change rieng.
+    effective_price_mode = (
+        payload.get("price_mode")
+        if payload.get("price_mode") in ("exclusive", "inclusive")
+        else (current_quote.get("priceMode") or "exclusive")
+    )
+    if previous_fx is not None:
+        effective_currency = qc.normalize_currency(payload.get("currency"))
+        effective_rate = qc.to_rate(payload.get("exchange_rate")) or qc.to_rate(default_usd_vnd_rate())
     if items_changed:
-        rpc_items = [item for item in items]
+        rpc_items = _enrich_bundle_catalog_quote_items([item for item in items], effective_currency, effective_rate)
     else:
         rpc_items = _raw_items_for_rpc(_quote_items(quote_id))
     changes = {"data_changed": payload.get("data") is not None, "items_changed": items_changed}
@@ -1520,7 +2637,39 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
+
+    if villa_totals is not None:
+        subtotal, vat, total = villa_totals
+        supabase.table(QUOTES_TABLE).update({
+            "subtotal_amount": subtotal,
+            "vat_amount": vat,
+            "total_amount": total,
+        }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+            effective_price_mode,
+        )
+    elif effective_price_mode == "inclusive":
+        # Quote THUONG (khong phai villa) o "inclusive" mode - RPC quote_update
+        # (SQL) khong biet tach VAT ngay ca khi chi luu nhap (khong approve),
+        # nen van phai chay pass Python nay o day thay vi doi toi luc duyet
+        # (khac voi standard-exclusive, von CHAP NHAN de RPC tinh tam, chi
+        # dung lai dung o luc duyet - inclusive thi SAI tu luc nhap, khong
+        # the doi, Sale se thay so sai NGAY khi luu nhap neu khong sua o day).
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+            effective_price_mode,
+        )
 
     # Du an + SLA due date (migration 097) - CHUA nam trong RPC quote_update
     # (chi la metadata, khong can recompute gia/VAT nhu cac RPC khac) - update
@@ -1537,6 +2686,26 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         direct_fields["sla_due_at"] = payload.get("sla_due_at")
     if "overall_discount_percent" in payload:
         direct_fields["overall_discount_percent"] = payload.get("overall_discount_percent")
+    if "price_mode" in payload and payload.get("price_mode") in ("exclusive", "inclusive"):
+        direct_fields["price_mode"] = payload.get("price_mode")
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24, "chọn Markee thì mẫu
+    # báo giá auto fill mẫu thuộc đơn vị phát hành đó") - truoc gio quote_form_id
+    # CHI gan duoc luc TAO (create_quote), khong co cach doi lai sau khi quote da
+    # ton tai. Them o day theo DUNG pattern project_id/sla_due_at (update THANG
+    # vao bang quotes, KHONG qua RPC quote_update - form chi la metadata tro
+    # schema, khong can recompute gia/VAT). Doi ca form_schema_version +
+    # form_snapshot cung luc (giong het create_quote()) - form_snapshot la BAN
+    # SNAPSHOT dung de RENDER (PDF/public/bang hang muc), khong doi no thi doi
+    # quote_form_id se chi doi "nhan", giao dien van hien schema mau CU.
+    if "quote_form_id" in payload:
+        new_form_id = payload.get("quote_form_id")
+        if new_form_id and new_form_id != current_quote.get("quoteFormId"):
+            form = supabase.table(FORMS_TABLE).select("*").eq("id", new_form_id).single().execute().data
+            if not form or form["status"] != "active":
+                raise ValueError("Mẫu báo giá không còn hoạt động.")
+            direct_fields["quote_form_id"] = form["id"]
+            direct_fields["form_schema_version"] = form["schema_version"]
+            direct_fields["form_snapshot"] = form["schema_json"]
     quote_type_changed = False
     old_quote_type_codes: list[str] = []
     if "quote_type_codes" in payload:
@@ -1546,13 +2715,18 @@ def update_quote(quote_id: str, payload: dict, actor_id: str | None) -> dict:
         # doc gia tri CU truoc khi ghi de (update() thang khong qua RPC nen
         # khong tu dong co "before" nhu cac thay doi hang muc qua quote_update()).
         current_row = (
-            supabase.table(QUOTES_TABLE).select("quote_type_codes").eq("id", quote_id).maybe_single().execute()
+            supabase.table(QUOTES_TABLE)
+            .select("quote_type_codes")
+            .eq("id", quote_id)
+            .eq("instance", _crm_instance())
+            .maybe_single()
+            .execute()
         )
         old_quote_type_codes = (current_row.data or {}).get("quote_type_codes") or [] if current_row else []
         quote_type_changed = sorted(old_quote_type_codes) != sorted(new_quote_type_codes)
         direct_fields["quote_type_codes"] = new_quote_type_codes
     if direct_fields:
-        supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update(direct_fields).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     if quote_type_changed:
         supabase.table("quote_activity_log").insert({
             "quote_id": quote_id,
@@ -1583,6 +2757,7 @@ def approve_quote(quote_id: str, actor_id: str | None) -> dict:
     du DB dang chay ban RPC nao, (2) khong bao gio de 1 quote 'approved' ket
     dinh o processing_stage cu - CHI set khi processing_stage CHUA o
     ready_to_publish/published (khong bao gio LUI lai tu 'published')."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_approve", {
@@ -1595,7 +2770,7 @@ def approve_quote(quote_id: str, actor_id: str | None) -> dict:
 
     quote = get_quote(quote_id)
     if quote.get("status") == "approved" and quote.get("processingStage") not in _READY_OR_LATER_STAGES:
-        supabase.table(QUOTES_TABLE).update({"processing_stage": "ready_to_publish"}).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update({"processing_stage": "ready_to_publish"}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
         quote = get_quote(quote_id)
     return quote
 
@@ -1604,6 +2779,7 @@ def publish_quote(quote_id: str, actor_id: str | None) -> dict:
     """Phát hành báo giá đã duyệt: sinh/bật public_token/public_enabled THẬT
     ở đây (không còn ở approve), processing_stage -> 'published'. Chỉ sau
     bước này Deal mới được link với public URL thật."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_publish", {
@@ -1628,12 +2804,13 @@ def publish_quote(quote_id: str, actor_id: str | None) -> dict:
     # sua 1 field trong `data`) - update thang cot `data` qua supabase client.
     quote_data = dict(quote.get("data") or {})
     quote_data["quoteDate"] = _now_iso()
-    supabase.table(QUOTES_TABLE).update({"data": quote_data}).eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).update({"data": quote_data}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     quote["data"] = quote_data
     return quote
 
 
 def cancel_quote(quote_id: str, actor_id: str | None, reason: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_cancel", {
@@ -1645,6 +2822,7 @@ def cancel_quote(quote_id: str, actor_id: str | None, reason: str) -> dict:
 
 
 def revoke_public_quote(quote_id: str, actor_id: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_revoke_public", {
@@ -1655,7 +2833,23 @@ def revoke_public_quote(quote_id: str, actor_id: str | None) -> dict:
     return get_quote(quote_id)
 
 
+def enable_public_quote(quote_id: str, actor_id: str | None) -> dict:
+    """"Mở lại link báo giá" - chieu nguoc cua revoke_public_quote() (truoc
+    day CHUA co, chi co "Khoá link" ma khong the mo lai). Giu nguyen
+    public_token cu (khong sinh token moi) - xem migration 115."""
+    _ensure_quote_in_instance(quote_id)
+    supabase: Client = get_supabase_client()
+    try:
+        supabase.rpc("quote_enable_public", {
+            "p_quote_id": quote_id, "p_actor_id": actor_id,
+        }).execute()
+    except Exception as exc:
+        _raise_friendly_rpc_error(exc)
+    return get_quote(quote_id)
+
+
 def soft_delete_quote(quote_id: str, actor_id: str | None, reason: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_soft_delete", {
@@ -1667,6 +2861,7 @@ def soft_delete_quote(quote_id: str, actor_id: str | None, reason: str | None) -
 
 
 def restore_quote(quote_id: str, actor_id: str | None) -> dict:
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_restore", {
@@ -1682,6 +2877,7 @@ def hard_delete_quote(quote_id: str, actor_id: str | None, quote_number_confirm:
     admin/superadmin thật. Backend tự đọc lại quote_number và đối chiếu với
     quote_number_confirm client gửi (double-check) trước khi RPC ghi
     quote_deletion_audit rồi mới DELETE thật, cùng 1 transaction Postgres."""
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_hard_delete", {
@@ -1696,6 +2892,7 @@ def hard_delete_quote(quote_id: str, actor_id: str | None, quote_number_confirm:
 
 
 def request_quote_changes(quote_id: str, actor_id: str | None, target_stage: str, reason: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         supabase.rpc("quote_request_changes", {
@@ -1718,9 +2915,13 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
     tu p_items. Neu caller khong gui "items" (vd chi doi data/issuer_company_id
     roi bam Duyet), PHAI truyen lai items HIEN CO thay vi [] - khong thi bam
     Duyet se xoa sach hang muc."""
+    current_quote = _ensure_quote_in_instance(quote_id)
+    _normalize_optional_uuid_fields(payload, ("issuer_company_id", "project_id", "quote_form_id"))
+    _normalize_quote_item_uuid_fields(payload.get("items"))
     supabase: Client = get_supabase_client()
     items = payload.get("items")
     items_changed = items is not None
+    previous_fx = _apply_quote_currency_change(quote_id, current_quote, payload)
     if items_changed:
         rpc_items = [item for item in items]
     else:
@@ -1737,7 +2938,28 @@ def update_and_approve_quote(quote_id: str, payload: dict, actor_id: str | None)
             "p_issuer_company_id": payload.get("issuer_company_id"),
         }).execute()
     except Exception as exc:
+        _rollback_quote_currency(quote_id, previous_fx)
         _raise_friendly_rpc_error(exc)
+    is_villa = current_quote.get("formSnapshot", {}).get("layoutType") == "villa_solution_package"
+    if not is_villa:
+        effective_currency = (
+            qc.normalize_currency(payload.get("currency"))
+            if previous_fx is not None
+            else (current_quote.get("currency") or "VND")
+        )
+        effective_price_mode = (
+            payload.get("price_mode")
+            if payload.get("price_mode") in ("exclusive", "inclusive")
+            else (current_quote.get("priceMode") or "exclusive")
+        )
+        _sync_computed_item_discounts_and_totals(
+            quote_id,
+            rpc_items,
+            effective_currency,
+            payload.get("data"),
+            payload.get("overall_discount_percent"),
+            effective_price_mode,
+        )
     quote = get_quote(quote_id)
     if quote.get("dealId"):
         link_quote_to_deal(quote_id, quote["dealId"], {
@@ -1761,6 +2983,7 @@ def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
     Trả thêm 'created' (False nếu chỉ redirect tới bản nháp có sẵn, không tạo
     mới) và thông tin bản nguồn thật sự đã copy (để FE cảnh báo nếu khác
     clicked_quote_id, vd bấm ở V1 nhưng nguồn thật là V2)."""
+    _ensure_quote_in_instance(clicked_quote_id)
     supabase: Client = get_supabase_client()
     try:
         result = supabase.rpc("quote_create_version", {
@@ -1785,17 +3008,66 @@ def create_quote_version(clicked_quote_id: str, actor_id: str | None) -> dict:
 
 def list_quote_versions(chain_id: str) -> list[dict]:
     """Toàn bộ phiên bản (V1..Vn) của 1 chuỗi báo giá, mới nhất trước - dùng cho
-    khối "Lịch sử phiên bản" (QuoteDetailPage) và mini-card Deal drawer."""
+    khối "Lịch sử phiên bản" (QuoteDetailPage), mini-card Deal drawer, VÀ
+    dropdown "xem phiên bản cũ" ở Quote Center + trang Khách hàng
+    (toggleExpandVersions/renderOlderVersionRows, toggleExpandQuoteVersions).
+
+    Feedback (2026-09-24): dropdown phiên bản cũ phải hiện ĐỦ thông tin như
+    phiên bản hiện tại (Dự án/Presale/Sale/giá vốn/margin), KHÔNG chỉ số báo
+    giá + trạng thái - nên embed project/technicalOwner/quoteOwner + load
+    items thật (để hasCostData/costTotal/grossMarginPercent tính đúng, thay
+    vì luôn rỗng do truyền items=[] như code cũ) - đúng pattern đã dùng ở
+    list_quotes_by_phase() (Quote Center danh sách chính)."""
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(QUOTES_TABLE)
         .select("*")
         .eq("version_chain_id", chain_id)
+        .eq("instance", _crm_instance())
         .is_("deleted_at", "null")
         .order("version_number", desc=True)
         .execute()
     )
-    return [_row_to_quote(row, []) for row in (result.data or [])]
+    rows = result.data or []
+    if not rows:
+        return []
+
+    project_ids = list({row["project_id"] for row in rows if row.get("project_id")})
+    projects_by_id: dict[str, dict] = {}
+    if project_ids:
+        proj_result = (
+            supabase.table("projects")
+            .select("id, project_code, name, status")
+            .in_("id", project_ids)
+            .execute()
+        )
+        projects_by_id = {p["id"]: p for p in (proj_result.data or [])}
+
+    owner_ids = list(
+        {row["technical_owner_id"] for row in rows if row.get("technical_owner_id")}
+        | {row["quote_owner_id"] for row in rows if row.get("quote_owner_id")}
+    )
+    owners_by_id: dict[str, dict] = {}
+    if owner_ids:
+        owner_result = supabase.table("app_users").select("id, name").in_("id", owner_ids).execute()
+        owners_by_id = {u["id"]: u for u in (owner_result.data or [])}
+
+    quotes: list[dict] = []
+    for row in rows:
+        quote = _row_to_quote(row, _quote_items(row["id"]))
+        quote["customerPriceBeforeVat"] = quote.get("netRevenue")
+        project_row = projects_by_id.get(row.get("project_id")) if row.get("project_id") else None
+        quote["project"] = (
+            {"id": project_row["id"], "code": project_row.get("project_code"), "name": project_row.get("name"), "status": project_row.get("status")}
+            if project_row
+            else None
+        )
+        tech_owner = owners_by_id.get(row.get("technical_owner_id")) if row.get("technical_owner_id") else None
+        quote["technicalOwner"] = {"id": tech_owner["id"], "name": tech_owner.get("name")} if tech_owner else None
+        quote_owner_row = owners_by_id.get(row.get("quote_owner_id")) if row.get("quote_owner_id") else None
+        quote["quoteOwner"] = {"id": quote_owner_row["id"], "name": quote_owner_row.get("name")} if quote_owner_row else None
+        quotes.append(quote)
+    return quotes
 
 
 HANDOFF_TABLE = "quote_handoff_checklist"
@@ -1805,6 +3077,61 @@ _RPC_ERROR_MESSAGES.update({
     "invalid_processing_stage": "Bước xử lý không hợp lệ.",
     "processing_stage_cannot_go_backward": "Không thể lùi về bước xử lý trước đó.",
 })
+
+
+
+# Truong "ho so khach hang" trong snapshot data cua bao gia (lay tu crm_customers luc tao bao gia).
+_CUSTOMER_SNAPSHOT_FIELD_MAP = {
+    "company_name": "customerCompanyName",
+    "address": "customerAddress",
+    "tax_code": "customerTaxCode",
+}
+
+
+def sync_customer_snapshot_to_quotes(customer_id: str | None = None, customer_row: dict | None = None, deal_ids: list[str] | None = None) -> int:
+    """Dong bo thong tin Khach hang (ten cong ty/dia chi/MST) vao snapshot `data` cua MOI bao gia
+    thuoc khach hang/co hoi do - sua ho so khach hang la moi bao gia (ke ca cu) cap nhat theo.
+
+    Chi ghi de cac key co gia tri khong rong trong `customer_row` (khong xoa du lieu quote khi ho so de trong);
+    "Kinh gui"/SDT/Email (theo Nguoi lien he) khong dong bo vi do Contact quyet dinh. Loi o day
+    KHONG duoc lam hong thao tac sua khach hang -> nuot loi + log. Tra ve so bao gia da cap nhat."""
+    try:
+        row = customer_row or {}
+        updates = {
+            snap_key: str(row.get(col)).strip()
+            for col, snap_key in _CUSTOMER_SNAPSHOT_FIELD_MAP.items()
+            if row.get(col) is not None and str(row.get(col)).strip()
+        }
+        if not updates:
+            return 0
+        supabase: Client = get_supabase_client()
+        instance = _crm_instance()
+        ids = list(deal_ids or [])
+        if customer_id:
+            deals = (
+                supabase.table("customer_leads").select("id")
+                .eq("customer_id", customer_id).eq("instance", instance).execute().data or []
+            )
+            ids.extend(d["id"] for d in deals)
+        ids = list({i for i in ids if i})
+        if not ids:
+            return 0
+        quotes = (
+            supabase.table(QUOTES_TABLE).select("id, data")
+            .eq("instance", instance).in_("deal_id", ids).is_("deleted_at", "null").execute().data or []
+        )
+        changed = 0
+        for q in quotes:
+            data = dict(q.get("data") or {})
+            if all(data.get(k) == v for k, v in updates.items()):
+                continue
+            data.update(updates)
+            supabase.table(QUOTES_TABLE).update({"data": data}).eq("id", q["id"]).execute()
+            changed += 1
+        return changed
+    except Exception as exc:  # noqa: BLE001 - dong bo phu, khong chan luong chinh
+        logger.warning("sync_customer_snapshot_to_quotes failed: %s", exc)
+        return 0
 
 
 def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) -> dict:
@@ -1822,6 +3149,35 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
     current = get_quote(quote_id)
     is_first_technical_handoff = stage == "technical" and current.get("processingStage") == "request"
     if is_first_technical_handoff:
+        deal_id = current.get("dealId")
+        if not deal_id:
+            raise ValueError("Cần chọn cơ hội CRM trước khi bàn giao báo giá.")
+        deal_result = (
+            supabase.table("customer_leads")
+            .select("customer_id")
+            .eq("id", deal_id)
+            .eq("instance", _crm_instance())
+            .maybe_single()
+            .execute()
+        )
+        if not deal_result or not deal_result.data or not deal_result.data.get("customer_id"):
+            raise ValueError("Cơ hội CRM phải được liên kết với khách hàng trước khi bàn giao báo giá.")
+        if not current.get("quoteFormId"):
+            raise ValueError("Cần chọn mẫu báo giá trước khi bàn giao.")
+        if not current.get("technicalOwnerId"):
+            raise ValueError("Cần chọn Presale trước khi bàn giao báo giá.")
+        if not current.get("quoteOwnerId"):
+            raise ValueError("Cần chọn Sale trước khi bàn giao báo giá.")
+
+        def has_priced_item(rows: list[dict]) -> bool:
+            return any(
+                row.get("rowType") != "section" or has_priced_item(row.get("children") or [])
+                for row in rows
+            )
+
+        if not has_priced_item(current.get("items") or []):
+            raise ValueError("Cần thêm ít nhất một hạng mục trước khi bàn giao báo giá.")
+
         sla_due_at = current.get("slaDueAt")
         if not sla_due_at:
             raise ValueError("Cần đặt SLA / hạn hoàn tất nội bộ trước khi gửi yêu cầu xử lý.")
@@ -1844,9 +3200,24 @@ def set_quote_processing_stage(quote_id: str, actor_id: str | None, stage: str) 
         _raise_friendly_rpc_error(exc)
 
     if is_first_technical_handoff and not current.get("slaStartedAt"):
-        supabase.table(QUOTES_TABLE).update({"sla_started_at": "now()"}).eq("id", quote_id).is_("sla_started_at", "null").execute()
+        supabase.table(QUOTES_TABLE).update({"sla_started_at": "now()"}).eq("id", quote_id).eq("instance", _crm_instance()).is_("sla_started_at", "null").execute()
 
     return get_quote(quote_id)
+
+
+def _validate_quote_owner_assignment(user_id: str | None, allowed_roles: tuple[str, ...], label: str) -> None:
+    """Phase 3.5 A4: assign_quote_owner() truoc day khong kiem tra gi ca -
+    payload sua tay van gan duoc 1 user quote_business_role=NULL/sai vai tro
+    lam technical/quote owner. Cung 1 pattern voi _validate_manager_id()
+    (supabase_project_service.py) - tu choi som bang thong bao tieng Viet
+    thay vi de quote roi vao trang thai assignment mo coi."""
+    if not user_id:
+        return
+    user = get_member_option_by_id(user_id)
+    if not user:
+        raise ValueError(f"{label} không hợp lệ hoặc không còn tồn tại.")
+    if user.get("quoteBusinessRole") not in allowed_roles:
+        raise ValueError(f"{label} phải có vai trò báo giá phù hợp.")
 
 
 def assign_quote_owner(
@@ -1859,6 +3230,21 @@ def assign_quote_owner(
     atomic voi tinh lai tong tien). `assign_technical`/`assign_quote_owner_field`
     phan biet "khong gui field nay" voi "gui gia tri None de bo gan" (giong
     han che cua issuer company nullable field truoc do)."""
+    _ensure_quote_in_instance(quote_id)
+    # BUG THAT DA GAP (feedback 2026-09-24, kem screenshot "không qua được
+    # bước 2" - alert "Người phụ trách báo giá phải có vai trò báo giá phù
+    # hợp"): commit d326cf10 (2026-09-23) da GOP dropdown Presale/Sale o card
+    # "Phân công & SLA" thanh 1 danh sach hop nhat - CHO PHEP chon bat ky ai
+    # co quote_business_role presale/sale/both vao CA 2 o (xem comment
+    # businessRoleUsers, QuoteWorkspaceModal.tsx) - nhung validate o day VAN
+    # con GIU NGUYEN rieng ("presale","both") cho ky thuat / ("sale","both")
+    # cho bao gia tu TRUOC khi gop, nen chon 1 nguoi CHI co role Presale vao o
+    # Sale (dung nhu FE cho phep) bi tu choi ngay khi bam "Bàn giao" - Update
+    # ca 2 thanh CUNG 1 tap hop day du, khop dung voi FE da cho phep.
+    if assign_technical:
+        _validate_quote_owner_assignment(technical_owner_id, ("presale", "sale", "both"), "Người phụ trách kỹ thuật")
+    if assign_quote_owner_field:
+        _validate_quote_owner_assignment(quote_owner_id, ("presale", "sale", "both"), "Người phụ trách báo giá")
     supabase: Client = get_supabase_client()
     update_data: dict = {"updated_by": actor_id}
     if assign_technical:
@@ -1866,7 +3252,7 @@ def assign_quote_owner(
     if assign_quote_owner_field:
         update_data["quote_owner_id"] = quote_owner_id or None
     if len(update_data) > 1:
-        supabase.table(QUOTES_TABLE).update(update_data).eq("id", quote_id).execute()
+        supabase.table(QUOTES_TABLE).update(update_data).eq("id", quote_id).eq("instance", _crm_instance()).execute()
         supabase.table(ACTIVITY_LOG_TABLE).insert({
             "quote_id": quote_id, "actor_id": actor_id, "action": "owner_assigned",
             "changes": {"technicalOwnerId": technical_owner_id, "quoteOwnerId": quote_owner_id},
@@ -1881,12 +3267,13 @@ def pin_quote(quote_id: str, actor_id: str | None) -> dict:
     KHONG bump updated_at khi UPDATE chi doi dung 3 cot nay, dung yeu cau
     "không sửa giả updated_at/created_at". Quyen CHI Admin da chan o router
     (can_pin_quote) - ham nay khong tu kiem tra lai quyen."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({
         "is_pinned": True,
         "pinned_at": _now_iso(),
         "pinned_by": actor_id,
-    }).eq("id", quote_id).execute()
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     supabase.table(ACTIVITY_LOG_TABLE).insert({
         "quote_id": quote_id, "actor_id": actor_id, "action": "pinned",
         "changes": {},
@@ -1898,12 +3285,13 @@ def unpin_quote(quote_id: str, actor_id: str | None) -> dict:
     """Bo ghim - dua ca 3 cot ve trang thai "chua tung ghim" (is_pinned=false,
     pinned_at/pinned_by=NULL) dung constraint quotes_pin_consistency_check
     (migration 103) - khong de lai dau vet pinned_at cu."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     supabase.table(QUOTES_TABLE).update({
         "is_pinned": False,
         "pinned_at": None,
         "pinned_by": None,
-    }).eq("id", quote_id).execute()
+    }).eq("id", quote_id).eq("instance", _crm_instance()).execute()
     supabase.table(ACTIVITY_LOG_TABLE).insert({
         "quote_id": quote_id, "actor_id": actor_id, "action": "unpinned",
         "changes": {},
@@ -1941,6 +3329,7 @@ def _row_to_handoff(quote_id: str, row: dict | None) -> dict:
 
 
 def get_quote_handoff_checklist(quote_id: str) -> dict:
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     result = supabase.table(HANDOFF_TABLE).select("*").eq("quote_id", quote_id).limit(1).execute()
     row = (result.data or [None])[0]
@@ -1951,6 +3340,7 @@ def save_quote_handoff_checklist(quote_id: str, actor_id: str | None, payload: d
     """Luu checklist ban giao (Scope/Cost/Timeline/Assumption) - upsert qua RPC
     (tu tinh handed_off_at/handed_off_by khi ca 4 muc deu da xac nhan, xem
     quote_save_handoff_checklist migration 085)."""
+    _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
     try:
         result = supabase.rpc("quote_save_handoff_checklist", {
@@ -1989,6 +3379,7 @@ def list_quote_activity_log(quote_id: str) -> list[dict]:
     cancelled/version_created/stage_changed/handoff_updated/owner_assigned) -
     dung cho khoi "Activity & handoff" trong workspace. Actor chi tra id, FE tu
     resolve ten qua danh sach agents da co (khong join ten o backend)."""
+    _ensure_quote_in_instance(quote_id, include_deleted=True)
     supabase: Client = get_supabase_client()
     result = (
         supabase.table(ACTIVITY_LOG_TABLE)
@@ -2009,6 +3400,7 @@ def log_quote_version_reason(quote_id: str, actor_id: str | None, reason: str) -
     nhan tham so ly do nen ghi bang 1 dong INSERT rieng ngay sau khi version
     moi tao xong thanh cong (khong doi lai RPC versioning da on dinh qua nhieu
     migration). Chi chap nhan gia tri that trong danh sach ly do co dinh."""
+    _ensure_quote_in_instance(quote_id)
     if reason not in _VALID_VERSION_REASONS:
         raise ValueError("Lý do tạo phiên bản không hợp lệ.")
     supabase: Client = get_supabase_client()
@@ -2019,11 +3411,11 @@ def log_quote_version_reason(quote_id: str, actor_id: str | None, reason: str) -
 
 
 def delete_quote(quote_id: str) -> None:
+    current = get_quote(quote_id)
     supabase: Client = get_supabase_client()
-    current = supabase.table(QUOTES_TABLE).select("status").eq("id", quote_id).single().execute().data
     if current and current.get("status") == "approved":
         raise ValueError("Báo giá đã duyệt, không thể xoá.")
-    supabase.table(QUOTES_TABLE).delete().eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).delete().eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
 
 def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = None) -> dict:
@@ -2031,8 +3423,9 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
     trên customer_leads — Deal Card/Drawer đọc y hệt như tham chiếu thủ công cũ
     (rowToDeal() phía frontend không cần sửa gì), chỉ khác nguồn dữ liệu giờ là
     quote thật thay vì user tự gõ tay."""
+    linked_quote = _ensure_quote_in_instance(quote_id)
     supabase: Client = get_supabase_client()
-    supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).execute()
+    supabase.table(QUOTES_TABLE).update({"deal_id": deal_id, "updated_at": _now_iso()}).eq("id", quote_id).eq("instance", _crm_instance()).execute()
 
     update_data: dict[str, Any] = {"quote_id": quote_id}
     if reference:
@@ -2042,9 +3435,60 @@ def link_quote_to_deal(quote_id: str, deal_id: str, reference: dict | None = Non
             update_data["last_attachment_name"] = reference["number"]
         if reference.get("totalAmount"):
             current = (
-                supabase.table("customer_leads").select("estimated_budget").eq("id", deal_id).single().execute().data
+                supabase.table("customer_leads")
+                .select("estimated_budget")
+                .eq("id", deal_id)
+                .eq("instance", _crm_instance())
+                .single()
+                .execute()
+                .data
             )
             if not (current or {}).get("estimated_budget"):
-                update_data["estimated_budget"] = reference["totalAmount"]
-    supabase.table("customer_leads").update(update_data).eq("id", deal_id).execute()
+                # estimated_budget cua Deal luon la VND - quote USD phai quy doi theo
+                # ty gia DA DONG BANG cua chinh quote (khong dung ty gia moi).
+                update_data["estimated_budget"] = qc.quote_amount_to_vnd(
+                    reference["totalAmount"], linked_quote.get("currency"), linked_quote.get("exchangeRate")
+                )
+    supabase.table("customer_leads").update(update_data).eq("id", deal_id).eq("instance", _crm_instance()).execute()
     return get_quote(quote_id)
+
+
+# ── Dong bo Sales Pipeline (customer_leads.deal_stage) sau cac su kien bao gia ──────────────────────────────
+# Boc (wrap) cac ham nghiep vu: ket qua cu GIU NGUYEN, chi them buoc tinh lai stage cua DUNG Deal gan voi bao gia
+# (deal_stage_sync_service.sync_deal_stage - khong bao gio raise). Dat o CUOI module de moi noi import/goi noi bo deu di qua ban da boc.
+def _wrap_deal_stage_sync(fn, source: str):
+    import functools
+
+    @functools.wraps(fn)
+    def inner(*args, **kwargs):
+        result = fn(*args, **kwargs)
+        try:
+            deal_id = result.get("dealId") if isinstance(result, dict) else None
+            if not deal_id:
+                quote_id = (result.get("id") if isinstance(result, dict) else None) or (args[0] if args else kwargs.get("quote_id") or kwargs.get("clicked_quote_id"))
+                if quote_id:
+                    rows = get_supabase_client().table(QUOTES_TABLE).select("deal_id").eq("id", quote_id).limit(1).execute().data or []
+                    deal_id = rows[0].get("deal_id") if rows else None
+            if deal_id:
+                from app.modules.all_platform.services.deal_stage_sync_service import sync_deal_stage
+
+                sync_deal_stage(deal_id, source=source)
+
+                from app.modules.all_platform.services.crm_customer_progress_service import recompute_customer_progress
+
+                rows = get_supabase_client().table("customer_leads").select("customer_id").eq("id", deal_id).limit(1).execute().data or []
+                customer_id = rows[0].get("customer_id") if rows else None
+                if customer_id:
+                    recompute_customer_progress(customer_id, source=source)
+        except Exception:  # noqa: BLE001 - dong bo stage khong duoc lam hong thao tac bao gia
+            logger.warning("deal stage sync sau %s that bai", source, exc_info=True)
+        return result
+
+    return inner
+
+
+for _name, _source in (
+    ("create_quote", "tạo báo giá"), ("approve_quote", "duyệt báo giá"), ("cancel_quote", "huỷ báo giá"),
+    ("soft_delete_quote", "xoá báo giá"), ("restore_quote", "khôi phục báo giá"), ("create_quote_version", "tạo phiên bản báo giá"),
+):
+    globals()[_name] = _wrap_deal_stage_sync(globals()[_name], _source)

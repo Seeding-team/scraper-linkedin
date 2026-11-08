@@ -1,8 +1,10 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { paymentPlanAmounts, paymentPlanPercent, visiblePaymentPlan } from '../utils/paymentPlan';
 import type {
   CustomBlock,
+  BundleSnapshotComponent,
   QuoteData,
   QuoteField,
   QuoteItem,
@@ -15,12 +17,35 @@ import {
   calculateItemSubtotal,
   calculateItemTotal,
   calculateItemVat,
-  formatVnd,
-  flattenQuoteItems,
+  calculateOverallDiscountSummary,
+  calculateSectionTotal,
+  formatVnd as formatVndRaw,
 } from '../utils/quoteCalculations';
-import { resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import { formatQuoteMoney, localizeCurrencyLabel, normalizeQuoteCurrency } from '@/lib/currency';
 
-interface Totals {
+// Yeu cau rieng "bỏ 'đ' trong các mẫu báo giá đi" - moi tien te da ghi ro 1
+// LAN duy nhat o dau tai lieu ("TIỀN TỆ VND") + header cot ("(VNĐ)"), lap
+// lai "đ" tren TUNG so trong bang la du thua. Shadow lai formatVnd CHI
+// trong file nay (formatVnd goc o quoteCalculations.ts van giu nguyen "đ"
+// cho moi noi khac dang dung, khong doi hanh vi chung).
+function formatVndPlain(value: unknown): string {
+  return formatVndRaw(value).replace(/\s*đ$/, '');
+}
+
+function formatDiscountPercent(value: unknown): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric === 0) return '';
+  return `${numeric.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')}%`;
+}
+import { ALWAYS_HIDDEN_CALCULATED_KEYS, filterRedundantAmountAfterDiscountColumn, normalizeQuoteColumnLabel, resolveDefaultVisibleColumnKeys, resolveQuoteItemColumns, resolveToggleableColumns } from '../utils/quoteColumns';
+import {
+  getCustomerDisplayFields,
+  resolveVisibleCustomerFieldKeys,
+} from '../utils/quoteCustomerFields';
+import { resolveVisibleSummaryFieldKeys } from '../utils/quoteSummaryFields';
+import { isQuoteDocumentSectionVisible, quoteCustomBlockSectionKey, QUOTE_DOCUMENT_SECTION_KEYS } from '../utils/quoteDocumentSections';
+
+export interface Totals {
   subtotalAmount: number;
   /** Tiền giảm giá (đã tính sẵn = subtotalAmount * discountPercent / 100) - optional
    * để không phá các nơi gọi cũ (villa layout, quote đã lưu trước khi có tính năng
@@ -42,6 +67,76 @@ interface Props {
    * tạo thấy đúng bản thật, không phải bản nội bộ đầy đủ cột. Không ảnh hưởng
    * mode='detail' (trang chi tiết nội bộ luôn hiện đủ cột). */
   respectVisibleColumns?: boolean;
+  /** "Ngày báo giá chỉ hiển thị khi bấm phát hành" (yeu cau rieng) - truoc
+   * khi Admin duyet + phat hanh (processingStage === 'published'), ngay nay
+   * CHUA duoc coi la chinh thuc (co the doi lien tuc trong luc con dang
+   * chinh sua Bước 1/2/3) nen KHONG hien tren tai lieu, tranh khach hieu
+   * nham day la ngay bao gia "chot". Mac dinh false (an) - phai truyen ro
+   * true tu noi goi biet chac quote da published. */
+  isPublished?: boolean;
+  /** BUG THAT DA GAP ("phát hành rồi sao k có số báo giá"): "Số báo giá"
+   * hien thi luon doc tu quoteData.quoteNumber (schema-driven field) nhung
+   * ma bao gia THAT (vd "202609071410") la 1 cot he thong rieng cua Quote
+   * (quote.quoteNumber, tu dong sinh, KHONG BAO GIO duoc dong bo vao
+   * data JSONB o bat ky noi nao trong code) - fieldValue('quoteNumber') vi
+   * vay LUON rong, hien mai placeholder "[Số báo giá]" du da phat hanh.
+   * Truyen thang gia tri THAT tu quote.quoteNumber qua day. */
+  quoteNumber?: string;
+  /** Chiet khau tong (quote.overallDiscountPercent, migration 106) - null/undefined
+   * = khong ap dung (an dong Giam gia tong/Tong sau giam gia). Dung de tinh khoi
+   * "Tong hop gia" moi (xem calculateOverallDiscountSummary) - KHONG anh huong
+   * totals truyen vao (totals van la so goc, phep tinh chiet khau chi xay ra o
+   * tang hien thi trong component nay). */
+  overallDiscountPercent?: number | null;
+  /** Bật khi renderer đang hiển thị với toolbar "chỉnh xoay ngang/dọc, căn
+   * chỉnh cột" luôn hiện sẵn (PublicQuotePage/QuoteDetailPage/QuoteWorkspaceModal)
+   * - cho phép kéo giãn cột NGAY CẢ ở mode 'public' (khách/PDF), không chỉ
+   * 'preview'/'detail' như mặc định (xem allowColumnResize), VÀ mang độ rộng đã
+   * kéo vào bản in thật (mặc định resize chỉ là tiện ích xem màn hình, xem
+   * resizedColumnWidths + rule --col-print-w trong quotes.css). */
+  printPreviewMode?: boolean;
+  /** Hướng giấy khi in - mặc định 'portrait' (giữ nguyên yêu cầu cũ "luôn A4
+   * dọc, không tự đổi hướng"). Người dùng chọn 'landscape' ở màn Xem trước khi
+   * in (xem usesLandscapePrint bên dưới - trước đây luôn hardcode false). */
+  printOrientation?: 'portrait' | 'landscape';
+  /** Do rong cot da LUU truoc do (quoteData.printLayoutPrefs.columnWidths,
+   * nut "Lưu" tren QuoteDetailPage) - dung lam gia tri KHOI TAO cho
+   * resizedColumnWidths thay vi luon bat dau lai tu null (mac dinh %) moi
+   * lan mo trang. Chi doc 1 LAN luc mount (component nay khong tu dong
+   * "nhay" lai theo prop thay doi sau do - doi voi cha muon reset ve gia tri
+   * moi thi remount qua `key`, giong het co che printResetKey da co). */
+  initialColumnWidths?: Record<string, number> | null;
+  /** Bao cho noi goi biet resizedColumnWidths vua doi (moi lan keo xong 1
+   * cot, tren mouseup) - dung de cha giu ban nhap moi nhat, phuc vu nut
+   * "Lưu" (persist xuong DB) tren QuoteDetailPage. KHONG tu goi luc mount
+   * neu chua ai resize. */
+  onColumnWidthsChange?: (widths: Record<string, number>) => void;
+  /** "Người liên hệ" trong khối "Người phụ trách" PHẢI là Sale đang được gán
+   * (quote.quoteOwnerId), KHÔNG dùng field tự do sellerContactName nữa (field
+   * đó có defaultValue cứng "Lan Anh" - đúng bug "tên mặc định" người dùng
+   * báo). Truyền tên Sale ĐÃ RESOLVE (display name thật) từ nơi gọi - canonical
+   * renderer này không tự query user, chỉ hiển thị đúng theo props để mọi nơi
+   * gọi (preview draft/detail/public/PDF) đều đi qua CÙNG 1 cơ chế, không tự
+   * suy luận riêng. undefined/null = quote thật sự chưa có Sale -> fallback
+   * về fieldValue('sellerContactName') cũ (field tự do/default). */
+  contactPersonName?: string | null;
+  /** Tien te CAP QUOTE ('VND' | 'USD', quote.currency). Bo trong -> doc quoteData.currency;
+   * khong nhan ra USD thi coi la VND (bao gia cu render y nhu truoc). Moi so tien, tieu de cot
+   * "(VND)" va khoi tong tien theo tien te nay - KHONG theo mau/template hard-code. */
+  currency?: string | null;
+  /** Cho phép sửa trực tiếp thông tin khách hàng và người liên hệ ngay trên tài liệu */
+  editableRecipient?: boolean;
+  /** Callback lưu các trường thông tin khách hàng / người liên hệ */
+  onSaveRecipientFields?: (fields: Record<string, string>) => void;
+}
+
+function PencilIcon({ className = 'w-3 h-3' }: { className?: string }) {
+  return (
+    <svg className={className} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+      <path d="m15 5 4 4" />
+    </svg>
+  );
 }
 
 function emptySchema(): QuoteSchema {
@@ -130,6 +225,19 @@ function splitLegacyServiceText(raw: unknown): { name: string; rest: string } {
   return { name: match[1].trim(), rest: match[2].trim() };
 }
 
+/** Field nhan dien ben ban duoc snapshot tu Don vi phat hanh (xem
+ * applyIssuerCompanySnapshot trong crm/integrations/quotes/types.ts). */
+const ISSUER_SNAPSHOT_FIELD_KEYS = new Set([
+  'sellerCompanyName',
+  'sellerBrandName',
+  'sellerTaxCode',
+  'sellerAddress',
+  'sellerPhone',
+  'sellerEmail',
+  'sellerWebsite',
+  'sellerLogo',
+]);
+
 const COMPACT_BLOCK_CHAR_LIMIT = 500; // uoc luong noi dung con vua 1 trang A4
 const COMPACT_BLOCK_LINE_LIMIT = 8;   // 500 ky tu nhung xuong dong nhieu van co the rat dai
 
@@ -173,6 +281,130 @@ function formatDescriptionLines(raw: unknown): string[] {
     .filter(Boolean);
 }
 
+const MONEY_COLUMN_KEYS = [
+  'unitPrice',
+  'subtotal',
+  'vatAmount',
+  'total',
+  'amountAfterDiscount',
+  'listPriceUsd',
+  'unitPriceUsd',
+  'unitPriceVnd',
+  // "Giảm giá/Tiết kiệm" (Mẫu ưu đãi combo Markee, xem quoteConfig.ts
+  // promoBundleColumns) - BUG THAT DA GAP: thieu key nay trong danh sach nen
+  // khong duoc white-space:nowrap, chu bi be doc tung ky tu khi cot qua hep
+  // (bang nhieu cot, xem them fix o minWidth ben duoi).
+  'discountAmount',
+];
+
+/** Cot so NGAN (SL/VAT%/Giam gia%) - yeu cau rieng "chữ Số lượng bị rớt chữ
+ * g xuống" (kem anh chup ban in that): cac cot nay TRUOC DAY khong co class
+ * rieng, roi vao nhom "con lai chia deu" cung voi 2 cot tien it hon ~5-7%,
+ * qua hep cho tieu de "SỐ LƯỢNG"/"THUẾ VAT" nen bi ngat GIUA tu (vd
+ * "LƯỢN"+"G" tach roi 2 dong) thay vi ngat dung o khoang trang. Dat rieng
+ * class de co the danh mot % vua du (xem .num-cell trong quotes.css). */
+const SHORT_NUMBER_COLUMN_KEYS = ['quantity', 'vatRate', 'discountPercent'];
+
+function quoteColumnClassName(column: QuoteField): string | undefined {
+  const classes: string[] = [];
+  if (column.type === 'currency' || MONEY_COLUMN_KEYS.includes(column.key)) classes.push('money-cell');
+  else if (column.key === 'unit') classes.push('unit-cell');
+  else if (SHORT_NUMBER_COLUMN_KEYS.includes(column.key)) classes.push('num-cell');
+  if (column.key === 'discountPercent' || column.key === 'vatRate') classes.push('quote-percent-cell', 'quote-percent-cell--red');
+  return classes.length ? classes.join(' ') : undefined;
+}
+
+function bundleSnapshotComponents(item: QuoteItem): BundleSnapshotComponent[] {
+  const snapshot = item.bundleSnapshot as unknown;
+  if (Array.isArray(snapshot)) return snapshot as BundleSnapshotComponent[];
+  if (snapshot && typeof snapshot === 'object' && Array.isArray((snapshot as { components?: unknown }).components)) {
+    return (snapshot as { components: BundleSnapshotComponent[] }).components;
+  }
+  return [];
+}
+
+/** Cac cot GIA bi che tren dong thanh phan con khi "Hien thanh phan con" bat
+ * (2026-10-14) - chi che GIA, giu nguyen ten/mo ta/so luong/don vi. */
+const BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS = new Set([
+  'subtotal', 'total', 'unitPrice', 'unitPriceVnd', 'unitPriceUsd', 'listPriceUsd',
+  'amountAfterDiscount', 'discountAmount', 'vatAmount',
+]);
+
+/** "Ẩn/Hiện GIÁ của thành phần con trên báo giá" (2026-10-14, đổi ý nghĩa - xem
+ * comment type BundleSnapshotValue.showComponentsOnQuote) - TEN thanh phan
+ * con LUON hien (khong con gate o day nua, xem bundleComponentsToDisplayItems),
+ * field nay CHI con quyet dinh co hien GIA rieng tung thanh phan hay khong -
+ * mac dinh FALSE (an gia) ca khi field chua ton tai (bao gia cu). */
+function bundleSnapshotShowComponentPricesOnQuote(item: QuoteItem): boolean {
+  const snapshot = item.bundleSnapshot as unknown;
+  return !!(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot) && (snapshot as { showComponentsOnQuote?: unknown }).showComponentsOnQuote === true);
+}
+
+function appendQuota(label: string, quota?: string | null): string {
+  const cleanQuota = String(quota || '').trim();
+  if (!cleanQuota) return label;
+  if (label.toLowerCase().includes(cleanQuota.toLowerCase())) return label;
+  return `${label} — ${cleanQuota}`;
+}
+
+function bundleComponentToDisplayItem(component: BundleSnapshotComponent, suffix: string, unitMultiplier: number): QuoteItem {
+  const label = component.customerDisplayName || component.name || component.displayText || 'Hạng mục';
+  const serviceDescription = appendQuota(label, component.quota);
+  return {
+    id: `bundle-component-${component.componentId}-${suffix}`,
+    rowType: 'item',
+    serviceDescription,
+    description: component.description || '',
+    unit: component.unit || '',
+    quantity: (component.computedQuantity || component.quantity || 1) * unitMultiplier,
+    unitPrice: component.unitPriceVnd || 0,
+    discountPercent: 0,
+    vatRate: 0,
+    __bundleComponent: true,
+  };
+}
+
+// BUG THAT DA GAP (giong QuoteWorkspaceModal.tsx): ham nay TRUOC DAY luon
+// tinh so luong hang muc con theo DUNG 1 bo bundle, bo qua item.quantity
+// (so bo Sale da chon) - bao gia khach xem (ban in/public) hien thi sai so
+// luong neu Sale mua >1 bo. Nhan them unitMultiplier = item.quantity (toi
+// thieu 1) vao so luong tung dong con, dong bo voi QuoteWorkspaceModal.tsx.
+function bundleComponentsToDisplayItems(item: QuoteItem): QuoteItem[] {
+  const unitMultiplier = Math.max(1, Number(item.quantity) || 1);
+  const components = bundleSnapshotComponents(item)
+    .filter(component => component.showOnQuote !== false)
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+  const renderedPoolKeys = new Set<string>();
+  const rows: QuoteItem[] = [];
+
+  components.forEach((component, index) => {
+    const poolKey = component.quotaPoolKey?.trim();
+    if (poolKey) {
+      if (renderedPoolKeys.has(poolKey)) return;
+      renderedPoolKeys.add(poolKey);
+      const technicalPoolName = component.quotaPoolName || '';
+      const name = component.customerDisplayName || (technicalPoolName.toLowerCase() === 'channel quota' ? 'Kênh kết nối' : technicalPoolName) || component.name || 'Kênh kết nối';
+      rows.push({
+        id: `bundle-pool-${poolKey}-${index}`,
+        rowType: 'item',
+        serviceDescription: appendQuota(name, component.quotaPoolQuota || component.quota),
+        description: '',
+        unit: '',
+        quantity: unitMultiplier,
+        unitPrice: component.unitPriceVnd || 0,
+        discountPercent: 0,
+        vatRate: 0,
+        __bundleComponent: true,
+      });
+      return;
+    }
+    rows.push(bundleComponentToDisplayItem(component, String(index), unitMultiplier));
+  });
+
+  const pricesHidden = !bundleSnapshotShowComponentPricesOnQuote(item);
+  return rows.map(row => ({ ...row, __bundleComponentPricesHidden: pricesHidden }));
+}
+
 export function QuoteDocumentRenderer({
   schemaSnapshot,
   quoteData = {},
@@ -181,15 +413,54 @@ export function QuoteDocumentRenderer({
   totals,
   mode = 'preview',
   respectVisibleColumns = false,
+  isPublished = false,
+  quoteNumber,
+  overallDiscountPercent = null,
+  printPreviewMode = false,
+  printOrientation = 'portrait',
+  initialColumnWidths = null,
+  onColumnWidthsChange,
+  contactPersonName,
+  currency: currencyProp,
+  editableRecipient = false,
+  onSaveRecipientFields,
 }: Props) {
+  // BUG THAT DA GAP (2026-09-22): trang /baogia/{token} crash trang ("This
+  // page couldn't load") khi backend tra ve quoteItems/solutionItems la
+  // `null` THAT SU (khong phai []) - default param `= []` o tren CHI ap
+  // dung khi gia tri la `undefined`, KHONG ap dung cho `null` (dac diem cua
+  // JS/TS default parameter). Nhieu cho ben duoi (quoteItems.flatMap,
+  // filterRedundantAmountAfterDiscountColumn -> .some, v.v.) doc thang
+  // quoteItems ma khong tu guard rieng - chan 1 lan duy nhat o day thay vi
+  // sua tung noi goi rai rac, tranh sot.
+  quoteItems = quoteItems || [];
+  solutionItems = solutionItems || [];
   // Resize cot bang hang muc kieu Excel - CHI cho man hinh xem truoc/chi tiet
   // noi bo (mode 'preview'/'detail', xem allowColumnResize ben duoi), KHONG
   // anh huong ban in/PDF (@media print da ep width qua !important nen inline
   // style o day luon bi ghi de luc in, xem quotes.css) va KHONG hien cho
-  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%).
-  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(null);
+  // khach (mode 'public'). null = chua ai resize, dung CSS mac dinh (%) - tru
+  // khi da co initialColumnWidths luu tu truoc (nut "Lưu").
+  const [resizedColumnWidths, setResizedColumnWidths] = useState<Record<string, number> | null>(
+    initialColumnWidths && Object.keys(initialColumnWidths).length ? initialColumnWidths : null
+  );
   const headerRowRef = useRef<HTMLTableRowElement | null>(null);
   const resizeDragRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
+  // BUG THAT DA GAP (React canh bao "Cannot update a component while
+  // rendering a different component"): handleMouseUp truoc day goi
+  // onColumnWidthsChange(current) (cap nhat STATE CUA COMPONENT CHA -
+  // PublicQuotePage/QuoteDetailPage) NGAY BEN TRONG callback updater cua
+  // chinh setResizedColumnWidths o day - vi pham nguyen tac updater phai
+  // THUAN (khong side-effect/khong goi setState khac). Sua: giu 1 ref luon
+  // dong bo VOI GIA TRI MOI NHAT cua resizedColumnWidths (cap nhat cung luc
+  // voi moi lan setResizedColumnWidths, khong doi re-render), roi
+  // handleMouseUp chi DOC thang tu ref nay va goi onColumnWidthsChange BEN
+  // NGOAI moi updater - khong con setState long nhau.
+  const latestWidthsRef = useRef<Record<string, number> | null>(resizedColumnWidths);
+  const [customerEditOpen, setCustomerEditOpen] = useState(false);
+  const [sellerEditOpen, setSellerEditOpen] = useState(false);
+  const [customerDraft, setCustomerDraft] = useState<Record<string, string>>({});
+  const [sellerDraft, setSellerDraft] = useState<Record<string, string>>({});
 
   const beginColumnResize = (columnKey: string, columns: QuoteField[]) => (event: React.MouseEvent) => {
     event.preventDefault();
@@ -205,6 +476,7 @@ export function QuoteDocumentRenderer({
         const th = ths[index] as HTMLElement | undefined;
         widths![column.key] = th ? Math.round(th.getBoundingClientRect().width) : 120;
       });
+      latestWidthsRef.current = widths;
       setResizedColumnWidths(widths);
     }
     resizeDragRef.current = {
@@ -216,18 +488,31 @@ export function QuoteDocumentRenderer({
       const drag = resizeDragRef.current;
       if (!drag) return;
       const nextWidth = Math.max(40, drag.startWidth + (moveEvent.clientX - drag.startX));
-      setResizedColumnWidths(prev => ({ ...(prev || {}), [drag.key]: nextWidth }));
+      const next = { ...(latestWidthsRef.current || {}), [drag.key]: nextWidth };
+      latestWidthsRef.current = next;
+      setResizedColumnWidths(next);
     };
     const handleMouseUp = () => {
       resizeDragRef.current = null;
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // Bao cho cha biet ban nhap moi nhat NGAY khi tha chuot - doc thang tu
+      // ref (luon la gia tri MOI NHAT, khong bi closure cu) THAY VI long ben
+      // trong updater cua setResizedColumnWidths nhu truoc.
+      if (onColumnWidthsChange && latestWidthsRef.current) {
+        onColumnWidthsChange(latestWidthsRef.current);
+      }
     };
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   };
 
   const schema = schemaSnapshot || emptySchema();
+  const currency = normalizeQuoteCurrency(currencyProp ?? quoteData.currency);
+  // Quote USD: "$48.08" (2 so le); VND: giu nguyen dang bo "đ" cua mau ("1.250.000").
+  const formatVnd = (value: unknown): string =>
+    currency === 'USD' ? formatQuoteMoney(typeof value === 'number' ? value : Number(value) || 0, 'USD') : formatVndPlain(value);
+  const columnLabel = (column: QuoteField): string => localizeCurrencyLabel(normalizeQuoteColumnLabel(column), currency);
   const layoutType = schema.layoutType || 'cloudgate_standard_quote';
   const sections = schema.sections || [];
   const findSection = (key: string) =>
@@ -243,32 +528,122 @@ export function QuoteDocumentRenderer({
       visible: true,
       editable: true,
     };
+  // Email cong ty cu "hello@markeeai.com" (default field cu trong
+  // seed_quote_forms.py, da doi thanh admin@markee.vn - xem comment o script
+  // do) van con "ket cung" trong 2 noi KHONG the sua bang cach doi 1 dong
+  // script: (1) data.sellerEmail cua CAC BAO GIA DA TAO TRUOC DAY (snapshot
+  // luc tao, khong duoc ghi de hang loat theo nguyen tac K), (2) defaultValue
+  // luu san trong CAC quote_form_schema DA TON TAI (script seed chi anh huong
+  // lan seed MOI, khong tu doi row schema cu trong DB). Loc o dung 1 diem
+  // fieldValue() (moi cho goi qua header/footer/villa deu di qua day) de AN
+  // gia tri legacy nay khoi hien thi cho MOI bao gia (cu lan moi), khong xoa/
+  // ghi de du lieu that nao ca - thuan tuy derived/display filter, dung tinh
+  // than "K" (thay doi trinh bay ap dung tu dong cho bao gia cu).
+  const LEGACY_HIDDEN_FIELD_VALUES: Record<string, string[]> = {
+    sellerEmail: ['hello@markeeai.com'],
+  };
+  // Bao gia da snapshot Don vi phat hanh (issuerSnapshotCompanyId) - cac field
+  // nhan dien ben ban CHI lay dung snapshot cua issuer do, KHONG roi ve
+  // defaultValue cua mau bao gia khi issuer de trong (feedback 2026-09-23:
+  // doi issuer nhung logo/dia chi van cua issuer cu, vi mau luu default cua
+  // 1 cong ty khac). Moi version giu snapshot rieng trong data cua chinh no.
+  const hasIssuerSnapshot = Boolean(quoteData.issuerSnapshotCompanyId);
   const fieldValue = (key: string) => {
+    // Truong "Đơn vị tiền tệ" luon theo tien te THAT cua quote (khong theo text go tay/mau).
+    if (key === 'currency') return currency;
     const value = quoteData[key];
-    if (value !== undefined && value !== null && value !== '') return value;
-    return findField(key).defaultValue || '';
+    if (hasIssuerSnapshot && ISSUER_SNAPSHOT_FIELD_KEYS.has(key)) {
+      return value !== undefined && value !== null ? value : '';
+    }
+    const resolved = value !== undefined && value !== null && value !== '' ? value : findField(key).defaultValue || '';
+    const hiddenValues = LEGACY_HIDDEN_FIELD_VALUES[key];
+    if (hiddenValues && typeof resolved === 'string' && hiddenValues.some(hidden => hidden.toLowerCase() === resolved.trim().toLowerCase())) {
+      return '';
+    }
+    return resolved;
   };
   const renderCell = (item: QuoteItem, column: QuoteField, index: number) => {
+    if (item.__bundleComponent && column.key === 'discountPercent') return '';
+    if (item.__bundleComponent && column.key === 'vatRate') return '';
+    // "van cho coi thanh phan con, mien khong hien gia" (2026-10-14) - thanh
+    // phan con LUON hien ten/mo ta/so luong; GIA tung dong chi hien khi Combo
+    // cha chu dong bat (showComponentsOnQuote===true, xem toggle canh chip
+    // "Giữ giá gói cố định") - mac dinh an (tranh khach tu cong don gia SKU
+    // con roi doi chieu voi gia goi, hoac tuong nham day la gia PHAI tra
+    // them). Khong anh huong gia von/gia ban/chiet khau/margin that su cua
+    // Combo, thuan la che cot hien thi.
+    if (item.__bundleComponent && item.__bundleComponentPricesHidden && BUNDLE_COMPONENT_HIDDEN_PRICE_COLUMNS.has(column.key)) return '';
     if (column.type === 'auto-number' || column.key === 'order') return String(index + 1);
-    if (column.key === 'subtotal') return formatVnd(calculateItemSubtotal(item));
-    if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item));
-    if (column.key === 'listPriceUsd') return item.listPriceUsd != null ? `$${item.listPriceUsd.toLocaleString('en-US')}` : '—';
-    if (column.key === 'unitPriceUsd') return item.unitPriceUsd != null ? `$${item.unitPriceUsd.toLocaleString('en-US')}` : '—';
-    if (column.key === 'unitPriceVnd') return item.unitPriceVnd != null ? formatVnd(item.unitPriceVnd) : '—';
+    // Chu ky "Trả năm" (migration 189): Thanh tien = Don gia x SL x 12 thang -
+    // khong ghi chu thi khach de hieu nham tinh sai (SL 1 x Don gia 199.000
+    // khong khop Thanh tien 2.388.000). Dung CHUNG .quote-price-stack voi
+    // nhanh giam gia (gach ngang) ben duoi - cung muc dich "1 dong phu nho
+    // duoi so tien chinh", khong tao class/cach trinh bay rieng.
+    if (column.key === 'subtotal') {
+      const amount = formatVnd(calculateItemSubtotal(item, currency));
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>Cam kết {item.billingTermMonths} tháng</small>
+          </span>
+        );
+      }
+      return amount;
+    }
+    if (column.key === 'vatAmount') return formatVnd(calculateItemVat(item, currency));
+    // "ô nào null thì không hiện" (yeu cau rieng, cung nguyen tac voi Thong
+    // tin khach hang) - tra chuoi rong thay vi dau "—" khi khong co du lieu.
+    if (column.key === 'listPriceUsd') return item.listPriceUsd != null ? `$${item.listPriceUsd.toLocaleString('en-US')}` : '';
+    if (column.key === 'unitPriceUsd') return item.unitPriceUsd != null ? `$${item.unitPriceUsd.toLocaleString('en-US')}` : '';
+    if (column.key === 'unitPriceVnd') return item.unitPriceVnd != null ? formatVndPlain(item.unitPriceVnd) : '';
     if (column.key === 'total') {
-      const discount = calculateItemDiscount(item);
+      const discount = calculateItemDiscount(item, currency);
       return discount ? (
         <span className="quote-price-stack">
-          <s>{formatVnd(calculateItemSubtotal(item) + calculateItemVat({ ...item, discountPercent: 0 }))}</s>
-          <b>{formatVnd(calculateItemTotal(item))}</b>
+          <s>{formatVnd(calculateItemSubtotal(item, currency) + calculateItemVat({ ...item, discountPercent: 0 }, currency))}</s>
+          <b>{formatVnd(calculateItemTotal(item, currency))}</b>
         </span>
-      ) : formatVnd(calculateItemTotal(item));
+      ) : formatVnd(calculateItemTotal(item, currency));
     }
-    if (column.key === 'unitPrice') return formatVnd(item.unitPrice);
-    if (column.key === 'quantity') return String(item.quantity || '');
-    if (column.key === 'discountPercent') return item.discountPercent ? `${item.discountPercent}%` : '—';
-    if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item));
-    if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '';
+    if (column.key === 'unitPrice') {
+      const amount = formatVnd(item.unitPrice);
+      if (item.billingCycle === 'annual' && item.billingTermMonths && item.billingTermMonths > 1) {
+        return (
+          <span className="quote-price-stack">
+            <b>{amount}</b>
+            <small>/tháng (trả năm)</small>
+          </span>
+        );
+      }
+      return amount;
+    }
+    if (column.key === 'discountPercent') {
+      const discountType = item.discountType || (quoteData?.itemDiscountTypes && item.id ? quoteData.itemDiscountTypes[item.id] : undefined);
+      const isAmount = discountType === 'amount' || (
+        discountType !== 'percent' &&
+        item.discountAmount !== null &&
+        item.discountAmount !== undefined &&
+        item.discountAmount > 0 &&
+        item.discountPercent !== null &&
+        item.discountPercent !== undefined &&
+        (item.discountPercent % 1 !== 0 || Math.abs(item.discountAmount - Math.round(calculateItemSubtotal(item, currency) * item.discountPercent / 100)) > 1)
+      );
+      if (isAmount) {
+        const discountAmt = calculateItemDiscount(item, currency);
+        return discountAmt ? `-${formatVnd(discountAmt)}` : formatVnd(0);
+      }
+      return formatDiscountPercent(item.discountPercent);
+    }
+    if (column.key === 'amountAfterDiscount') return formatVnd(calculateItemAfterDiscount(item, currency));
+    // "Giảm giá/Tiết kiệm" (so tien, KHAC voi 'discountPercent' o tren chi
+    // hien %) - dung cho mau "Mẫu ưu đãi combo (Markee)" (xem promoBundleColumns
+    // trong quoteConfig.ts).
+    if (column.key === 'discountAmount') {
+      const discount = calculateItemDiscount(item, currency);
+      return discount ? `-${formatVnd(discount)}` : formatVnd(0);
+    }
+    if (column.key === 'vatRate') return item.vatRate ? `${item.vatRate}%` : '–';
     // "Mô tả" luôn qua tách dòng theo "•" (kể cả du lieu moi da co serviceDescription
     // rieng) - phai xu ly TRUOC fallback chung ben duoi, khong thi item.description
     // (luon co gia tri) se bi return thang o do, khien nhanh tach dong o day
@@ -290,6 +665,10 @@ export function QuoteDocumentRenderer({
       value = String(item.name);
     }
     if (value !== undefined && value !== null && value !== '') {
+      // Ten hang muc co xuong dong (Enter trong Workspace) -> giu xuong dong tren ban khach/PDF.
+      if (column.key === 'serviceDescription' && String(value).includes('\n')) {
+        return <span className="quote-pre-line">{String(value)}</span>;
+      }
       return String(value);
     }
     // item.serviceDescription trống (du lieu cu) -> thu tach tu description
@@ -300,17 +679,55 @@ export function QuoteDocumentRenderer({
     return '';
   };
 
-  const lineDiscountAmount = flattenQuoteItems(quoteItems).reduce(
-    (sum, item) => sum + calculateItemDiscount(item),
-    0
+  // "Chiết khấu tổng" (Tổng hợp giá) - thay hẳn cho khối "Giảm giá" (dòng đơn,
+  // suy từ discountAmount/discountPercent legacy) đã có trước đây. Công thức
+  // chỉ chạy Ở TẦNG HIỂN THỊ (không đổi totals/DB) - xem calculateOverallDiscountSummary.
+  // subtotalBeforeVat lấy từ totals.totalAmount - totals.totalVatAmount (LUÔN có ở
+  // mọi call site đã audit) thay vì subtotalAmount/discountAmount (không phải nơi
+  // gọi nào cũng truyền discountAmount) nên tự động net đúng phần giảm giá TỪNG
+  // DÒNG (nếu có) đã có sẵn trong totals, không cần đọc lại quoteItems/discountPercent
+  // legacy ở đây nữa.
+  const isVatAmountMode =
+    quoteData?.vatType === 'amount' ||
+    (typeof quoteData?.vatAmount === 'number' && Number.isFinite(quoteData.vatAmount) && quoteData.vatAmount >= 0);
+
+  const discountSummary = calculateOverallDiscountSummary(
+    totals,
+    overallDiscountPercent,
+    currency,
+    typeof quoteData?.overallDiscountAmount === 'number' ? quoteData.overallDiscountAmount : null,
+    quoteData?.overallDiscountType,
+    typeof quoteData?.vatAmount === 'number' ? quoteData.vatAmount : null,
+    (quoteData?.vatType === 'amount' || isVatAmountMode) ? 'amount' : (quoteData?.vatType === 'percent' ? 'percent' : undefined)
   );
-  const discountPercentValue = textValue(quoteData.discountPercent);
-  // Quote mới dùng giảm giá theo từng dòng cha/con. Giữ fallback discountPercent
-  // tổng cho quote cũ đã lưu trước khi có cấu trúc line-level discount.
-  const resolvedDiscountAmount =
-    totals.discountAmount ??
-    (lineDiscountAmount ||
-      (discountPercentValue ? (totals.subtotalAmount * Number(discountPercentValue)) / 100 : 0));
+  const isOverallDiscountAmount =
+    quoteData?.overallDiscountType === 'amount' ||
+    (typeof quoteData?.overallDiscountAmount === 'number' &&
+      quoteData.overallDiscountAmount > 0 &&
+      (quoteData.overallDiscountType !== 'percent' ||
+        overallDiscountPercent == null ||
+        overallDiscountPercent === 0 ||
+        (overallDiscountPercent > 0 && overallDiscountPercent % 1 !== 0)));
+  // "Giảm giá tổng"/"Tổng sau giảm giá" chỉ hiện khi > 0, BẤT KỂ đang bật trong
+  // cấu hình "Tổng hợp giá" hay không (auto-hide đè lên cấu hình - yêu cầu rõ
+  // "trùng với tạm tính thì ẩn").
+  const hasOverallDiscount = discountSummary.overallDiscountAmount > 0;
+  // "Tổng tiền giảm = Giảm giá hạng mục + Giảm giá toàn báo giá" (2026-10-13) -
+  // overallDiscountAmount DA tinh tren phan CON LAI sau khi tru giam gia hang
+  // muc (xem calculateOverallDiscountSummary - ap dung dung thu tu "hạng mục
+  // trước, sau đó mới toàn báo giá trên số tiền còn lại"), nen cong truc tiep
+  // 2 so nay la dung, khong tinh trung.
+  const totalDiscountAmount = (totals.discountAmount || 0) + discountSummary.overallDiscountAmount;
+  // Trường "Tổng hợp giá" hiện cho khách - áp dụng ở MỌI mode (preview/detail/
+  // public/print), KHÁC với cột bảng hạng mục (applyCustomerColumnFilter chỉ áp ở
+  // public/print/preview) - yêu cầu rõ "Chi tiết báo giá đã duyệt phải đồng nhất
+  // với preview" cho riêng khối tổng tiền này.
+  const visibleSummaryKeys = new Set(
+    resolveVisibleSummaryFieldKeys(schema, quoteData.visibleSummaryFields)
+  );
+  const visibleCustomBlocks = Array.isArray(quoteData.customBlocks)
+    ? quoteData.customBlocks.filter((block, index) => isQuoteDocumentSectionVisible(quoteData, quoteCustomBlockSectionKey(block, index)))
+    : [];
   const notesValue = fieldValue('notes');
   const notesRows = splitLines(notesValue).map(cleanDocumentText).filter(Boolean);
   const commitments = fieldValue('commitments');
@@ -329,19 +746,57 @@ export function QuoteDocumentRenderer({
     return String(value ?? '');
   };
 
-  const customerRows = findSection('customer')
-    .fields.filter(field => field.visible !== false)
+  const customerDisplayFields = getCustomerDisplayFields(schema);
+  const visibleCustomerFieldKeys = new Set(resolveVisibleCustomerFieldKeys(schema, quoteData.visibleCustomerFields));
+  const handleOpenCustomerEdit = () => {
+    const initialDraft: Record<string, string> = {};
+    customerDisplayFields
+      .filter(field => visibleCustomerFieldKeys.has(field.key))
+      .forEach(field => {
+        let val = '';
+        if (field.key === 'customerRecipient') {
+          val = String(fieldValue('customerRecipient') || fieldValue('customerContactName') || fieldValue('customerCompanyName') || '');
+        } else {
+          val = String(fieldValue(field.key) || '');
+        }
+        initialDraft[field.key] = val;
+      });
+    setCustomerDraft(initialDraft);
+    setCustomerEditOpen(true);
+    setSellerEditOpen(false);
+  };
+
+  const handleSaveCustomer = () => {
+    onSaveRecipientFields?.(customerDraft);
+    setCustomerEditOpen(false);
+  };
+
+  const handleOpenSellerEdit = () => {
+    setSellerDraft({
+      sellerContactNameOverride: String(fieldValue('sellerContactNameOverride') || ''),
+      sellerPhone: String(fieldValue('sellerPhone') || ''),
+      sellerEmail: String(fieldValue('sellerEmail') || ''),
+    });
+    setSellerEditOpen(true);
+    setCustomerEditOpen(false);
+  };
+
+  const handleSaveSeller = () => {
+    onSaveRecipientFields?.(sellerDraft);
+    setSellerEditOpen(false);
+  };
+
+  const customerRows = customerDisplayFields
+    .filter(field => visibleCustomerFieldKeys.has(field.key))
     .map(field => ({
       key: field.key,
       label: field.label,
-      value: textValue(fieldValue(field.key)),
-      placeholder: `[${field.label}]`,
+      value: textValue(
+        field.key === 'customerRecipient'
+          ? fieldValue('customerRecipient') || fieldValue('customerContactName') || fieldValue('customerCompanyName')
+          : fieldValue(field.key)
+      ),
     }));
-  const validUntil = textValue(fieldValue('offerExpiryDate'))
-    ? formatDateVN(fieldValue('offerExpiryDate'))
-    : textValue(fieldValue('validityDays'))
-      ? `${textValue(fieldValue('validityDays'))} ngày kể từ ngày báo giá`
-      : '';
   const insightRows = [
     ['customerNeed', 'Nhu cầu khách hàng'],
     ['customerRequirement', 'Yêu cầu chính'],
@@ -371,46 +826,79 @@ export function QuoteDocumentRenderer({
   // 'vatRate' -> phai tu bo sung vao de KHONG lam VAT bi an mat khoi bao gia cu
   // (truoc day VAT luon hien, khong toggle duoc). Bao gia MOI tu gio deu di qua
   // resolveToggleableColumns() (da co san 'vatRate') nen khong bi anh huong.
-  const rawCustomerVisibleColumns = Array.isArray(quoteData.visibleColumns) ? quoteData.visibleColumns : null;
-  // "discountPercent" (Giam gia) moi duoc mo cho toggle trong "Cot hien thi"
-  // (truoc day an han khoi picker, luon hien khong toggle duoc - gay lech
-  // giua danh sach checkbox va cot that su tren bang, QA thuc te phat hien).
-  // Cung 1 ly do/cach xu ly nhu 'vatRate' o tren: bao gia CU da luu san
-  // visibleColumns tu truoc khi 'discountPercent' la toggle option se KHONG
-  // biet gi ve key nay - phai tu bo sung de KHONG lam cot Giam gia bi an mat
-  // khoi ban gui khach (truoc day luon hien, khong duoc phep tu nhien bien
-  // mat chi vi thay doi logic toggle).
-  const AUTO_INCLUDE_LEGACY_COLUMN_KEYS = ['vatRate', 'discountPercent'];
-  const customerVisibleColumns = rawCustomerVisibleColumns
-    ? [
-        ...rawCustomerVisibleColumns,
-        ...AUTO_INCLUDE_LEGACY_COLUMN_KEYS.filter(key => !rawCustomerVisibleColumns.includes(key)),
-      ]
-    : rawCustomerVisibleColumns;
-  const finalColumns =
-    applyCustomerColumnFilter && customerVisibleColumns
-      ? standardColumns.filter(
-          column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
-        )
-      : standardColumns;
-  // Resize cot kieu Excel chi bat o man hinh noi bo (nguoi TAO/xem chi tiet
-  // bao gia) - khong bat cho 'public' (khach nhan bao gia khong can/khong nen
-  // co UI keo cot) va khong lien quan ban in (ban in doc theo @media print,
-  // khong doc prop mode nay).
-  const allowColumnResize = mode === 'preview' || mode === 'detail';
-  // Bang qua nhieu cot (vd mau "chuan" 9 cot: STT/Ten dich vu/Mo ta/DVT/So
-  // luong/Don gia/Giam gia/VAT/Thanh tien) khong the nen vua khong gian A4 du
-  // da nong cot Mo ta/Ten dich vu - cac cot so con lai bi ep qua hep gay
-  // chong chit/tran mep (QA thuc te + nguoi dung bao cao qua screenshot man
-  // hinh XEM, khong chi ban in). Tu 7 cot tro len, chuyen sang A4 NGANG cho
-  // CA man hinh xem (class .quote-sheet--print-landscape trong quotes.css)
-  // LAN ban in/PDF (the <style> chen duoi day, KHONG dung CSS "named page" -
-  // xem giai thich trong quotes.css, muc @page - da xac nhan Chromium bi 1
-  // loi that lam mat noi dung cuoi tai lieu voi named page). Bang van la
-  // <table> that, chi chia lai % cot rong rai hon, khong doi sang dang the
-  // xep doc/thu nho.
-  const LANDSCAPE_PRINT_COLUMN_THRESHOLD = 7;
-  const usesLandscapePrint = finalColumns.length >= LANDSCAPE_PRINT_COLUMN_THRESHOLD;
+  // BUG THAT DA GAP ("tick ẩn Giảm giá rồi mà nó không ẩn trên bản xem
+  // trước"): AUTO_INCLUDE_LEGACY_COLUMN_KEYS (['vatRate','discountPercent'])
+  // TRUOC DAY luon tu CHEN LAI 2 key nay vao customerVisibleColumns BAT KE
+  // nguoi dung co chu dong tat hay khong - y dinh ban dau la "tuong thich
+  // nguoc" cho bao gia CU luu visibleColumns TRUOC KHI 2 cot nay la toggle
+  // option (mang cu khong biet gi ve 2 key nay = khong phai nguoi dung
+  // "chu dong tat"). Nhung logic nay KHONG PHAN BIET DUOC "mang cu chua
+  // tung biet key nay" voi "nguoi dung MOI VUA TAT key nay that su" - ca 2
+  // truong hop deu la "key vang mat trong mang da luu", nen MOI LAN nguoi
+  // dung tat 'vatRate'/'discountPercent' deu bi ghi de lai thanh BAT ngay
+  // lap tuc, dung nguyen chinh 2 cot nay khong bao gio tat duoc. Xoa han co
+  // che "tu suy doan" nay - ton trong CHINH XAC gia tri da luu
+  // (quoteData.visibleColumns), khong tu chen them bat ky key nao vao.
+  const customerVisibleColumns = Array.isArray(quoteData.visibleColumns) ? quoteData.visibleColumns : null;
+  // BUG THAT DA GAP ("Bản xem trước cho khách hàng vẫn có horizontal
+  // scrollbar", "Không hiển thị đồng thời List price USD, Unit price USD,
+  // Unit price VND"): khi quote CHUA TUNG duoc admin tuy chinh "Cột hiển
+  // thị" (quoteData.visibleColumns null - dung cho HAU HET bao gia thuc te,
+  // vi day la 1 buoc tuy chon it ai bam toi), applyCustomerColumnFilter bi
+  // BO QUA HOAN TOAN (finalColumns = standardColumns, hien nguyen tat ca) -
+  // bao gom ca 3 cot gia tham khao noi bo (listPriceUsd/unitPriceUsd/
+  // unitPriceVnd, tu dong chen khi item co catalogItemId, xem
+  // resolveQuoteItemColumns) khien bang qua rong, tran ngang. Mac dinh HOP
+  // LY khi CHUA tuy chinh gi ca la AN 3 cot tham khao nay khoi ban khach (day
+  // von la du lieu ho tro Sale chon gia luc dang tao, khong phai thu khach
+  // hang can thay) - chi hien khi admin CHU DONG tick chung vao "Cột hiển
+  // thị" (customerVisibleColumns thuc su chua key do).
+  const DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS = ['listPriceUsd', 'unitPriceUsd', 'unitPriceVnd'];
+  // "Thành tiền trước VAT" (`subtotal`) - cot TRUNG LAP THAT SU voi cap
+  // "Thành tiền (Chưa VAT)" (amountAfterDiscount) + "Thành tiền (gồm VAT)"
+  // (total) da dung o ban khach. `subtotal` co type 'calculated' nen KHONG
+  // nam trong TOGGLEABLE_COLUMN_KEYS (xem resolveToggleableColumns loc bo
+  // type 'calculated') - dieu nay khien dieu kien loc customer o duoi
+  // (`!TOGGLEABLE_COLUMN_KEYS.includes(...)`) LUON danh gia true cho no, tuc
+  // no bi coi la cot "khong the tat", hien BAT KE quoteData.visibleColumns da
+  // luu gi. Loai HAN khoi ban khach o day (khac DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS
+  // - key do CHI an khi CHUA tuy chinh gi, con day phai an TUYET DOI, ke ca
+  // bao gia cu lo luu 'subtotal' trong visibleColumns tu truoc). Van tinh
+  // toan noi bo (calculateItemSubtotal) binh thuong, chi bo o tang hien thi
+  // khach hang - khong dung mode='detail' (noi bo van thay du neu mau khai).
+  const ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS = [...ALWAYS_HIDDEN_CALCULATED_KEYS];
+  const defaultVisibleCustomerColumnKeys = resolveDefaultVisibleColumnKeys(schema, quoteItems);
+  const finalColumns = filterRedundantAmountAfterDiscountColumn(
+    applyCustomerColumnFilter
+      ? (customerVisibleColumns
+          ? standardColumns.filter(
+              column => !TOGGLEABLE_COLUMN_KEYS.includes(column.key) || customerVisibleColumns.includes(column.key)
+            )
+          : standardColumns.filter(
+              column =>
+                (!TOGGLEABLE_COLUMN_KEYS.includes(column.key) || defaultVisibleCustomerColumnKeys.includes(column.key)) &&
+                !DEFAULT_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key)
+            )
+        ).filter(column => !ALWAYS_HIDDEN_FROM_CUSTOMER_KEYS.includes(column.key))
+      : standardColumns,
+    quoteItems
+  );
+  // Resize cot kieu Excel: mac dinh chi bat o man hinh noi bo (nguoi TAO/xem
+  // chi tiet bao gia), khong bat cho 'public' (khach nhan bao gia khong
+  // can/khong nen co UI keo cot) va khong lien quan ban in (ban in doc theo
+  // @media print, khong doc prop mode nay) - TRU KHI toolbar chinh in dang
+  // hien san (printPreviewMode=true, xem PublicQuotePage/QuoteDetailPage/
+  // QuoteWorkspaceModal.tsx), noi nguoi dung CHU DONG can keo cot va IN LUON tu do (ke ca ban 'public' gui
+  // khach), nen bat resize bat ke mode.
+  const allowColumnResize = printPreviewMode || mode === 'preview' || mode === 'detail';
+  // Kho giay khi in: mac dinh 'portrait' (A4 doc) theo yeu cau cu ("Khổ A4
+  // portrait... Không cố nhồi nhiều sản phẩm bằng cách làm chữ nhỏ... Nếu báo
+  // giá dài → tự động sang trang 2, 3" - tuc KHONG tu dong doi ngang/thu nho
+  // chu de nen). Yeu cau moi hon ("Xem truoc khi in" co the chon doc/ngang)
+  // cho phep NGUOI DUNG tu chon qua prop printOrientation thay vi component
+  // tu quyet dinh - portrait van la mac dinh khi khong truyen gi (giu dung
+  // hanh vi cu cho moi noi goi chua cap nhat).
+  const usesLandscapePrint = printOrientation === 'landscape';
   // Muc cha (Section)/hang muc con - migration 104. 1 dong goc rowType=
   // 'section' la TIEU DE NHOM thuan tuy (khong tinh tien) - hien rieng 1 hang
   // noi bat chiem het cac cot, DUNG so La Ma (I, II, III...) rieng, KHONG
@@ -424,15 +912,38 @@ export function QuoteDocumentRenderer({
   const displayedQuoteRows = quoteItems.flatMap(item => {
     if (item.rowType === 'section') {
       sectionCounter += 1;
-      const sectionRow = { item, number: toRomanNumeral(sectionCounter), isChild: false, isSection: true as const };
-      const childRows = (item.children || []).map(child => {
+      const sectionRow = {
+        item,
+        number: toRomanNumeral(sectionCounter),
+        isChild: false,
+        isSection: true as const,
+        // Tong tien section (B) - CHI cong truc tiep cac hang muc con (khong
+        // de quy sau hon), dung chung 1 ham voi Workspace - xem
+        // calculateSectionTotal trong quoteCalculations.ts.
+        sectionTotal: calculateSectionTotal(item.children || [], currency),
+      };
+      const childRows = (item.children || []).flatMap(child => {
         itemCounter += 1;
-        return { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const childRow = { item: child, number: String(itemCounter).padStart(2, '0'), isChild: true, isSection: false as const };
+        const bundleRows = bundleComponentsToDisplayItems(child).map(componentItem => ({
+          item: componentItem,
+          number: '',
+          isChild: true,
+          isSection: false as const,
+        }));
+        return [childRow, ...bundleRows];
       });
       return [sectionRow, ...childRows];
     }
     itemCounter += 1;
-    return [{ item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const }];
+    const parentRow = { item, number: String(itemCounter).padStart(2, '0'), isChild: false, isSection: false as const };
+    const bundleRows = bundleComponentsToDisplayItems(item).map(componentItem => ({
+      item: componentItem,
+      number: '',
+      isChild: true,
+      isSection: false as const,
+    }));
+    return [parentRow, ...bundleRows];
   });
 
   if (layoutType === 'villa_solution_package') {
@@ -449,7 +960,7 @@ export function QuoteDocumentRenderer({
             <div className="villa-brand">{String(fieldValue('sellerBrandName') || 'MARKEE')}</div>
             <div className="villa-meta">
               <p>Ngày: {formatDateVN(fieldValue('quoteDate')) || '[Ngày]'}</p>
-              <p>Số báo giá: {String(fieldValue('quoteNumber') || '[Số]')}</p>
+              <p>Số báo giá: {quoteNumber || String(fieldValue('quoteNumber') || '[Số]')}</p>
             </div>
           </header>
 
@@ -467,7 +978,7 @@ export function QuoteDocumentRenderer({
               <thead>
                 <tr>
                   {finalColumns.map(column => (
-                    <th key={column.key}>{column.label}</th>
+                    <th key={column.key}>{columnLabel(column)}</th>
                   ))}
                 </tr>
               </thead>
@@ -511,26 +1022,71 @@ export function QuoteDocumentRenderer({
             </section>
             <section className="villa-totals">
               <h3>Tổng đầu tư</h3>
-              <div className="villa-total-row">
-                <span>Phí triển khai</span>
-                <strong>{formatVnd(setupTotal || totals.totalAmount)}</strong>
-              </div>
+              {visibleSummaryKeys.has('subtotalBeforeVat') ? (
+                <div className="villa-total-row">
+                  <span>Phí triển khai</span>
+                  <strong>{formatVnd(discountSummary.subtotalBeforeVat || setupTotal || totals.totalAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>{isOverallDiscountAmount ? 'Giảm giá toàn báo giá' : `Giảm giá tổng (${overallDiscountPercent}%)`}</span>
+                  <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 && !(visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount && (totals.discountAmount || 0) <= 0) ? (
+                <div className="villa-total-row villa-total-row--discount">
+                  <span>{isOverallDiscountAmount && (totals.discountAmount || 0) <= 0 ? 'Giảm giá toàn báo giá' : 'Tổng tiền giảm'}</span>
+                  <strong>-{formatVnd(totalDiscountAmount)}</strong>
+                </div>
+              ) : null}
+              {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
+                <div className="villa-total-row">
+                  <span>Tổng sau giảm giá</span>
+                  <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
+                </div>
+              ) : null}
+              {/* Villa khong co khai niem VAT that (calculateVillaTotals() luon
+                  tra totalVatAmount:0) nhung van hien dong nay theo dung yeu
+                  cau "ca 5 truong ap dung dong nhat moi mau, khong loai tru
+                  theo layout" - gia tri se luon la 0d, khong phai bug. */}
+              {visibleSummaryKeys.has('vatTotal') ? (
+                <div className="villa-total-row">
+                  <span>Thuế GTGT</span>
+                  <strong>{formatVnd(discountSummary.vatAfterDiscount)}</strong>
+                </div>
+              ) : null}
               <div className="villa-total-row">
                 <span>Phí duy trì hàng tháng</span>
                 <strong>{formatVnd(fieldValue('monthlyAmount'))}</strong>
               </div>
+              {visibleSummaryKeys.has('grandTotal') ? (
+                <div className="villa-total-row villa-total-row--grand">
+                  <span>Tổng thanh toán</span>
+                  <strong>{formatVnd(discountSummary.grandTotal)}</strong>
+                </div>
+              ) : null}
+              {/* Sua base tinh 2 dong "Thanh toan dot 1/2": TRUOC DAY nhan thang
+                  vao setupTotal (truoc chiet khau) - neu Chiet khau tong > 0 thi
+                  tong 2 dot se KHONG con khop voi "Tong thanh toan" da tru giam
+                  gia o tren, gay mau thuan 2 con so tren cung 1 to bao gia. Doi
+                  sang discountSummary.grandTotal (phan phi trien khai SAU chiet
+                  khau - Chiet khau tong KHONG ap dung cho "Phi duy tri hang
+                  thang", xem audit trong ke hoach) de dot1+dot2 = Tong thanh toan
+                  luon dung tuyet doi (gia dinh phaseOnePercent+phaseTwoPercent=100,
+                  dung nhu thiet ke san co cua 2 field nay). */}
               <div className="villa-total-sub">
                 Thanh toán đợt 1 ({phaseOnePercent}%):{' '}
-                {formatVnd((setupTotal * phaseOnePercent) / 100)}
+                {formatVnd((discountSummary.grandTotal * phaseOnePercent) / 100)}
               </div>
               <div className="villa-total-sub">
                 Thanh toán đợt 2 ({phaseTwoPercent}%):{' '}
-                {formatVnd((setupTotal * phaseTwoPercent) / 100)}
+                {formatVnd((discountSummary.grandTotal * phaseTwoPercent) / 100)}
               </div>
             </section>
           </div>
 
-          {renderCustomBlocks(quoteData?.customBlocks)}
+          {renderCustomBlocks(visibleCustomBlocks)}
 
           <section className="villa-footer">
             <div className="villa-footer-col">
@@ -541,7 +1097,7 @@ export function QuoteDocumentRenderer({
             <div className="villa-footer-col">
               <h4>Liên hệ</h4>
               <p>Zalo: {String(fieldValue('sellerZalo'))}</p>
-              <p>Email: {String(fieldValue('sellerEmail'))}</p>
+              {fieldValue('sellerEmail') ? <p>Email: {String(fieldValue('sellerEmail'))}</p> : null}
             </div>
             <div className="villa-footer-col">
               <h4>Hiệu lực</h4>
@@ -567,54 +1123,221 @@ export function QuoteDocumentRenderer({
           @page DUY NHAT (khong dat ten) hoat dong moi luc in - an toan, da
           test that khong con mat noi dung. */}
       {usesLandscapePrint ? (
-        <style>{'@media print { @page { size: A4 landscape; margin: 10mm 12mm; } }'}</style>
+        <style>{'@media print { @page { size: A4 landscape; margin: 7mm 12mm; } }'}</style>
       ) : null}
       <section className={`quote-sheet quote-sheet--standard${usesLandscapePrint ? ' quote-sheet--print-landscape' : ''}`}>
+        {/* Banner marketing (anh tinh, URL dan san qua field "bannerImageUrl") -
+         * chi dung cho "Mẫu ưu đãi combo (Markee)" (xem quoteConfig.ts), CO
+         * DIEU KIEN nen KHONG anh huong mau standard/villa cu (field nay
+         * khong ton tai/rong o cac schema khac). */}
+        {fieldValue('bannerImageUrl') ? (
+          <img className="sheet-marketing-banner" src={String(fieldValue('bannerImageUrl'))} alt="" />
+        ) : null}
         <header className="sheet-company sheet-company--standard">
+          {/* Logo nam NGANG song song voi thong tin cong ty (yeu cau rieng
+           * "thông tin nằm ngang song song logo") - truoc day logo/ten/dia
+           * chi/sdt xep CHONG doc trong cung 1 div, gio logo la 1 flex item
+           * rieng, phan text ben canh (xem .sheet-brand-block trong
+           * quotes.css). */}
           <div className="sheet-brand-block">
             {fieldValue('sellerLogo') ? (
               <img className="sheet-brand-logo" src={String(fieldValue('sellerLogo'))} alt={String(fieldValue('sellerCompanyName') || '')} />
             ) : null}
-            <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
-            <p>{String(fieldValue('sellerAddress'))}</p>
-            <p>
-              {String(fieldValue('sellerPhone'))}
-              {fieldValue('sellerEmail') ? ` · ${String(fieldValue('sellerEmail'))}` : ''}
-              {fieldValue('sellerWebsite') ? ` · ${String(fieldValue('sellerWebsite'))}` : ''}
-            </p>
+            <div className="sheet-brand-text">
+              <div className="sheet-brand-mark">{String(fieldValue('sellerCompanyName') || 'MARKEE')}</div>
+              <p>{String(fieldValue('sellerAddress'))}</p>
+              <p>
+                {/* Chi noi bang " · " cac gia tri CO that - issuer thieu SDT khong
+                    con dau " · " thua dau dong. */}
+                {[fieldValue('sellerPhone'), fieldValue('sellerEmail'), fieldValue('sellerWebsite')]
+                  .map(value => String(value || '').trim())
+                  .filter(Boolean)
+                  .join(' · ')}
+              </p>
+              {fieldValue('sellerTaxCode') ? <p>MST: {String(fieldValue('sellerTaxCode'))}</p> : null}
+            </div>
           </div>
           <div className="sheet-doc-code">
             <span>BÁO GIÁ</span>
-            <strong>{String(fieldValue('quoteNumber') || '[Số báo giá]')}</strong>
+            <strong>{quoteNumber || String(fieldValue('quoteNumber') || '[Số báo giá]')}</strong>
+            {/* Ngay bao gia chuyen LEN NGANG voi Ma bao gia (yeu cau rieng
+             * "bỏ ngày báo giá lên trang ngang mã báo giá") - Hiệu lực/Tiền
+             * tệ bo hoan toan (khong con hien o dau tai lieu nua). Van giu
+             * dung rule cu "chỉ hiển thị khi bấm phát hành". */}
+            {isPublished ? <em>{formatDateVN(fieldValue('quoteDate')) || ''}</em> : null}
           </div>
         </header>
 
         <section className="sheet-title-block sheet-title-block--standard">
-          <p className="sheet-eyebrow">Đề xuất thương mại</p>
           <h1>{String(fieldValue('quoteTitle') || 'Bảng báo giá')}</h1>
-          <div className="sheet-quote-meta sheet-quote-meta--cards">
-            <span><b>Ngày báo giá</b>{formatDateVN(fieldValue('quoteDate')) || '[Ngày báo giá]'}</span>
-            <span><b>Hiệu lực</b>{validUntil || '[Thời hạn hiệu lực]'}</span>
-            <span><b>Tiền tệ</b>{String(fieldValue('currency') || 'VND')}</span>
-          </div>
         </section>
 
-        <section className="sheet-parties sheet-parties--standard">
-          <div>
-            <h3>{findSection('customer').title || 'Thông tin khách hàng'}</h3>
-            {customerRows.map(row => (
-              <p key={row.key} className={!row.value && mode === 'preview' ? 'placeholder' : ''}>
-                <strong>{row.label}:</strong> {row.value || row.placeholder}
-              </p>
-            ))}
-          </div>
-          <div>
-            <h3>Người phụ trách</h3>
-            <p><strong>{findField('sellerContactName').label}:</strong> {String(fieldValue('sellerContactName') || '[Người liên hệ]')}</p>
-            <p><strong>{findField('sellerPhone').label}:</strong> {String(fieldValue('sellerPhone') || '[Số điện thoại]')}</p>
-            <p><strong>{findField('sellerEmail').label}:</strong> {String(fieldValue('sellerEmail') || '[Email liên hệ]')}</p>
-          </div>
-        </section>
+        {/* CHOT LAI ("field không có dữ liệu thì ẩn hoàn toàn cả nhãn lẫn
+         * giá trị, không hiện placeholder [Label]; nếu cả khối không có dữ
+         * liệu thì bỏ khối đó"): truoc day LUON render du dong (dung
+         * row.value || row.placeholder) - khach hang thay nguyen van
+         * "[Địa chỉ]"/"[Mã số thuế]" tren PDF/preview that neu Sale chua
+         * dien. Loc bo dong rong TRUOC khi render, an ca 2 nua neu tuong
+         * ung rong het. */}
+        {(() => {
+          const filledCustomerRows = customerRows.filter(row => row.value);
+          // "Người liên hệ" = Sale dang duoc gan (quote_owner_id), KHONG con
+          // dung field tu do/default cu - chi fallback ve fieldValue khi quote
+          // THAT SU chua co Sale (contactPersonName undefined/null/rong).
+          //
+          // Fix (2026-11-04, "cho sửa bên khu vực ng liên hệ luôn"): them
+          // `sellerContactNameOverride` (quote.data, sua duoc qua popup "Sửa
+          // thông tin khách hàng" - xem QuoteWorkspaceModal) uu tien CAO NHAT
+          // khi Sale CHU DONG go gia tri khac ten Sale duoc gan - KHONG doi
+          // thu tu uu tien cu (contactPersonName/sellerContactName) khi
+          // override rong, tranh pha lai fix "quote_owner_id" o tren.
+          const resolvedContactName = String(fieldValue('sellerContactNameOverride') || '') || contactPersonName || String(fieldValue('sellerContactName') || '');
+          // Rieng khoi "Người liên hệ" nay (KHONG phai header cong ty ben tren,
+          // chi o day) - fallback ve admin@markee.vn khi email rong/da bi an
+          // (legacy hello@markeeai.com) de khong bo trong 1 dong lien he quan
+          // trong; header/villa footer KHONG doi (van dung nguyen fieldValue()
+          // goc, tiep tuc an hoan toan neu rong - yeu cau rieng "khong muon
+          // hien o do"). Khong ghi de sellerEmail THAT (khac rong) cua bao gia.
+          const sellerContactEmail = String(fieldValue('sellerEmail') || '') || 'admin@markee.vn';
+          const sellerContactRows = [
+            { key: 'sellerContactName', label: findField('sellerContactName').label, value: resolvedContactName },
+            { key: 'sellerPhone', label: findField('sellerPhone').label, value: String(fieldValue('sellerPhone') || '') },
+            { key: 'sellerEmail', label: findField('sellerEmail').label, value: sellerContactEmail },
+          ].filter(row => row.value);
+          if (!filledCustomerRows.length && !sellerContactRows.length && !editableRecipient) return null;
+          return (
+            <section className="sheet-parties sheet-parties--standard">
+              {filledCustomerRows.length || editableRecipient ? (
+                <div>
+                  <div className="sheet-party-header">
+                    <h3>{findSection('customer').title || 'Thông tin khách hàng'}</h3>
+                    {editableRecipient ? (
+                      <button
+                        type="button"
+                        className="sheet-party-edit-btn no-print"
+                        onClick={() => (customerEditOpen ? setCustomerEditOpen(false) : handleOpenCustomerEdit())}
+                        title="Sửa thông tin khách hàng hiển thị"
+                      >
+                        <PencilIcon />
+                      </button>
+                    ) : null}
+                    {customerEditOpen ? (
+                      <>
+                        <div className="sheet-party-popover-backdrop no-print" onClick={() => setCustomerEditOpen(false)} />
+                        <div className="sheet-party-popover no-print" onClick={e => e.stopPropagation()}>
+                          <div className="sheet-party-popover-title">
+                            <span>Sửa thông tin khách hàng</span>
+                            <button type="button" className="sheet-party-popover-close" onClick={() => setCustomerEditOpen(false)}>×</button>
+                          </div>
+                          <div className="sheet-party-popover-body">
+                            {customerDisplayFields
+                              .filter(field => visibleCustomerFieldKeys.has(field.key))
+                              .map(field => (
+                                <label key={field.key} className="sheet-party-popover-field">
+                                  <span>{field.label}</span>
+                                  <input
+                                    type="text"
+                                    value={customerDraft[field.key] ?? ''}
+                                    placeholder={field.label}
+                                    onChange={e => setCustomerDraft(prev => ({ ...prev, [field.key]: e.target.value }))}
+                                  />
+                                </label>
+                              ))}
+                          </div>
+                          <div className="sheet-party-popover-actions">
+                            <button type="button" className="sheet-party-btn sheet-party-btn-cancel" onClick={() => setCustomerEditOpen(false)}>
+                              Huỷ
+                            </button>
+                            <button type="button" className="sheet-party-btn sheet-party-btn-save" onClick={handleSaveCustomer}>
+                              Lưu
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  {filledCustomerRows.map(row => (
+                    <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
+                  ))}
+                  {!filledCustomerRows.length && editableRecipient ? (
+                    <p className="sheet-party-empty-hint no-print">(Chưa có thông tin - bấm nút sửa để nhập)</p>
+                  ) : null}
+                </div>
+              ) : null}
+              {sellerContactRows.length || editableRecipient ? (
+                <div>
+                  <div className="sheet-party-header">
+                    <h3>Người liên hệ</h3>
+                    {editableRecipient ? (
+                      <button
+                        type="button"
+                        className="sheet-party-edit-btn no-print"
+                        onClick={() => (sellerEditOpen ? setSellerEditOpen(false) : handleOpenSellerEdit())}
+                        title="Sửa thông tin người liên hệ hiển thị"
+                      >
+                        <PencilIcon />
+                      </button>
+                    ) : null}
+                    {sellerEditOpen ? (
+                      <>
+                        <div className="sheet-party-popover-backdrop no-print" onClick={() => setSellerEditOpen(false)} />
+                        <div className="sheet-party-popover sheet-party-popover--right no-print" onClick={e => e.stopPropagation()}>
+                          <div className="sheet-party-popover-title">
+                            <span>Sửa người liên hệ</span>
+                            <button type="button" className="sheet-party-popover-close" onClick={() => setSellerEditOpen(false)}>×</button>
+                          </div>
+                          <div className="sheet-party-popover-body">
+                            <label className="sheet-party-popover-field">
+                              <span>Người liên hệ (phụ trách)</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerContactNameOverride ?? ''}
+                                placeholder={contactPersonName || String(fieldValue('sellerContactName') || 'Tên người liên hệ')}
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerContactNameOverride: e.target.value }))}
+                              />
+                            </label>
+                            <label className="sheet-party-popover-field">
+                              <span>SĐT phụ trách</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerPhone ?? ''}
+                                placeholder="090..."
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerPhone: e.target.value }))}
+                              />
+                            </label>
+                            <label className="sheet-party-popover-field">
+                              <span>Email phụ trách</span>
+                              <input
+                                type="text"
+                                value={sellerDraft.sellerEmail ?? ''}
+                                placeholder="admin@markee.vn"
+                                onChange={e => setSellerDraft(prev => ({ ...prev, sellerEmail: e.target.value }))}
+                              />
+                            </label>
+                          </div>
+                          <div className="sheet-party-popover-actions">
+                            <button type="button" className="sheet-party-btn sheet-party-btn-cancel" onClick={() => setSellerEditOpen(false)}>
+                              Huỷ
+                            </button>
+                            <button type="button" className="sheet-party-btn sheet-party-btn-save" onClick={handleSaveSeller}>
+                              Lưu
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  {sellerContactRows.map(row => (
+                    <p key={row.key}><strong>{row.label}:</strong> {row.value}</p>
+                  ))}
+                  {!sellerContactRows.length && editableRecipient ? (
+                    <p className="sheet-party-empty-hint no-print">(Chưa có thông tin - bấm nút sửa để nhập)</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </section>
+          );
+        })()}
 
         {insightRows.length ? (
           <section className="sheet-insights">
@@ -646,7 +1369,7 @@ export function QuoteDocumentRenderer({
                 bot cot khac), header duoc phep xuong dong (xem quotes.css) nen
                 khong can cot rong toi thieu lon nhu truoc. */}
             <table
-              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}`}
+              className={`sheet-items-table${usesLandscapePrint ? ' sheet-items-table--print-landscape' : ''}${allowColumnResize ? ' sheet-items-table--resizable' : ''}${printPreviewMode && resizedColumnWidths ? ' sheet-items-table--custom-print-widths' : ''}`}
               style={
                 // Da resize it nhat 1 cot: dat width = TONG cac cot (co the
                 // vuot 100% wrapper) de bang tu gian rong ra that su thay vi
@@ -656,7 +1379,13 @@ export function QuoteDocumentRenderer({
                 // khac). Chua resize: giu nguyen minWidth mac dinh nhu cu.
                 allowColumnResize && resizedColumnWidths
                   ? { width: Object.values(resizedColumnWidths).reduce((sum, w) => sum + w, 0) }
-                  : { minWidth: Math.min(760, Math.max(420, finalColumns.length * 70)) }
+                  // BUG THAT DA GAP ("Mẫu ưu đãi combo Markee" 12 cot, chu bi
+                  // be/chong nhau): tran 760px cu THAP HON ca gia tri tinh ra
+                  // (12*70=840) cho bang nhieu cot - vo tinh EP bang HEP HON
+                  // muc can thiet du cong thuc tren da tinh dung. Nang tran
+                  // len 1400 (chi anh huong bang >10 cot, <=10 cot van y het
+                  // truoc gio vi 10*70=700 <760, khong bao gio cham tran).
+                  : { minWidth: Math.min(1400, Math.max(420, finalColumns.length * 70)) }
               }
             >
               <thead>
@@ -664,13 +1393,22 @@ export function QuoteDocumentRenderer({
                   {finalColumns.map(column => (
                     <th
                       key={column.key}
+                      className={quoteColumnClassName(column)}
                       style={
                         allowColumnResize && resizedColumnWidths?.[column.key]
-                          ? { width: resizedColumnWidths[column.key], minWidth: resizedColumnWidths[column.key] }
+                          ? ({
+                              width: resizedColumnWidths[column.key],
+                              minWidth: resizedColumnWidths[column.key],
+                              // Doc lai o quotes.css (".sheet-items-table--custom-print-widths th")
+                              // KHI printPreviewMode - cho phep do rong da keo tay
+                              // "song" qua luc in that (@media print binh thuong ep
+                              // width:auto/% qua !important, xem comment o quotes.css).
+                              ...(printPreviewMode ? { '--col-print-w': `${resizedColumnWidths[column.key]}px` } : {}),
+                            } as React.CSSProperties)
                           : undefined
                       }
                     >
-                      {column.label}
+                      {columnLabel(column)}
                       {allowColumnResize ? (
                         <span
                           className="quote-col-resize-handle"
@@ -689,34 +1427,57 @@ export function QuoteDocumentRenderer({
                     </td>
                   </tr>
                 ) : (
-                  displayedQuoteRows.map((row, index) =>
-                    row.isSection ? (
-                      <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
-                        <td colSpan={Math.max(finalColumns.length, 1)}>
-                          <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
-                        </td>
-                      </tr>
-                    ) : (
-                      <tr key={row.item.id || `${row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
+                  displayedQuoteRows.map((row, index) => {
+                    if (row.isSection) {
+                      // Tong tien section (B) - hien BOLD, can PHAI, thang
+                      // hang duoi dung cot "Thành tiền" (`total`) - neu mau
+                      // KHONG khai bao cot `total` (hiem, vd solutionItems)
+                      // thi khong co cot nao de can theo, gop chung vao 1 o
+                      // ten section nhu cu (khong hien so).
+                      const totalColIndex = finalColumns.findIndex(column => column.key === 'total');
+                      if (totalColIndex < 0) {
+                        return (
+                          <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                            <td colSpan={Math.max(finalColumns.length, 1)}>
+                              <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                            </td>
+                          </tr>
+                        );
+                      }
+                      const trailingColSpan = finalColumns.length - totalColIndex - 1;
+                      return (
+                        <tr key={row.item.id || `section-${row.number}-${index}`} className="quote-item-row quote-item-row--section">
+                          <td colSpan={Math.max(totalColIndex, 1)}>
+                            <strong>{row.number} — {stripLeadingRomanPrefix(String(row.item.description || row.item.serviceDescription || ''), row.number)}</strong>
+                          </td>
+                          <td className="money-cell quote-section-total-cell">
+                            <strong>{formatVnd(row.sectionTotal)}</strong>
+                          </td>
+                          {trailingColSpan > 0 ? <td colSpan={trailingColSpan} /> : null}
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={`${row.item.id || row.number}-${index}`} className={row.isChild ? 'quote-item-row quote-item-row--child' : 'quote-item-row quote-item-row--parent'}>
                         {finalColumns.map(column => (
                           <td
                             key={column.key}
-                            data-label={column.label}
-                            className={
-                              column.type === 'currency' ||
-                              ['unitPrice', 'subtotal', 'vatAmount', 'total'].includes(column.key)
-                                ? 'money-cell'
-                                : undefined
-                            }
+                            data-label={columnLabel(column)}
+                            className={quoteColumnClassName(column)}
                           >
                             {column.type === 'auto-number' || column.key === 'order'
                               ? row.number
                               : renderCell(row.item, column, index)}
+                            {column.key === (finalColumns.find(c => c.key === 'serviceDescription') || finalColumns.find(c => c.key === 'description') || finalColumns[0])?.key && row.item.warrantyScope?.trim() ? (
+                              <div className="quote-item-warranty"><strong>Phạm vi bảo hành:</strong>
+                                {formatDescriptionLines(row.item.warrantyScope).map((line, i) => <div key={i}>{line}</div>)}
+                              </div>
+                            ) : null}
                           </td>
                         ))}
                       </tr>
-                    )
-                  )
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -724,27 +1485,86 @@ export function QuoteDocumentRenderer({
         </section>
 
         <section className="sheet-total-block sheet-total-block--standard">
-          <div className="sheet-total-row">
-            <span>{findField('subtotalAmount').label || 'Tổng trước VAT'}</span>
-            <strong>{formatVnd(totals.subtotalAmount)}</strong>
-          </div>
-          {resolvedDiscountAmount ? (
-            <div className="sheet-total-row sheet-total-row--discount">
-              <span>Giảm giá</span>
-              <strong>-{formatVnd(resolvedDiscountAmount)}</strong>
+          {/* "nhìn như bị trừ 2 lần" (2026-10-13): subtotalBeforeVat tu truoc
+           * gio da NET san phan giam gia hang muc (xem comment o
+           * calculateOverallDiscountSummary) - hien dong nay NGAY PHIA TREN
+           * dong "Giảm giá hạng mục" gay hieu nham la bi tru 2 lan. Co giam
+           * gia hang muc thi doi sang hien "Giá gốc trước giảm" (gia GOC that,
+           * truoc ca giam gia hang muc) thay the - CHI 1 trong 2 dong hien tai
+           * 1 thoi diem, khong lap lai. */}
+          {visibleSummaryKeys.has('grossSubtotal') && totalDiscountAmount > 0 ? (
+            <div className="sheet-total-row">
+              <span>Giá gốc trước giảm</span>
+              <strong>{formatVnd(totals.subtotalAmount)}</strong>
             </div>
           ) : null}
-          <div className="sheet-total-row">
-            <span>{findField('totalVatAmount').label || 'VAT'}</span>
-            <strong>{formatVnd(totals.totalVatAmount)}</strong>
-          </div>
-          <div className="sheet-total-row sheet-total-row--grand">
-            <span>{findField('totalAmount').label || 'Tổng cộng'}</span>
-            <strong>{formatVnd(totals.totalAmount)}</strong>
-          </div>
+          {visibleSummaryKeys.has('subtotalBeforeVat') && totalDiscountAmount <= 0 ? (
+            <div className="sheet-total-row">
+              <span>{findField('subtotalAmount').label || 'Tổng cộng chưa bao gồm thuế GTGT'}</span>
+              <strong>{formatVnd(discountSummary.subtotalBeforeVat)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>{isOverallDiscountAmount ? 'Giảm giá toàn báo giá' : `Giảm giá tổng (${overallDiscountPercent}%)`}</span>
+              <strong>-{formatVnd(discountSummary.overallDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('totalDiscount') && totalDiscountAmount > 0 && !(visibleSummaryKeys.has('overallDiscount') && hasOverallDiscount && (totals.discountAmount || 0) <= 0) ? (
+            <div className="sheet-total-row sheet-total-row--discount">
+              <span>{isOverallDiscountAmount && (totals.discountAmount || 0) <= 0 ? 'Giảm giá toàn báo giá' : 'Tổng tiền giảm'}</span>
+              <strong>-{formatVnd(totalDiscountAmount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('subtotalAfterDiscount') && totalDiscountAmount > 0 ? (
+            <div className="sheet-total-row">
+              <span>Tổng sau giảm giá</span>
+              <strong>{formatVnd(discountSummary.subtotalAfterDiscount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('vatTotal') ? (
+            <div className="sheet-total-row">
+              <span>{findField('totalVatAmount').label || 'Thuế GTGT'}</span>
+              <strong>{formatVnd(discountSummary.vatAfterDiscount)}</strong>
+            </div>
+          ) : null}
+          {visibleSummaryKeys.has('grandTotal') ? (
+            <div className="sheet-total-row sheet-total-row--grand">
+              <span>{findField('totalAmount').label || 'Tổng thanh toán'}</span>
+              <strong>{formatVnd(discountSummary.grandTotal)}</strong>
+            </div>
+          ) : null}
         </section>
 
-        {notesRows.length ? (
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.paymentPlan) && schema.enableDynamicPaymentPlan && visiblePaymentPlan(quoteData.paymentPlan).length > 0 ? (
+          <section className="sheet-note sheet-payment-plan">
+            <h3>Kế hoạch thanh toán</h3>
+            <table className="quote-table">
+              <thead><tr><th>Đợt</th><th>Tỷ lệ (%)</th><th>Số tiền</th><th>Điều kiện thanh toán</th><th>Ghi chú</th></tr></thead>
+              <tbody>{visiblePaymentPlan(quoteData.paymentPlan).map((row, i) => <tr key={row.id || i}>
+                <td>{row.phase}</td><td>{row.percent}%</td><td className="money-cell">{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency)[i])}</td><td>{row.condition}</td><td>{row.note}</td>
+              </tr>)}</tbody>
+              <tfoot><tr><th>Tổng</th><th>{paymentPlanPercent(visiblePaymentPlan(quoteData.paymentPlan))}%</th><th>{formatVnd(paymentPlanAmounts(visiblePaymentPlan(quoteData.paymentPlan), discountSummary.grandTotal, currency).reduce((sum, amount) => sum + amount, 0))}</th><td colSpan={2} /></tr></tfoot>
+            </table>
+          </section>
+        ) : null}
+
+        {/* "Cam kết & bảo hành" - dung DUNG field "commitments" + bien
+         * commitmentRows da tinh san (xem dong 476, villa dang dung chung bien
+         * nay) - CO DIEU KIEN nen KHONG anh huong cac mau khac (field nay
+         * trong/khong ton tai o schema standard/villa cu). */}
+        {commitmentRows.length ? (
+          <section className="sheet-note sheet-commitments">
+            <h3>Cam kết & bảo hành</h3>
+            <ul>
+              {commitmentRows.map((item, index) => (
+                <li key={`${item}-${index}`}>{item}</li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.notes) && notesRows.length ? (
           <section className="sheet-note sheet-note--terms">
             <h3>Điều khoản & ghi chú</h3>
             <ul>
@@ -755,18 +1575,28 @@ export function QuoteDocumentRenderer({
           </section>
         ) : null}
 
-        {renderCustomBlocks(quoteData?.customBlocks)}
+        {renderCustomBlocks(visibleCustomBlocks)}
 
-        <footer className="sheet-signatures">
+        {isQuoteDocumentSectionVisible(quoteData, QUOTE_DOCUMENT_SECTION_KEYS.signatures) ? <footer className="sheet-signatures">
           <div>
             <strong>{findField('companyRepresentative').label || 'Đại diện công ty'}</strong>
-            <span>{String(fieldValue('companyRepresentative') || '[Đại diện công ty]')}</span>
+            {/* Khong con hien placeholder "[Đại diện công ty]" khi trong -
+             * day la dong DE KY THAT, de trong (khong chu) van hop ly hon
+             * hien 1 chuoi ngoac vuong khong phai chu ky ai ca. */}
+            {/* "sheet-signature-line" (2026-10-23, yeu cau sep - ten dai dien
+             * khong co cho ky tay khi in giay): 1 duong ke ngang ngan phia
+             * tren ten, tao khoang trong de ky that bang tay truoc khi dong
+             * dau - KHONG dung border-top tren <span> ten (se dinh sat vao
+             * chu) ma la 1 phan tu rieng. */}
+            <span className="sheet-signature-line" aria-hidden="true" />
+            <span>{String(fieldValue('companyRepresentative') || '')}</span>
           </div>
           <div>
             <strong>{findField('customerRepresentative').label || 'Đại diện khách hàng'}</strong>
-            <span>{String(fieldValue('customerRepresentative') || '[Đại diện khách hàng]')}</span>
+            <span className="sheet-signature-line" aria-hidden="true" />
+            <span>{String(fieldValue('customerRepresentative') || '')}</span>
           </div>
-        </footer>
+        </footer> : null}
       </section>
     </div>
   );

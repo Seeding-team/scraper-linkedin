@@ -27,8 +27,8 @@ export function DashboardHeader() {
         >
           <span className="relative h-8 w-8 overflow-hidden rounded-lg border border-outline-variant bg-surface">
             <Image
-              src="https://markeeai.com/logo.svg"
-              alt="MarkeeAI"
+              src="/securityzone_logo.png"
+              alt="SecurityZone"
               fill
               sizes="32px"
               className="object-contain p-1"

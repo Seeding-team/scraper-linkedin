@@ -1,15 +1,22 @@
 export type BillingType = 'one_time' | 'monthly' | 'yearly';
 
 export type DealStage =
+  | 'dealing'
+  | 'proposal_sent'
+  | 'negotiation'
+  | 'contract_signed'
+  | 'payment_1'
+  | 'implementation'
+  | 'acceptance'
+  | 'payment_final'
+  | 'post_sale_care'
   | 'new_lead'
   | 'contacted'
   | 'qualified'
   | 'requirement'
-  | 'proposal_sent'
-  | 'negotiation'
   | 'contract_sent'
-  | 'on_hold'
   | 'won'
+  | 'on_hold'
   | 'lost';
 
 export type ContractStatus =
@@ -34,6 +41,8 @@ export interface QuoteReference {
   number?: string;
   url?: string;
   totalAmount?: number;
+  /** Tien te cua quote da gan ('VND' | 'USD'); bo trong = VND. */
+  currency?: string;
   /** 'draft' = Chưa duyệt, 'approved' = Đã duyệt, 'confirmed' = báo giá cũ (tương thích ngược). */
   status?: 'draft' | 'confirmed' | 'approved' | 'cancelled';
   /** V1/V2/V3... trong chuỗi phiên bản (mặc định 1 nếu báo giá cũ chưa có chuỗi). */
@@ -128,6 +137,10 @@ export interface Deal {
   contactId: string;
   dealId: string;
   customerId?: string;
+  /** Nguoi lien he chinh cua Deal (migration 134/135: customer_leads.
+   * primary_contact_id) - trs `crm_contacts.id`, KHAC voi `contactId` o tren
+   * (field cu, khong lien quan Contact 360). null/undefined = chua chon. */
+  primaryContactId?: string | null;
   /** Du an that (migration 097) - null/undefined = Co hoi chua gan Du an nao. */
   projectId?: string | null;
   customerName: string;
@@ -185,6 +198,9 @@ export interface CrmCustomerSummary {
   id: string;
   customerName: string;
   companyName?: string;
+  /** Ten viet tat (uu tien hien thi o danh sach/dropdown); ten day du van la companyName/customerName. */
+  shortName?: string | null;
+  customerCode?: string | null;
   position?: string;
   positionCategoryId?: string;
   positionLabelSnapshot?: string;
@@ -200,6 +216,13 @@ export interface CrmCustomerSummary {
   /** So Contact that thuoc khach hang nay (migration khong can - backend gan
    * them field nay o _attach_customer_metrics, xem crm_customer_service.py). */
   contactCount?: number;
+  /** Contact dai dien (is_primary=true, hoac created_at som nhat neu khong co
+   * contact nao is_primary) - cung gan o _attach_customer_metrics(), null neu
+   * khach hang chua co contact nao. */
+  primaryContact?: { id: string; name: string; phone?: string | null; email?: string | null } | null;
+  /** "Việc tiếp theo" tự tính từ Deal/Báo giá/Hợp đồng đang hoạt động (server-computed, khong luu DB -
+   * xem crm_customer_progress_service.py) - khong con la switch cung theo status o FE. */
+  nextAction?: string;
 }
 
 /**
@@ -210,6 +233,10 @@ export interface CrmCustomerSummary {
  * cho combobox chọn khách hàng lúc tạo deal).
  */
 export interface CrmCustomerRow extends CrmCustomerSummary {
+  /** Ten viet tat (hien thi o danh sach). null = chua co -> fallback ten cong ty day du. */
+  shortName?: string | null;
+  /** true = nguoi dung tu nhap/sua tay -> he thong khong bao gio tu ghi de. */
+  shortNameManual?: boolean;
   zalo?: string;
   facebook?: string;
   telegram?: string;
@@ -221,6 +248,10 @@ export interface CrmCustomerRow extends CrmCustomerSummary {
   note?: string;
   phoneNormalized?: string;
   emailNormalized?: string;
+  externalSystem?: string;
+  externalId?: string;
+  externalPayload?: Record<string, unknown>;
+  syncedAt?: string;
   createdBy?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -232,6 +263,8 @@ export interface CrmCustomerKpi {
   following: number;
   current_customer: number;
   not_fit: number;
+  /** So khach dang co hop dong con hieu luc/da ky (2026-10-23) - dung cho tab "Hợp đồng". */
+  has_contract: number;
 }
 
 export interface CrmCustomerListResult {
@@ -334,6 +367,12 @@ export type CreateDealInput = Omit<
 > & {
   customerId?: string;
   updateCustomerProfile?: boolean;
+  /** Customer profile name, distinct from legacy Deal.customerName (deal title). */
+  customerProfileName?: string;
+  /** Ten Du an MOI go tay (chua co projectId) - feedback 2026-09-25: "Cơ hội"
+   * khong con nhap ten rieng, lay theo Du an. Backend tu tao Du an that tu
+   * ten nay khi projectId rong. */
+  projectName?: string;
   idempotencyKey?: string;
   contract?: ContractInfo;
   outcome?: OutcomeInfo;
@@ -366,12 +405,28 @@ export interface RevenueRow {
 // ===== Leads (crm_leads) — trang riêng /all-platform/crm/leads, KHÁC hẳn
 // CrmCustomerRow (crm_customers) và Deal (customer_leads). Khớp
 // CrmLeadResponse ở backend (app/modules/all_platform/schemas/crm_lead.py). =====
-export type CrmLeadStatus = 'new_lead' | 'qualifying' | 'qualified' | 'nurture' | 'converted' | 'disqualified';
+export type CrmLeadStatus =
+  | 'mql'
+  | 'sql'
+  | 'nurturing'
+  | 'unqualified'
+  | 'new_lead'
+  | 'qualifying'
+  | 'qualified'
+  | 'nurture'
+  | 'converted'
+  | 'disqualified'
+  | 'out'; // Lead da convert co Co hoi OUT (tinh tu backend) - tach rieng voi 'unqualified'
 
 export interface CrmLeadRow {
   id: string;
+  /** Link Doc/Sheet hang muc bao gia dan luc ban giao (GD3). */
+  handoverLinks?: Array<{ url: string; title?: string }>;
+  /** Co hoi cua Lead nay da OUT (backend tinh tu deal_stage = lost). */
+  dealOut?: boolean;
   leadName: string;
   companyName?: string;
+  taxCode?: string;
   position?: string;
   positionCategoryId?: string;
   positionLabelSnapshot?: string;
@@ -392,6 +447,17 @@ export interface CrmLeadRow {
   qualificationDecisionMaker?: string;
   qualificationExpectedTimeline?: string;
   qualificationAeId?: string;
+  /** Team Sale bàn giao (crm_leads.team_id, migration 154) - thay cho chọn 1
+   * cá nhân cụ thể (qualificationAeId, để nguyên trong schema nhưng ngưng
+   * dùng ở form Xác minh Lead - feedback leader 2026-09-27). */
+  teamId?: string;
+  /** Dự án (nhập tay) lưu trước khi Lead convert thành Cơ hội (crm_leads.project_name,
+   * migration 165) - cùng cơ chế round-trip với teamId ở trên. */
+  projectName?: string;
+  projectId?: string;
+  /** Giai đoạn (nháp) chọn trước khi Lead convert thành Cơ hội (crm_leads.deal_stage,
+   * migration 166) - cùng cơ chế round-trip với teamId/projectName ở trên. */
+  dealStage?: string;
   nextStep?: string;
   followUpDate?: string;
   convertedCustomerId?: string;
@@ -406,9 +472,12 @@ export interface CrmLeadRow {
 
 export interface CrmLeadKpi {
   total: number;
-  new_lead: number;
-  qualifying: number;
-  qualified: number;
+  mql: number;
+  sql: number;
+  nurturing: number;
+  unqualified: number;
+  /** Lead da convert nhung Co hoi OUT (deal_stage = lost) - tach rieng voi Khong dat chuan. */
+  out?: number;
 }
 
 export interface CrmAnalytics {

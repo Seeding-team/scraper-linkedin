@@ -311,11 +311,54 @@ class Settings:
     default_scroll_delay_max_ms: int = int(os.getenv("DEFAULT_SCROLL_DELAY_MAX_MS", "2000"))
     default_max_items: int = int(os.getenv("DEFAULT_MAX_ITEMS", "50"))
     api_key: str = os.getenv("API_KEY", "")
+    # Khoá cho web ngoài (Project 2 / Learn) gọi API thay cho đăng nhập bằng mật khẩu tài khoản dịch vụ: gửi header
+    # X-Web-Intake-Key; backend chạy dưới user WEB_INTAKE_USER_ID (nên là user riêng, quyền tối thiểu). Để trống = tắt.
+    web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
+    web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
     render_api_key: str = os.getenv("RENDER_API_KEY", "")
+
+    # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────
+    # Base URL he thong MSC (source of truth, chi GET /api/v1/goods boil dau /).
+    # De trong = tat tinh nang dong bo (job se khong chay, endpoint bao loi).
+    msc_api_base_url: str = os.getenv("MSC_API_BASE_URL", "").rstrip("/")
+    # DEPRECATED (dung cho luu dong bo cu): token Bearer — MSC KHONG con nhan token nay
+    # cho GET /goods; msc_sync_service gio dung khoa tich hop msc_integration_key.
+    # Giu lai value cho den khi luu dong bo moi da xac minh xong tren prod roi moi xoa.
+    msc_api_token: str = os.getenv("MSC_API_TOKEN", "")
+    # Khoa tich hop may-may (X-Msc-Integration-Key): MSC chi nhan tren GET /api/v1/goods.
+    # Bat buoc cho dong bo: thieu = run that bai sach se (khong fallback ve token cu).
+    msc_integration_key: str = os.getenv("MSC_INTEGRATION_KEY", "")
+    # Gio (0-23) va phut chay dong bo tu dong 1 lan/ngay (timezone cua container,
+    # docker-compose dat TZ=Asia/Ho_Chi_Minh).
+    msc_sync_hour: int = max(0, min(23, int(os.getenv("MSC_SYNC_HOUR", "2"))))
+    msc_sync_minute: int = max(0, min(59, int(os.getenv("MSC_SYNC_MINUTE", "30"))))
+    # 1 = chi tinh toan dem insert/update, KHONG ghi CRM (kiem tra mapping an toan).
+    msc_sync_dry_run: bool = os.getenv("MSC_SYNC_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
+    # Timeout cho GET /api/v1/goods (giay).
+    msc_sync_timeout_sec: float = float(os.getenv("MSC_SYNC_TIMEOUT_SEC", "60"))
     render_service_id: str = os.getenv("RENDER_SERVICE_ID", "")
     cors_origins: list[str] | None = None
     host: str = os.getenv("HOST", "0.0.0.0")
     port: int = int(os.getenv("PORT", "8000"))
+    # Main CRM tenant. Main is not a special case that can read all CRM data;
+    # it must use the same instance filter mechanism as the clone apps.
+    crm_instance: str = (os.getenv("CRM_INSTANCE") or "markee").strip()
+    crm_public_url: str = os.getenv("CRM_PUBLIC_URL", "http://localhost:8080").rstrip("/")
+    google_service_account_email: str = os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL", "")
+    google_private_key: str = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
+    google_drive_contracts_shared_drive_id: str = os.getenv(
+        "GOOGLE_DRIVE_CONTRACTS_SHARED_DRIVE_ID", "",
+    )
+    onlyoffice_internal_url: str = os.getenv(
+        "ONLYOFFICE_INTERNAL_URL", "http://onlyoffice:80",
+    ).rstrip("/")
+    backend_internal_url: str = os.getenv(
+        "BACKEND_INTERNAL_URL", "http://backend:8000/api/all-platform",
+    ).rstrip("/")
+    onlyoffice_public_url: str = os.getenv(
+        "ONLYOFFICE_PUBLIC_URL", "http://localhost:8094",
+    ).rstrip("/")
+    onlyoffice_jwt_secret: str = os.getenv("ONLYOFFICE_JWT_SECRET", "")
     raw_data_dir: Path = BASE_DIR / "data" / "raw"
     output_data_dir: Path = BASE_DIR / "data" / "output"
     n8n_webhook_url: str = os.getenv("N8N_WEBHOOK_URL", "")
@@ -410,7 +453,8 @@ class Settings:
 
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     openai_base_url: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    ai_model: str = os.getenv("AI_MODEL", "gpt-4o")
+    ai_model: str = os.getenv("AI_MODEL", "gpt-4o-mini")
+    gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
 
     # Hardcoded defaults (not read from env) so every deploy target — dev,
     # production, or a fresh server — works out of the box with no .env
@@ -426,6 +470,18 @@ class Settings:
             os.getenv("MARKEEAI_CAMPAIGN_IDS"),
             default=("8740a8ad-6796-4e25-b80c-25e7e7dc15f7",),
         ),
+    )
+
+    # Dong bo ung vien "accepted" tu he thong tuyen dung (cv.markeeai.com) vao
+    # danh ba noi bo `members` (nut "Dong bo tu tuyen dung" o tab Quan ly thanh
+    # vien) - dung CHUNG 1 project Supabase voi pm-new (PM tool noi bo), hardcode
+    # default nhu markeeai_* o tren de moi deploy chay duoc ngay, .env van override duoc.
+    recruitment_supabase_url: str = os.getenv(
+        "RECRUITMENT_SUPABASE_URL", "https://cv.db.markeeai.com",
+    ).rstrip("/")
+    recruitment_supabase_service_role_key: str = os.getenv(
+        "RECRUITMENT_SUPABASE_SERVICE_ROLE_KEY",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg",
     )
 
     def __post_init__(self) -> None:

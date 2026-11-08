@@ -1,0 +1,2289 @@
+import asyncio
+import os
+import posixpath
+import tempfile
+import shutil
+import time
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+import re
+from loguru import logger
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from pydantic import BaseModel, Field
+
+from app.modules.all_platform.auth_deps import get_authenticated_caller_email
+from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
+from app.modules.all_platform.zalo.schemas.library import (
+    ZaloConversationListResponse,
+    ZaloConversationSummary,
+    ZaloLibraryListResponse,
+    ZaloLibraryMessage,
+)
+from app.modules.all_platform.zalo.schemas.message import Message, Mention
+from app.modules.all_platform.zalo.services.supabase_service import (
+    SupabaseNotConfigured,
+    _rest,
+    list_conversation_messages,
+    list_conversations,
+    save_listener_messages,
+    save_global_listener_messages,
+    upsert_groups,
+    upsert_group,
+    mark_conversation_as_read,
+    resolve_thread_type,
+    search_conversation_messages,
+)
+from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
+from app.modules.all_platform.zalo.services.zca_api_bridge import (
+    ZcaAuthExpiredError,
+    find_zca_user_by_phone,
+    find_zca_user_by_username,
+    get_zca_group_history,
+    get_zca_user_history,
+    list_zca_groups,
+    list_zca_friends,
+    send_zca_message,
+    send_zca_images,
+    sync_zca_group_old_messages,
+    remove_zca_unread_mark,
+    recall_zca_message,
+    get_zca_friend_status,
+    send_zca_friend_request,
+    accept_zca_friend_request,
+    get_zca_group_members_full,
+    get_zca_stickers_detail,
+    send_zca_sticker,
+    add_zca_reaction,
+    search_zca_stickers,
+)
+from app.core.phone import vn_phone_to_e164
+
+router = APIRouter(
+    prefix="/conversations",
+    tags=["zalo-conversations"],
+    dependencies=[Depends(verify_zalo_api_key)],
+)
+
+# Thông báo chuẩn khi phiên Zalo hết hạn — FE dựa vào status 401 + code này để hiện CTA login lại.
+ZCA_SESSION_EXPIRED_DETAIL = {
+    "code": "zca_session_expired",
+    "message": "Phiên đăng nhập Zalo đã hết hạn hoặc bị đăng xuất (có thể do đăng nhập cùng lúc ở nơi khác). Vui lòng đăng nhập lại qua Chrome Extension.",
+}
+
+
+def _normalize_user_id(value: Optional[str]) -> str:
+    raw = (value or "default").strip().lower()
+    raw = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-._")
+    return raw or "default"
+
+
+
+# ==============================================================================
+# ⚡ ACCELERATOR CACHE (Tối ưu hoá truy vấn & loại bỏ Supabase round-trip)
+# ==============================================================================
+_AUTH_USER_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_ACCOUNT_META_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_PERM_CACHE: Dict[Tuple[str, str, str], Tuple[float, Optional[set[str]]]] = {}
+_MESSAGE_CACHE: Dict[Tuple[str, str, int, int], Tuple[float, Dict[str, Any]]] = {}
+
+AUTH_CACHE_TTL = 60.0  # 60s cache cho app_user và zalo_account metadata
+MESSAGE_CACHE_TTL = 3.0  # 3s cache cho danh sách tin nhắn đang xem/click liên tục
+
+def invalidate_conversation_message_cache(user_id: str, conversation_id: Optional[str] = None) -> None:
+    """Xoá cache tin nhắn khi có tin nhắn mới hoặc thao tác gửi/thu hồi."""
+    u_id = user_id.strip().lower()
+    c_id = conversation_id.strip() if conversation_id else None
+    keys_to_del = [
+        k for k in list(_MESSAGE_CACHE.keys())
+        if k[0].strip().lower() == u_id and (c_id is None or k[1] == c_id)
+    ]
+    for k in keys_to_del:
+        _MESSAGE_CACHE.pop(k, None)
+
+
+async def check_caller_conversation_access(
+    account_id: str,
+    caller_email: Optional[str],
+) -> Optional[set[str]]:
+    """Kiểm tra quyền truy cập của người gọi đối với tài khoản zalo account_id (kèm TTL Cache 60s)."""
+    if not caller_email:
+        return None
+
+    now = time.time()
+    caller_email_clean = caller_email.strip().lower()
+
+    # 1. Tìm thông tin app_user từ cache (TTL 60s)
+    user_cached = _AUTH_USER_CACHE.get(caller_email_clean)
+    if user_cached and (now - user_cached[0] < AUTH_CACHE_TTL):
+        caller_user = user_cached[1]
+    else:
+        user_rows = await _rest(
+            "GET",
+            "app_users",
+            params={
+                "select": "id,role",
+                "email": f"eq.{caller_email_clean}",
+                "limit": "1",
+            },
+        )
+        caller_user = user_rows[0] if user_rows else None
+        _AUTH_USER_CACHE[caller_email_clean] = (now, caller_user)
+
+    if not caller_user:
+        raise HTTPException(status_code=403, detail="Không tìm thấy thông tin tài khoản người gọi.")
+        
+    caller_user_id = str(caller_user.get("id"))
+    caller_role = str(caller_user.get("role") or "").strip().lower()
+
+    # 2. Tìm chủ sở hữu của tài khoản Zalo từ cache (TTL 60s)
+    acc_cached = _ACCOUNT_META_CACHE.get(account_id)
+    if acc_cached and (now - acc_cached[0] < AUTH_CACHE_TTL):
+        acc_data = acc_cached[1]
+    else:
+        account_rows = await _rest(
+            "GET",
+            "zalo_accounts",
+            params={
+                "select": "owner_id,is_shared_with_all",
+                "account_id": f"eq.{account_id}",
+                "limit": "1",
+            },
+        )
+        acc_data = account_rows[0] if account_rows else None
+        _ACCOUNT_META_CACHE[account_id] = (now, acc_data)
+
+    owner_user_id = str(acc_data.get("owner_id") or "") if acc_data else None
+
+    # 3. Nếu là chủ sở hữu, cho phép xem toàn bộ
+    if owner_user_id and caller_user_id == owner_user_id:
+        return None
+
+    # 3b. Tài khoản đánh dấu "dùng chung toàn công ty" -> mọi nhân viên đều full quyền
+    if acc_data and bool(acc_data.get("is_shared_with_all")):
+        return None
+
+    # 4. Nếu không phải chủ sở hữu, chỉ admin và leader được xem
+    if caller_role not in ["admin", "superadmin", "leader"]:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập dữ liệu của tài khoản này.")
+
+    # 5. Truy vấn danh sách cuộc hội thoại được share từ cache (TTL 60s)
+    perm_cache_key = (account_id, caller_user_id, caller_role)
+    perm_cached = _PERM_CACHE.get(perm_cache_key)
+    if perm_cached and (now - perm_cached[0] < AUTH_CACHE_TTL):
+        return perm_cached[1]
+
+    perm_params = {
+        "select": "conversation_id,id_leader",
+        "account_id": f"eq.{account_id}",
+        "is_active": "eq.true",
+        "limit": "5000",
+    }
+    if caller_role == "leader":
+        perm_params["or"] = f"(id_leader.eq.{caller_user_id},id_leader.is.null)"
+
+    perm_rows = await _rest(
+        "GET",
+        "zalo_conversation_permissions",
+        params=perm_params,
+    ) or []
+
+    allowed_ids = {str(row.get("conversation_id") or "").strip() for row in perm_rows if row.get("conversation_id")}
+    _PERM_CACHE[perm_cache_key] = (now, allowed_ids)
+    return allowed_ids
+
+
+class SyncRecentRequest(BaseModel):
+    account_id: Optional[str] = None
+    limit: int = Field(default=50, ge=1, le=100)
+    messages_per_conversation: int = Field(default=50, ge=1, le=200)
+
+
+class SyncRecentGroupResult(BaseModel):
+    group_id: str
+    group_name: str
+    messages_saved: int = 0
+    status: str
+    error: Optional[str] = None
+
+
+class SyncRecentResponse(BaseModel):
+    account_id: str
+    scanned: int = 0
+    groups_with_messages: int = 0
+    messages_saved: int = 0
+    errors: int = 0
+    results: List[SyncRecentGroupResult] = Field(default_factory=list)
+
+class SyncDomMessage(BaseModel):
+    message_id: Optional[str] = None
+    source_message_id: Optional[str] = None
+    sender_id: Optional[str] = None
+    sender_name: Optional[str] = None
+    timestamp: Optional[str] = None
+    timestamp_text: Optional[str] = None
+    time_text: Optional[str] = None
+    type: str = "webchat"
+    content: Optional[str] = None
+    image_urls: List[str] = Field(default_factory=list)
+    is_sent: bool = False
+    is_deleted: bool = False
+
+class SyncDomConversation(BaseModel):
+    group_id: str
+    group_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    unread_count: Optional[int] = None
+    messages: List[SyncDomMessage] = Field(default_factory=list)
+
+class SyncDomRequest(BaseModel):
+    account_id: Optional[str] = None
+    conversations: List[SyncDomConversation] = Field(default_factory=list)
+
+class SyncDomResponse(BaseModel):
+    ok: bool = True
+    account_id: str
+    scanned: int = 0
+    groups_with_messages: int = 0
+    messages_saved: int = 0
+    errors: int = 0
+    results: List[SyncRecentGroupResult] = Field(default_factory=list)
+
+
+async def list_conversations_for_caller(
+    user_id: str,
+    caller_email: Optional[str],
+    limit: int = 500,
+) -> List[Dict[str, Any]]:
+    try:
+        rows = await _rest(
+            "POST",
+            "rpc/fn_get_zalo_conversations",
+            json={
+                "p_account_id": user_id,
+                "p_caller_email": caller_email or "",
+                "p_limit": limit,
+            }
+        ) or []
+        
+        results = []
+        for r in rows:
+            last_msg_at = r.get("last_message_at")
+            latest_message_at = str(last_msg_at) if last_msg_at else None
+            c_name = (r.get("conversation_name") or r.get("group_name") or "").strip()
+            l_sender = (r.get("last_sender_name") or "").strip()
+            if (not c_name or c_name.lower() in ("markee", "zalo", "user", "dm", "me", "__me__") or c_name == str(r.get("conversation_id"))) and l_sender and l_sender.lower() not in ("markee", "__me__", "me", "bạn", "ban"):
+                c_name = l_sender
+            elif not c_name:
+                c_name = r.get("conversation_id") or "Người dùng Zalo"
+
+            results.append({
+                "conversation_id": r.get("conversation_id"),
+                "conversation_name": c_name,
+                "account_id": user_id,
+                "message_count": 0,
+                "image_count": 0,
+                "sent_count": 0,
+                "received_count": 0,
+                "latest_message_at": latest_message_at,
+                "latest_content": r.get("last_message_content"),
+                "latest_sender_name": r.get("last_sender_name"),
+                "has_messages": bool(latest_message_at),
+                "sync_status": "has_messages" if latest_message_at else "no_messages",
+                "avatar_url": r.get("avatar_url"),
+                "unread_count": int(r.get("unread_count") or 0),
+                "is_pinned": bool(r.get("is_pinned")),
+                "is_friend": bool(r.get("is_friend")),
+                "thread_type": r.get("thread_type") or ("user" if r.get("is_friend") else "group"),
+                "tag": r.get("tag"),
+            })
+        return results
+    except Exception as exc:
+        logger.info(f"fn_get_zalo_conversations RPC failed: {exc}. Falling back to manual queries...")
+        allowed_conv_ids = await check_caller_conversation_access(user_id, caller_email)
+        rows = await list_conversations(user_id, limit=limit)
+        if allowed_conv_ids is not None:
+            rows = [r for r in rows if str(r.get("group_id") or "").strip() in allowed_conv_ids]
+        return rows
+
+
+@router.get("", response_model=ZaloConversationListResponse)
+async def get_conversations(
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    limit: int = Query(500, ge=1, le=2000),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    try:
+        rows = await list_conversations_for_caller(user_id, x_caller_email, limit=limit)
+        return {
+            "account_id": user_id,
+            "conversations": [ZaloConversationSummary(**row) for row in rows],
+            "total": len(rows),
+        }
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tải danh sách hội thoại Zalo: {exc}")
+
+
+# SU CO THAT (2026-10-04): frontend (ZaloInboxAdminShell.tsx, luong "Xu ly"
+# tu CRM voi ?conv=) co bug - reload trang lien tuc lam component remount
+# lien tuc, moi lan mount goi lai endpoint nay cho CUNG 1 conv_id, flood
+# hang nghin request/phut, nghet CPU backend toi 86%+ lam MOI API (ke ca
+# auth/me) bi xep hang/timeout. Da fix frontend (sessionStorage cooldown),
+# nhung them 1 lop chan o day cho CHAC - cache ket qua ngan han theo
+# (conv_id, caller) de du frontend/client nao sau nay co bug tuong tu cung
+# khong lam qua tai Supabase/CPU. TTL ngan (20s) vi day chi la tra cuu
+# "acc nao dang giu conv nay" - khong nhay cam ve thoi gian thuc.
+_RESOLVE_ACCOUNT_CACHE: Dict[str, tuple[float, dict]] = {}
+_RESOLVE_ACCOUNT_CACHE_TTL_S = 20.0
+
+
+@router.get("/resolve-account")
+async def resolve_conversation_account(
+    conv_id: str = Query(...),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Tim tai khoan Zalo dang giu 1 conv_id, dung cho luong 'Xu ly' tu trang
+    Khach hang (CRM) - bam vao la tu dong chon dung acc + nhay thang toi hoi
+    thoai, khong can biet truoc acc nao dang giu no."""
+    cache_key = f"{conv_id}:{x_caller_email or ''}"
+    now = time.monotonic()
+    cached = _RESOLVE_ACCOUNT_CACHE.get(cache_key)
+    if cached and now - cached[0] < _RESOLVE_ACCOUNT_CACHE_TTL_S:
+        return cached[1]
+
+    rows = await _rest(
+        "GET",
+        "zalo_groups",
+        params={"select": "user_id", "group_id": f"eq.{conv_id}", "limit": "1"},
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại này.")
+    account_id = str(rows[0].get("user_id") or "")
+    if not account_id:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại này.")
+
+    allowed_ids = await check_caller_conversation_access(account_id, x_caller_email)
+    if allowed_ids is not None and conv_id not in allowed_ids:
+        raise HTTPException(status_code=403, detail="Bạn không có quyền truy cập hội thoại này.")
+
+    result = {"account_id": account_id, "conv_id": conv_id}
+    # Don cache qua date tien loi (chi khi dict phinh to), khong can scheduler
+    # rieng - endpoint nay goi it, du lieu nho, khong dang lo leak thuc te.
+    if len(_RESOLVE_ACCOUNT_CACHE) > 500:
+        expired = [k for k, (ts, _) in _RESOLVE_ACCOUNT_CACHE.items() if now - ts > _RESOLVE_ACCOUNT_CACHE_TTL_S]
+        for k in expired:
+            _RESOLVE_ACCOUNT_CACHE.pop(k, None)
+    _RESOLVE_ACCOUNT_CACHE[cache_key] = (now, result)
+    return result
+
+
+@router.post("/sync-recent", response_model=SyncRecentResponse)
+async def sync_recent_conversations(
+    body: SyncRecentRequest,
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(body.account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="No persisted ZCA auth found for this account")
+
+    # Tải siêu dữ liệu các nhóm hiện tại từ DB để so sánh thời gian tin nhắn cuối
+    # PHẢI tải trước khi gọi upsert_groups để lấy được last_message_at CŨ
+    existing_meta = {}
+    try:
+        from app.modules.all_platform.zalo.services.supabase_service import _rest
+        rows = await _rest(
+            "GET",
+            "zalo_groups",
+            params={
+                "select": "group_id,last_message_at,unread_count",
+                "user_id": f"eq.{user_id}",
+            }
+        ) or []
+        existing_meta = {
+            r["group_id"]: {
+                "last_message_at": r.get("last_message_at"),
+                "unread_count": int(r.get("unread_count") or 0)
+            }
+            for r in rows
+        }
+    except Exception as exc:
+        logger.warning(f"Could not load existing group metadata for sync check: {exc}")
+
+    try:
+        # 1. Fetch all groups and friends and upsert them to zalo_groups
+        groups = await list_zca_groups(auth)
+        friends = await list_zca_friends(auth)
+        all_chats = groups + friends
+        await upsert_groups(user_id, [chat.model_dump() for chat in all_chats])
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        err_msg = str(exc).lower()
+        if "429" in err_msg or "too many" in err_msg or "rate limit" in err_msg:
+            raise HTTPException(
+                status_code=429,
+                detail="Zalo đang giới hạn tốc độ yêu cầu (quá nhiều thao tác). Vui lòng đợi 1-2 phút rồi thử lại."
+            )
+        raise HTTPException(status_code=500, detail=f"Không thể tải danh sách hội thoại Zalo: {exc}")
+
+    def _chat_sort_ms(chat: Any) -> int:
+        from app.modules.all_platform.zalo.services.supabase_service import _parse_to_millis
+
+        return _parse_to_millis(getattr(chat, "last_message_at", None))
+
+    # Manual sync should fetch the latest page from Zalo for the visible recent chats.
+    # Do not skip based on DB/API last_message_at metadata: that metadata can be stale
+    # or already polluted by an older sync page, causing today's messages to be missed.
+    recent_chats = sorted(
+        all_chats,
+        key=lambda chat: (
+            1 if getattr(chat, "is_pinned", False) else 0,
+            _chat_sort_ms(chat),
+            int(getattr(chat, "unread_count", 0) or 0),
+        ),
+        reverse=True,
+    )[: body.limit]
+
+    results: List[SyncRecentGroupResult] = []
+    total_saved = 0
+    groups_with_messages = 0
+    errors = 0
+
+    per_group_count = max(20, min(body.messages_per_conversation, 200))
+
+    # Sequential processing with adaptive delay to avoid Zalo 429 rate limiting.
+    # Burst concurrent calls (semaphore(4)) caused all groups to fail when Zalo
+    # throttled the first burst — sequential + backoff is much more reliable.
+    import random
+
+    _sync_delay = 2.0       # base delay between groups (seconds)
+    _sync_max_delay = 30.0  # cap delay after repeated 429s
+    _consecutive_429 = 0
+
+    async def _fetch_group_messages(group, retry: int = 0) -> List:
+        """Fetch messages for one group with up to 2 retries on 429."""
+        nonlocal _sync_delay, _consecutive_429
+        thread_type = 0 if getattr(group, "is_friend", False) else 1
+        try:
+            if thread_type == 0:
+                messages = await get_zca_user_history(auth, group.group_id, count=per_group_count)
+            else:
+                messages = await get_zca_group_history(auth, group.group_id, count=per_group_count)
+
+            if not messages:
+                messages = await sync_zca_group_old_messages(
+                    auth, group.group_id, thread_type=thread_type, count=per_group_count,
+                )
+            if not messages and thread_type == 1:
+                messages = await sync_zca_group_old_messages(
+                    auth, group.group_id, thread_type=0, count=per_group_count,
+                )
+            _consecutive_429 = 0
+            _sync_delay = max(2.0, _sync_delay * 0.9)  # slowly recover delay on success
+            return messages or []
+        except Exception as exc:
+            err = str(exc).lower()
+            is_429 = "429" in err or "too many" in err or "rate limit" in err
+            if is_429:
+                _consecutive_429 += 1
+                _sync_delay = min(_sync_max_delay, _sync_delay * 2.0)
+                cooldown = min(120.0, 30.0 * _consecutive_429)
+                logger.warning(
+                    f"sync-recent 429 for group={group.group_id} "
+                    f"retry={retry} consecutive={_consecutive_429}, "
+                    f"cooling down {cooldown:.0f}s"
+                )
+                if retry < 2:
+                    await asyncio.sleep(cooldown)
+                    return await _fetch_group_messages(group, retry=retry + 1)
+            raise
+
+    for idx, group in enumerate(recent_chats):
+        # Adaptive jitter delay between groups (skip before the first one)
+        if idx > 0:
+            jitter = _sync_delay * (1.0 + random.uniform(-0.2, 0.2))
+            await asyncio.sleep(jitter)
+
+        try:
+            messages = await _fetch_group_messages(group)
+            if not messages:
+                results.append(SyncRecentGroupResult(
+                    group_id=group.group_id,
+                    group_name=group.name,
+                    messages_saved=0,
+                    status="empty",
+                ))
+                continue
+            saved = await save_listener_messages(
+                user_id, group.group_id, group.name, messages, increment_unread=False,
+            )
+            results.append(SyncRecentGroupResult(
+                group_id=group.group_id,
+                group_name=group.name,
+                messages_saved=saved,
+                status="has_messages" if saved else "empty",
+            ))
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except Exception as exc:
+            logger.warning(f"sync-recent failed for group={group.group_id}: {exc}")
+            results.append(SyncRecentGroupResult(
+                group_id=group.group_id,
+                group_name=group.name,
+                messages_saved=0,
+                status="error",
+                error=str(exc),
+            ))
+
+    for item in results:
+        total_saved += item.messages_saved
+        if item.messages_saved > 0:
+            groups_with_messages += 1
+        if item.status == "error":
+            errors += 1
+
+    return SyncRecentResponse(
+        account_id=user_id,
+        scanned=len(recent_chats),
+        groups_with_messages=groups_with_messages,
+        messages_saved=total_saved,
+        errors=errors,
+        results=list(results),
+    )
+
+
+
+def _normalize_dom_conversation_id(value: str) -> str:
+    raw = str(value or "").strip()
+    if raw.startswith("g") and raw[1:].isdigit():
+        return raw[1:]
+    return raw
+
+def _normalize_dom_message_id(message: SyncDomMessage, group_id: str) -> str:
+    raw = str(message.source_message_id or message.message_id or "").strip()
+    if raw:
+        return raw
+    seed = "|".join(
+        [
+            group_id,
+            str(message.sender_id or message.sender_name or ""),
+            str(message.timestamp_text or message.timestamp or message.time_text or ""),
+            str(message.content or ""),
+            "1" if message.is_sent else "0",
+        ]
+    )
+    import hashlib
+    return "dom-" + hashlib.sha1(seed.encode("utf-8", errors="ignore")).hexdigest()[:32]
+
+@router.post("/sync-dom", response_model=SyncDomResponse)
+async def sync_dom_messages(
+    body: SyncDomRequest,
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Persist messages scraped from the visible Zalo Web DOM.
+
+    This route intentionally does not publish SSE events, send messages, or touch the
+    persistent listener. It only upserts Supabase rows using the same conflict key as
+    listener/crawl data: `(user_id, group_id, source_message_id)`.
+    """
+    user_id = _normalize_user_id(body.account_id or x_user_id)
+    results: List[SyncRecentGroupResult] = []
+    total_saved = 0
+    groups_with_messages = 0
+    errors = 0
+
+    for conversation in body.conversations[:100]:
+        group_id = _normalize_dom_conversation_id(conversation.group_id)
+        if not group_id:
+            continue
+        group_name = (conversation.group_name or group_id).strip() or group_id
+
+        messages: List[Message] = []
+        for item in conversation.messages[:500]:
+            content = (item.content or "").strip() or None
+            image_urls = [str(url) for url in (item.image_urls or []) if str(url).strip()]
+            if not content and not image_urls:
+                continue
+            source_id = _normalize_dom_message_id(item, group_id)
+            timestamp_value = item.timestamp_text or item.timestamp
+            messages.append(
+                Message(
+                    message_id=source_id,
+                    sender_id=item.sender_id,
+                    sender_name=item.sender_name,
+                    timestamp=str(timestamp_value) if timestamp_value else None,
+                    time_text=item.time_text,
+                    type=item.type or ("image" if image_urls else "webchat"),
+                    content=content,
+                    image_urls=image_urls,
+                    is_deleted=item.is_deleted,
+                    is_sent=item.is_sent,
+                    group_id=group_id,
+                )
+            )
+
+        try:
+            saved = 0
+            if messages:
+                saved = await save_listener_messages(
+                    user_id,
+                    group_id,
+                    group_name,
+                    messages,
+                    increment_unread=False,
+                )
+            elif conversation.avatar_url or conversation.unread_count is not None:
+                await upsert_group(
+                    user_id=user_id,
+                    group_id=group_id,
+                    group_name=group_name,
+                    avatar_url=conversation.avatar_url,
+                    unread_count=conversation.unread_count,
+                    is_friend=conversation.is_friend,
+                )
+            total_saved += saved
+            if saved > 0:
+                groups_with_messages += 1
+            results.append(
+                SyncRecentGroupResult(
+                    group_id=group_id,
+                    group_name=group_name,
+                    messages_saved=saved,
+                    status="has_messages" if saved else "empty",
+                )
+            )
+        except SupabaseNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except Exception as exc:
+            logger.warning(f"Failed saving DOM-scraped messages for group={group_id}: {exc}")
+            errors += 1
+            results.append(
+                SyncRecentGroupResult(
+                    group_id=group_id,
+                    group_name=group_name,
+                    messages_saved=0,
+                    status="error",
+                    error=str(exc),
+                )
+            )
+
+    return SyncDomResponse(
+        account_id=user_id,
+        scanned=len(body.conversations),
+        groups_with_messages=groups_with_messages,
+        messages_saved=total_saved,
+        errors=errors,
+        results=results,
+    )
+
+async def _background_sync_conversation_messages(account_id: str, conversation_id: str):
+    """Background sync: dùng group-history thay vì sync-old-messages để tránh lỗi getOwnId null."""
+    from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
+    from app.modules.all_platform.zalo.services.zca_api_bridge import get_zca_group_history
+    from app.modules.all_platform.zalo.services.supabase_service import save_listener_messages, _rest
+    try:
+        auth = await load_zca_auth(account_id)
+        if not auth: return
+
+        # Resolve group_name từ Supabase trước khi dùng conversation_id.
+        group_name = conversation_id
+        try:
+            rows = await _rest(
+                "GET",
+                "zalo_groups",
+                params={
+                    "select": "group_name",
+                    "user_id": f"eq.{account_id}",
+                    "group_id": f"eq.{conversation_id}",
+                    "limit": "1",
+                },
+            ) or []
+            if rows and rows[0].get("group_name"):
+                resolved = str(rows[0]["group_name"]).strip()
+                if resolved and not resolved.startswith("Conversation ") and resolved != conversation_id:
+                    group_name = resolved
+        except Exception:
+            pass  # Fallback vẫn dùng conversation_id
+
+        # Chạy sync_zca_group_old_messages để đồng bộ tin nhắn
+        ttype = await resolve_thread_type(account_id, conversation_id)
+        messages = await sync_zca_group_old_messages(
+            auth, 
+            conversation_id, 
+            thread_type=ttype, 
+            count=50
+        )
+        if not messages and ttype == 1:
+            messages = await sync_zca_group_old_messages(
+                auth, 
+                conversation_id, 
+                thread_type=0, 
+                count=50
+            )
+        if messages:
+            await save_listener_messages(
+                user_id=account_id,
+                group_id=conversation_id,
+                group_name=group_name,
+                messages=messages,
+                increment_unread=False,
+            )
+    except Exception as exc:
+        logger.warning(f"Could not background sync messages for {conversation_id}: {exc}")
+
+@router.get("/{conversation_id}/messages", response_model=ZaloLibraryListResponse)
+async def get_conversation_messages(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    # Check access permission
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+    
+    # User requested to NOT auto-sync old messages on load. 
+    # They will click the sync button manually if needed.
+    # if offset == 0:
+    #     background_tasks.add_task(_background_sync_conversation_messages, user_id, conversation_id)
+        
+    # ⚡ ACCELERATOR: In-memory short TTL cache (3s) cho việc xem/click tin nhắn
+    now = time.time()
+    cache_key = (user_id, conversation_id.strip(), limit, offset)
+    cached_entry = _MESSAGE_CACHE.get(cache_key)
+    if cached_entry and (now - cached_entry[0] < MESSAGE_CACHE_TTL):
+        return cached_entry[1]
+
+    try:
+        rows, total = await list_conversation_messages(
+            user_id,
+            conversation_id,
+            limit=limit,
+            offset=offset,
+        )
+        response_payload = {
+            "messages": [ZaloLibraryMessage(**row) for row in rows],
+            "groups": [],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(rows) < total,
+        }
+        _MESSAGE_CACHE[cache_key] = (now, response_payload)
+        if len(_MESSAGE_CACHE) > 500:
+            for ok in sorted(_MESSAGE_CACHE.keys(), key=lambda k: _MESSAGE_CACHE[k][0])[:100]:
+                _MESSAGE_CACHE.pop(ok, None)
+        return response_payload
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tải tin nhắn hội thoại Zalo: {exc}")
+
+
+@router.get("/{conversation_id}/search-messages", response_model=ZaloLibraryListResponse)
+async def search_conversation_messages_endpoint(
+    conversation_id: str,
+    q: str = Query(..., min_length=1, max_length=200),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Tìm tin nhắn cũ chứa từ khoá TRONG 1 hội thoại cụ thể (1 người hoặc 1
+    nhóm) — vd tìm "Leo" trong nhóm KẾ TOÁN - VẬN HÀNH DENFOOD. Trả về danh
+    sách khớp (mới nhất trước), KHÔNG phân trang lồng vào luồng tin chính —
+    FE hiện như 1 panel kết quả riêng.
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+    try:
+        rows = await search_conversation_messages(user_id, conversation_id.strip(), q, limit=limit)
+        return {
+            "messages": [ZaloLibraryMessage(**row) for row in rows],
+            "groups": [],
+            "total": len(rows),
+            "limit": limit,
+            "offset": 0,
+            "has_more": False,
+        }
+    except SupabaseNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tìm tin nhắn: {exc}")
+
+
+@router.post("/{conversation_id}/sync")
+async def sync_conversation_messages_manually(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Đồng bộ bù tin nhắn thủ công cho một cuộc hội thoại từ Zalo."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    # Check access permission
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+
+    # Thêm background task để chạy đồng bộ tin nhắn
+    background_tasks.add_task(_background_sync_conversation_messages, user_id, conversation_id)
+    return {"ok": True, "message": "Đã thêm tác vụ đồng bộ lịch sử tin nhắn vào nền"}
+
+
+class ReplyToPayload(BaseModel):
+    """Tin nhắn đang được trả lời/trích dẫn — FE lấy nguyên các field này từ tin
+    đã có sẵn trong state cục bộ (không cần BE tra lại DB), rồi gửi kèm khi tạo
+    tin mới. Áp dụng được cho tin của CẢ đối phương lẫn của chính mình."""
+    message_id: str = Field(..., min_length=1, description="source_message_id (msgId thật) của tin được trả lời")
+    cli_msg_id: Optional[str] = Field(None, description="cli_msg_id của tin được trả lời (nếu có)")
+    sender_id: Optional[str] = Field(None, description="uid người gửi tin được trả lời")
+    content: Optional[str] = Field(None, description="Nội dung xem trước của tin được trả lời")
+    ts: Optional[int] = Field(None, description="epoch ms của tin được trả lời")
+
+
+class SendMessageRequest(BaseModel):
+    text: str = Field(..., min_length=1, description="Nội dung tin nhắn văn bản")
+    thread_type: Optional[int] = Field(
+        None,
+        description="0 = cá nhân, 1 = nhóm. Nếu để trống, tự suy ra từ conversation_id.",
+    )
+    # Zalo tập trung (Mục 3.3.5 + 4.6 mentionUtils guide) — @tag/@All trong tin nhắn nhóm.
+    mentions: Optional[List[Mention]] = Field(
+        None, description="[{pos,uid,len}] — vị trí/uid/độ dài mỗi mention trong `text`"
+    )
+    reply_to: Optional[ReplyToPayload] = Field(
+        None, description="Trả lời/trích dẫn 1 tin nhắn cụ thể trong hội thoại"
+    )
+
+
+class SendMessageResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    message: str = ""
+
+
+@router.post("/{conversation_id}/send", response_model=SendMessageResponse)
+async def send_message_to_conversation(
+    conversation_id: str,
+    body: SendMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Gửi tin nhắn văn bản trực tiếp vào một hội thoại Zalo qua ZCA API.
+
+    - ``conversation_id`` là ID group hoặc thread cá nhân trong Supabase.
+    - Nếu ``thread_type`` không được chỉ指定, endpoint tự suy ra:
+      số nguyên thuần túy → nhóm (type=1), còn lại → cá nhân (type=0).
+    - Sau khi Zalo xác nhận gửi thành công, message sẽ được lưu vào Supabase để
+      hiển thị ngay trong lịch sử chat (kể cả khi listener chưa kịp echo về).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    # Check access permission
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
+        )
+
+    # Infer thread_type from conversation_id when not explicitly provided
+    if body.thread_type is not None:
+        thread_type = body.thread_type
+    else:
+        thread_type = await resolve_thread_type(user_id, conversation_id.strip())
+
+    mentions_payload = [m.model_dump() for m in body.mentions] if body.mentions else None
+    quote_payload = None
+    if body.reply_to:
+        # Đúng shape SendMessageQuote của zca-js (node_modules/zca-js/dist/apis/sendMessage.d.ts):
+        # {content, msgType, uidFrom, msgId, cliMsgId, ts, ttl} — cố tình bỏ propertyExt
+        # (không bắt buộc ở runtime dù type khai là required) và ép content về string,
+        # tránh đúng lỗi zca-js throw với content không phải string + msgType "webchat".
+        quote_payload = {
+            "msgId": body.reply_to.message_id.strip(),
+            "cliMsgId": (body.reply_to.cli_msg_id or "").strip() or None,
+            "uidFrom": (body.reply_to.sender_id or "").strip() or None,
+            "ts": body.reply_to.ts,
+            "content": str(body.reply_to.content or ""),
+        }
+    try:
+        result = await send_zca_message(
+            auth,
+            conversation_id.strip(),
+            body.text.strip(),
+            thread_type=thread_type,
+            mentions=mentions_payload,
+            quote=quote_payload,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể gửi tin nhắn: {exc}")
+
+    # Persist sent message vào Supabase — zca-js chỉ trả về msgId (không có sender/timestamp)
+    # nên ta tạo Message tối thiểu với is_sent=True, listener sẽ tự merge khi echo về
+    # (cli_msg_id cũng được listener điền bù lúc echo — zca-js.sendMessage() không trả
+    # cliMsgId ngay, chỉ có msgId; xem zca_persistent_listener.js normalizeMessage()).
+    # "response" là key chuẩn (zca_api_bridge.js + zca_api_server.js, đã đồng bộ
+    # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
+    # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
+    api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    await _persist_outgoing_message(
+        user_id,
+        conversation_id.strip(),
+        api_payload,
+        content=body.text.strip(),
+        message_type="text",
+        mentions=body.mentions,
+        reply_to_id=body.reply_to.message_id.strip() if body.reply_to else None,
+    )
+
+    return SendMessageResponse(
+        ok=True,
+        conversation_id=conversation_id,
+        message=result.get("message") or "Đã gửi tin nhắn thành công",
+    )
+
+
+@router.post("/{conversation_id}/send-media", response_model=SendMessageResponse)
+async def send_media_to_conversation(
+    conversation_id: str,
+    text: Optional[str] = Form(None),
+    thread_type: Optional[int] = Form(None),
+    files: List[UploadFile] = File(...),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Gửi hình ảnh hoặc tài liệu kèm chữ vào một hội thoại Zalo qua ZCA API."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    # Check access permission
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
+        )
+
+    if thread_type is not None:
+        ttype = thread_type
+    else:
+        ttype = await resolve_thread_type(user_id, conversation_id.strip())
+
+    temp_paths: List[str] = []
+    try:
+        for file in files:
+            orig_ext = os.path.splitext(file.filename or "")[1] or ".jpg"
+            fd, path = tempfile.mkstemp(prefix="zalo-zca-upload-", suffix=orig_ext)
+            content = await file.read()
+            with os.fdopen(fd, "wb") as tmp:
+                tmp.write(content)
+            temp_paths.append(path)
+
+        try:
+            result = await send_zca_images(
+                auth,
+                conversation_id.strip(),
+                temp_paths,
+                text=text.strip() if text else "",
+                thread_type=ttype,
+            )
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Không thể gửi file: {exc}")
+
+        # Upload file/ảnh đã gửi lên Supabase storage để hiển thị trong lịch sử chat
+        # (zca-js không trả URL persistent, chỉ trả msgId).
+        uploaded_urls: List[str] = []
+        uploaded_assets: List[Dict[str, str]] = []
+        all_images = True
+        _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"}
+        try:
+            import mimetypes
+
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                _download_image,
+                upload_asset_bytes,
+            )
+            for idx, path in enumerate(temp_paths):
+                try:
+                    with open(path, "rb") as f:
+                        file_bytes = f.read()
+                    # Lấy extension từ file gốc
+                    orig_name = files[idx].filename if idx < len(files) else None
+                    ext = os.path.splitext(orig_name or path)[1] or ".jpg"
+                    if ext.lower() not in _IMAGE_EXTS:
+                        all_images = False
+                    # Trước đây hard-code content_type về "image/jpeg" cho MỌI phần mở
+                    # rộng lạ (pdf, docx, zip...) — file lưu trong storage với
+                    # Content-Type sai, và msg_kind bị ép thành "image" khiến FE vẽ
+                    # <img> cho 1 file không phải ảnh -> hiện icon ảnh vỡ. Dùng
+                    # mimetypes để suy ra đúng content-type theo tên file thật.
+                    content_type = mimetypes.guess_type(orig_name or path)[0] or "application/octet-stream"
+                    storage_path = posixpath.join(
+                        user_id,
+                        "outgoing",
+                        f"{uuid.uuid4().hex}{ext}",
+                    )
+                    url = await upload_asset_bytes(storage_path, file_bytes, content_type)
+                    uploaded_urls.append(url)
+                    # Đã có sẵn URL + path trong storage của mình (vừa upload xong) —
+                    # ghi thẳng vào zalo_message_assets bên dưới, KHÔNG để
+                    # save_message_assets() tải lại CHÍNH url này về rồi upload lại
+                    # lần 2 (lãng phí, và từng lỗi im lặng khi bucket zalo-assets
+                    # chưa tồn tại — ảnh mình tự gửi không hiện ra được).
+                    uploaded_assets.append({
+                        "source_url": url,
+                        "storage_path": storage_path,
+                        "storage_url": url,
+                    })
+                except Exception as exc:
+                    logger.warning(f"Could not persist outgoing Zalo image {path}: {exc}")
+        except Exception as exc:
+            logger.warning(f"Could not import supabase helpers for media upload: {exc}")
+
+        # Lưu message đã gửi vào Supabase
+        # "response" là key chuẩn (zca_api_bridge.js + zca_api_server.js, đã đồng bộ
+        # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
+        # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
+        api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+        caption = text.strip() if text else ""
+        if not caption and not all_images:
+            # File thường không có chữ kèm — dùng tên file thật làm content, giống
+            # đúng cách listener làm cho file NHẬN được (xem comment fileNameHint ở
+            # zca_persistent_listener.js), để FE hiện đúng tên thay vì tên ngẫu
+            # nhiên UUID của storage_path.
+            orig_names = [f.filename for f in files if f.filename]
+            caption = ", ".join(orig_names)[:150]
+        await _persist_outgoing_message(
+            user_id,
+            conversation_id.strip(),
+            api_payload,
+            content=caption,
+            # Chỉ ép "image" khi THẬT SỰ toàn ảnh — file thường (pdf/docx/zip...) phải
+            # để "file" để FE hiện thẻ tên-file+tải-về thay vì <img> vỡ (xem comment
+            # classifyAssetKind trong ZaloInboxAdminShell.tsx — URL không đúng đuôi
+            # ảnh + msg_kind=image mới là tổ hợp gây vỡ ảnh).
+            message_type="image" if all_images and uploaded_urls else "file",
+            image_urls=uploaded_urls,
+            uploaded_assets=uploaded_assets,
+        )
+
+        return SendMessageResponse(
+            ok=True,
+            conversation_id=conversation_id,
+            message=result.get("message") or "Đã gửi file thành công",
+        )
+    finally:
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+class MarkReadResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    message: str = ""
+
+
+async def _background_remove_zca_unread(user_id: str, conversation_id: str, thread_type: int):
+    auth = await load_zca_auth(user_id)
+    if auth:
+        try:
+            await remove_zca_unread_mark(auth, conversation_id, thread_type=thread_type)
+        except Exception as exc:
+            logger.warning(f"Could not remove unread mark on Zalo for user={user_id} conversation={conversation_id}: {exc}")
+
+
+@router.post("/{conversation_id}/read", response_model=MarkReadResponse)
+async def mark_conversation_read(
+    conversation_id: str,
+    background_tasks: BackgroundTasks,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    # Trước đây trực tiếp tin header X-Caller-Email client tự gửi (lấy từ
+    # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
+    # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Đánh dấu hội thoại là đã đọc. Cập nhật trong Supabase và thông báo ZCA (nếu đăng nhập)."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    # Check access permission
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn."
+        )
+    
+    # 1. Update in Supabase
+    try:
+        await mark_conversation_as_read(user_id, conversation_id.strip())
+    except Exception as exc:
+        logger.warning(f"Could not update unread count in Supabase for user={user_id} conversation={conversation_id}: {exc}")
+
+    # 2. Inform Zalo via ZCA if auth is available (trong background để tránh treo request)
+    thread_type = await resolve_thread_type(user_id, conversation_id.strip())
+    background_tasks.add_task(_background_remove_zca_unread, user_id, conversation_id.strip(), thread_type)
+
+    return MarkReadResponse(
+        ok=True,
+        conversation_id=conversation_id,
+        message="Hội thoại đã được đánh dấu là đã đọc"
+    )
+
+
+class SetConversationTagRequest(BaseModel):
+    tag: Optional[str] = Field(None, max_length=50, description="Tên tag phân loại khách, null để xoá tag")
+
+
+@router.patch("/{conversation_id}/tag")
+async def set_conversation_tag(
+    conversation_id: str,
+    body: SetConversationTagRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Gắn/đổi/bỏ tag phân loại khách cho 1 hội thoại — lưu server-side trên
+    zalo_groups.tag (migration 139), thay cho localStorage cũ (chỉ 1 máy thấy
+    được, không đồng bộ giữa các nhân viên cùng quản lý 1 tài khoản Zalo).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    tag = (body.tag or "").strip() or None
+    try:
+        await _rest(
+            "PATCH",
+            "zalo_groups",
+            params={"user_id": f"eq.{user_id}", "group_id": f"eq.{conversation_id.strip()}"},
+            json={"tag": tag},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể lưu tag: {exc}")
+    return {"ok": True, "conversation_id": conversation_id, "tag": tag}
+
+
+class ForwardMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1, description="zalo_messages.source_message_id của tin cần chuyển tiếp")
+    target_conversation_ids: List[str] = Field(..., min_length=1, max_length=20, description="Danh sách hội thoại đích (tối đa 20)")
+
+
+class ForwardMessageResult(BaseModel):
+    conversation_id: str
+    ok: bool
+    error: Optional[str] = None
+
+
+class ForwardMessageResponse(BaseModel):
+    ok: bool
+    results: List[ForwardMessageResult]
+
+
+@router.post("/{conversation_id}/forward", response_model=ForwardMessageResponse)
+async def forward_conversation_message(
+    conversation_id: str,
+    body: ForwardMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Chuyển tiếp 1 tin nhắn (chữ hoặc ảnh) sang N hội thoại khác.
+
+    KHÔNG dùng zca-js ``api.forwardMessage()`` thật (API này không mang được
+    @mentions và cần đúng shape "message object" phức tạp của Zalo — xem ghi chú
+    tham khảo trong PR) — thay vào đó GỬI LẠI content/ảnh như 1 tin nhắn MỚI ở
+    từng đích, giống hệt cách nút "Chuyển tiếp" thủ công hoạt động trên các
+    client Zalo khác. Đơn giản hơn, không phụ thuộc shape nội bộ hay bị Zalo
+    đổi API, đánh đổi là tin đến nơi KHÔNG có tag "Đã chuyển tiếp" (chấp nhận
+    được, đã ghi chú rõ đây là lựa chọn có chủ đích).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "content,type,msg_kind,is_deleted,assets:zalo_message_assets(storage_path,storage_url,status)",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn để chuyển tiếp.")
+    row = rows[0]
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Tin nhắn này đã bị thu hồi, không thể chuyển tiếp.")
+
+    from app.modules.all_platform.zalo.services.zca_broadcast_sender import _asset_to_temp_file, _uploaded_assets
+
+    content = (row.get("content") or "").strip()
+    uploaded_assets = _uploaded_assets(row)
+    msg_kind = row.get("msg_kind") or row.get("type") or "text"
+    if not content and not uploaded_assets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loại tin nhắn này ({msg_kind}) chưa hỗ trợ chuyển tiếp — chỉ hỗ trợ tin nhắn có chữ hoặc ảnh.",
+        )
+
+    target_ids = [t.strip() for t in body.target_conversation_ids if t and t.strip()]
+    if not target_ids:
+        raise HTTPException(status_code=400, detail="Chưa chọn hội thoại đích.")
+
+    results: List[ForwardMessageResult] = []
+    for target_id in target_ids:
+        temp_paths: List[str] = []
+        try:
+            target_thread_type = await resolve_thread_type(user_id, target_id)
+            persisted_assets: Optional[List[Dict[str, str]]] = None
+            if uploaded_assets:
+                temp_paths = [await _asset_to_temp_file(asset) for asset in uploaded_assets]
+                api_result = await send_zca_images(
+                    auth, target_id, temp_paths, text=content, thread_type=target_thread_type,
+                )
+                image_urls = [a.get("storage_url") for a in uploaded_assets if a.get("storage_url")]
+                message_type = "image"
+                # Tái dùng storage_url gốc (đã có sẵn trong bucket của mình) cho tin
+                # nhắn mới — tránh save_listener_messages() tải lại chính url này
+                # qua save_message_assets() (cùng lỗi tự-tải-lại đã sửa ở gửi ảnh mới).
+                persisted_assets = [
+                    {"source_url": a["storage_url"], "storage_path": a.get("storage_path") or "", "storage_url": a["storage_url"]}
+                    for a in uploaded_assets if a.get("storage_url")
+                ]
+            else:
+                api_result = await send_zca_message(auth, target_id, content, thread_type=target_thread_type)
+                image_urls = None
+                message_type = "text"
+
+            api_payload = (
+                api_result.get("response") or api_result.get("result")
+                if isinstance(api_result, dict) else None
+            )
+            await _persist_outgoing_message(
+                user_id, target_id, api_payload,
+                content=content, message_type=message_type, image_urls=image_urls,
+                uploaded_assets=persisted_assets,
+            )
+            results.append(ForwardMessageResult(conversation_id=target_id, ok=True))
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except Exception as exc:
+            logger.warning(f"Forward message failed for target={target_id}: {exc}")
+            results.append(ForwardMessageResult(conversation_id=target_id, ok=False, error=str(exc)))
+        finally:
+            for p in temp_paths:
+                try:
+                    os.remove(p)
+                except Exception:
+                    pass
+
+    return ForwardMessageResponse(ok=all(r.ok for r in results), results=results)
+
+
+class RecallMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1, description="zalo_messages.source_message_id (= msgId thật)")
+    thread_type: Optional[int] = Field(None, description="0 = cá nhân, 1 = nhóm. Nếu trống, tự suy ra.")
+
+
+class RecallMessageResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    source_message_id: str
+
+
+@router.post("/{conversation_id}/recall", response_model=RecallMessageResponse)
+async def recall_conversation_message(
+    conversation_id: str,
+    body: RecallMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Thu hồi tin nhắn thật (api.undo — Mục 3.3.5 guide) — tin biến mất ở CẢ HAI phía.
+
+    Chỉ cho phép thu hồi tin do CHÍNH tài khoản Zalo này gửi (is_sent=true) và
+    còn `cli_msg_id` (được listener điền bù ngay sau khi gửi — xem
+    `_persist_outgoing_message`/`zca_persistent_listener.js`); tin cũ gửi TRƯỚC
+    khi có cột này, hoặc tin gửi rất gần đây mà listener chưa kịp echo về, sẽ
+    trả 409 để user thử lại sau vài giây thay vì âm thầm gọi undo() với
+    cli_msg_id rỗng (Zalo sẽ từ chối).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "source_message_id,cli_msg_id,is_sent,is_deleted",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn này.")
+    row = rows[0]
+    if not row.get("is_sent"):
+        raise HTTPException(status_code=403, detail="Chỉ được thu hồi tin nhắn do chính tài khoản này gửi.")
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Tin nhắn này đã bị thu hồi trước đó.")
+    cli_msg_id = row.get("cli_msg_id")
+    if not cli_msg_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa xác định được cli_msg_id của tin nhắn (có thể vừa gửi, đợi vài giây rồi thử lại).",
+        )
+
+    thread_type = body.thread_type if body.thread_type is not None else await resolve_thread_type(user_id, conversation_id.strip())
+    try:
+        await recall_zca_message(
+            auth,
+            conversation_id.strip(),
+            msg_id=body.source_message_id.strip(),
+            cli_msg_id=str(cli_msg_id),
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể thu hồi tin nhắn: {exc}")
+
+    try:
+        await _rest(
+            "PATCH",
+            "zalo_messages",
+            params={
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{conversation_id.strip()}",
+                "source_message_id": f"eq.{body.source_message_id.strip()}",
+            },
+            json={"is_deleted": True, "updated_at": datetime.utcnow().isoformat()},
+        )
+    except Exception as exc:
+        logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
+
+    invalidate_conversation_message_cache(user_id, conversation_id.strip())
+    return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
+
+
+# 6 cảm xúc nhanh — đúng bộ Zalo thật hiện khi bấm giữ 1 tin nhắn (❤️👍😆😮😢😠).
+# zca-js hỗ trợ ~50 icon (models/Reaction.js) nhưng chỉ dùng đúng 6 này để giữ
+# UX giống Zalo, không làm rối menu. "NONE" = bỏ react (Reactions.NONE = ""
+# trong zca-js — bấm lại đúng icon mình đã thả để huỷ, giống Zalo thật).
+QUICK_REACTION_ICONS = ("HEART", "LIKE", "HAHA", "WOW", "CRY", "ANGRY")
+_VALID_REACTION_ICONS = QUICK_REACTION_ICONS + ("NONE",)
+
+
+class ReactMessageRequest(BaseModel):
+    source_message_id: str = Field(..., min_length=1)
+    icon: str = Field(..., description="Tên enum Reactions của zca-js, vd HEART/LIKE/HAHA/WOW/CRY/ANGRY")
+    thread_type: Optional[int] = None
+
+
+class ReactMessageResponse(BaseModel):
+    ok: bool
+    conversation_id: str
+    source_message_id: str
+    icon: str
+
+
+@router.post("/{conversation_id}/react", response_model=ReactMessageResponse)
+async def react_to_conversation_message(
+    conversation_id: str,
+    body: ReactMessageRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Thả cảm xúc cho 1 tin — giống bấm giữ tin nhắn trên app Zalo rồi chọn
+    icon. KHÁC recall: cho phép react tin của BẤT KỲ AI (không chỉ tin mình
+    gửi) — đúng hành vi Zalo thật.
+
+    Lưu ý về persist: endpoint này CHỈ gửi reaction lên Zalo thật, KHÔNG tự
+    ghi vào cột `reactions` — việc lưu (cho cả reaction của mình lẫn của đối
+    phương) do listener xử lý khi nhận event "reaction" echo lại (zca-js bật
+    selfListen=true nên tự mình react cũng được echo về, tránh 2 nguồn ghi
+    tranh nhau gây trùng/lệch key định danh người react). FE tự hiện tạm
+    (optimistic) rồi đồng bộ lại khi poll/SSE tới.
+    """
+    icon = body.icon.strip().upper()
+    if icon not in _VALID_REACTION_ICONS:
+        raise HTTPException(status_code=400, detail=f"Icon không hợp lệ. Chỉ hỗ trợ: {', '.join(_VALID_REACTION_ICONS)}")
+
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(status_code=403, detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.")
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+
+    rows = await _rest(
+        "GET",
+        "zalo_messages",
+        params={
+            "select": "source_message_id,cli_msg_id,is_deleted",
+            "user_id": f"eq.{user_id}",
+            "group_id": f"eq.{conversation_id.strip()}",
+            "source_message_id": f"eq.{body.source_message_id.strip()}",
+            "limit": "1",
+        },
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Không tìm thấy tin nhắn này.")
+    row = rows[0]
+    if row.get("is_deleted"):
+        raise HTTPException(status_code=409, detail="Không thể thả cảm xúc cho tin đã bị thu hồi.")
+    cli_msg_id = row.get("cli_msg_id")
+    if not cli_msg_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Chưa xác định được cli_msg_id của tin nhắn (có thể vừa nhận/gửi, đợi vài giây rồi thử lại).",
+        )
+
+    thread_type = body.thread_type if body.thread_type is not None else await resolve_thread_type(user_id, conversation_id.strip())
+    try:
+        await add_zca_reaction(
+            auth,
+            conversation_id.strip(),
+            msg_id=body.source_message_id.strip(),
+            cli_msg_id=str(cli_msg_id),
+            icon=icon,
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể thả cảm xúc: {exc}")
+
+    return ReactMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id, icon=icon)
+
+
+@router.get("/stickers/search")
+async def search_conversation_stickers(
+    q: str = Query(..., min_length=1, max_length=64),
+    limit: int = Query(24, ge=1, le=48),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tìm sticker Zalo thật theo từ khoá (giống thanh tìm sticker trong app
+    Zalo) — thay cho UI cũ phải tự biết trước sticker id. Trả kèm URL ảnh
+    (stickerUrl/stickerWebpUrl) để FE hiện thumbnail thật, không chỉ số ID.
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.")
+    try:
+        stickers = await search_zca_stickers(auth, q.strip(), limit)
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tìm sticker: {exc}")
+    return {"ok": True, "stickers": stickers}
+
+
+# --------------------------------------------------------------------------------------
+# Helpers: lưu tin nhắn gửi đi vào Supabase
+# --------------------------------------------------------------------------------------
+
+async def _resolve_group_name(user_id: str, group_id: str) -> str:
+    """Lấy group_name từ bảng zalo_groups; fallback về group_id nếu chưa có."""
+    try:
+        rows = await _rest(
+            "GET",
+            "zalo_groups",
+            params={
+                "select": "group_name",
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{group_id}",
+                "limit": "1",
+            },
+        ) or []
+        if rows and rows[0].get("group_name"):
+            return str(rows[0]["group_name"])
+    except Exception as exc:
+        logger.warning(f"Could not resolve group_name for group={group_id}: {exc}")
+    return group_id
+
+
+def _build_outgoing_message_id(api_response: Optional[Dict[str, Any]], conversation_id: str = "") -> str:
+    """Tạo source_message_id ổn định từ response của zca-js.
+
+    QUAN TRỌNG — DEDUP CONTRACT:
+    - zca-js trả về `{ message: { msgId: number } | null, attachment: [{ msgId }, ...] }`.
+    - Khi Zalo echo lại tin nhắn mình vừa gửi, ZCA persistent listener (Node.js)
+      cũng sẽ emit event với cùng `msgId` thuần (xem scripts/zca_persistent_listener.js
+      dòng 178-186: `data.msgId || data.cliMsgId || ...`).
+    - Vì cả 2 path (gửi từ tool + echo từ listener) đều lưu vào bảng
+      zalo_messages với unique key `(user_id, group_id, source_message_id)`,
+      ta BẮT BUỘC dùng CÙNG format source_message_id để DB upsert theo conflict
+      thay vì insert duplicate row. Sai format → hiển thị 2 bản sao trên UI.
+
+    Format chuẩn: msgId thuần dạng số (vd: "1234567890123456789").
+    Fallback khi ZCA không trả msgId: sinh UUID local để có primary key
+    tạm thời; khi listener echo về (có msgId thật), DB sẽ tạo row mới với
+    msgId làm key — 2 row tồn tại song song cho đến khi listener merge.
+    Vì listener thường echo về < 1s, duplicate ở trường hợp fallback
+    rất hiếm và tự hết khi user refresh.
+
+    `conversation_id` KHÔNG đưa vào msgId nữa vì listener không thêm prefix —
+    việc trùng msgId giữa 2 thread khác nhau là gần như không thể (ZCA's msgId
+    là ID toàn cục, không phải per-thread).
+    """
+    if api_response and isinstance(api_response, dict):
+        msg_obj = api_response.get("message")
+        if isinstance(msg_obj, dict) and msg_obj.get("msgId") is not None:
+            return str(int(msg_obj["msgId"]))
+        attachments = api_response.get("attachment")
+        if isinstance(attachments, list) and attachments:
+            first = attachments[0]
+            if isinstance(first, dict) and first.get("msgId") is not None:
+                return str(int(first["msgId"]))
+    safe_cid = re.sub(r"[^a-zA-Z0-9_-]+", "-", (conversation_id or "").strip())[:32] or "thread"
+    return f"local-{safe_cid}-{uuid.uuid4().hex}"
+
+
+async def _persist_outgoing_message(
+    user_id: str,
+    conversation_id: str,
+    api_response: Optional[Dict[str, Any]],
+    *,
+    content: str,
+    message_type: str = "text",
+    image_urls: Optional[List[str]] = None,
+    mentions: Optional[List[Mention]] = None,
+    reply_to_id: Optional[str] = None,
+    uploaded_assets: Optional[List[Dict[str, str]]] = None,
+    raw_content_override: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Lưu message gửi đi vào Supabase để hiển thị ngay trong chat history.
+
+    - Nếu response chứa msgId → dùng làm source_message_id (khi Zalo echo về sẽ merge).
+    - Nếu không có → tạo UUID local; listener sẽ thay thế bằng dữ liệu thật khi có.
+    - Tự update last_message_* trên zalo_groups để sidebar preview tươi ngay.
+    """
+    source_id = _build_outgoing_message_id(api_response, conversation_id)
+    # Lưu UTC (chuẩn industry). Frontend sẽ convert sang Asia/Ho_Chi_Minh khi hiển thị.
+    # Dùng timezone.utc thay vì utcnow() vì:
+    #   1) utcnow() bị deprecated từ Python 3.12
+    #   2) now(timezone.utc) trả về datetime **aware** → tránh nhầm lẫn với local time
+    now_utc = datetime.now(timezone.utc)
+    now_ms = int(now_utc.timestamp() * 1000)
+    now_iso = now_utc.isoformat().replace("+00:00", "Z")
+    safe_content = (content or "").strip() or None
+    safe_image_urls = [url for url in (image_urls or []) if url]
+    # Trước đây luôn ép resolved_type="image" bất cứ khi nào có URL đính kèm, bất kể
+    # caller truyền message_type gì — đúng lúc _persist_outgoing_message() CHỈ được
+    # gọi cho ảnh, nhưng giờ cũng dùng cho file thường/sticker (caller đã tự tính
+    # đúng message_type rồi), ép cứng về "image" ở đây sẽ làm 1 file .pdf/.docx bị
+    # gắn msg_kind="image" và FE vẽ ra <img> vỡ thay vì thẻ file tải về. Tin caller.
+    resolved_type = message_type
+
+    message = Message(
+        message_id=source_id,
+        sender_id=None,
+        sender_name="Bạn",
+        timestamp=str(now_ms),
+        time_text=now_iso,
+        type=resolved_type,
+        content=safe_content,
+        # uploaded_assets đã có sẵn → ghi thẳng zalo_message_assets bên dưới sau khi
+        # lưu xong, KHÔNG để save_listener_messages() lại tự tải/upload lại qua
+        # save_message_assets() (xem call site ở send_media_to_conversation).
+        image_urls=[] if uploaded_assets else safe_image_urls,
+        is_sent=True,
+        is_deleted=False,
+        group_id=conversation_id,
+        ts=now_ms,
+        msg_kind=resolved_type,
+        mentions=mentions or [],
+        reply_to_id=reply_to_id,
+        raw_content=raw_content_override,
+    )
+
+    group_name = await _resolve_group_name(user_id, conversation_id)
+
+    try:
+        # Cập nhật metadata group để sidebar hiển thị ngay tin mới nhất
+        await upsert_group(
+            user_id=user_id,
+            group_id=conversation_id,
+            group_name=group_name,
+            last_message_at=now_iso,
+            last_message_content=safe_content or (safe_image_urls[0] if safe_image_urls else None),
+            last_sender_id=None,
+            last_sender_name="Bạn",
+            last_message_type=resolved_type,
+        )
+    except Exception as exc:
+        logger.warning(f"Could not upsert group metadata after send for user={user_id} conv={conversation_id}: {exc}")
+
+    try:
+        await save_listener_messages(
+            user_id,
+            conversation_id,
+            group_name,
+            [message],
+            increment_unread=False,
+        )
+    except Exception as exc:
+        # Không làm fail cả request gửi — Zalo đã nhận, chỉ là lưu local lỗi.
+        logger.warning(
+            f"Could not persist outgoing message to Supabase for user={user_id} conv={conversation_id}: {exc}"
+        )
+        return
+
+    if uploaded_assets:
+        try:
+            rows = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "select": "id",
+                    "user_id": f"eq.{user_id}",
+                    "group_id": f"eq.{conversation_id}",
+                    "source_message_id": f"eq.{source_id}",
+                    "limit": "1",
+                },
+            ) or []
+            message_uuid = rows[0]["id"] if rows else None
+            if message_uuid:
+                now_iso2 = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+                await _rest(
+                    "POST",
+                    "zalo_message_assets",
+                    json=[
+                        {
+                            "message_id": message_uuid,
+                            "source_url": asset["source_url"],
+                            "storage_path": asset["storage_path"],
+                            "storage_url": asset["storage_url"],
+                            "status": "uploaded",
+                            "updated_at": now_iso2,
+                        }
+                        for asset in uploaded_assets
+                    ],
+                )
+        except Exception as exc:
+            logger.warning(
+                f"Could not persist outgoing message assets for user={user_id} conv={conversation_id}: {exc}"
+            )
+    invalidate_conversation_message_cache(user_id, conversation_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Tìm user lạ (chưa từng chat) bằng SĐT hoặc username Zalo.
+# Sau khi tìm thấy, FE dùng endpoint POST /conversations/users để tạo thread
+# (insert vào zalo_groups) rồi mở khung chat như thread bình thường.
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/users/find")
+async def find_zalo_user(
+    q: str = Query(..., min_length=8, max_length=32, description="SĐT VN (08x/09x...) hoặc username Zalo"),
+    by: str = Query("phone", pattern="^(phone|username)$", description="Loại tìm kiếm: phone | username"),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tìm một user Zalo bằng SĐT (E.164) hoặc username.
+
+    - Input ``q`` ở dạng SĐT VN bất kỳ (0839108906, +84939108906, 0084...) — backend tự
+      chuẩn hoá về E.164 trước khi gọi ``zca-js.findUser``.
+    - Input ``q`` ở dạng username Zalo thì truyền ``by=username``.
+
+    Trả 404 nếu ZCA không tìm thấy (chưa đăng ký Zalo / không nhận tin từ người lạ).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
+        )
+
+    raw = q.strip()
+    if by == "phone":
+        e164 = vn_phone_to_e164(raw)
+        if not e164:
+            raise HTTPException(
+                status_code=400,
+                detail="SĐT không hợp lệ. VD: 0839108906, +84939108906, 0084 939 108 906",
+            )
+        try:
+            user = await find_zca_user_by_phone(auth, e164)
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except RuntimeError as exc:
+            err = str(exc).lower()
+            # ZCA thường trả lỗi -111 hoặc "user not found" khi SĐT không có Zalo.
+            if "-111" in err or "not found" in err or "không tìm" in err:
+                raise HTTPException(
+                    status_code=404,
+                    detail="SĐT này chưa đăng ký Zalo, hoặc user đã tắt nhận tin nhắn từ người lạ.",
+                )
+            if "rate" in err or "too many" in err or "limit" in err:
+                raise HTTPException(status_code=429, detail="Zalo đang giới hạn tốc độ. Thử lại sau vài giây.")
+            raise HTTPException(status_code=500, detail=f"findUser thất bại: {exc}")
+    else:
+        # by == 'username'
+        if not raw or len(raw) < 2:
+            raise HTTPException(status_code=400, detail="Username Zalo tối thiểu 2 ký tự.")
+        try:
+            user = await find_zca_user_by_username(auth, raw)
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except RuntimeError as exc:
+            err = str(exc).lower()
+            if "-111" in err or "not found" in err or "không tìm" in err:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Username Zalo không tồn tại, hoặc user đã tắt nhận tin nhắn từ người lạ.",
+                )
+            raise HTTPException(status_code=500, detail=f"findUserByUsername thất bại: {exc}")
+
+    # QUAN TRỌNG (bug phát hiện 2026-10-02): raw response zca-js dùng field "uid" (vd
+    # {"uid": "...", "zalo_name": "...", "display_name": "...", "avatar": "..."}), KHÔNG
+    # PHẢI "userId"/"displayName"/"zaloName"/"avatarUrl" như code cũ ở đây check - khiến
+    # MỌI lần tìm đều báo "không tìm thấy" dù ZCA trả về user thật hợp lệ. Giữ cả 2 tên để
+    # phòng hờ response shape đổi (giống automation_worker.py đã làm đúng từ trước).
+    user_id_zalo_raw = user.get("uid") or user.get("userId") or user.get("id")
+    if not user or not user_id_zalo_raw:
+        raise HTTPException(
+            status_code=404,
+            detail="Không tìm thấy user Zalo. Có thể user đã tắt nhận tin nhắn từ người lạ.",
+        )
+
+    user_id_zalo = str(user_id_zalo_raw)
+    return {
+        "user_id": user_id_zalo,
+        "display_name": user.get("display_name") or user.get("displayName") or user.get("zalo_name") or user.get("zaloName") or user_id_zalo,
+        "zalo_name": user.get("zalo_name") or user.get("zaloName") or None,
+        "avatar_url": user.get("avatar") or user.get("avatarUrl") or user.get("avt") or user.get("fullAvt") or user.get("fullAvatar") or None,
+        "phone_e164": e164 if by == "phone" else None,
+        "raw": user,
+    }
+
+
+class CreateUserConversationRequest(BaseModel):
+    user_id: str = Field(..., min_length=1, description="uid Zalo tìm được qua GET /users/find")
+    display_name: str = Field(..., min_length=1)
+    avatar_url: Optional[str] = None
+
+
+@router.post("/users")
+async def create_conversation_with_user(
+    body: CreateUserConversationRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tạo (hoặc lấy lại) 1 hội thoại cá nhân (DM) với user vừa tìm bằng SĐT/username
+    qua GET /users/find — với DM, ``group_id`` của hội thoại CHÍNH LÀ uid Zalo của
+    đối phương (giống cách các hội thoại DM khác trong hệ thống này được định danh).
+    Idempotent: gọi lại nhiều lần với cùng user_id chỉ cập nhật metadata, không tạo
+    trùng — ``upsert_group`` đã có on_conflict=(user_id, group_id).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    target_uid = body.user_id.strip()
+    if not target_uid:
+        raise HTTPException(status_code=400, detail="Thiếu user_id.")
+    try:
+        # Gán thread_type="direct" để resolve_thread_type xác định đúng là cá nhân (0)
+        # khi gửi tin nhắn cho người lạ, không bị nhầm thành nhóm chat (1).
+        await upsert_group(
+            user_id=user_id,
+            group_id=target_uid,
+            group_name=body.display_name.strip(),
+            avatar_url=body.avatar_url,
+            is_friend=False,
+            thread_type="direct",
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tạo hội thoại: {exc}")
+    return {"ok": True, "conversation_id": target_uid, "group_name": body.display_name.strip()}
+
+
+@router.get("/users/{uid}/friend-status")
+async def get_friend_status(
+    uid: str,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Trạng thái bạn bè với 1 uid Zalo (Mục 3.3.5 guide).
+
+    CẢNH BÁO field ngược tên gọi trực giác (Mục 11.1 guide) — GIỮ NGUYÊN, không đảo:
+    - is_requested=true  → MÌNH đã gửi lời mời kết bạn (đang chờ họ chấp nhận).
+    - is_requesting=true → HỌ đang gửi lời mời kết bạn cho MÌNH (đang chờ mình chấp nhận).
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        status = await get_zca_friend_status(auth, uid.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tra trạng thái bạn bè: {exc}")
+    return {"uid": uid, **status}
+
+
+class FriendRequestBody(BaseModel):
+    message: str = Field("", description="Lời nhắn kèm lời mời kết bạn (có thể để trống)")
+
+
+@router.post("/users/{uid}/friend-request")
+async def send_friend_request(
+    uid: str,
+    body: FriendRequestBody,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await send_zca_friend_request(auth, uid.strip(), message=body.message or "")
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể gửi lời mời kết bạn: {exc}")
+    return {"ok": True, "uid": uid, "result": result}
+
+
+@router.post("/users/{uid}/friend-request/accept")
+async def accept_friend_request(
+    uid: str,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await accept_zca_friend_request(auth, uid.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể chấp nhận lời mời kết bạn: {exc}")
+    return {"ok": True, "uid": uid, "result": result}
+
+
+class CreateUserThreadRequest(BaseModel):
+    user_id: str = Field(..., min_length=4, description="Zalo userId từ /users/find")
+    display_name: str = Field(..., min_length=1, description="Tên hiển thị để show trong sidebar")
+    avatar_url: Optional[str] = None
+
+
+@router.post("/users/threads", response_model=Dict[str, Any])
+async def create_user_thread(
+    body: CreateUserThreadRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Tạo (hoặc trả về) thread chat với một user lạ trong ``zalo_groups``.
+
+    Idempotent: nếu thread đã tồn tại thì chỉ update ``group_name`` / ``avatar_url``.
+    Sau khi gọi endpoint này, FE chỉ cần select conversation_id == user_id để mở khung chat
+    rồi gọi ``POST /conversations/{id}/send`` như thread bình thường (backend tự suy
+    ``thread_type=0`` vì userId Zalo không bắt đầu bằng 'g').
+    """
+    user_id = _normalize_user_id(account_id or x_user_id)
+    target_user_id = body.user_id.strip()
+    if not target_user_id or not target_user_id.isdigit():
+        raise HTTPException(
+            status_code=400,
+            detail="user_id phải là chuỗi chữ số thuần (Zalo userId).",
+        )
+
+    try:
+        await upsert_group(
+            user_id=user_id,
+            group_id=target_user_id,
+            group_name=body.display_name.strip() or f"User {target_user_id}",
+            avatar_url=body.avatar_url,
+            is_friend=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Không thể tạo thread với user: {exc}",
+        )
+
+    return {
+        "ok": True,
+        "conversation_id": target_user_id,
+        "user_id": user_id,
+        "display_name": body.display_name.strip(),
+        "thread_type": 0,
+    }
+
+
+@router.get("/{account_id}/groups/{group_id}/members")
+async def get_group_members(
+    account_id: str,
+    group_id: str,
+):
+    """Quét ĐẦY ĐỦ thành viên 1 nhóm — dùng để tạo bulk-send job (Mục 3.3.5/8(i) guide)."""
+    user_id = _normalize_user_id(account_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        result = await get_zca_group_members_full(auth, group_id.strip())
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể quét thành viên nhóm: {exc}")
+    return result
+
+
+class SendStickerBody(BaseModel):
+    id: int
+    cate_id: int
+    type: int = 1
+
+
+@router.post("/{conversation_id}/send-sticker")
+async def send_sticker_to_conversation(
+    conversation_id: str,
+    body: SendStickerBody,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    thread_type = await resolve_thread_type(user_id, conversation_id)
+    try:
+        result = await send_zca_sticker(
+            auth, conversation_id.strip(),
+            sticker_id=body.id, cate_id=body.cate_id, sticker_type=body.type,
+            thread_type=thread_type,
+        )
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể gửi sticker: {exc}")
+
+    # Trước đây KHÔNG lưu gì vào Supabase sau khi gửi — sticker chỉ hiện lại khi
+    # listener echo về, và dữ liệu echo của Zalo cho sticker chỉ có id/cateId (không
+    # có URL ảnh thật, phải tra riêng qua getStickersDetail), nên dù echo về cũng
+    # không có ảnh để vẽ. Ở đây đã có sẵn id/cateId CHẮC CHẮN đúng (từ chính request)
+    # nên tra ngay URL thật rồi lưu local, hiện ra tức thì — không cần chờ/đoán field
+    # từ raw_content của listener.
+    sticker_url: Optional[str] = None
+    try:
+        details = await get_zca_stickers_detail(auth, [body.id])
+        detail = details[0] if details else {}
+        sticker_url = detail.get("stickerWebpUrl") or detail.get("stickerUrl") or None
+    except Exception as exc:
+        logger.info(f"Could not resolve sticker detail for id={body.id}: {exc}")
+
+    api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    await _persist_outgoing_message(
+        user_id,
+        conversation_id.strip(),
+        api_payload,
+        content="",
+        message_type="image" if sticker_url else "sticker",
+        image_urls=[sticker_url] if sticker_url else None,
+        raw_content_override=(
+            {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
+        ),
+    )
+    return {"ok": True, "result": result}
+
+
+@router.get("/stickers")
+async def get_stickers_detail(
+    ids: str = Query(..., description="Danh sách sticker id, phân tách bằng dấu phẩy"),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
+    try:
+        sticker_ids = [int(s.strip()) for s in ids.split(",") if s.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids phải là danh sách số nguyên, phân tách bằng dấu phẩy")
+    try:
+        stickers = await get_zca_stickers_detail(auth, sticker_ids)
+    except ZcaAuthExpiredError:
+        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể tra sticker: {exc}")
+    return {"stickers": stickers}
+
+
+@router.get("/{conversation_id}/phone")
+async def get_conversation_phone(
+    conversation_id: str,
+    name: Optional[str] = Query(None),
+):
+    """Tra cứu số điện thoại liên kết với hội thoại Zalo từ CRM hoặc Seeding Campaign."""
+    conv_id = (conversation_id or "").strip()
+    if not conv_id:
+        return {"success": False, "phone": None}
+
+    clean_name = (name or "").strip()
+    phone: Optional[str] = None
+
+    # 1. Tra trong customer_leads theo conv_id
+    try:
+        lead_rows = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "phone,phone_normalized",
+                "limit": 1,
+            },
+        )
+        if lead_rows and isinstance(lead_rows, list) and len(lead_rows) > 0:
+            phone = lead_rows[0].get("phone") or lead_rows[0].get("phone_normalized")
+    except Exception as e:
+        logger.debug(f"lookup phone in customer_leads by conv_id failed: {e}")
+
+    # 2. Tra trong customer_leads theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            name_lead_rows = await _rest(
+                "GET",
+                "customer_leads",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if name_lead_rows and isinstance(name_lead_rows, list) and len(name_lead_rows) > 0:
+                phone = name_lead_rows[0].get("phone") or name_lead_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in customer_leads by name failed: {e}")
+
+    # 3. Tra trong crm_customers theo customer_name
+    if not phone and clean_name and len(clean_name) >= 2:
+        try:
+            cust_rows = await _rest(
+                "GET",
+                "crm_customers",
+                params={
+                    "customer_name": f"ilike.*{clean_name}*",
+                    "phone": "not.is.null",
+                    "select": "phone,phone_normalized",
+                    "limit": 1,
+                },
+            )
+            if cust_rows and isinstance(cust_rows, list) and len(cust_rows) > 0:
+                phone = cust_rows[0].get("phone") or cust_rows[0].get("phone_normalized")
+        except Exception as e:
+            logger.debug(f"lookup phone in crm_customers by name failed: {e}")
+
+    # 4. Tra trong auto_seeding_comments theo zalo_conversation_id
+    if not phone:
+        try:
+            seeding_rows = await _rest(
+                "GET",
+                "auto_seeding_comments",
+                params={
+                    "zalo_conversation_id": f"eq.{conv_id}",
+                    "select": "phone_number",
+                    "limit": 1,
+                },
+            )
+            if seeding_rows and isinstance(seeding_rows, list) and len(seeding_rows) > 0:
+                phone = seeding_rows[0].get("phone_number")
+        except Exception as e:
+            logger.debug(f"lookup phone in auto_seeding_comments failed: {e}")
+
+    # 5. Tra trong zalo_messages của conversation xem có tin nhắn chứa SĐT
+    if not phone:
+        try:
+            msgs = await _rest(
+                "GET",
+                "zalo_messages",
+                params={
+                    "group_id": f"eq.{conv_id}",
+                    "content": "not.is.null",
+                    "select": "content",
+                    "order": "created_at.desc",
+                    "limit": 20,
+                },
+            )
+            if msgs and isinstance(msgs, list):
+                phone_pattern = re.compile(r"(?:(?:+?84|0)[235789](?:[.s-]?d){8,9})")
+                for m in msgs:
+                    text = m.get("content") or ""
+                    match = phone_pattern.search(text)
+                    if match:
+                        phone = match.group(0)
+                        break
+        except Exception as e:
+            logger.debug(f"lookup phone in zalo_messages failed: {e}")
+
+    # 6. Nếu conv_id chính là số điện thoại
+    if not phone:
+        digits = re.sub(r"\D", "", conv_id)
+        if (len(digits) == 10 and digits.startswith("0")) or (len(digits) == 11 and digits.startswith("84")):
+            phone = digits
+
+    # Chuẩn hóa về dạng 0...
+    if phone:
+        clean = re.sub(r"\D", "", str(phone))
+        if clean.startswith("84") and len(clean) >= 10:
+            clean = "0" + clean[2:]
+        return {"success": True, "phone": clean}
+
+    return {"success": True, "phone": None}
+
+
+class SaveConversationPhoneRequest(BaseModel):
+    phone: str
+    name: Optional[str] = None
+
+
+@router.post("/{conversation_id}/phone")
+async def save_conversation_phone(
+    conversation_id: str,
+    payload: SaveConversationPhoneRequest,
+):
+    """Lưu hoặc cập nhật số điện thoại cho hội thoại Zalo vào customer_leads."""
+    conv_id = (conversation_id or "").strip()
+    raw_phone = (payload.phone or "").strip()
+    clean_digits = re.sub(r"\D", "", raw_phone)
+    if clean_digits.startswith("84") and len(clean_digits) >= 10:
+        clean_digits = "0" + clean_digits[2:]
+
+    if not conv_id or not clean_digits:
+        raise HTTPException(status_code=400, detail="Thiếu conversation_id hoặc phone")
+
+    clean_name = (payload.name or "").strip() or f"Zalo User {clean_digits[-4:]}"
+
+    # 1. Kiểm tra xem đã có lead với conv_id này chưa
+    try:
+        existing = await _rest(
+            "GET",
+            "customer_leads",
+            params={
+                "conv_id": f"eq.{conv_id}",
+                "select": "id,customer_name,phone",
+                "limit": 1,
+            },
+        )
+        if existing and isinstance(existing, list) and len(existing) > 0:
+            lead_id = existing[0]["id"]
+            await _rest(
+                "PATCH",
+                "customer_leads",
+                params={"id": f"eq.{lead_id}"},
+                payload={
+                    "phone": clean_digits,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            return {"success": True, "phone": clean_digits, "lead_id": lead_id, "action": "updated"}
+    except Exception as e:
+        logger.error(f"update existing lead by conv_id failed: {e}")
+
+    # 2. Tạo mới lead trong customer_leads
+    try:
+        new_lead = {
+            "customer_name": clean_name,
+            "phone": clean_digits,
+            "conv_id": conv_id,
+            "source_platform": "zalo",
+            "status": "new",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        res = await _rest("POST", "customer_leads", payload=new_lead)
+        return {"success": True, "phone": clean_digits, "action": "created", "lead": res}
+    except Exception as e:
+        logger.error(f"create customer_leads for conv_id failed: {e}")
+        # Vẫn trả về phone để UI hiển thị được ngay lập tức
+        return {"success": True, "phone": clean_digits, "action": "fallback_local"}

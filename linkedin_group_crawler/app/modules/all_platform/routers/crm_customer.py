@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
@@ -13,18 +15,23 @@ from app.modules.all_platform.schemas.crm_customer import (
 )
 from app.modules.all_platform.services.crm_customer_service import (
     CustomerLinkedError,
+    CustomerNotFoundError,
     DuplicateCustomerError,
+    copy_customer_to_instance,
+    copy_customers_to_instance,
     create_customer,
     create_customer_with_deal,
     delete_customer,
+    delete_customers_bulk,
     get_customer,
     list_customers,
     quick_search_customers,
     related_records,
+    get_customer_activity,
     update_customer,
 )
 from app.modules.all_platform.services.supabase_project_service import get_customer_projects_summary
-from app.modules.all_platform.services.crm_permission_service import can_view_project
+from app.modules.all_platform.services.crm_permission_service import can_view_project, has_module_access
 
 router = APIRouter()
 
@@ -36,10 +43,12 @@ def _error(exc: Exception) -> BaseResponse:
         return BaseResponse(
             success=False,
             message=str(exc),
-            data={"deal_count": exc.deal_count, "contact_count": exc.contact_count},
+            data={"requiresCascadeConfirm": True, **exc.summary},
         )
+    if isinstance(exc, CustomerNotFoundError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, PermissionError):
-        return BaseResponse(success=False, message=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return BaseResponse(success=False, message=str(exc))
 
 
@@ -50,18 +59,49 @@ def customers_list(
     source: str | None = Query(None),
     owner_id: str | None = Query(None),
     sale_manager_id: str | None = Query(None),
+    team: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
+    if not has_module_access(user, "Customer"):
+        return BaseResponse(success=False, message="Forbidden: không có quyền truy cập module Customer")
     try:
         return BaseResponse(
             success=True,
             data=list_customers(
                 user, search=search, status=status, source=source,
-                owner_id=owner_id, sale_manager_id=sale_manager_id, page=page, page_size=page_size,
+                owner_id=owner_id, sale_manager_id=sale_manager_id, team=team, page=page, page_size=page_size,
             ),
         )
+    except Exception as exc:
+        return _error(exc)
+
+
+class SuggestShortNameRequest(BaseModel):
+    company_name: str
+    customer_id: str | None = None
+    use_ai: bool = True
+
+
+@router.post("/suggest-short-name")
+def customers_suggest_short_name(payload: SuggestShortNameRequest, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """De xuat ten viet tat tu ten cong ty (thuong hieu da co -> quy tac -> AI neu can -> fallback quy tac). Khong ghi DB."""
+    try:
+        from app.modules.all_platform.services.crm_short_name_service import suggest_short_name
+
+        return BaseResponse(success=True, data=suggest_short_name(payload.company_name, customer_id=payload.customer_id, use_ai=payload.use_ai))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/handover-docs")
+def customers_handover_docs(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Link tai lieu (Doc/Sheet) dan luc ban giao Lead -> hien o Customer Detail / Co hoi sau convert."""
+    try:
+        from app.modules.all_platform.services.crm_lead_handover_service import customer_handover_docs
+
+        return BaseResponse(success=True, data=customer_handover_docs(customer_id, user))
     except Exception as exc:
         return _error(exc)
 
@@ -96,6 +136,63 @@ def customers_create_with_deal(payload: CrmCustomerWithDealCreate, user: dict[st
         return _error(exc)
 
 
+@router.post("/bulk-delete")
+def customers_delete_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Xoa nhieu Khach hang da chon. confirm_cascade=true CHI gui sau khi nguoi
+    dung da xac nhan xoa toan bo du lieu lien quan (xem delete_customers_bulk)."""
+    try:
+        customer_ids = payload.get("customer_ids")
+        if not customer_ids or not isinstance(customer_ids, list):
+            return BaseResponse(success=False, message="Danh sách customer_ids không hợp lệ.")
+        data = delete_customers_bulk(customer_ids, user, confirm_cascade=bool(payload.get("confirm_cascade")))
+        deleted = len(data["deleted_ids"])
+        failed = len(data["failed"])
+        if deleted == 0 and failed > 0:
+            return BaseResponse(success=False, message=f"Không xoá được khách hàng nào ({failed} khách hàng cần xác nhận hoặc bị từ chối).", data=data)
+        return BaseResponse(success=True, message=f"Đã xoá {deleted} khách hàng" + (f", {failed} khách hàng chưa xoá" if failed else ""), data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/copy-instance")
+def customers_copy_instance_bulk(payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT: sao chep NHIEU Khach hang cung luc, MOI Khach hang 1
+    workspace dich RIENG, trong so 2 clone CRM doc lap (cloudgate/SECURITYZONE)
+    - dung y het leads_copy_instance_bulk(). Payload:
+    {"assignments": [{"customer_id": ..., "target_instance": ...}, ...]}."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép khách hàng sang workspace khác")
+    try:
+        assignments = payload.get("assignments")
+        if not assignments or not isinstance(assignments, list):
+            return BaseResponse(success=False, message="assignments là bắt buộc (danh sách)")
+        data = copy_customers_to_instance(assignments, user)
+        failed_count = len(data.get("failed") or [])
+        copied_count = len(data.get("copied") or [])
+        message = f"Đã sao chép {copied_count} khách hàng" + (f", {failed_count} lỗi" if failed_count else "")
+        return BaseResponse(success=True, message=message, data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/{customer_id}/copy-instance")
+def customers_copy_instance(customer_id: str, payload: dict, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Chi Admin THAT (khong phai leader): tao 1 ban sao cua 1 Khach hang sang
+    1 clone CRM doc lap khac (cloudgate/SECURITYZONE), Khach hang goc van giu
+    nguyen o workspace hien tai - thao tac xuyen tenant, dung y het
+    leads_copy_instance()."""
+    if str(user.get("role") or "").strip().lower() != "admin":
+        return BaseResponse(success=False, message="Chỉ Admin mới được sao chép khách hàng sang workspace khác")
+    try:
+        target_instance = payload.get("target_instance")
+        if not target_instance:
+            return BaseResponse(success=False, message="target_instance là bắt buộc")
+        data = copy_customer_to_instance(customer_id, str(target_instance), user)
+        return BaseResponse(success=True, message="Đã sao chép sang workspace khác", data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
 @router.get("/{customer_id}")
 def customers_get(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
@@ -117,9 +214,13 @@ def customers_update(customer_id: str, payload: CrmCustomerUpdate, user: dict[st
 
 
 @router.delete("/{customer_id}")
-def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+def customers_delete(
+    customer_id: str,
+    confirm_cascade: bool = Query(False, description="True sau khi nguoi dung da xac nhan xoa toan bo du lieu lien quan."),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
     try:
-        delete_customer(customer_id, user)
+        delete_customer(customer_id, user, confirm_cascade=confirm_cascade)
         return BaseResponse(success=True, message="Da xoa ho so khach hang")
     except Exception as exc:
         return _error(exc)
@@ -129,6 +230,18 @@ def customers_delete(customer_id: str, user: dict[str, Any] = Depends(get_curren
 def customers_related(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
     try:
         return BaseResponse(success=True, data=related_records(customer_id, user))
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.get("/{customer_id}/activity")
+def customers_activity(customer_id: str, user: dict[str, Any] = Depends(get_current_user)) -> BaseResponse:
+    """Tab "Hoạt động" trong Customer 360 — Phase 3 scope: CHỈ gộp Deal/Sales
+    activity (customer_lead_activity_log) của mọi Deal thuộc customer này,
+    KHÔNG phải Activity Timeline hợp nhất (chưa gồm Quote/Contract/Customer
+    event) — FE phải ghi rõ phạm vi này khi hiển thị."""
+    try:
+        return BaseResponse(success=True, data=get_customer_activity(customer_id, user))
     except Exception as exc:
         return _error(exc)
 

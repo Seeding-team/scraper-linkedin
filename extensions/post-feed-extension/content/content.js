@@ -7,7 +7,7 @@
 const SELECTORS = {
   FEED: 'div[role="feed"]',
   POST_BLOCKS: 'div[role="feed"] > div',
-  CONTENT_PRIMARY: 'div[data-ad-comet-preview="message"]',
+  CONTENT_PRIMARY: 'div[data-ad-comet-preview="message"], div[data-ad-rendering-role="story_message"], div[data-ad-preview="message"]',
   CONTENT_FALLBACK: 'div[dir="auto"]',
   SEE_MORE: 'div[role="button"], span[role="button"]',
   LINK: 'a[role="link"], a[href]',
@@ -161,6 +161,7 @@ function getInfo(block) {
     const links = block.querySelectorAll('a[href]');
     for (const link of links) {
       const href = link.getAttribute('href') || '';
+      if (/([?&])(comment_id|reply_comment_id)=/i.test(href)) continue;
 
       if (!RE_POST_URL.test(href) && !href.includes('/posts/') && !href.includes('/permalink/') && !href.includes('story_fbid')) {
         continue;
@@ -193,7 +194,7 @@ async function getContent(block) {
 
   // 2. Tầng 1: data-ad-comet-preview
   try {
-    const node = block.querySelector('div[data-ad-comet-preview="message"]');
+    const node = block.querySelector('div[data-ad-comet-preview="message"], div[data-ad-rendering-role="story_message"], div[data-ad-preview="message"]');
     if (node) {
       const text = node.innerText?.trim();
       if (text) return text;
@@ -212,9 +213,10 @@ async function getContent(block) {
 
       const allDirs = el.querySelectorAll('div[dir="auto"]');
       let bestText = '';
-      const banWords = ['bình luận', 'chia sẻ', 'comment', 'share', 'thông báo'];
+      const banWords = ['viết bình luận', 'write a comment', 'xem thêm bình luận', 'view more comments'];
 
       for (const div of allDirs) {
+        if (div.closest('[role=\"article\"] [role=\"article\"], [aria-label*=\"bình luận\" i], [aria-label*=\"comment\" i], [aria-label*=\"trả lời\" i], [aria-label*=\"reply\" i], [data-testid*=\"comment\" i]')) continue;
         if (commentSection && commentSection.contains(div)) continue;
         if (commentSection && (commentSection.compareDocumentPosition(div) & 4)) continue;
 

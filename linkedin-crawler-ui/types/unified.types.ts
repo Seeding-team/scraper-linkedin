@@ -4,15 +4,18 @@
 /* Unified TypeScript types for the All-Platform (Tổng hợp) page.
    These types mirror the Supabase database schema. */
 
-export type FeedPlatform = "facebook" | "linkedin";
-export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_next_step" | "crm_quote_type";
+export type FeedPlatform = "facebook" | "linkedin" | "threads" | "youtube";
+export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
 
 // ── Posts ────────────────────────────────────────────────────────────────────
 
 export interface UnifiedSeedingInfo {
+  id_member?: string;
+  member_id?: string;
   member_name?: string;
+  member_email?: string;
   seeding_content?: string;
   seeding_name?: string;
   link_comment?: string;
@@ -29,6 +32,8 @@ export interface UnifiedPost {
   crawl_date: string;
   post_time?: string;
   posted_at?: string;
+  phone_number?: string;
+  contact_phone?: string;
   content: string;
   score: number;
   reactions: number;
@@ -53,6 +58,58 @@ export interface UnifiedPost {
   crawler_name?: string;
   crawler_team?: string;
   all_seedings?: UnifiedSeedingInfo[];
+  is_my_seeding?: boolean;
+  /** Chỉ bài Threads/YouTube: từ khoá tìm kiếm đã tìm ra bài (không có group). */
+  search_keyword?: string;
+  /** Chỉ video YouTube (bảng youtube_posts, migration 155). */
+  video_id?: string;
+  title?: string;
+  is_short?: boolean;
+  view_count?: number;
+  duration_text?: string;
+  published_text?: string;
+  /** 'keyword' (tìm theo từ khoá) | 'link' (người dùng dán link). */
+  source?: string;
+  /** Bình luận cào được từ bài (LinkedIn, extension >= 2.0) — cần migration 151. */
+  comments_detail?: UnifiedCrawledComment[];
+  /** Tên người đã react bài (LinkedIn, best-effort). */
+  likers?: string[];
+  /** Điểm "tiềm năng seeding" do LLM chấm (0-100) — người đang tìm đơn vị làm website/
+   * app/landing page. NULL/undefined = chưa chấm (migration 159). */
+  lead_score?: number | null;
+  /** Lý do ngắn gọn LLM đưa ra cho lead_score — hiện tooltip. */
+  lead_score_reason?: string | null;
+  /** Bình luận seeding tự động hệ thống đã/sẽ đăng cho bài điểm cao (Facebook, migration
+   * 160) — hiển thị ngay trên card như 1 bình luận thật nhưng ghi rõ "Hệ thống:". */
+  auto_seeding_comment?: {
+    content?: string | null;
+    status?: "pending" | "posted" | "failed" | string;
+    posted_at?: string | null;
+    link_comment?: string | null;
+    need_category?: string | null;
+    /** SĐT liên hệ LLM trích được từ bài (E.164), null nếu bài không nêu rõ (migration 161). */
+    phone_number?: string | null;
+    /** Kết quả nhắn tin Zalo tự động tới SĐT trên (null nếu không có SĐT để thử). */
+    zalo_status?: "sent" | "failed" | string | null;
+    zalo_message_content?: string | null;
+    zalo_sent_at?: string | null;
+    /** uid Zalo của khách — dùng để mở thẳng hội thoại trong trang Zalo Inbox. */
+    zalo_conversation_id?: string | null;
+    /** Lý do cụ thể khi zalo_status='failed' (vd "SĐT chưa đăng ký Zalo", "phiên hết hạn"...). */
+    zalo_error?: string | null;
+    /** Tên hiển thị Zalo của khách (tìm được qua SĐT) — null nếu Zalo không trả về tên
+     * riêng (migration 172). Hiện cùng SĐT trên post card cho rõ thông tin khách. */
+    zalo_display_name?: string | null;
+    /** Tên người dùng trong hệ thống đã gửi tin nhắn Zalo tới SĐT này (migration 214). */
+    zalo_sent_by?: string | null;
+  } | null;
+}
+
+export interface UnifiedCrawledComment {
+  author_name?: string;
+  author_url?: string;
+  content?: string;
+  likes?: number;
 }
 
 export interface GetAllPostsRequest {
@@ -146,9 +203,10 @@ export interface Category {
   name?: string;
   description?: string;
   platform: string;
-  is_active?: boolean;
-  created_at?: string;
-}
+    is_active?: boolean;
+    sort_order?: number;
+    created_at?: string;
+  }
 
 // ── Members (HR roster, độc lập với app_users) ────────────────────────────────
 
@@ -174,6 +232,13 @@ export interface MemberProfile {
   experience_year?: number | null;
   linked_user_id?: string | null;
   linked_user_id_2?: string | null;
+  leader_name?: string | null;
+  leader_email?: string | null;
+  cv_link?: string | null;
+  employment_status?: string | null;
+  off_effective_at?: string | null;
+  is_recruitment_synced?: boolean | null;
+  level?: string | null;
   skill_ids?: string[];
   skills?: Skill[];
   created_at?: string;
@@ -210,6 +275,10 @@ export interface InternalEngagementPost {
   deadline?: string;
   target_comments?: number;
   assigned_team_ids?: string[];
+  /** "internal" (mặc định, bài của chính công ty) | "external" (bài của nguồn
+   * bên ngoài) — chỉ có ở bài custom-post, quyết định hiện ở tab "Seeding nội
+   * bộ" hay "Seeding bên ngoài" trên trang internal-engagement. */
+  scope?: "internal" | "external";
 }
 
 export type InternalEngagementMarkStatus = "need" | "received" | "completed";
@@ -235,12 +304,93 @@ export interface InternalEngagementInteraction {
   summary: string;
   created_at: string;
   raw_created_at?: string | null;
+  comment_content?: string;
 }
 
 export interface InternalEngagementPostInteractionsData {
   role: string;
   teams: InternalEngagementTeamRef[];
   items: InternalEngagementInteraction[];
+}
+
+export interface PostSeedingRosterItem {
+  id_member: string;
+  name: string;
+  email?: string | null;
+  team_name?: string | null;
+  has_seeded: boolean;
+  content: string;
+  verify_status?: string | null;
+  link_comment?: string | null;
+  created_at?: string | null;
+}
+
+export interface PostSeedingRosterData {
+  role: string;
+  team_name: string | null;
+  items: PostSeedingRosterItem[];
+}
+
+export interface TeamSeedingEfficiency {
+  team_id: string;
+  team_name: string;
+  total_members: number;
+  total_seeded_today: number;
+  total_verified_today: number;
+  active_members_today: number;
+}
+
+export interface TeamsSeedingEfficiencyData {
+  role: string;
+  teams: TeamSeedingEfficiency[];
+}
+
+export interface MemberSeedingAccount {
+  id_member: string;
+  name: string;
+  email: string;
+  fb_groups: number;
+  li_groups: number;
+  scheduled_crawls_count?: number;
+  telegram_connected: boolean;
+  total_fb_posts_crawled?: number;
+  total_crawled_posts: number;
+  ai_passed_posts: number;
+  ai_passed_percent: number;
+  last_crawled_at: string | null;
+}
+
+export interface MemberSeedingOverviewData {
+  role: string;
+  accounts: MemberSeedingAccount[];
+}
+
+export interface MemberCrawlHistoryItem {
+  id: string;
+  group_name: string;
+  content: string;
+  crawl_date: string | null;
+}
+
+export interface MemberCrawlHistoryData {
+  groups: { id: string; name: string }[];
+  history: MemberCrawlHistoryItem[];
+}
+
+export interface MemberOnlinePresence {
+  id_member: string;
+  name: string;
+  email?: string;
+  today_minutes: number;
+  week_minutes: number;
+  month_minutes: number;
+  is_online: boolean;
+  last_seen_at: string | null;
+}
+
+export interface OnlineSummaryData {
+  role: string;
+  members: MemberOnlinePresence[];
 }
 
 export interface InternalEngagementPostTeamCount {
@@ -252,6 +402,8 @@ export interface InternalEngagementPostTeamCount {
 export interface InternalEngagementPostTeamCountsData {
   role: string;
   teams: InternalEngagementPostTeamCount[];
+  /** Số thành viên (distinct) đã tương tác thành công trên bài — không phụ thuộc role người xem. */
+  total_interacted?: number;
 }
 
 export interface InternalEngagementTeamTrendPoint {
@@ -355,6 +507,19 @@ export interface FacebookGroup {
   assignee_id?: string;
   co_assignee_id?: string;
   id_member?: string;
+  /** Số bài trong nhóm có điểm AI (lead_score) >= 70 — tính on-the-fly, dùng để sắp xếp
+   * nhóm nào đáng seeding nhất lên đầu (yêu cầu 2026-10-02). */
+  high_lead_post_count?: number;
+  /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
+  avg_lead_score?: number | null;
+  /** Tổng số bài trong nhóm đã được LLM chấm điểm (kể cả điểm thấp). */
+  scored_post_count?: number;
+  /** true nếu đã chấm đủ bài nhưng chưa ra bài điểm cao nào — nhóm này ít/không tạo lead,
+   * KHÔNG tự động xoá, chỉ cảnh báo để người dùng tự quyết định (yêu cầu 2026-10-02). */
+  lead_stats_warning?: boolean;
+  /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
+   * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
+  lead_stats_error?: boolean;
 }
 
 export interface LinkedInGroup {
@@ -387,6 +552,18 @@ export interface LinkedInGroup {
   assignee_id?: string;
   co_assignee_id?: string;
   id_member?: string;
+  /** Số bài trong nhóm có điểm AI (lead_score) >= 70 — tính on-the-fly (yêu cầu 2026-10-02). */
+  high_lead_post_count?: number;
+  /** Điểm AI trung bình các bài trong nhóm đã được chấm (null nếu chưa có bài nào chấm). */
+  avg_lead_score?: number | null;
+  /** Tổng số bài trong nhóm đã được LLM chấm điểm (kể cả điểm thấp). */
+  scored_post_count?: number;
+  /** true nếu đã chấm đủ bài nhưng chưa ra bài điểm cao nào — nhóm này ít/không tạo lead,
+   * KHÔNG tự động xoá, chỉ cảnh báo để người dùng tự quyết định (yêu cầu 2026-10-02). */
+  lead_stats_warning?: boolean;
+  /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
+   * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
+  lead_stats_error?: boolean;
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────
@@ -426,11 +603,20 @@ export interface AppUser {
   /** true nếu được cấp quyền duyệt Báo giá (migration 053) — admin luôn duyệt
    * được dù cờ này false. */
   can_approve_quotes?: boolean;
+  quote_business_role?: "presale" | "sale" | "both" | null;
+  /** "Nhom quyen" CRM (migration 155) - module duoc phep vao (Lead/Customer/
+   * Deal/Quote/Product/Report/Account/Setting). `null` = CHUA duoc gan Nhom
+   * quyen nao (opt-in) - khong gioi han gi, sidebar hien day du nhu hien tai.
+   * Mang RONG (`[]`, khac `null`) nghia la DA gan nhom nhung khong module nao
+   * duoc phep. */
+  effective_modules?: string[] | null;
 }
 
 export interface AuthLoginResponse {
   user: AppUser;
   access_token: string;
+  redirect_required?: boolean;
+  redirect_url?: string;
 }
 
 export interface SocialAccount {
@@ -441,6 +627,7 @@ export interface SocialAccount {
   account_email?: string;
   account_password?: string;
   account_profile_id?: string;  // Profile ID on the social platform
+  account_handle?: string;      // YouTube: @handle của kênh đã liên kết
   id_platform?: number;         // FK to platforms table
   two_fa_secret?: string;
   two_fa_enabled: boolean;
@@ -524,6 +711,8 @@ export interface ScheduledComment {
   status: ScheduledCommentStatus;
   scheduled_at: string;
   posted_at?: string;
+  phone_number?: string;
+  contact_phone?: string;
   error_message?: string;
   link_comment?: string;
   created_at: string;
@@ -542,4 +731,136 @@ export interface CreateScheduledCommentRequest {
   ai_generated: boolean;
   scheduled_at: string;
 }
+// ── Crawl Schedule Rounds History ──────────────────────────────────────────
 
+export interface CrawlRoundPlatformStat {
+  posts_count: number;
+  ai_passed_count: number;
+  ai_pass_rate: number;
+}
+
+export interface CrawlScheduleRoundItem {
+  id: string;
+  round_number: number;
+  round_label: string;
+  schedule_label: string;
+  user_id: string;
+  user_name: string;
+  user_email: string;
+  is_system: boolean;
+  started_at: string;
+  finished_at: string;
+  started_at_formatted: string;
+  duration_seconds: number;
+  duration_formatted: string;
+  status: "done" | "running" | "failed";
+  facebook: CrawlRoundPlatformStat;
+  linkedin: CrawlRoundPlatformStat;
+  threads: CrawlRoundPlatformStat;
+  total_posts: number;
+  total_ai_passed: number;
+  ai_pass_rate: number;
+}
+
+export interface CrawlScheduleHistoryMember {
+  id: string;
+  name: string;
+  email: string;
+  is_system: boolean;
+}
+
+export interface CrawlScheduleHistorySummary {
+  total_rounds: number;
+  total_posts: number;
+  total_ai_passed: number;
+  facebook_total: number;
+  linkedin_total: number;
+  threads_total: number;
+  overall_ai_pass_rate: number;
+}
+
+export interface CrawlScheduleHistoryData {
+  members: CrawlScheduleHistoryMember[];
+  rounds: CrawlScheduleRoundItem[];
+  summary: CrawlScheduleHistorySummary;
+}
+
+
+
+// ── Post Evaluation & Keyword Exclusion Types ─────────────────────────────────
+
+export interface EvaluatorUser {
+  id?: string;
+  name?: string;
+  email?: string;
+}
+
+export interface UnifiedPost {
+  evaluation_code?: string;
+  evaluation_reason?: string;
+  evaluation_summary?: string;
+  exclude_keyword_exempt?: boolean;
+  is_excluded?: boolean;
+  matched_keywords?: string[];
+  call_result_code?: string;
+  call_attempts?: number;
+  last_call_at?: string;
+  evaluated_by_user?: EvaluatorUser | null;
+  evaluated_at?: string | null;
+  updated_by_user?: EvaluatorUser | null;
+}
+
+export type PostEvaluationCode = "chua-danh-gia" | "can-lien-he" | "khong-phu-hop" | string;
+
+export interface PostCallResult {
+  id?: string;
+  post_id: string;
+  platform: string;
+  result_code: string;
+  attempts: number;
+  last_call_at?: string;
+  updated_by?: string;
+  updated_by_user?: EvaluatorUser | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface PostEvaluation {
+  id?: string;
+  post_id: string;
+  platform: string;
+  evaluation_code: PostEvaluationCode;
+  reason?: string;
+  summary?: string;
+  exclude_keyword_exempt?: boolean;
+  evaluated_by?: string;
+  evaluated_by_user?: EvaluatorUser | null;
+  evaluated_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ExcludeKeyword {
+  id: string;
+  keyword: string;
+  platform?: string | null;
+  status: "active" | "inactive";
+  created_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface KeywordProposal {
+  id: string;
+  keyword: string;
+  reason?: string;
+  source_post_id?: string;
+  platform?: string;
+  status: "pending" | "approved" | "rejected";
+  proposed_by?: string;
+  proposer_name?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
+  created_at?: string;
+  updated_at?: string;
+}

@@ -4,7 +4,41 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+class PaymentPlanRowInput(BaseModel):
+    id: str
+    phase: str = ""
+    percent: float = Field(default=0, ge=0, le=100, allow_inf_nan=False)
+    condition: str = ""
+    note: str = ""
+
+
+def normalize_quote_data(data):
+    """Keep quote snapshot fields; payment amounts are derived, never persisted."""
+    if data is None or "paymentPlan" not in data:
+        return data
+    if not isinstance(data["paymentPlan"], list):
+        raise ValueError("paymentPlan must be a list")
+    return {**data, "paymentPlan": [PaymentPlanRowInput.model_validate(row).model_dump()
+                                  for row in data["paymentPlan"]]}
+
+
+def optional_uuid_or_none(value):
+    """Normalize optional UUID fields before they reach PostgREST/Postgres.
+
+    Browser selects often send "" for "not selected"; Postgres UUID columns do
+    not accept empty strings. Keep real UUID strings unchanged, but consistently
+    turn empty/blank strings into None across quote create/update/assignment
+    payloads.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return value
 
 
 class QuoteFormCreateRequest(BaseModel):
@@ -16,6 +50,8 @@ class QuoteFormCreateRequest(BaseModel):
     schema_json: dict[str, Any]
     issuer_company_id: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
+
 
 class QuoteFormUpdateRequest(BaseModel):
     name: Optional[str] = None
@@ -26,6 +62,8 @@ class QuoteFormUpdateRequest(BaseModel):
     schema_json: Optional[dict[str, Any]] = None
     issuer_company_id: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator("issuer_company_id", mode="before")(optional_uuid_or_none)
+
 
 class IssuerCompanyCreateRequest(BaseModel):
     code: str
@@ -33,6 +71,7 @@ class IssuerCompanyCreateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -41,6 +80,13 @@ class IssuerCompanyCreateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: str = "active"
     sort_order: int = 0
+    # (I) "Điều khoản thanh toán" mac dinh cua don vi phat hanh - SNAPSHOT 1 lan
+    # vao custom block 'payment_terms' cua bao gia luc tao (xem
+    # apply_issuer_payment_terms_snapshot trong supabase_quote_service.py),
+    # KHONG doc song - sua o day chi anh huong bao gia MOI tao sau do.
+    payment_terms: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
 
 
 class IssuerCompanyUpdateRequest(BaseModel):
@@ -49,6 +95,7 @@ class IssuerCompanyUpdateRequest(BaseModel):
     brand_name: Optional[str] = None
     address: Optional[str] = None
     contact_name: Optional[str] = None
+    position_category_id: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -57,6 +104,9 @@ class IssuerCompanyUpdateRequest(BaseModel):
     default_quote_form_id: Optional[str] = None
     status: Optional[str] = None
     sort_order: Optional[int] = None
+    payment_terms: Optional[str] = None
+
+    _normalize_optional_uuid = field_validator("default_quote_form_id", mode="before")(optional_uuid_or_none)
 
 
 class QuoteItemInput(BaseModel):
@@ -71,16 +121,23 @@ class QuoteItemInput(BaseModel):
     row_type: Optional[str] = None
     description: str = ""
     service_description: Optional[str] = None
+    warranty_scope: Optional[str] = None
+    @field_validator("warranty_scope")
+    @classmethod
+    def normalize_warranty_scope(cls, value):
+        return value.strip() or None if value is not None else None
+
     unit: Optional[str] = None
     quantity: float = 0
-    unit_price: float = 0
+    unit_price: Optional[float] = Field(default=None, ge=0)
     discount_percent: float = Field(default=0, ge=0, le=100)
+    discount_amount: Optional[float] = Field(default=None, ge=0)
     vat_rate: float = Field(default=0, ge=0, le=100)
     children: list["QuoteItemInput"] = Field(default_factory=list)
     # Danh mục dịch vụ: truy vết + snapshot USD/VND/tỷ giá tại thời điểm chọn dịch vụ.
     # Đông cứng ngay khi tạo/sửa báo giá - sửa catalog sau này không ảnh hưởng số liệu cũ.
     catalog_item_id: Optional[str] = None
-    bundle_snapshot: Optional[list[dict[str, Any]]] = None
+    bundle_snapshot: Optional[list[dict[str, Any]] | dict[str, Any]] = None
     list_price_usd: Optional[float] = None
     unit_price_usd: Optional[float] = None
     exchange_rate: Optional[float] = None
@@ -108,6 +165,31 @@ class QuoteItemInput(BaseModel):
     price_book_item_id: Optional[str] = None
     price_book_version_id: Optional[str] = None
     price_book_snapshot: Optional[dict[str, Any]] = None
+    cost_override_reason: Optional[str] = None
+    cost_override_by: Optional[str] = None
+    cost_override_at: Optional[str] = None
+    cost_price_original: Optional[float] = Field(default=None, ge=0)
+    # Gia von GOC bang VND (migration 169) - chi gui o bao gia USD de doi lai VND
+    # khong troi do lam tron. Gia ban goc VND dung lai unit_price_vnd co san.
+    cost_price_vnd: Optional[float] = Field(default=None, ge=0)
+    # Chu ky "tra thang/tra nam" (migration 189) - dung chung moi nhom san
+    # pham co ca 2 gia tu danh muc (vd Markee Chat MCHAT-AGENT). CANH BAO: neu
+    # khong khai bao o day, Pydantic se AM THAM bo field nay (y het bug
+    # row_type/price_book_item_id da ghi o tren) - moi lan Luu bao gia se mat
+    # sach du lieu Chu ky da chon, ca 2 ham quote.py/supabase_quote_service.py
+    # vua them cung vo tac dung.
+    billing_cycle: Optional[str] = None
+    billing_term_months: Optional[float] = Field(default=None, ge=1)
+    catalog_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
+    catalog_annual_commit_monthly_price_vnd: Optional[float] = Field(default=None, ge=0)
+
+    _normalize_optional_uuid = field_validator(
+        "catalog_item_id",
+        "price_book_item_id",
+        "price_book_version_id",
+        "cost_override_by",
+        mode="before",
+    )(optional_uuid_or_none)
 
 
 class QuoteCreateRequest(BaseModel):
@@ -122,6 +204,29 @@ class QuoteCreateRequest(BaseModel):
     # "Loai bao gia" (migration 112) - multi-select code cua
     # category_type='crm_quote_type', chon duoc tu Buoc 1 luc tao.
     quote_type_codes: Optional[list[str]] = None
+    # Tien te cap Quote (migration 169): 'VND' (mac dinh) | 'USD'. exchange_rate = so
+    # VND cho 1 USD, bat buoc/duoc dong bang khi currency khac VND (neu bo trong dung
+    # ty gia he thong - xem quote_exchange_rate_service).
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
+    # "Gia da gom VAT" (migration 204): 'exclusive' (mac dinh, HANH VI CU) |
+    # 'inclusive'. Khong gui = 'exclusive'.
+    price_mode: Optional[str] = None
+
+    _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "deal_id",
+        "issuer_company_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
+
+    @field_validator("price_mode")
+    @classmethod
+    def _validate_price_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("exclusive", "inclusive"):
+            raise ValueError("price_mode phải là 'exclusive' hoặc 'inclusive'.")
+        return value
 
 
 class QuoteUpdateRequest(BaseModel):
@@ -132,6 +237,11 @@ class QuoteUpdateRequest(BaseModel):
     data: Optional[dict[str, Any]] = None
     items: Optional[list[QuoteItemInput]] = None
     issuer_company_id: Optional[str] = None
+    # "Mẫu ăn theo Đơn vị phát hành" (feedback 2026-09-24) - CHI dung de DOI
+    # sang 1 mau khac (gia tri that su, khong co y nghia "bo gan" nhu project_id/
+    # sla_due_at), nen KHONG can model_fields_set o router - exclude_none=True
+    # mac dinh (payload.model_dump()) la du: khong gui/gui null = khong doi.
+    quote_form_id: Optional[str] = None
     project_id: Optional[str] = None
     sla_due_at: Optional[str] = None
     # Giam gia tong cap quote (migration 106, muc 6.9) - None co y nghia THAT
@@ -143,6 +253,27 @@ class QuoteUpdateRequest(BaseModel):
     # o router (list rong [] la gia tri that su hop le "bo chon het", khac
     # "khong gui gi").
     quote_type_codes: Optional[list[str]] = None
+    # Doi tien te cua bao gia DRAFT: phai gui kem toan bo `items` da quy doi.
+    currency: Optional[str] = None
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
+    # "Gia da gom VAT" (migration 204) - KHONG can gui kem items (khong
+    # rescale unitPrice gi ca, chi doi cach dien giai - khac han currency).
+    price_mode: Optional[str] = None
+
+    _normalize_data = field_validator("data")(normalize_quote_data)
+    _normalize_optional_uuid = field_validator(
+        "issuer_company_id",
+        "quote_form_id",
+        "project_id",
+        mode="before",
+    )(optional_uuid_or_none)
+
+    @field_validator("price_mode")
+    @classmethod
+    def _validate_price_mode(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in ("exclusive", "inclusive"):
+            raise ValueError("price_mode phải là 'exclusive' hoặc 'inclusive'.")
+        return value
 
 
 class QuoteStageUpdateRequest(BaseModel):
@@ -160,6 +291,12 @@ class QuoteOwnersUpdateRequest(BaseModel):
     technical_owner_id: Optional[str] = None
     quote_owner_id: Optional[str] = None
 
+    _normalize_optional_uuid = field_validator(
+        "technical_owner_id",
+        "quote_owner_id",
+        mode="before",
+    )(optional_uuid_or_none)
+
 
 class QuoteVersionReasonRequest(BaseModel):
     reason: str
@@ -171,6 +308,31 @@ class QuoteCancelRequest(BaseModel):
 
 class QuoteSoftDeleteRequest(BaseModel):
     reason: Optional[str] = None
+
+
+class QuotePublicAccessRestrictionUpdateRequest(BaseModel):
+    """"Giới hạn xem link báo giá bằng Email hoặc Số điện thoại" (migration
+    118, thay the QuotePublicEmailGateUpdateRequest cu chi ho tro email).
+    `mode`: 'none' | 'email' | 'phone' - CHI 1 che do co hieu luc, tranh bug
+    "tat gioi han nhung van hoi Email" do truoc day dung 1 boolean rieng
+    song song voi danh sach email."""
+
+    mode: str
+    allowed_emails: list[str] = []
+    allowed_phones: list[str] = []
+
+
+class QuotePrintLayoutPrefsUpdateRequest(BaseModel):
+    """Nut "Lưu" o toolbar in (huong giay + do rong cot da keo tay) tren
+    QuoteDetailPage - trang NOI BO da dang nhap (KHONG phai trang public
+    khong xac thuc /baogia/[token] - xem thao luan trong PublicQuotePage.tsx).
+    Endpoint chi ghi DUNG 1 khoa `data.printLayoutPrefs`, khong dung RPC
+    quote_update (RPC do recompute lai toan bo p_items/tong tien, thua va co
+    rui ro cho thao tac chi luu 1 tuy chinh hien thi nay) - xem
+    set_print_layout_prefs. `column_widths`: map { columnKey: widthPx }."""
+
+    orientation: str
+    column_widths: dict[str, float] = {}
 
 
 class QuoteHardDeleteRequest(BaseModel):
