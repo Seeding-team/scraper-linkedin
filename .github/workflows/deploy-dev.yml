@@ -33,8 +33,10 @@ jobs:
           git fetch origin "$REF"
           git checkout -f -B "$REF" "origin/$REF" || git checkout -f "$REF" || true
           git reset --hard "origin/$REF"
-          git checkout HEAD -- .
+          rm -rf nginx-router/nginx.conf
+          git show "origin/$REF:nginx-router/nginx.conf" > nginx-router/nginx.conf
           git clean -fd -e ".env*" -e "docker-compose*.yml"
+          ls -l nginx-router/nginx.conf
           echo "===== Current commit on host ====="
           git log -n 1 --oneline
 
@@ -59,9 +61,9 @@ jobs:
 
       - name: Ap dung container moi
         run: |
-          if [ -d nginx-router/nginx.conf ]; then
+          if [ -d nginx-router/nginx.conf ] || [ ! -f nginx-router/nginx.conf ]; then
             rm -rf nginx-router/nginx.conf
-            git checkout -f HEAD -- nginx-router/nginx.conf
+            git show HEAD:nginx-router/nginx.conf > nginx-router/nginx.conf
           fi
           docker compose up -d frontend backend router
           sleep 5
