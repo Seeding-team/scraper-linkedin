@@ -58,45 +58,25 @@ jobs:
       - name: Dong bo database tu Main sang Dev
         run: |
           echo "===== 1. Syncing database from Main (10.30.194.82) to Dev (10.30.195.32) ====="
-          docker run --rm postgres:alpine sh -c "
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c '
             set -e
-            echo 'Testing connection to Dev DB...'
-            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c 'SELECT 1;'
+            echo "Testing connection to Dev DB..."
+            psql "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres" -c "SELECT 1;"
             
-            echo 'Running pg_dump from Main and restoring to Dev (EXCLUDING ALL ZALO TABLES)...'
+            echo "Running pg_dump from Main and restoring to Dev (EXCLUDING ALL ZALO TABLES)..."
             pg_dump --clean --if-exists --no-owner --no-privileges --schema=public \
-              --exclude-table='zalo_*' --exclude-table='v_zalo_*' \
-              'postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres' \
-              | psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' || true
+              --exclude-table="zalo_*" --exclude-table="v_zalo_*" \
+              "postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres" \
+              | psql "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres" || true
               
-            echo 'Safeguard: Purging any residual Zalo data on DEV DB to protect Production sessions...'
-            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c "
-              DO \$\$
-              DECLARE
-                r RECORD;
-              BEGIN
-                FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%zalo%') LOOP
-                  EXECUTE 'TRUNCATE TABLE public.' || quote_ident(r.tablename) || ' CASCADE;';
-                END LOOP;
-              END \$\$;
-            " || true
+            echo "Applying permissions and Zalo purge safeguard script..."
+            psql "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres" \
+              -f /repo/linkedin_group_crawler/scripts/init_dev_db_permissions.sql || true
               
-            echo 'Granting Supabase role permissions on schema public...'
-            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c "
-              GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-              GRANT ALL ON SCHEMA public TO postgres;
-              GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
-              GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-              GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
-              ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
-              NOTIFY pgrst, 'reload schema';
-            "
-              
-            echo 'Verifying synced public table count on DEV:'
-            psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -c \"SELECT count(*) as total_tables FROM information_schema.tables WHERE table_schema = 'public';\"
-          "
+            echo "Verifying synced public table count on DEV:"
+            psql "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres" \
+              -c "SELECT count(*) as total_tables FROM information_schema.tables WHERE table_schema = '\''public'\'';"
+          '
 
       - name: Ap dung migration database 221
         run: |
