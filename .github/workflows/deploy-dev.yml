@@ -33,8 +33,8 @@ jobs:
           git fetch origin "$REF"
           git checkout -f -B "$REF" "origin/$REF" || git checkout -f "$REF" || true
           git reset --hard "origin/$REF"
+          git checkout HEAD -- .
           git clean -fd -e ".env*" -e "docker-compose*.yml"
-          ls -ld nginx-router/nginx.conf
           echo "===== Current commit on host ====="
           git log -n 1 --oneline
 
