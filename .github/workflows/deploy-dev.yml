@@ -54,6 +54,10 @@ jobs:
       - name: Build frontend + backend
         run: docker compose build frontend backend
 
+      - name: Ap dung migration database 221
+        run: |
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding:9Esqznvy_NTKeAFZDwrGh4FICe6Gr08XYBwA5kHzxuY@10.30.194.82:5432/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/221_facebook_messenger_api.sql || true"
+
       - name: Ap dung container moi
         run: |
           docker compose up -d frontend backend
