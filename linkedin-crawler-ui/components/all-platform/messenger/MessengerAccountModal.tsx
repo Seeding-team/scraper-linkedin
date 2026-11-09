@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,46 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
   const [name, setName] = useState("");
   const [proxyUrl, setProxyUrl] = useState("");
   const [isShared, setIsShared] = useState(false);
+  const [capturing, setCapturing] = useState(false);
+
+  const handleCaptureFromExtension = () => {
+    setCapturing(true);
+    let resolved = false;
+
+    const timeoutTimer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        setCapturing(false);
+        window.removeEventListener("message", handleMessage);
+        toast.error(
+          "Không nhận được phản hồi từ tiện ích. Vui lòng cài đặt và bật Extension FB API Crawler (hoặc tải ở link bên dưới)!"
+        );
+      }
+    }, 3500);
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.source !== window || !event.data) return;
+      if (event.data.type === "FB_GET_SESSION_RESPONSE") {
+        resolved = true;
+        clearTimeout(timeoutTimer);
+        setCapturing(false);
+        window.removeEventListener("message", handleMessage);
+
+        if (event.data.success && event.data.data?.cookie) {
+          setCookie(event.data.data.cookie);
+          if (!name && event.data.data.name) {
+            setName(event.data.data.name);
+          }
+          toast.success("Đã tự động lấy Cookie Facebook từ trình duyệt thành công!");
+        } else {
+          toast.error(event.data.message || "Không thể lấy cookie Facebook từ trình duyệt.");
+        }
+      }
+    };
+
+    window.addEventListener("message", handleMessage);
+    window.postMessage({ type: "FB_GET_SESSION_REQUEST" }, "*");
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,7 +135,18 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
               <label className="text-xs font-bold text-foreground">
                 Chuỗi Cookie Facebook <span className="text-red-500">*</span>
               </label>
-              <span className="text-[10px] text-muted-foreground">Bắt buộc chứa c_user và xs</span>
+              <button
+                type="button"
+                onClick={handleCaptureFromExtension}
+                disabled={capturing || loading}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                title="Tự động đọc session cookie Facebook đang đăng nhập trong trình duyệt"
+              >
+                <span className={cn("material-symbols-outlined text-[14px]", capturing && "animate-spin")}>
+                  {capturing ? "progress_activity" : "bolt"}
+                </span>
+                <span>{capturing ? "Đang lấy..." : "⚡ Lấy tự động bằng Extension"}</span>
+              </button>
             </div>
             <Textarea
               placeholder="c_user=1000...; xs=...; fr=...; datr=...;"
@@ -104,6 +156,18 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
               className="text-xs font-mono resize-none"
               required
             />
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-0.5">
+              <span>Bắt buộc chứa c_user và xs</span>
+              <a
+                href="/api-facebook-get-extension.zip"
+                download="api-facebook-get-extension.zip"
+                className="text-blue-600 hover:underline flex items-center gap-0.5 font-medium"
+                title="Tải gói tiện ích cài vào Chrome"
+              >
+                <span className="material-symbols-outlined text-[13px]">download</span>
+                <span>Tải Extension (nếu chưa cài)</span>
+              </a>
+            </div>
           </div>
 
           <div className="space-y-1.5">

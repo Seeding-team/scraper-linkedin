@@ -248,9 +248,10 @@ class FbMessengerService:
         cls,
         account_id: str,
         recipient_id: str,
-        content: str,
+        content: str = "",
         recipient_name: Optional[str] = None,
         recipient_avatar: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
         simulate_human: bool = True,
     ) -> Dict[str, Any]:
         """Gửi tin nhắn Messenger với chuỗi 5 bước sinh học chống quét bot."""
@@ -414,7 +415,8 @@ class FbMessengerService:
             "sender_id": str(account.get("fb_user_id")),
             "sender_name": account.get("name"),
             "recipient_id": thread_id,
-            "content": content,
+            "content": content or "",
+            "attachments": attachments or [],
             "is_self": True,
             "is_echo": False,
             "status": "sent",
@@ -425,13 +427,19 @@ class FbMessengerService:
         created_msg = msg_res.data[0] if msg_res.data else msg_payload
 
         # Cập nhật thông tin Thread
+        last_msg = content
+        if not last_msg and attachments:
+            att0 = attachments[0]
+            kind_txt = "Hình ảnh" if att0.get("kind") == "image" else "Tệp đính kèm"
+            last_msg = f"[{kind_txt}] {att0.get('name', '')}".strip()
+
         thread_payload = {
             "account_id": account_id,
             "thread_id": thread_id,
             "recipient_id": thread_id,
             "recipient_name": recipient_name or f"Người dùng {thread_id}",
             "recipient_avatar": recipient_avatar,
-            "last_message": content,
+            "last_message": last_msg or "(Trống)",
             "last_message_at": now_utc.isoformat(),
             "updated_at": now_utc.isoformat(),
         }
@@ -441,6 +449,21 @@ class FbMessengerService:
             ).execute()
         except Exception as te:
             logger.warning(f"Error upserting fb_messenger_thread: {te}")
+
+        # Phát sự kiện SSE Bus về Web App tức thời 0ms
+        try:
+            from app.modules.facebook.src.modules.messenger.services.fb_realtime_listener import messenger_event_bus
+            await messenger_event_bus.publish({
+                "type": "fb_message_new",
+                "account_id": account_id,
+                "thread_id": thread_id,
+                "is_self": True,
+                "is_echo": False,
+                "message": created_msg,
+                "timestamp": now_utc.isoformat(),
+            })
+        except Exception as sse_err:
+            logger.warning(f"Error broadcasting outgoing message via SSE: {sse_err}")
 
         # Ghi nhận hạn ngạch gửi thành công
         FbCircuitBreaker.record_send_success(sb, account_id)

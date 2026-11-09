@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -22,7 +22,8 @@ class SendMessageRequest(BaseModel):
     recipient_id: str = Field(..., description="Facebook UID hoặc Thread ID của người nhận")
     recipient_name: Optional[str] = Field(None, description="Tên người nhận (để cập nhật vào thread)")
     recipient_avatar: Optional[str] = Field(None, description="Avatar người nhận")
-    content: str = Field(..., min_length=1, description="Nội dung tin nhắn")
+    content: Optional[str] = Field("", description="Nội dung tin nhắn")
+    attachments: Optional[List[Dict[str, Any]]] = Field(None, description="Danh sách tệp đính kèm / hình ảnh")
     simulate_human: Optional[bool] = Field(True, description="Bật chuỗi 5 bước mô phỏng nhịp sinh học người thật")
 
 

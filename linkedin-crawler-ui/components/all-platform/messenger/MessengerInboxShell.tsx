@@ -33,7 +33,42 @@ export function MessengerInboxShell() {
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
+  // Danh sách tệp đính kèm chờ gửi & lightbox phóng to ảnh
+  const [pendingFiles, setPendingFiles] = useState<
+    { file: File; previewUrl?: string; name: string; size: number; kind: "image" | "file" }[]
+  >([]);
+  const [previewLightboxUrl, setPreviewLightboxUrl] = useState<string | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>, kind: "image" | "file") => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const newItems = Array.from(files).map((f) => ({
+      file: f,
+      name: f.name,
+      size: f.size,
+      kind,
+      previewUrl: kind === "image" ? URL.createObjectURL(f) : undefined,
+    }));
+
+    setPendingFiles((prev) => [...prev, ...newItems]);
+    // Reset input value để có thể chọn lại cùng file
+    e.target.value = "";
+  };
+
+  const removePendingFile = (index: number) => {
+    setPendingFiles((prev) => {
+      const removed = prev[index];
+      if (removed?.previewUrl) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return prev.filter((_, idx) => idx !== index);
+    });
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -152,14 +187,44 @@ export function MessengerInboxShell() {
     return () => unsubscribe();
   }, [selectedThread]);
 
-  // 5. Gửi tin nhắn với bộ đếm mô phỏng người thật trực quan
+  // 5. Gửi tin nhắn với bộ đếm mô phỏng người thật trực quan & hỗ trợ đa phương tiện
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !selectedAccountId || !selectedThread) return;
+    if ((!inputText.trim() && pendingFiles.length === 0) || !selectedAccountId || !selectedThread) return;
 
     const content = inputText.trim();
+    const filesToUpload = [...pendingFiles];
     setInputText("");
+    setPendingFiles([]);
     setShowTemplateMenu(false);
+
+    setSending(true);
+
+    // 1. Upload các file đính kèm (nếu có)
+    const uploadedAttachments: {
+      url: string;
+      name: string;
+      size?: number;
+      mime_type?: string;
+      kind?: "image" | "file";
+    }[] = [];
+
+    if (filesToUpload.length > 0) {
+      setSimulationStep(1);
+      setSimulationText(`Đang tải lên ${filesToUpload.length} tệp đính kèm...`);
+      for (const pf of filesToUpload) {
+        try {
+          const upRes = await fbMessengerService.uploadMedia(pf.file, selectedAccountId);
+          if (upRes.success && upRes.data) {
+            uploadedAttachments.push(upRes.data);
+          } else {
+            toast.error(`Không thể tải lên file ${pf.name}: ${upRes.message}`);
+          }
+        } catch {
+          toast.error(`Lỗi tải lên file ${pf.name}`);
+        }
+      }
+    }
 
     // Optimistic UI Message (Hiện ngay trong 0ms)
     const optimisticMsg: FbMessengerMessage = {
@@ -169,6 +234,7 @@ export function MessengerInboxShell() {
       sender_id: selectedAccountId,
       recipient_id: selectedThread.thread_id,
       content,
+      attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
       is_self: true,
       is_echo: false,
       status: "sending",
@@ -176,7 +242,6 @@ export function MessengerInboxShell() {
     };
 
     setMessages((prev) => [...prev, optimisticMsg]);
-    setSending(true);
 
     // Kích hoạt chuỗi bước mô phỏng thị giác (Visual Simulation Stepper)
     setSimulationStep(1);
@@ -203,6 +268,7 @@ export function MessengerInboxShell() {
         recipient_id: selectedThread.thread_id,
         recipient_name: selectedThread.recipient_name,
         content,
+        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         simulate_human: true,
       });
 
@@ -491,13 +557,96 @@ export function MessengerInboxShell() {
                     >
                       <div
                         className={cn(
-                          "max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed font-sans shadow-xs whitespace-pre-wrap",
+                          "max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed font-sans shadow-xs",
                           isMe
                             ? "bg-blue-600 text-white rounded-br-xs"
                             : "bg-surface-container border border-outline-variant text-on-surface rounded-bl-xs"
                         )}
                       >
-                        {m.content}
+                        {/* 1. Nhóm hình ảnh & tệp đính kèm */}
+                        {m.attachments && m.attachments.length > 0 && (
+                          <div className="space-y-2 mb-2">
+                            {/* Nhóm hình ảnh (Grid) */}
+                            {m.attachments.filter((a) => a.kind === "image" || a.mime_type?.startsWith("image/")).length > 0 && (
+                              <div
+                                className={cn(
+                                  "grid gap-1.5 rounded-xl overflow-hidden",
+                                  m.attachments.filter((a) => a.kind === "image" || a.mime_type?.startsWith("image/")).length === 1
+                                    ? "grid-cols-1 max-w-xs"
+                                    : m.attachments.filter((a) => a.kind === "image" || a.mime_type?.startsWith("image/")).length === 2
+                                    ? "grid-cols-2 max-w-sm"
+                                    : "grid-cols-3 max-w-md"
+                                )}
+                              >
+                                {m.attachments
+                                  .filter((a) => a.kind === "image" || a.mime_type?.startsWith("image/"))
+                                  .map((att, aIdx) => (
+                                    <div
+                                      key={aIdx}
+                                      onClick={() => setPreviewLightboxUrl(att.url)}
+                                      className="relative group cursor-pointer overflow-hidden rounded-lg bg-black/10 aspect-square flex items-center justify-center border border-black/10"
+                                      title="Bấm để phóng to xem ảnh"
+                                    >
+                                      <img
+                                        src={att.url}
+                                        alt={att.name || "Hình ảnh"}
+                                        className="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition flex items-center justify-center text-white">
+                                        <span className="material-symbols-outlined text-[20px]">zoom_in</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+
+                            {/* Nhóm tệp tài liệu (PDF, Word, Excel, etc.) */}
+                            {m.attachments
+                              .filter((a) => a.kind !== "image" && !a.mime_type?.startsWith("image/"))
+                              .map((att, aIdx) => (
+                                <a
+                                  key={aIdx}
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  download={att.name}
+                                  className={cn(
+                                    "flex items-center gap-2.5 p-2 rounded-xl border transition max-w-xs cursor-pointer",
+                                    isMe
+                                      ? "bg-white/10 hover:bg-white/20 border-white/20 text-white"
+                                      : "bg-surface hover:bg-surface-container border-outline-variant text-on-surface"
+                                  )}
+                                >
+                                  <div
+                                    className={cn(
+                                      "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold",
+                                      isMe ? "bg-white/20 text-white" : "bg-blue-500/10 text-blue-600"
+                                    )}
+                                  >
+                                    <span className="material-symbols-outlined text-[20px]">
+                                      {att.name?.endsWith(".pdf")
+                                        ? "picture_as_pdf"
+                                        : att.name?.match(/\.(doc|docx)$/i)
+                                        ? "description"
+                                        : att.name?.match(/\.(xls|xlsx)$/i)
+                                        ? "table_chart"
+                                        : "draft"}
+                                    </span>
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-xs font-bold truncate leading-tight">{att.name || "Tệp đính kèm"}</p>
+                                    <p className={cn("text-[10px] mt-0.5", isMe ? "text-white/70" : "text-muted-foreground")}>
+                                      {att.size ? `${(att.size / 1024).toFixed(1)} KB` : "Tệp tin"} · Tải về
+                                    </p>
+                                  </div>
+                                  <span className="material-symbols-outlined text-[16px] shrink-0 opacity-80">download</span>
+                                </a>
+                              ))}
+                          </div>
+                        )}
+
+                        {m.content && <p className="whitespace-pre-wrap">{m.content}</p>}
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mt-0.5 px-1 font-medium">
                         <span>
@@ -592,11 +741,79 @@ export function MessengerInboxShell() {
               </div>
             )}
 
+            {/* Thanh hiển thị các tệp đính kèm đang chờ gửi */}
+            {pendingFiles.length > 0 && (
+              <div className="px-4 py-2 bg-surface-container border-t border-outline-variant flex items-center gap-2 overflow-x-auto">
+                <span className="text-[11px] font-bold text-muted-foreground shrink-0">Đính kèm ({pendingFiles.length}):</span>
+                {pendingFiles.map((pf, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface border border-outline-variant text-xs shrink-0 max-w-xs shadow-2xs"
+                  >
+                    {pf.kind === "image" && pf.previewUrl ? (
+                      <img src={pf.previewUrl} alt="preview" className="w-5 h-5 rounded object-cover" />
+                    ) : (
+                      <span className="material-symbols-outlined text-[16px] text-blue-600">draft</span>
+                    )}
+                    <span className="truncate max-w-[120px] font-medium">{pf.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removePendingFile(idx)}
+                      className="text-muted-foreground hover:text-red-500 cursor-pointer ml-1"
+                      title="Bỏ tệp này"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">close</span>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Input file ẩn */}
+            <input
+              type="file"
+              ref={imageInputRef}
+              accept="image/*"
+              className="hidden"
+              multiple
+              onChange={(e) => handleFileSelect(e, "image")}
+            />
+            <input
+              type="file"
+              ref={fileInputRef}
+              className="hidden"
+              multiple
+              onChange={(e) => handleFileSelect(e, "file")}
+            />
+
             {/* Ô soạn thảo và gửi tin */}
             <form
               onSubmit={handleSend}
               className="p-3.5 border-t border-outline-variant bg-surface-container-low flex items-center gap-2"
             >
+              {/* Nút đính kèm ảnh */}
+              <button
+                type="button"
+                onClick={() => imageInputRef.current?.click()}
+                disabled={sending}
+                className="p-2.5 rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface text-xs font-bold flex items-center justify-center cursor-pointer transition shrink-0"
+                title="Gửi hình ảnh"
+              >
+                <span className="material-symbols-outlined text-[18px] text-blue-600">image</span>
+              </button>
+
+              {/* Nút đính kèm file */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                className="p-2.5 rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface text-xs font-bold flex items-center justify-center cursor-pointer transition shrink-0"
+                title="Đính kèm tài liệu"
+              >
+                <span className="material-symbols-outlined text-[18px] text-amber-600">attach_file</span>
+              </button>
+
+              {/* Nút chọn mẫu câu nhanh */}
               <button
                 type="button"
                 onClick={() => setShowTemplateMenu(!showTemplateMenu)}
@@ -609,7 +826,7 @@ export function MessengerInboxShell() {
                 title="Chọn mẫu câu nhanh"
               >
                 <span className="material-symbols-outlined text-[16px]">library_books</span>
-                <span>Mẫu câu</span>
+                <span className="hidden sm:inline">Mẫu câu</span>
               </button>
 
               <input
@@ -623,7 +840,7 @@ export function MessengerInboxShell() {
 
               <button
                 type="submit"
-                disabled={sending || !inputText.trim()}
+                disabled={sending || (!inputText.trim() && pendingFiles.length === 0)}
                 className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
               >
                 <span className="material-symbols-outlined text-[16px]">send</span>
@@ -643,6 +860,29 @@ export function MessengerInboxShell() {
           </div>
         )}
       </div>
+
+      {/* Lightbox phóng to ảnh */}
+      {previewLightboxUrl && (
+        <div
+          onClick={() => setPreviewLightboxUrl(null)}
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-xs cursor-zoom-out animate-in fade-in duration-200"
+        >
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <img
+              src={previewLightboxUrl}
+              alt="Xem ảnh lớn"
+              className="max-w-full max-h-[85vh] rounded-xl object-contain shadow-2xl"
+            />
+            <button
+              onClick={() => setPreviewLightboxUrl(null)}
+              className="absolute -top-3 -right-3 w-8 h-8 rounded-full bg-surface text-on-surface border border-outline-variant flex items-center justify-center shadow-lg hover:bg-surface-container cursor-pointer"
+              title="Đóng xem ảnh"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       <MessengerAccountModal
         open={showAccountModal}

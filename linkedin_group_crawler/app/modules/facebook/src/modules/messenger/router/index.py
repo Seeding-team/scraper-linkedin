@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Query, Header, Request
+from fastapi import APIRouter, HTTPException, Query, Header, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 
 from app.core.supabase_client import get_supabase_client
@@ -142,9 +142,10 @@ async def send_messenger_message(payload: SendMessageRequest) -> MessengerBaseRe
     res = await FbMessengerService.send_message_human_like(
         account_id=payload.account_id,
         recipient_id=payload.recipient_id,
-        content=payload.content,
+        content=payload.content or "",
         recipient_name=payload.recipient_name,
         recipient_avatar=payload.recipient_avatar,
+        attachments=payload.attachments,
         simulate_human=payload.simulate_human if payload.simulate_human is not None else True,
     )
     return MessengerBaseResponse(
@@ -152,6 +153,47 @@ async def send_messenger_message(payload: SendMessageRequest) -> MessengerBaseRe
         message=res.get("message", ""),
         data=res.get("data"),
     )
+
+
+@messenger_router.post("/upload", response_model=MessengerBaseResponse)
+async def upload_messenger_media(
+    file: UploadFile = File(...),
+    account_id: Optional[str] = Form(None),
+) -> MessengerBaseResponse:
+    """Tải lên hình ảnh hoặc tài liệu đính kèm cho tin nhắn Messenger."""
+    try:
+        from app.modules.all_platform.services.crm_attachment_service import upload_attachment
+        content_type = (file.content_type or "").lower()
+        raw = await file.read()
+        if len(raw) > 25 * 1024 * 1024:
+            return MessengerBaseResponse(success=False, message="File quá lớn (tối đa 25MB).")
+
+        filename = file.filename or "attachment"
+        url, err = upload_attachment(
+            prefix="messenger",
+            customer_id=account_id or "general",
+            filename=filename,
+            content=raw,
+            content_type=content_type,
+        )
+        if err:
+            return MessengerBaseResponse(success=False, message=err)
+
+        kind = "image" if content_type.startswith("image/") else "file"
+        return MessengerBaseResponse(
+            success=True,
+            message="Tải tệp lên thành công",
+            data={
+                "url": url,
+                "name": filename,
+                "size": len(raw),
+                "mime_type": content_type,
+                "kind": kind,
+            },
+        )
+    except Exception as e:
+        logger.exception(f"Error uploading messenger media: {e}")
+        return MessengerBaseResponse(success=False, message=str(e))
 
 
 

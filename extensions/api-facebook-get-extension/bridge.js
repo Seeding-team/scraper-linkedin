@@ -63,6 +63,20 @@ window.addEventListener('message', (event) => {
         }
         window.postMessage({ type: 'API_MARKEE_FB_PONG', installed: true, isRunning: false }, '*');
     }
+
+    if (event.data && event.data.type === 'FB_GET_SESSION_REQUEST') {
+        if (!isExtensionContextValid()) {
+            notifyExtensionInvalidated();
+            window.postMessage({ type: 'FB_GET_SESSION_RESPONSE', success: false, message: 'Extension context invalidated. Vui lòng F5 lại trang.' }, '*');
+            return;
+        }
+        safeSendMessage({ action: 'CAPTURE_FB_SESSION' }, (response) => {
+            window.postMessage({
+                type: 'FB_GET_SESSION_RESPONSE',
+                ...(response || { success: false, message: 'Extension không phản hồi.' })
+            }, '*');
+        });
+    }
 });
 
 chrome.runtime.onMessage.addListener((msg) => {

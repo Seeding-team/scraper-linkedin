@@ -60,8 +60,84 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             stopCrawlAndCloseCrawlTabs('Người dùng chủ động đóng tab Web Seeding');
         }
         sendResponse({ stopped: true });
+    } else if (msg.action === 'CAPTURE_FB_SESSION') {
+        captureFacebookSession()
+            .then(res => sendResponse(res))
+            .catch(err => sendResponse({ success: false, message: err?.message || String(err) }));
+        return true;
     }
 });
+
+// Hàm trích xuất toàn bộ cookie session Facebook từ trình duyệt Chrome
+async function captureFacebookSession() {
+    try {
+        const getCookiesForDomain = (domain) => {
+            return new Promise((resolve) => {
+                chrome.cookies.getAll({ domain }, (cookies) => {
+                    if (chrome.runtime.lastError || !cookies) {
+                        resolve([]);
+                    } else {
+                        resolve(cookies);
+                    }
+                });
+            });
+        };
+
+        let cookies = await getCookiesForDomain('.facebook.com');
+        let cUser = cookies.find(c => c.name === 'c_user')?.value;
+        let xs = cookies.find(c => c.name === 'xs')?.value;
+
+        if (!cUser || !xs) {
+            const extraCookies = await getCookiesForDomain('facebook.com');
+            cookies = [...cookies, ...extraCookies];
+            cUser = cookies.find(c => c.name === 'c_user')?.value;
+            xs = cookies.find(c => c.name === 'xs')?.value;
+        }
+
+        if (!cUser || !xs) {
+            return {
+                success: false,
+                message: 'Chưa tìm thấy phiên đăng nhập Facebook trên trình duyệt Chrome (thiếu c_user hoặc xs). Vui lòng đăng nhập Facebook trên Chrome trước!'
+            };
+        }
+
+        // Khử trùng lặp tên cookie
+        const uniqueMap = new Map();
+        for (const c of cookies) {
+            if (!uniqueMap.has(c.name)) {
+                uniqueMap.set(c.name, c.value);
+            }
+        }
+
+        const priorityKeys = ['c_user', 'xs', 'datr', 'fr', 'sb', 'wd', 'presence'];
+        const parts = [];
+        for (const k of priorityKeys) {
+            if (uniqueMap.has(k)) {
+                parts.push(`${k}=${uniqueMap.get(k)}`);
+                uniqueMap.delete(k);
+            }
+        }
+        for (const [k, v] of uniqueMap.entries()) {
+            parts.push(`${k}=${v}`);
+        }
+
+        const cookieString = parts.join('; ');
+
+        return {
+            success: true,
+            data: {
+                cookie: cookieString,
+                fb_user_id: cUser,
+                name: `Facebook User ${cUser}`
+            }
+        };
+    } catch (err) {
+        return {
+            success: false,
+            message: `Lỗi khi đọc session từ Chrome: ${err?.message || String(err)}`
+        };
+    }
+}
 
 async function sendLog(message, isRaw = false, level = 'info') {
     // In ra console của service worker -- nơi duy nhất xem được log khi chạy

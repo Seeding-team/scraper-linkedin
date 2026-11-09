@@ -69,6 +69,13 @@ export interface SendMessengerMessagePayload {
   recipient_name?: string;
   recipient_avatar?: string;
   content: string;
+  attachments?: {
+    url: string;
+    name: string;
+    size?: number;
+    mime_type?: string;
+    kind?: "image" | "file";
+  }[];
   simulate_human?: boolean;
 }
 
@@ -144,6 +151,46 @@ export const fbMessengerService = {
       method: "POST",
       body: JSON.stringify(payload),
     });
+  },
+
+  /** Tải lên hình ảnh hoặc tài liệu đính kèm */
+  uploadMedia: async (
+    file: File,
+    accountId?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    data?: {
+      url: string;
+      name: string;
+      size: number;
+      mime_type: string;
+      kind: "image" | "file";
+    };
+  }> => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      if (accountId) formData.append("account_id", accountId);
+
+      const res = await fetch(`${BASE}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          message: json.message || json.detail || `Lỗi tải file (${res.status})`,
+        };
+      }
+      return json;
+    } catch (err) {
+      return {
+        success: false,
+        message: err instanceof Error ? err.message : "Lỗi kết nối khi tải file",
+      };
+    }
   },
 
   /** Tạo kết nối SSE lắng nghe sự kiện tin nhắn mới thời gian thực */
