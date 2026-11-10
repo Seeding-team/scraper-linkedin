@@ -127,7 +127,8 @@ def _normalize_rpc_response(payload: Any) -> dict:
         kpi_obj = m.get("kpi") or {}
         actuals = m.get("actuals") or {}
         comment_n = int(actuals.get("comment") or 0)
-        post_n = int(actuals.get("post") or 0)
+        call_n = int(actuals.get("call") if actuals.get("call") is not None else (actuals.get("post") or 0))
+        post_n = call_n
         inbox_zalo = int(actuals.get("inbox_zalo") or 0)
         lead_zalo = int(actuals.get("lead_zalo") or 0)
         inbox_fb = int(actuals.get("inbox_fb_kpi") or 0)
@@ -136,6 +137,7 @@ def _normalize_rpc_response(payload: Any) -> dict:
 
         total_inbox = inbox_zalo + inbox_seeder_note + inbox_fb
         total_lead = lead_zalo + lead_fb
+        call_target = int(kpi_obj.get("kpi_call") if kpi_obj.get("kpi_call") is not None else (kpi_obj.get("kpi_post") or 0))
 
         out_members.append({
             "id": str(m.get("id", "")),
@@ -145,7 +147,8 @@ def _normalize_rpc_response(payload: Any) -> dict:
             "profile_slug": m.get("profile_slug"),
             "email_leader": None,  # RPC không trả về, FE tự fill
             "kpi": [{
-                "kpi_post": int(kpi_obj.get("kpi_post") or 0),
+                "kpi_call": call_target,
+                "kpi_post": call_target,
                 "kpi_lead": int(kpi_obj.get("kpi_lead") or 0),
                 "kpi_inbox": int(kpi_obj.get("kpi_inbox") or 0),
                 "kpi_comment": int(kpi_obj.get("kpi_comment") or 0),
@@ -155,7 +158,9 @@ def _normalize_rpc_response(payload: Any) -> dict:
             "seeding_stats": {
                 "verified_count": comment_n,
                 "kpi_target": int(kpi_obj.get("kpi_comment") or 0),
-                "kpi_post": int(kpi_obj.get("kpi_post") or 0),
+                "kpi_call": call_target,
+                "kpi_call_current": call_n,
+                "kpi_post": call_target,
                 "kpi_post_current": post_n,
                 "kpi_lead": int(kpi_obj.get("kpi_lead") or 0),
                 "kpi_lead_current": total_lead,
@@ -268,13 +273,15 @@ def assign_kpi(payload: dict) -> dict:
         start_date = monday.isoformat()
         end_date = sunday.isoformat()
 
+    call_target = getattr(latest, "kpi_call", 0) or latest.kpi_post or 0
     upsert_data = {
         "id_member": id_member,
         "id_leader": id_leader,
         "id_platform": 1,  # all-platform
         "id_team": id_team,
         "kpi_comment": latest.kpi_comment,
-        "kpi_post": latest.kpi_post,
+        "kpi_post": call_target,
+        "kpi_call": call_target,
         "kpi_lead": latest.kpi_lead,
         "kpi_inbox": latest.kpi_inbox,
         "start_date": start_date,

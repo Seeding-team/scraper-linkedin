@@ -43,7 +43,7 @@ export function BulkAssignKpiModal({
 
   // Default KPI values for all members
   const [kpiComment, setKpiComment] = useState<number>(0);
-  const [kpiPost, setKpiPost] = useState<number>(0);
+  const [kpiCall, setKpiCall] = useState<number>(0);
   const [kpiLead, setKpiLead] = useState<number>(0);
   const [kpiInbox, setKpiInbox] = useState<number>(0);
   const [isFailed, setIsFailed] = useState(false);
@@ -102,7 +102,7 @@ export function BulkAssignKpiModal({
       setError(null);
       setResults(null);
       setKpiComment(0);
-      setKpiPost(0);
+      setKpiCall(0);
       setKpiLead(0);
       setKpiInbox(0);
       setIsFailed(false);
@@ -183,7 +183,8 @@ export function BulkAssignKpiModal({
           email: m.email,
           profile_slug: m.email,
           kpi_comment: kpiComment,
-          kpi_post: kpiPost,
+          kpi_call: kpiCall,
+          kpi_post: kpiCall,
           kpi_lead: kpiLead,
           kpi_inbox: kpiInbox,
           is_failed: isFailed,
@@ -509,14 +510,14 @@ export function BulkAssignKpiModal({
 
                 <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-white shadow-sm">
                   <div className="flex items-center gap-2">
-                    <MaterialIcon name="article" className="text-emerald-500 text-[16px]" />
-                    <span className="text-xs font-medium text-slate-700">Post</span>
+                    <MaterialIcon name="call" className="text-emerald-500 text-[16px]" />
+                    <span className="text-xs font-medium text-slate-700">Cuộc gọi (CALL)</span>
                   </div>
                   <input
                     type="number"
                     min="0"
-                    value={kpiPost}
-                    onChange={(e) => setKpiPost(parseInt(e.target.value) || 0)}
+                    value={kpiCall}
+                    onChange={(e) => setKpiCall(parseInt(e.target.value) || 0)}
                     className="w-16 text-center font-bold bg-slate-50 border border-slate-200 rounded-lg py-1 text-xs focus:border-emerald-500 outline-none"
                   />
                 </div>

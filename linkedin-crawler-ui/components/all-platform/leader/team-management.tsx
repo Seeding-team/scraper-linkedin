@@ -14,6 +14,19 @@ import { BulkAssignKpiModal } from "./BulkAssignKpiModal";
 import { TeamModal } from "./TeamModal";
 import { toast } from "sonner";
 import { useKpiRefresh, dispatchKpiRefresh } from "@/lib/useKpiRefresh";
+import { BarChart3, PieChart as PieChartIcon, Trophy } from "lucide-react";
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip as RechartsTooltip,
+  Legend,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
 
 // Phase 3: dynamic import cho các modal nặng (chỉ tải khi cần mở).
 const SeedingModal = dynamic(
@@ -248,8 +261,13 @@ export function TeamManagement() {
     refreshKpi();
   };
 
+  const [isMounted, setIsMounted] = useState(false);
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // Sua KPI truc tiep tai bang (bam vao so muc tieu la hien input, khong can mo modal).
-  const [editingCell, setEditingCell] = useState<{ memberId: string; field: "kpiPostTarget" | "kpiCommentTarget" | "kpiInboxTarget" | "kpiLeadTarget" } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ memberId: string; field: "kpiCallTarget" | "kpiPostTarget" | "kpiCommentTarget" | "kpiInboxTarget" | "kpiLeadTarget" } | null>(null);
   const [editingValue, setEditingValue] = useState("");
 
   const submitInlineKpiEdit = async (member: any) => {
@@ -260,6 +278,7 @@ export function TeamManagement() {
     if (newVal === member[field]) return;
     try {
       const [startDate, endDate] = selectedWeek.split("_");
+      const callVal = (field === "kpiCallTarget" || field === "kpiPostTarget") ? newVal : (member.kpiCallTarget || member.kpiPostTarget || 0);
       const payload = {
         leader_role: "leader",
         role: "member",
@@ -271,7 +290,8 @@ export function TeamManagement() {
           start_day: startDate,
           end_day: endDate,
           kpi_comment: field === "kpiCommentTarget" ? newVal : member.kpiCommentTarget,
-          kpi_post: field === "kpiPostTarget" ? newVal : member.kpiPostTarget,
+          kpi_call: callVal,
+          kpi_post: callVal,
           kpi_lead: field === "kpiLeadTarget" ? newVal : member.kpiLeadTarget,
           kpi_inbox: field === "kpiInboxTarget" ? newVal : member.kpiInboxTarget,
         }],
@@ -289,7 +309,7 @@ export function TeamManagement() {
     }
   };
 
-  function InlineKpiTarget({ member, field, value }: { member: any; field: "kpiPostTarget" | "kpiCommentTarget" | "kpiInboxTarget" | "kpiLeadTarget"; value: number }) {
+  function InlineKpiTarget({ member, field, value }: { member: any; field: "kpiCallTarget" | "kpiPostTarget" | "kpiCommentTarget" | "kpiInboxTarget" | "kpiLeadTarget"; value: number }) {
     const isEditing = editingCell?.memberId === member.id && editingCell?.field === field;
     if (isEditing) {
       return (
@@ -344,10 +364,6 @@ export function TeamManagement() {
   }, [teamMembers, selectedTeam]);
 
   // Map KPI data to members
-  // Them chinh leader vao danh sach hien thi: teamMembers (roster) khong bao gio
-  // chua leader, nhung RPC get_team_kpi_overview (migration 012) da tra ve KPI
-  // cua leader trong kpiData - neu khong them dong nay, du lieu leader bi fetch
-  // xong roi vut bo, leader "bien mat" khoi chinh trang team cua minh.
   const membersWithKpi = useMemo(() => {
     if (!selectedTeam) return [];
     const hasLeaderAlready = teamMembers.some(m => m.id === selectedTeam.id_leader);
@@ -364,12 +380,16 @@ export function TeamManagement() {
     return allMembers.map(member => {
       const kpiInfo = kpiData.find(k => k.id === member.id) || {};
       const stats = kpiInfo.seeding_stats || {};
+      const kpiCallTarget = stats.kpi_call !== undefined ? stats.kpi_call : (stats.kpi_post || 0);
+      const kpiCallCurrent = stats.kpi_call_current !== undefined ? stats.kpi_call_current : (stats.kpi_post_current || 0);
       return {
         ...member,
         kpiCommentTarget: stats.kpi_target || 0,
         kpiCommentCurrent: stats.verified_count || 0,
-        kpiPostTarget: stats.kpi_post || 0,
-        kpiPostCurrent: stats.kpi_post_current || 0,
+        kpiCallTarget,
+        kpiCallCurrent,
+        kpiPostTarget: kpiCallTarget,
+        kpiPostCurrent: kpiCallCurrent,
         kpiLeadTarget: stats.kpi_lead || 0,
         kpiLeadCurrent: stats.kpi_lead_current || 0,
         kpiInboxTarget: stats.kpi_inbox || 0,
@@ -390,11 +410,82 @@ export function TeamManagement() {
     let sumCurrent = 0;
     let sumTarget = 0;
     membersWithKpi.forEach(m => {
-      sumCurrent += m.kpiCommentCurrent + m.kpiPostCurrent + m.kpiLeadCurrent + m.kpiInboxCurrent;
-      sumTarget += m.kpiCommentTarget + m.kpiPostTarget + m.kpiLeadTarget + m.kpiInboxTarget;
+      sumCurrent += m.kpiCommentCurrent + m.kpiCallCurrent + m.kpiLeadCurrent + m.kpiInboxCurrent;
+      sumTarget += m.kpiCommentTarget + m.kpiCallTarget + m.kpiLeadTarget + m.kpiInboxTarget;
     });
     if (sumTarget === 0) return 0;
     return Math.min(100, Math.round((sumCurrent / sumTarget) * 100));
+  }, [membersWithKpi]);
+
+  // 4 KPI Summary Pillars
+  const kpiSummary = useMemo(() => {
+    let commentTarget = 0, commentActual = 0;
+    let callTarget = 0, callActual = 0;
+    let inboxTarget = 0, inboxActual = 0;
+    let leadTarget = 0, leadActual = 0;
+
+    membersWithKpi.forEach(m => {
+      commentTarget += m.kpiCommentTarget || 0;
+      commentActual += m.kpiCommentCurrent || 0;
+      callTarget += m.kpiCallTarget || 0;
+      callActual += m.kpiCallCurrent || 0;
+      inboxTarget += m.kpiInboxTarget || 0;
+      inboxActual += m.kpiInboxCurrent || 0;
+      leadTarget += m.kpiLeadTarget || 0;
+      leadActual += m.kpiLeadCurrent || 0;
+    });
+
+    const getPct = (act: number, tgt: number) => tgt === 0 ? (act > 0 ? 100 : 0) : Math.min(100, Math.round((act / tgt) * 100));
+
+    return {
+      comment: { target: commentTarget, actual: commentActual, pct: getPct(commentActual, commentTarget) },
+      call: { target: callTarget, actual: callActual, pct: getPct(callActual, callTarget) },
+      inbox: { target: inboxTarget, actual: inboxActual, pct: getPct(inboxActual, inboxTarget) },
+      lead: { target: leadTarget, actual: leadActual, pct: getPct(leadActual, leadTarget) },
+    };
+  }, [membersWithKpi]);
+
+  // Bar Chart Data
+  const barChartData = useMemo(() => {
+    return membersWithKpi.slice(0, 10).map(m => {
+      const tgt = m.kpiCommentTarget + m.kpiCallTarget + m.kpiInboxTarget + m.kpiLeadTarget;
+      const act = m.kpiCommentCurrent + m.kpiCallCurrent + m.kpiInboxCurrent + m.kpiLeadCurrent;
+      const rawName = m.name || m.email || "";
+      const shortName = rawName.includes("@") ? rawName.split("@")[0] : rawName;
+      return {
+        name: shortName.length > 10 ? shortName.slice(0, 10) + "…" : shortName,
+        "Thực đạt": act,
+        "Chỉ tiêu": tgt,
+        "Cuộc gọi": m.kpiCallCurrent,
+        "Comment": m.kpiCommentCurrent,
+        "Inbox": m.kpiInboxCurrent,
+        "Lead": m.kpiLeadCurrent,
+      };
+    });
+  }, [membersWithKpi]);
+
+  // Donut Chart Data
+  const donutChartData = useMemo(() => {
+    const list = [
+      { name: "Cuộc gọi (CALL)", value: kpiSummary.call.actual, color: "#ba244a" },
+      { name: "Bình luận (CMT)", value: kpiSummary.comment.actual, color: "#3b82f6" },
+      { name: "Inbox Zalo", value: kpiSummary.inbox.actual, color: "#f97316" },
+      { name: "Khách tiềm năng (LEAD)", value: kpiSummary.lead.actual, color: "#8b5cf6" },
+    ].filter(item => item.value > 0);
+    return list.length > 0 ? list : [{ name: "Chưa có dữ liệu", value: 1, color: "#e2e8f0" }];
+  }, [kpiSummary]);
+
+  // Top 3 Performers
+  const topPerformers = useMemo(() => {
+    return [...membersWithKpi]
+      .map(m => {
+        const totalTarget = m.kpiCommentTarget + m.kpiCallTarget + m.kpiInboxTarget + m.kpiLeadTarget;
+        const totalActual = m.kpiCommentCurrent + m.kpiCallCurrent + m.kpiInboxCurrent + m.kpiLeadCurrent;
+        const pct = totalTarget === 0 ? 0 : Math.round((totalActual / totalTarget) * 100);
+        return { ...m, totalTarget, totalActual, pct };
+      })
+      .sort((a, b) => b.pct - a.pct || b.totalActual - a.totalActual)
+      .slice(0, 3);
   }, [membersWithKpi]);
 
   const toolbarButtonClass =
@@ -477,6 +568,234 @@ export function TeamManagement() {
         />
       </PlatformStatsRow>
 
+      {/* 4 Trụ Cột KPI Cốt Lõi (CMT, INBOX, CALL, LEAD) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Cuộc gọi (CALL) - Trọng tâm mới */}
+        <div className="rounded-2xl border border-red-100 bg-gradient-to-br from-white to-red-50/30 p-4 shadow-sm hover:shadow-md transition">
+          <div className="flex items-center justify-between">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#ba244a]/10 text-[#ba244a]">
+              <MaterialIcon name="call" className="text-2xl" />
+            </div>
+            <span className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-bold",
+              kpiSummary.call.pct >= 100 ? "bg-emerald-100 text-emerald-700" :
+              kpiSummary.call.pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"
+            )}>
+              {kpiSummary.call.pct}%
+            </span>
+          </div>
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Cuộc gọi (CALL)</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-black text-slate-900">{kpiSummary.call.actual}</span>
+              <span className="text-xs font-semibold text-slate-400">/ {kpiSummary.call.target} chỉ tiêu</span>
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-[#ba244a] transition-all duration-500"
+              style={{ width: `${kpiSummary.call.pct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Card 2: Comment Seeding */}
+        <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-white to-blue-50/30 p-4 shadow-sm hover:shadow-md transition">
+          <div className="flex items-center justify-between">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+              <MaterialIcon name="comment" className="text-2xl" />
+            </div>
+            <span className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-bold",
+              kpiSummary.comment.pct >= 100 ? "bg-emerald-100 text-emerald-700" :
+              kpiSummary.comment.pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700"
+            )}>
+              {kpiSummary.comment.pct}%
+            </span>
+          </div>
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Bình luận (CMT)</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-black text-slate-900">{kpiSummary.comment.actual}</span>
+              <span className="text-xs font-semibold text-slate-400">/ {kpiSummary.comment.target} chỉ tiêu</span>
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-blue-500 transition-all duration-500"
+              style={{ width: `${kpiSummary.comment.pct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Card 3: Inbox Zalo */}
+        <div className="rounded-2xl border border-orange-100 bg-gradient-to-br from-white to-orange-50/30 p-4 shadow-sm hover:shadow-md transition">
+          <div className="flex items-center justify-between">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+              <MaterialIcon name="forum" className="text-2xl" />
+            </div>
+            <span className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-bold",
+              kpiSummary.inbox.pct >= 100 ? "bg-emerald-100 text-emerald-700" :
+              kpiSummary.inbox.pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-orange-100 text-orange-700"
+            )}>
+              {kpiSummary.inbox.pct}%
+            </span>
+          </div>
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Inbox (Zalo Care)</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-black text-slate-900">{kpiSummary.inbox.actual}</span>
+              <span className="text-xs font-semibold text-slate-400">/ {kpiSummary.inbox.target} chỉ tiêu</span>
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-orange-500 transition-all duration-500"
+              style={{ width: `${kpiSummary.inbox.pct}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Card 4: Khách tiềm năng (LEAD) */}
+        <div className="rounded-2xl border border-purple-100 bg-gradient-to-br from-white to-purple-50/30 p-4 shadow-sm hover:shadow-md transition">
+          <div className="flex items-center justify-between">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-purple-50 text-purple-600">
+              <MaterialIcon name="person_add" className="text-2xl" />
+            </div>
+            <span className={cn(
+              "rounded-full px-2 py-0.5 text-[11px] font-bold",
+              kpiSummary.lead.pct >= 100 ? "bg-emerald-100 text-emerald-700" :
+              kpiSummary.lead.pct >= 50 ? "bg-amber-100 text-amber-700" : "bg-purple-100 text-purple-700"
+            )}>
+              {kpiSummary.lead.pct}%
+            </span>
+          </div>
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Khách tiềm năng (LEAD)</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-2xl font-black text-slate-900">{kpiSummary.lead.actual}</span>
+              <span className="text-xs font-semibold text-slate-400">/ {kpiSummary.lead.target} chỉ tiêu</span>
+            </div>
+          </div>
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+            <div
+              className="h-full rounded-full bg-purple-500 transition-all duration-500"
+              style={{ width: `${kpiSummary.lead.pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Analytics & Charts Grid */}
+      {isMounted && membersWithKpi.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          {/* Biểu đồ Cột: Thực đạt vs Chỉ tiêu theo thành viên */}
+          <div className="lg:col-span-8 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                  <BarChart3 className="text-[#ba244a] w-5 h-5 shrink-0" />
+                  So sánh Tiến độ KPI Thành viên (Top 10)
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">Tổng hợp kết quả Thực đạt so với Chỉ tiêu giao tuần này</p>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-[#ba244a]" />
+                  <span className="text-slate-600 font-medium">Thực đạt</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2.5 h-2.5 rounded-sm bg-slate-200" />
+                  <span className="text-slate-600 font-medium">Chỉ tiêu</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-[260px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                  <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                  <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                  <RechartsTooltip
+                    contentStyle={{ backgroundColor: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", fontSize: "12px", boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1)" }}
+                  />
+                  <Bar dataKey="Thực đạt" fill="#ba244a" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                  <Bar dataKey="Chỉ tiêu" fill="#e2e8f0" radius={[4, 4, 0, 0]} maxBarSize={28} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Biểu đồ Tròn: Phân bổ 4 loại KPI + Bảng Top Performers */}
+          <div className="lg:col-span-4 flex flex-col gap-4">
+            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm flex-1">
+              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2 mb-2">
+                <PieChartIcon className="text-[#ba244a] w-5 h-5 shrink-0" />
+                Phân bổ Nỗ lực 4 Chỉ số
+              </h3>
+              <div className="h-[140px] w-full flex items-center justify-center">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donutChartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={38}
+                      outerRadius={58}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {donutChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <RechartsTooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-slate-50">
+                {donutChartData.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 text-[10px]">
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                    <span className="truncate text-slate-600 font-medium">{item.name}</span>
+                    <span className="ml-auto font-bold text-slate-900">{item.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Top 3 Performers */}
+            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+              <h4 className="text-xs font-bold text-slate-900 flex items-center gap-1.5 mb-3">
+                <Trophy className="text-amber-500 w-4 h-4 shrink-0" />
+                Top Performers Tuần
+              </h4>
+              <div className="space-y-2">
+                {topPerformers.map((p, idx) => (
+                  <div key={p.id} className="flex items-center justify-between p-2 rounded-xl bg-slate-50/70 border border-slate-100 text-xs">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={cn(
+                        "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black shrink-0",
+                        idx === 0 ? "bg-amber-100 text-amber-700" :
+                        idx === 1 ? "bg-slate-200 text-slate-700" : "bg-orange-100 text-orange-700"
+                      )}>
+                        {idx + 1}
+                      </span>
+                      <span className="font-bold text-slate-800 truncate">{p.name || p.email}</span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="font-extrabold text-[#ba244a]">{p.pct}%</span>
+                      <span className="text-[10px] text-slate-400">({p.totalActual}/{p.totalTarget})</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mt-6 flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-none">
         {/* Toolbar */}
         <div className="flex flex-col gap-4 border-b border-slate-100 bg-slate-50/50 p-4 sm:p-5">
@@ -538,11 +857,11 @@ export function TeamManagement() {
                   }}
                   className={cn(
                     toolbarButtonClass,
-                    "border border-green-100 bg-green-50 text-green-700 hover:bg-green-100",
+                    "border border-red-100 bg-red-50 text-[#ba244a] hover:bg-red-100",
                   )}
                 >
-                  <MaterialIcon name="article" className="text-[16px]" />
-                  Xem Tất Cả Posts
+                  <MaterialIcon name="call" className="text-[16px]" />
+                  Xem Tất Cả Cuộc Gọi
                 </button>
               </>
             )}
@@ -637,12 +956,12 @@ export function TeamManagement() {
             membersWithKpi.map((member) => {
               const totalTarget =
                 member.kpiCommentTarget +
-                member.kpiPostTarget +
+                member.kpiCallTarget +
                 member.kpiLeadTarget +
                 member.kpiInboxTarget;
               const totalCurrent =
                 member.kpiCommentCurrent +
-                member.kpiPostCurrent +
+                member.kpiCallCurrent +
                 member.kpiLeadCurrent +
                 member.kpiInboxCurrent;
               const percent =
@@ -662,7 +981,7 @@ export function TeamManagement() {
 
                   <div className="mt-4 grid grid-cols-2 gap-2">
                     {[
-                      { label: "Post", current: member.kpiPostCurrent, target: member.kpiPostTarget, hasTarget: true },
+                      { label: "Cuộc gọi (CALL)", current: member.kpiCallCurrent, target: member.kpiCallTarget, hasTarget: true },
                       { label: "Comment", current: member.kpiCommentCurrent, target: member.kpiCommentTarget, hasTarget: true },
                       { label: "Inbox", current: member.kpiInboxCurrent, target: member.kpiInboxTarget, hasTarget: true },
                       { label: "Khách reply (tham khảo)", current: member.replyCurrent, target: 0, hasTarget: false },
@@ -682,7 +1001,7 @@ export function TeamManagement() {
                     <div
                       className={cn(
                         "h-full rounded-full transition-all duration-500",
-                        percent >= 100 ? "bg-emerald-500" : percent > 50 ? "bg-amber-500" : "bg-[#E3000F]",
+                        percent >= 100 ? "bg-emerald-500" : percent > 50 ? "bg-amber-500" : "bg-[#ba244a]",
                       )}
                       style={{ width: `${percent}%` }}
                     />
@@ -719,11 +1038,11 @@ export function TeamManagement() {
                       }}
                       className={cn(
                         memberActionButtonClass,
-                        "border border-green-100 bg-green-50 text-green-700 hover:bg-green-100",
+                        "border border-red-100 bg-red-50 text-[#ba244a] hover:bg-red-100",
                       )}
                     >
-                      <MaterialIcon name="article" className="text-[12px]" />
-                      Posts
+                      <MaterialIcon name="call" className="text-[12px]" />
+                      Cuộc gọi
                     </button>
                     <button
                       onClick={() => handleAssignKpi(member)}
@@ -747,7 +1066,7 @@ export function TeamManagement() {
             <thead className="bg-slate-50/75 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
               <tr>
                 <th className="px-3 py-2.5 text-left whitespace-nowrap">Thành viên</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap">Post</th>
+                <th className="px-1 py-2.5 text-center whitespace-nowrap text-[#ba244a]" title="Số cuộc gọi tư vấn khách hàng ghi nhận từ Post Call Results">Cuộc gọi (CALL)</th>
                 <th className="px-1 py-2.5 text-center whitespace-nowrap">Comment</th>
                 <th className="px-1 py-2.5 text-center whitespace-nowrap" title="Số HỘI THOẠI tính KPI: Zalo đã xác minh + Facebook đã tính KPI">Inbox</th>
                 <th className="px-1 py-2.5 text-center whitespace-nowrap" title="Số TIN NHẮN khách gửi tới. Chỉ tham khảo — không cộng vào KPI Inbox.">Khách reply (tham khảo)</th>
@@ -770,12 +1089,12 @@ export function TeamManagement() {
                 membersWithKpi.map((member) => {
                   const totalTarget =
                     member.kpiCommentTarget +
-                    member.kpiPostTarget +
+                    member.kpiCallTarget +
                     member.kpiLeadTarget +
                     member.kpiInboxTarget;
                   const totalCurrent =
                     member.kpiCommentCurrent +
-                    member.kpiPostCurrent +
+                    member.kpiCallCurrent +
                     member.kpiLeadCurrent +
                     member.kpiInboxCurrent;
                   const percent = totalTarget === 0 ? 0 : Math.min(100, Math.round((totalCurrent / totalTarget) * 100));
@@ -797,8 +1116,8 @@ export function TeamManagement() {
                         <div className="max-w-[120px] truncate text-[10px] font-medium text-slate-400" title={member.email}>{member.email}</div>
                       </td>
                       <td className="px-1 py-2.5 text-center">
-                        <span className={cn("text-[11px] font-bold", member.kpiPostCurrent > 0 ? "text-emerald-600" : "text-slate-800")}>{member.kpiPostCurrent}</span>
-                        <InlineKpiTarget member={member} field="kpiPostTarget" value={member.kpiPostTarget} />
+                        <span className={cn("text-[11px] font-bold", member.kpiCallCurrent > 0 ? "text-[#ba244a]" : "text-slate-800")}>{member.kpiCallCurrent}</span>
+                        <InlineKpiTarget member={member} field="kpiCallTarget" value={member.kpiCallTarget} />
                       </td>
                       <td className="px-1 py-2.5 text-center">
                         <span className="text-[11px] font-bold text-slate-800">{member.kpiCommentCurrent}</span>
@@ -829,7 +1148,7 @@ export function TeamManagement() {
                         <div className="flex items-center gap-1.5">
                           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
                             <div
-                              className={cn("h-full rounded-full transition-all duration-500", percent >= 100 ? "bg-emerald-500" : percent > 50 ? "bg-amber-500" : "bg-[#E3000F]")}
+                              className={cn("h-full rounded-full transition-all duration-500", percent >= 100 ? "bg-emerald-500" : percent > 50 ? "bg-amber-500" : "bg-[#ba244a]")}
                               style={{ width: `${percent}%` }}
                             />
                           </div>
@@ -870,9 +1189,9 @@ export function TeamManagement() {
                           }}
                             className={cn(
                               memberActionButtonClass,
-                              "border border-green-100 bg-green-50 text-green-700 hover:bg-green-100",
+                              "border border-red-100 bg-red-50 text-[#ba244a] hover:bg-red-100",
                             )}>
-                            <MaterialIcon name="article" className="text-[12px]" />Posts
+                            <MaterialIcon name="call" className="text-[12px]" />Cuộc gọi
                           </button>
                           <button onClick={() => handleAssignKpi(member)}
                             className={cn(

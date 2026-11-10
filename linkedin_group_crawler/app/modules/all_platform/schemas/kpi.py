@@ -15,6 +15,7 @@ class KpiWeekItem(BaseModel):
     total_session_crawl: int = 0
     kpi_comment: int = 0
     kpi_post: int = 0
+    kpi_call: int = 0
     kpi_lead: int = 0
     kpi_inbox: int = 0
     platform: str = "Facebook"

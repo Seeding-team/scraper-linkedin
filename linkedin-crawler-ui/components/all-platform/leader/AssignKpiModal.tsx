@@ -21,7 +21,7 @@ export function AssignKpiModal({ isOpen, onClose, member, teamId, selectedWeekVa
 
   // Form State
   const [kpiComment, setKpiComment] = useState<number>(member.kpiCommentTarget || 0);
-  const [kpiPost, setKpiPost] = useState<number>(member.kpiPostTarget || 0);
+  const [kpiCall, setKpiCall] = useState<number>(member.kpiCallTarget || member.kpiPostTarget || 0);
   const [kpiLead, setKpiLead] = useState<number>(member.kpiLeadTarget || 0);
   const [kpiInbox, setKpiInbox] = useState<number>(member.kpiInboxTarget || member.kpi_inbox_target || 0);
   const [isFailed, setIsFailed] = useState(false);
@@ -77,7 +77,7 @@ export function AssignKpiModal({ isOpen, onClose, member, teamId, selectedWeekVa
   useEffect(() => {
     if (isOpen) {
       setKpiComment(member.kpiCommentTarget || 0);
-      setKpiPost(member.kpiPostTarget || 0);
+      setKpiCall(member.kpiCallTarget || member.kpiPostTarget || 0);
       setKpiLead(member.kpiLeadTarget || 0);
       setKpiInbox(member.kpiInboxTarget || member.kpi_inbox_target || 0);
       setIsFailed(false);
@@ -114,7 +114,8 @@ export function AssignKpiModal({ isOpen, onClose, member, teamId, selectedWeekVa
           start_day: currentWeekData?.monday || "",
           end_day: currentWeekData?.sunday || "",
           kpi_comment: kpiComment,
-          kpi_post: kpiPost,
+          kpi_call: kpiCall,
+          kpi_post: kpiCall,
           kpi_lead: kpiLead,
           kpi_inbox: kpiInbox,
           is_failed: isFailed,
@@ -282,18 +283,18 @@ if (isFailed && !reasonNotMet.trim()) {
             <div className="flex items-center justify-between gap-4 p-3 rounded-xl border border-outline-variant bg-surface shadow-sm">
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <MaterialIcon name="article" className="text-[18px]" />
+                  <MaterialIcon name="call" className="text-[18px]" />
                 </div>
                 <div>
-                  <div className="text-sm font-bold text-on-surface">KPI Post</div>
-                  <div className="text-[10px] text-on-surface-variant font-medium">Đăng bài viết</div>
+                  <div className="text-sm font-bold text-on-surface">KPI Cuộc gọi (CALL)</div>
+                  <div className="text-[10px] text-on-surface-variant font-medium">Số cuộc gọi tư vấn / tuần</div>
                 </div>
               </div>
               <input
                 type="number"
                 min="0"
-                value={kpiPost}
-                onChange={(e) => setKpiPost(parseInt(e.target.value) || 0)}
+                value={kpiCall}
+                onChange={(e) => setKpiCall(parseInt(e.target.value) || 0)}
                 className="w-20 text-center font-bold bg-surface-container-low border border-outline-variant rounded-lg py-1.5 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none transition"
               />
             </div>

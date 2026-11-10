@@ -111,6 +111,7 @@ class BulkAssignMemberItem(BaseModel):
     profile_slug: str = ""
     kpi_comment: int = 0
     kpi_post: int = 0
+    kpi_call: int = 0
     kpi_lead: int = 0
     kpi_inbox: int = 0
 
@@ -137,6 +138,7 @@ def kpi_bulk_assign(payload: BulkAssignKpiRequest, user: dict = Depends(get_curr
         results: List[dict] = []
         for member in payload.members:
             try:
+                call_val = member.kpi_call or member.kpi_post
                 result = _assign_one({
                     "leader_role": "leader",
                     "role": "member",
@@ -148,7 +150,8 @@ def kpi_bulk_assign(payload: BulkAssignKpiRequest, user: dict = Depends(get_curr
                         "start_day": payload.start_day,
                         "end_day": payload.end_day,
                         "kpi_comment": member.kpi_comment,
-                        "kpi_post": member.kpi_post,
+                        "kpi_post": call_val,
+                        "kpi_call": call_val,
                         "kpi_lead": member.kpi_lead,
                         "kpi_inbox": member.kpi_inbox,
                     }],

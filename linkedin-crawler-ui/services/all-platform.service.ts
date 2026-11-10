@@ -496,6 +496,7 @@ export const allPlatformKpiService = {
       end_day: string;
       kpi_comment?: number;
       kpi_post?: number;
+      kpi_call?: number;
       kpi_lead?: number;
       kpi_inbox?: number;
       total_reaction?: number;
@@ -526,6 +527,7 @@ export const allPlatformKpiService = {
       profile_slug?: string;
       kpi_comment?: number;
       kpi_post?: number;
+      kpi_call?: number;
       kpi_lead?: number;
       kpi_inbox?: number;
     }>;
