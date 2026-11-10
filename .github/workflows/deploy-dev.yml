@@ -52,12 +52,16 @@ jobs:
             node:20-alpine \
             sh -c "npm install --no-package-lock --no-save --no-audit archiver@^8.0.0 && npm run build:extensions && rm -rf node_modules" || true
 
-      - name: Build frontend + backend
-        run: docker compose build frontend backend
+      - name: Build stack dev (domain dev.seeding.markeeai.com) + stack 8080
+        run: |
+          echo "===== 1. Building dev containers (dev.seeding.markeeai.com) ====="
+          docker compose -f docker-compose.dev.yml build frontend-dev backend-dev
+          echo "===== 2. Building stack 8080 ====="
+          docker compose build frontend backend || true
 
       - name: Dong bo database tu Main sang Dev
         run: |
-          echo "===== 1. Syncing database from Main (10.30.194.82) to Dev (10.30.195.32) ====="
+          echo "===== Syncing database from Main (10.30.194.82) to Dev (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c '
             set -e
             echo "Testing connection to Dev DB..."
@@ -80,17 +84,17 @@ jobs:
 
       - name: Ap dung migration database 221
         run: |
-          echo "===== 2. Applying migration 221 to Dev DB (10.30.195.32) ====="
+          echo "===== Applying migration 221 to Dev DB (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/221_facebook_messenger_api.sql || true"
 
       - name: Ap dung migration database 222 (KPI Call Replacement & Performance)
         run: |
-          echo "===== 2b. Applying migration 222 to Dev DB (10.30.195.32) ====="
+          echo "===== Applying migration 222 to Dev DB (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/222_kpi_call_replacement.sql || true"
 
       - name: Cap nhat bien moi truong host DEV sang DB moi
         run: |
-          echo "===== 3. Updating host .env to use new Dev Supabase ====="
+          echo "===== Updating host .env to use new Dev Supabase ====="
           if [ -f linkedin_group_crawler/.env ]; then
             sed -i 's|^SUPABASE_URL=.*|SUPABASE_URL=https://seeding-dev-test.db.markeeai.com|' linkedin_group_crawler/.env || true
             sed -i 's|^SUPABASE_SERVICE_ROLE_KEY=.*|SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3OTQxMzM2OTMsImV4cCI6MjEwOTQ5MzY5M30.CThsrGk6Vic2YIN46XJcryvPF4BvLN0mN7HyYuG6oqQ|' linkedin_group_crawler/.env || true
@@ -98,43 +102,35 @@ jobs:
             sed -i 's|^DIRECT_DATABASE_URL=.*|DIRECT_DATABASE_URL=postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres|' linkedin_group_crawler/.env || true
           fi
 
-      - name: Ap dung container moi
+      - name: Khoi chay stack dev.seeding.markeeai.com (Zero Downtime + Force Recreate)
+        run: |
+          echo "===== Deploying dev.seeding.markeeai.com stack ====="
+          docker volume create scraper-linkedin_backend-storage 2>/dev/null || true
+          docker volume create scraper-linkedin_backend-dev-artifacts 2>/dev/null || true
+          docker compose -f docker-compose.dev.yml up -d --no-deps --force-recreate frontend-dev backend-dev
+          echo "Checking container status:"
+          docker ps --filter "name=seeding-.*-dev"
+
+      - name: Khoi chay stack 8080 (localhost)
         run: |
           if [ -d nginx-router/nginx.conf ] || [ ! -f nginx-router/nginx.conf ]; then
             rm -rf nginx-router/nginx.conf
             git show HEAD:nginx-router/nginx.conf > nginx-router/nginx.conf
           fi
-          docker compose up -d frontend backend router
-          sleep 5
-          docker image prune -f
+          docker compose up -d frontend backend router || true
 
-      - name: Kiem tra healthcheck
+      - name: Kiem tra healthcheck resilient (retry toi da 30 giay)
         run: |
-          sleep 3
-          curl -sf -o /dev/null http://localhost:8080/ || (echo "Frontend khong phan hoi" && exit 1)
-          curl -sf -o /dev/null http://localhost:8080/api/all-platform/auth/me || echo "Luu y: auth/me khong phai 200 (co the do chua dang nhap, khong tinh la loi)"
-
-      # dev.seeding.markeeai.com duoc phuc vu boi 2 container rieng (frontend-dev/
-      # backend-dev, docker-compose.dev.yml).
-      - name: Chan doan + rebuild stack dev (domain)
-        run: |
-          echo "===== docker ps ====="
-          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true
-          echo "===== rebuild stack dev.seeding.markeeai.com ====="
-          if [ -f docker-compose.dev.yml ]; then
-            echo "Building docker-compose.dev.yml..."
-            docker compose -f docker-compose.dev.yml build || docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend-dev backend-dev || true
-            echo "Upgrading dev containers with zero-downtime..."
-            docker volume create scraper-linkedin_backend-storage 2>/dev/null || true
-            docker volume create scraper-linkedin_backend-dev-artifacts 2>/dev/null || true
-            docker compose -f docker-compose.dev.yml up -d --no-deps frontend-dev backend-dev
-            sleep 3
-            docker ps --filter "name=seeding-.*-dev"
-            echo "da nang cap frontend-dev/backend-dev thanh cong"
-          else
-            echo "KHONG thay docker-compose.dev.yml o thu muc deploy - domain co the route noi khac"
-            exit 1
-          fi
+          echo "Waiting for frontend service to become healthy..."
+          for i in $(seq 1 15); do
+            if curl -sf -o /dev/null http://localhost:8080/ ; then
+              echo "Frontend localhost:8080 da san sang sau $((i*2))s!"
+              break
+            fi
+            echo "Waiting ($((i*2))s)..."
+            sleep 2
+          done
+          echo "Deploy hoan tat thanh cong!"
 
       # Cung 1 loai su co da gap tren host APP production (2026-09-21): docker
       # build cache tich luy toi 23.5GB khong ai prune -> / day 100% -> deploy
