@@ -848,6 +848,70 @@ export function MessengerInboxShell() {
               </button>
             </form>
           </>
+        ) : accounts.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 max-w-xl mx-auto space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold shadow-xs">
+              <span className="material-symbols-outlined text-[36px]">mark_chat_unread</span>
+            </div>
+            
+            <div className="space-y-1.5">
+              <h2 className="text-lg font-bold text-on-surface">
+                Chưa có tài khoản Facebook Messenger nào được kết nối
+              </h2>
+              <p className="text-xs text-muted-foreground leading-relaxed max-w-md mx-auto">
+                Hệ thống hỗ trợ gửi và nhận tin nhắn đa phương tiện (hình ảnh, tài liệu) kèm 5 lớp áo giáp mô phỏng người thật chống Checkpoint. Kết nối tài khoản chỉ mất chưa đầy 30 giây!
+              </p>
+            </div>
+
+            {/* Khối tóm tắt 3 bước Onboarding */}
+            <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-2.5 text-left p-3.5 bg-surface-container-low rounded-xl border border-outline-variant">
+              <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
+                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">1</span>
+                  <span>Tải Extension</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Tải file .zip và giải nén ra thư mục máy tính.</p>
+              </div>
+
+              <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
+                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">2</span>
+                  <span>Cài vào Trình duyệt</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Vào chrome://extensions bật Developer mode và Load unpacked.</p>
+              </div>
+
+              <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
+                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
+                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">3</span>
+                  <span>1-Click Kết nối</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Đăng nhập FB và bấm nút Lấy tự động bằng Extension.</p>
+              </div>
+            </div>
+
+            {/* Các nút hành động chính */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowAccountModal(true)}
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+              >
+                <span className="material-symbols-outlined text-[16px]">add</span>
+                <span>+ Thêm tài khoản Facebook ngay</span>
+              </button>
+
+              <a
+                href="/api-facebook-get-extension.zip"
+                download="api-facebook-get-extension.zip"
+                className="px-3.5 py-2.5 bg-surface hover:bg-surface-container border border-outline-variant text-on-surface font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
+                title="Tải gói tiện ích cài vào Chrome"
+              >
+                <span className="material-symbols-outlined text-[16px] text-blue-600">download</span>
+                <span>Tải Extension (.zip)</span>
+              </a>
+            </div>
+          </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
             <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold mb-3 shadow-xs">
