@@ -27,7 +27,6 @@ import {
   LuChevronRight,
   LuPhoneCall,
 } from "react-icons/lu";
-import { LeaderInboxView } from "@/components/all-platform/leader/LeaderInboxView";
 
 // Trong so KPI theo yeu cau nghiep vu: Lead quan trong nhat -> Inbox -> Comment -> Post.
 // % hoan thanh tong cua team = trung binh CO TRONG SO cua ty le hoan thanh tung chi so
@@ -212,12 +211,6 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
   const [selectedTeamForKpi, setSelectedTeamForKpi] = useState<TeamRow | null>(
     null,
   );
-
-  const [inboxModalOpen, setInboxModalOpen] = useState(false);
-  const [selectedLeaderForInbox, setSelectedLeaderForInbox] = useState<{
-    email: string;
-    name: string;
-  } | null>(null);
 
   const recentWeeks = useMemo(() => getRecentWeeks(8), []);
   const [selectedWeek, setSelectedWeek] = useState(recentWeeks[0].value);
@@ -818,22 +811,10 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
                       <div className="mt-2 flex flex-wrap gap-2 border-t border-border pt-4">
                         <button
                           onClick={() => handleViewMembers(team)}
-                          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-200 px-2 py-2 text-[12.5px] font-semibold text-foreground transition hover:bg-primary hover:text-white cursor-pointer"
+                          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-200 px-3 py-2 text-[12.5px] font-semibold text-foreground transition hover:bg-primary hover:text-white cursor-pointer shadow-sm"
+                          title="Xem danh sách thành viên và chi tiết KPI"
                         >
-                          <LuEye size={13} /> Xem TV
-                        </button>
-                        <button
-                          onClick={() => {
-                            setSelectedLeaderForInbox({
-                              email: team.leader_email,
-                              name: team.name_team,
-                            });
-                            setInboxModalOpen(true);
-                          }}
-                          className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-zinc-200 px-2 py-2 text-[12.5px] font-semibold text-foreground transition hover:bg-primary hover:text-white cursor-pointer"
-                          title="Xem toàn bộ Inbox của Team này"
-                        >
-                          <LuMessageSquare size={13} /> Inbox
+                          <LuEye size={14} /> Xem TV
                         </button>
                         <button
                           onClick={() => handleEditTeam(team)}
@@ -924,7 +905,7 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
         }}
       />
 
-      {/* Member KPI Overview Modal */}
+      {/* Member KPI Overview Modal (Mở tức thì 0ms nhờ initialKpiData) */}
       <AdminMemberKpiModal
         isOpen={kpiModalOpen}
         onClose={() => {
@@ -932,17 +913,12 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
           setSelectedTeamForKpi(null);
         }}
         team={selectedTeamForKpi}
+        initialKpiData={
+          selectedTeamForKpi
+            ? kpiRows.filter((r) => r.team_id === selectedTeamForKpi.id)
+            : undefined
+        }
       />
-
-      {/* Admin Inbox View Modal */}
-      {inboxModalOpen && selectedLeaderForInbox && (
-        <LeaderInboxView
-          isOpen={inboxModalOpen}
-          onClose={() => setInboxModalOpen(false)}
-          leaderEmail={selectedLeaderForInbox.email}
-          memberName={`Toàn bộ team ${selectedLeaderForInbox.name}`}
-        />
-      )}
     </div>
   );
 }

@@ -315,6 +315,8 @@ def list_shared_conversations_for_leader(
     leader_id = str(user_res.data[0]["id"])
     is_admin = user_res.data[0].get("role") in ["admin", "superadmin"]
 
+    # Bỏ hoàn toàn ràng buộc is_active = True theo chỉ thị xóa cơ chế share hộp thoại của Master.
+    # Hiển thị toàn bộ cuộc hội thoại mà thành viên đã nhắn tin với khách hàng.
     q = (
         supabase.table("zalo_conversation_permissions")
         .select(
@@ -322,13 +324,12 @@ def list_shared_conversations_for_leader(
             "id_member, id_leader, verified_at, verified_by, created_at, updated_at, "
             "zalo_accounts!fk_zalo_conv_perm_account(label, phone)"
         )
-        .eq("is_active", True)
-        .eq("shared_role", "leader")
     )
     
     if not is_admin:
         q = q.eq("id_leader", leader_id)
 
+    member_id = None
     if member_email:
         member_id = _resolve_user_id(supabase, member_email)
         if member_id:
@@ -338,6 +339,54 @@ def list_shared_conversations_for_leader(
 
     res = q.order("updated_at", desc=True).execute()
     items = list(res.data or [])
+
+    # Nếu có member_id, tự động quét bổ sung từ zalo_accounts & zalo_groups mà member sở hữu
+    if member_id:
+        try:
+            acc_res = (
+                supabase.table("zalo_accounts")
+                .select("account_id, label, phone")
+                .or_(f"owner_id.eq.{member_id},id_member.eq.{member_id}")
+                .execute()
+            )
+            existing_keys = {f"{i.get('account_id')}_{i.get('conversation_id')}" for i in items}
+            for acc in (acc_res.data or []):
+                acc_id = acc.get("account_id")
+                if not acc_id:
+                    continue
+                grp_res = (
+                    supabase.table("zalo_groups")
+                    .select("group_id, group_name, last_message_at, updated_at")
+                    .eq("user_id", acc_id)
+                    .order("last_message_at", desc=True)
+                    .limit(50)
+                    .execute()
+                )
+                for g in (grp_res.data or []):
+                    c_id = g.get("group_id")
+                    key = f"{acc_id}_{c_id}"
+                    if key not in existing_keys:
+                        existing_keys.add(key)
+                        items.append({
+                            "id": 0,
+                            "account_id": acc_id,
+                            "conversation_id": c_id,
+                            "shared_role": "leader",
+                            "is_active": True,
+                            "is_verify": True,
+                            "is_lead": False,
+                            "note": None,
+                            "id_member": member_id,
+                            "id_leader": leader_id,
+                            "verified_at": g.get("updated_at") or g.get("last_message_at"),
+                            "verified_by": "system",
+                            "created_at": g.get("last_message_at") or g.get("updated_at"),
+                            "updated_at": g.get("updated_at") or g.get("last_message_at"),
+                            "zalo_accounts": {"label": acc.get("label"), "phone": acc.get("phone")},
+                            "group_name": g.get("group_name") or "",
+                        })
+        except Exception as exc:
+            logger.warning(f"Failed to auto-fetch member zalo_groups: {exc}")
     
     if items:
         conv_ids = list({str(item["conversation_id"]) for item in items if item.get("conversation_id")})

@@ -978,29 +978,19 @@ def compute_kpi_inbox_progress(
 
     out: Dict[str, Dict[str, Any]] = {}
     for mid in member_user_ids:
-        # Đếm số conversation đã verify của member này trong khoảng
-        # (không phụ thuộc vào zalo_accounts.account_id; chỉ cần member có share là đủ)
+        # Đếm số conversation của member này trong khoảng
+        # (Xóa cơ chế share thủ công, tính trực tiếp mọi hộp thoại có lưu vết của member)
         try:
             res = (
                 supabase.table("zalo_conversation_permissions")
-                .select("id, verified_at, is_lead")
+                .select("id, verified_at, updated_at, is_lead")
                 .eq("id_member", mid)
-                .eq("shared_role", "leader")
-                .eq("is_active", True)
-                .eq("is_verify", True)
-                .not_.is_("verified_at", "null")
                 .execute()
             )
             current = 0
             lead_current = 0
             for r in res.data or []:
-                v_at = r.get("verified_at") or ""
-                # Chi xet verified_at (thoi diem leader xac minh) de xac dinh
-                # tuan tinh KPI - truoc day OR ca created_at/updated_at khien
-                # 1 conversation cu bi dem lai neu bi update vi ly do khac
-                # (vd toggle is_lead) trong tuan hien tai, gay trung/lech KPI
-                # giua cac tuan. verified_at cung la quy uoc dang dung o RPC
-                # get_team_kpi_overview (migration 012) cho cung 1 bang nay.
+                v_at = r.get("verified_at") or r.get("updated_at") or ""
                 if v_at >= start_dt and v_at <= end_dt:
                     current += 1
                     if r.get("is_lead"):

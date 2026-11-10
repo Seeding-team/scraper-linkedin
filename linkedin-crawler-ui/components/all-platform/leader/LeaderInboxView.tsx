@@ -94,6 +94,7 @@ export function LeaderInboxView({
 
   const [memberEmail, setMemberEmail] = useState((initialMemberEmail || "").trim().toLowerCase());
   const [memberName, setMemberName] = useState(initialMemberName || "");
+  const [searchQuery, setSearchQuery] = useState("");
   const [sharedList, setSharedList] = useState<SharedRow[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -104,13 +105,21 @@ export function LeaderInboxView({
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [verifyingId, setVerifyingId] = useState<number | null>(null);
 
   const [selectedMedia, setSelectedMedia] = useState<SelectedMedia[]>([]);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [activeEmojiTab, setActiveEmojiTab] = useState(0);
   const [showQuickReplies, setShowQuickReplies] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialMemberEmail) {
+      setMemberEmail(initialMemberEmail.trim().toLowerCase());
+    }
+    if (initialMemberName) {
+      setMemberName(initialMemberName);
+    }
+  }, [initialMemberEmail, initialMemberName]);
 
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -167,17 +176,27 @@ export function LeaderInboxView({
     setDraft((prev) => prev + emoji);
   };
 
+  const filteredList = useMemo(() => {
+    if (!searchQuery.trim()) return sharedList;
+    const q = searchQuery.toLowerCase();
+    return sharedList.filter(
+      (r) =>
+        (r.group_name || "").toLowerCase().includes(q) ||
+        r.conversation_id.toLowerCase().includes(q)
+    );
+  }, [sharedList, searchQuery]);
+
   // Group theo account_id
   const grouped = useMemo(() => {
     const map = new Map<string, { account: SharedRow["zalo_accounts"]; rows: SharedRow[] }>();
-    for (const row of sharedList) {
+    for (const row of filteredList) {
       if (!map.has(row.account_id)) {
         map.set(row.account_id, { account: row.zalo_accounts, rows: [] });
       }
       map.get(row.account_id)!.rows.push(row);
     }
     return Array.from(map.entries());
-  }, [sharedList]);
+  }, [filteredList]);
 
   // Load share list khi mở popup hoặc đổi member
   const refreshList = useCallback(async () => {
@@ -231,86 +250,8 @@ export function LeaderInboxView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, leaderEmail, memberEmail]);
 
-  // Leader xác minh 1 share — share đó mới được tính vào kpi_inbox
-  const handleVerify = useCallback(
-    async (rowId: number, currentlyVerified: boolean) => {
-      if (!leaderEmail) return;
-      setVerifyingId(rowId);
-      try {
-        if (currentlyVerified) {
-          // Đã verify → bấm lại để thu hồi
-          const res = await zaloInboxShareService.unverify(rowId);
-          if (res?.success) {
-            if (onStatusChange) onStatusChange();
-            setSharedList((prev) =>
-              prev.map((r) =>
-                r.id === rowId
-                  ? { ...r, is_verify: false, verified_at: null, verified_by: null }
-                  : r,
-              ),
-            );
-          }
-        } else {
-          // Chưa verify → xác minh
-          const res = await zaloInboxShareService.verify(rowId, leaderEmail);
-            if (res?.success) {
-              if (onStatusChange) onStatusChange();
-              // BE trả {success, row} phẳng — fallback data.row cho tương thích
-              const row = (res as { row?: { is_verify?: boolean; verified_at?: string; verified_by?: string } })?.row
-                || (res as { data?: { row?: { is_verify?: boolean; verified_at?: string; verified_by?: string } } })?.data?.row;
-              setSharedList((prev) =>
-                prev.map((r) =>
-                  r.id === rowId
-                    ? {
-                        ...r,
-                        is_verify: true,
-                        verified_at: row?.verified_at || new Date().toISOString(),
-                        verified_by: row?.verified_by || leaderEmail,
-                      }
-                    : r,
-                ),
-              );
-            }
-        }
-      } finally {
-        setVerifyingId(null);
-      }
-    },
-    [leaderEmail],
-  );
-
-  const [togglingLeadId, setTogglingLeadId] = useState<number | null>(null);
-
   const [showLeadModal, setShowLeadModal] = useState(false);
   const { user: appUser } = useAppAuth();
-
-  const handleToggleLead = useCallback(
-    async (rowId: number, currentlyLead: boolean) => {
-      if (!leaderEmail) return;
-      setTogglingLeadId(rowId);
-      try {
-        const res = await zaloInboxShareService.toggleLead(rowId, leaderEmail, !currentlyLead);
-        if (res?.success) {
-          if (onStatusChange) onStatusChange();
-          setSharedList((prev) =>
-            prev.map((r) =>
-              r.id === rowId ? { ...r, is_lead: !currentlyLead } : r
-            )
-          );
-        }
-      } finally {
-        setTogglingLeadId(null);
-      }
-    },
-    [leaderEmail]
-  );
-
-  // Đếm số share đã verify trong nhóm hiện tại
-  const verifiedCount = useMemo(
-    () => sharedList.filter((r) => r.is_verify || r.verified_at).length,
-    [sharedList],
-  );
-  const totalCount = sharedList.length;
 
   // Load messages khi chọn conversation
   useEffect(() => {
@@ -444,32 +385,28 @@ export function LeaderInboxView({
         <div className="flex items-center justify-between px-5 py-3 border-b border-outline-variant bg-surface-container-low">
           <div>
             <h2 className="text-base font-bold text-on-surface flex items-center gap-2">
-              <MaterialIcon name="visibility" className="text-red-600 text-[20px]" />
-              Xem Inbox (KPI verification)
+              <MaterialIcon name="chat" className="text-[#ba244a] text-[20px]" />
+              Hộp thoại Zalo của thành viên
             </h2>
             <p className="text-[11px] text-on-surface-variant mt-0.5">
-              {memberName || memberEmail || "—"} · {sharedList.length} hội thoại đã share
-              {totalCount > 0 && (
-                <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">
-                  <MaterialIcon name="verified" className="text-[12px]" />
-                  {verifiedCount}/{totalCount} đã xác minh
-                </span>
-              )}
+              <span className="font-bold text-slate-800">{memberName || memberEmail || "—"}</span>
+              <span className="mx-1.5">·</span>
+              <span className="text-[#ba244a] font-semibold">{filteredList.length} cuộc hội thoại</span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <label className="flex items-center gap-1 text-[11px] text-on-surface-variant cursor-pointer">
               <input
                 type="checkbox"
                 checked={autoRefresh}
                 onChange={(e) => setAutoRefresh(e.target.checked)}
-                className="rounded"
+                className="rounded accent-[#ba244a]"
               />
               Auto-refresh 10s
             </label>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg text-on-surface-variant hover:text-on-surface-variant hover:bg-surface-container-highest/50"
+              className="p-1.5 rounded-lg text-on-surface-variant hover:text-slate-900 hover:bg-slate-200 transition cursor-pointer"
               title="Đóng"
             >
               <MaterialIcon name="close" className="text-[20px]" />
@@ -480,105 +417,93 @@ export function LeaderInboxView({
         {/* Body: sidebar + chat */}
         <div className="flex-1 flex min-h-0">
           {/* Sidebar */}
-          <div className={`w-full md:w-72 border-r border-outline-variant flex-col bg-surface-container-low ${activeConversationId ? "hidden md:flex" : "flex"}`}>
-            <div className="p-3 border-b border-outline-variant">
-              <label className="text-[10px] font-bold text-on-surface-variant uppercase">
-                Member
-              </label>
-              <input
-                value={memberEmail}
-                onChange={(e) => setMemberEmail(e.target.value.toLowerCase())}
-                placeholder="email@company.com"
-                className="w-full mt-1 bg-surface border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:border-red-600 focus:ring-2 focus:ring-red-600/20"
-              />
-              <button
-                onClick={refreshList}
-                disabled={loadingList || !memberEmail}
-                className="mt-2 w-full rounded-lg bg-red-600 text-white text-xs font-bold py-1.5 hover:bg-red-700 transition disabled:opacity-50"
-              >
-                {loadingList ? "Đang tải…" : "Tải danh sách share"}
-              </button>
+          <div className={`w-full md:w-80 border-r border-outline-variant flex flex-col bg-surface-container-low ${activeConversationId ? "hidden md:flex" : "flex"}`}>
+            <div className="p-3 border-b border-outline-variant space-y-2">
+              {!initialMemberEmail ? (
+                <div>
+                  <label className="text-[10px] font-bold text-on-surface-variant uppercase">
+                    Chọn Thành viên
+                  </label>
+                  <div className="flex gap-1.5 mt-1">
+                    <input
+                      value={memberEmail}
+                      onChange={(e) => setMemberEmail(e.target.value.toLowerCase())}
+                      placeholder="email@company.com"
+                      className="flex-1 bg-surface border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-[#ba244a] focus:ring-2 focus:ring-[#ba244a]/20"
+                    />
+                    <button
+                      onClick={refreshList}
+                      disabled={loadingList || !memberEmail}
+                      className="rounded-lg bg-[#ba244a] text-white text-xs font-bold px-3 py-1.5 hover:bg-[#a01c3e] transition disabled:opacity-50 cursor-pointer"
+                    >
+                      {loadingList ? "Đang tải…" : "Lọc"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+              {/* Thanh tìm kiếm nhanh cuộc trò chuyện */}
+              <div>
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="🔍 Tìm tên khách hoặc ID..."
+                  className="w-full bg-surface border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-[#ba244a] focus:ring-2 focus:ring-[#ba244a]/20 transition"
+                />
+              </div>
               {listError && (
                 <p className="mt-1 text-[10px] text-red-600">{listError}</p>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            <div className="flex-1 overflow-y-auto p-2 space-y-3">
               {grouped.length === 0 && !loadingList && (
-                <p className="text-center text-[11px] text-on-surface-variant py-8 leading-relaxed">
-                  Member này chưa share hội thoại nào với bạn.
-                  <br />
-                  Nhắc member tick 👁 ở Zalo Chat.
-                </p>
+                <div className="text-center text-[11px] text-on-surface-variant py-12 px-4 leading-relaxed">
+                  <MaterialIcon name="forum" className="text-slate-300 text-3xl mx-auto mb-2" />
+                  <p className="font-semibold text-slate-600">Chưa có cuộc trò chuyện nào</p>
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Hội thoại sẽ tự động xuất hiện khi thành viên nhắn tin qua Zalo hoặc PostFeed.
+                  </p>
+                </div>
               )}
               {grouped.map(([accId, group]) => (
                 <div key={accId} className="space-y-1">
-                  <div className="text-[10px] font-bold text-on-surface-variant uppercase px-1.5 pt-1">
-                    {group.account?.label || accId.slice(0, 10)}…
+                  <div className="text-[10px] font-bold text-slate-500 uppercase px-2 pt-1 flex items-center justify-between">
+                    <span>📱 {group.account?.label || group.account?.phone || accId.slice(0, 10)}</span>
+                    <span className="text-[9px] font-normal text-slate-400">{group.rows.length} hội thoại</span>
                   </div>
                   {group.rows.map((row) => {
                     const isActive = row.conversation_id === activeConversationId;
-                    const isVerified = row.is_verify ?? !!row.verified_at;
                     return (
                       <div
-                        key={row.conversation_id}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg text-[11px] transition ${
-                          isActive
-                            ? "bg-red-50 text-red-600 font-bold"
-                            : "hover:bg-surface-container-highest/50 text-on-surface"
-                        }`}
-                      >
-                        <div
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
+                        key={`${row.account_id}_${row.conversation_id}`}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setActiveAccountId(row.account_id);
+                          setActiveConversationId(row.conversation_id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
                             setActiveAccountId(row.account_id);
                             setActiveConversationId(row.conversation_id);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              setActiveAccountId(row.account_id);
-                              setActiveConversationId(row.conversation_id);
-                            }
-                          }}
-                          className="w-full text-left cursor-pointer outline-none"
-                        >
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span className={`truncate flex-1 text-[13px] ${isActive ? "font-semibold" : ""}`}>
-                              💬 {row.group_name || `${row.conversation_id.slice(0, 14)}…`}
-                            </span>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleVerify(row.id, isVerified);
-                              }}
-                              disabled={verifyingId === row.id}
-                              className={`inline-flex items-center justify-center shrink-0 w-7 h-7 rounded-full transition cursor-pointer disabled:opacity-50 ${
-                                isVerified
-                                  ? "text-emerald-500 hover:bg-emerald-50"
-                                  : "text-outline hover:text-on-surface-variant hover:bg-surface-container-low"
-                              }`}
-                              title={
-                                isVerified
-                                  ? `Đã xác minh lúc ${new Date(row.verified_at!).toLocaleString("vi-VN")}. Bấm để thu hồi.`
-                                  : "Bấm để xác minh KPI hội thoại này"
-                              }
-                            >
-                              {verifyingId === row.id ? (
-                                <MaterialIcon name="pending" className="text-[18px] animate-pulse" />
-                              ) : isVerified ? (
-                                <MaterialIcon name="verified" className="text-[20px]" />
-                              ) : (
-                                <MaterialIcon name="check_circle" className="text-[20px]" />
-                              )}
-                            </button>
-                          </div>
-                          {row.note && (
-                            <div className="text-[11px] text-on-surface-variant mt-0.5 truncate pr-8">
-                              “{row.note}”
-                            </div>
-                          )}
+                          }
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs transition cursor-pointer ${
+                          isActive
+                            ? "bg-[#ba244a]/10 text-[#ba244a] font-bold border border-[#ba244a]/30 shadow-xs"
+                            : "hover:bg-slate-100 text-slate-800 border border-transparent"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className={`truncate flex-1 text-[13px] ${isActive ? "font-bold text-[#ba244a]" : "font-medium text-slate-800"}`}>
+                            💬 {row.group_name || `Khách: ${row.conversation_id.slice(0, 14)}…`}
+                          </span>
                         </div>
+                        {row.note && (
+                          <div className="text-[10px] text-slate-500 mt-0.5 truncate">
+                            “{row.note}”
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -591,8 +516,8 @@ export function LeaderInboxView({
           <div className={`flex-1 flex-col min-w-0 bg-surface ${!activeConversationId ? "hidden md:flex" : "flex"}`}>
             {activeConversationId ? (
               <>
-                <div className="px-4 py-2 border-b border-outline-variant bg-surface">
-                  <div className="flex items-center gap-2 flex-wrap">
+                <div className="px-4 py-2.5 border-b border-outline-variant bg-surface flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 min-w-0">
                     <button
                       onClick={() => setActiveConversationId(null)}
                       className="md:hidden p-1.5 -ml-2 rounded-lg text-on-surface-variant hover:bg-surface-container-low shrink-0"
@@ -600,85 +525,20 @@ export function LeaderInboxView({
                     >
                       <MaterialIcon name="arrow_back" className="text-[20px]" />
                     </button>
-                    <p className="text-xs font-bold text-on-surface truncate max-w-[160px] sm:max-w-[250px]">
-                      {sharedList.find((r) => r.conversation_id === activeConversationId)?.group_name || activeConversationId}
+                    <p className="text-sm font-bold text-slate-900 truncate max-w-[220px] sm:max-w-[320px]">
+                      {sharedList.find((r) => r.conversation_id === activeConversationId)?.group_name || `Hội thoại: ${activeConversationId}`}
                     </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => setShowLeadModal(true)}
-                      className="ml-2 inline-flex items-center gap-1 px-2 py-1 rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200 text-xs font-bold transition-colors"
-                      title="Lưu khách hàng (Lead) này"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-yellow-50 border border-yellow-200 text-yellow-800 hover:bg-yellow-100 text-xs font-bold transition cursor-pointer"
+                      title="Lưu thông tin khách hàng tiềm năng vào CRM"
                     >
                       <MaterialIcon name="person_add" className="text-[14px]" />
                       Lưu Lead
                     </button>
-                    {(() => {
-                      const active = sharedList.find(
-                        (r) => r.conversation_id === activeConversationId,
-                      );
-                      if (!active) return null;
-                      const isVerified = active.is_verify ?? !!active.verified_at;
-                      return (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleVerify(active.id, isVerified);
-                            }}
-                            disabled={verifyingId === active.id}
-                            className={`inline-flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold transition disabled:opacity-50 ${
-                              isVerified
-                                ? "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
-                                : "bg-red-700 hover:bg-red-800 text-white border border-red-700"
-                            }`}
-                            title={
-                              isVerified
-                                ? "Bấm để thu hồi xác minh"
-                                : "Bấm để xác minh KPI cho hội thoại này"
-                            }
-                          >
-                            <MaterialIcon
-                              name={isVerified ? "check_circle" : "verified"}
-                              className="text-[14px]"
-                            />
-                            {verifyingId === active.id
-                              ? "Đang xử lý..."
-                              : isVerified
-                                ? "Đã xác minh KPI"
-                                : "Xác minh KPI Inbox"}
-                          </button>
-
-                          {isVerified && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleToggleLead(active.id, !!active.is_lead);
-                              }}
-                              disabled={togglingLeadId === active.id}
-                              className={`inline-flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold transition disabled:opacity-50 ${
-                                active.is_lead
-                                  ? "bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200"
-                                  : "bg-surface hover:bg-surface-container-low text-on-surface-variant border border-outline-variant"
-                              }`}
-                              title="Đánh dấu hội thoại này là có tiềm năng"
-                            >
-                              <MaterialIcon
-                                name={active.is_lead ? "star" : "star_border"}
-                                className={`text-[14px] ${active.is_lead ? "text-blue-500" : "text-on-surface-variant"}`}
-                              />
-                              {togglingLeadId === active.id
-                                ? "Đang xử lý..."
-                                : active.is_lead
-                                  ? "Khách Tiềm Năng"
-                                  : "Đánh dấu Tiềm Năng"}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })()}
                   </div>
-                  <p className="text-[10px] text-on-surface-variant">
-                    Account: {activeAccountId}
-                  </p>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-surface-container-low">
                   {loadingMessages && messages.length === 0 ? (

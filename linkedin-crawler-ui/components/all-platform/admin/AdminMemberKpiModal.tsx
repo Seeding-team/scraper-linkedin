@@ -3,8 +3,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { MaterialIcon } from "@/components/ui";
 import { allPlatformKpiService } from "@/services/all-platform.service";
-import { LeaderPostView } from "@/components/all-platform/leader/LeaderPostView";
 import { SeedingModal } from "@/components/all-platform/leader/SeedingModal";
+import { LeaderInboxView } from "@/components/all-platform/leader/LeaderInboxView";
 import { cn } from "@/lib/utils";
 import type { TeamRow } from "@/services/all-platform.service";
 
@@ -38,15 +38,40 @@ interface AdminMemberKpiModalProps {
   isOpen: boolean;
   onClose: () => void;
   team: TeamRow | null;
+  initialKpiData?: any[];
 }
 
-export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiModalProps) {
+export function AdminMemberKpiModal({ isOpen, onClose, team, initialKpiData }: AdminMemberKpiModalProps) {
+  // Map initialKpiData nếu có để mở modal 0ms mà không phải chờ spinner
+  const parsedInitial = useMemo(() => {
+    if (!initialKpiData || initialKpiData.length === 0) return [];
+    return initialKpiData.map((row) => ({
+      id: row.member_id,
+      email: row.member_email,
+      name: row.member_name,
+      seeding_stats: {
+        verified_count: row.verified_count || 0,
+        kpi_target: row.kpi_comment || 0,
+        kpi_call: row.kpi_call !== undefined ? row.kpi_call : (row.kpi_post || 0),
+        kpi_call_current: row.kpi_call_current !== undefined ? row.kpi_call_current : (row.kpi_post_current || 0),
+        kpi_post: row.kpi_call !== undefined ? row.kpi_call : (row.kpi_post || 0),
+        kpi_post_current: row.kpi_call_current !== undefined ? row.kpi_call_current : (row.kpi_post_current || 0),
+        kpi_inbox: row.kpi_inbox || 0,
+        kpi_inbox_current: row.kpi_inbox_current || 0,
+        kpi_lead: row.kpi_lead || 0,
+        kpi_lead_current: row.kpi_lead_current || 0,
+        kpi_inbox_range: row.kpi_inbox_range,
+      },
+    }));
+  }, [initialKpiData]);
+
   const [kpiData, setKpiData] = useState<any[]>([]);
+  const [currentTeamId, setCurrentTeamId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [postModalOpen, setPostModalOpen] = useState(false);
-  const [postMember, setPostMember] = useState<{ email: string; name: string } | null>(null);
+  const [inboxModalOpen, setInboxModalOpen] = useState(false);
+  const [inboxMember, setInboxMember] = useState<{ email: string; name: string } | null>(null);
 
   const [seedingModalOpen, setSeedingModalOpen] = useState(false);
   const [selectedMemberSeeding, setSelectedMemberSeeding] = useState<any>(null);
@@ -54,14 +79,31 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
   const recentWeeks = useMemo(() => getRecentWeeks(8), []);
   const [selectedWeek, setSelectedWeek] = useState(recentWeeks[0].value);
 
+  // Khi chuyển sang team khác, reset state chi tiết để lấy parsedInitial mới 0ms
+  useEffect(() => {
+    if (team?.id !== currentTeamId) {
+      setCurrentTeamId(team?.id || null);
+      setKpiData([]);
+    }
+  }, [team?.id, currentTeamId]);
+
+  // Nguồn dữ liệu KPI hiện hành: ưu tiên chi tiết remote kpiData, nếu chưa có thì lấy parsedInitial 0ms
+  const activeKpiData = useMemo(() => {
+    return kpiData.length > 0 ? kpiData : parsedInitial;
+  }, [kpiData, parsedInitial]);
+
   useEffect(() => {
     async function loadKpiData() {
       if (!team?.leader_email) return;
-      setIsLoading(true);
+      // Chỉ bật loading spinner nếu cả 2 nguồn đều chưa có dữ liệu ban đầu
+      const hasInitialData = parsedInitial.length > 0 || kpiData.length > 0;
+      if (!hasInitialData) {
+        setIsLoading(true);
+      }
       setError(null);
       try {
         const [startDate, endDate] = selectedWeek.split("_");
-        // Phase 3: Dùng getTeamOverviewV3 (Postgres RPC) thay cho getAll (legacy N+1 loops) để mở modal tức thì <100ms
+        // Phase 3: Dùng getTeamOverviewV3 (Postgres RPC) thay cho getAll (legacy N+1 loops) để nạp siêu tốc
         const res = await allPlatformKpiService.getTeamOverviewV3(team.leader_email, team.id, startDate, endDate);
         if (res.success && res.data?.members) {
           setKpiData(res.data.members);
@@ -70,13 +112,15 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
           const fallbackRes = await allPlatformKpiService.getAll(team.leader_email, team.id, startDate, endDate);
           if (fallbackRes.success && fallbackRes.data?.members) {
             setKpiData(fallbackRes.data.members);
-          } else {
+          } else if (!hasInitialData) {
             setError(res.message || fallbackRes.message || "Không thể tải dữ liệu KPI của nhóm");
           }
         }
       } catch (err) {
         console.error("Lỗi khi tải KPI:", err);
-        setError("Lỗi kết nối máy chủ");
+        if (!hasInitialData) {
+          setError("Lỗi kết nối máy chủ");
+        }
       } finally {
         setIsLoading(false);
       }
@@ -89,17 +133,32 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
   const membersWithKpi = useMemo(() => {
     if (!team) return [];
     const teamMembers = team.members || [];
-    // 2026-07-04: them chinh leader vao danh sach hien thi - truoc day
-    // team.members chi lay tu member_of_teams (thanh vien thuong), KPI cua
-    // leader khong bao gio hien o modal nay. Backend /kpi/get-all gio da
-    // tra them 1 dong is_leader=true cho leader trong kpiData - chi con
-    // thieu 1 "member object" (id/email/name) tuong ung de map() qua duoc.
     const hasLeaderAlready = teamMembers.some(m => m.id === team.id_leader);
     const allMembers = team.id_leader && !hasLeaderAlready
       ? [...teamMembers, { id: team.id_leader, email: team.leader_email, name: team.leader_name || team.leader_email }]
       : teamMembers;
-    return allMembers.map(member => {
-      const kpiInfo = kpiData.find(k => k.id === member.id) || {};
+
+    // Bổ sung các thành viên từ activeKpiData nếu chưa có trong team.members
+    const membersMap = new Map<string, { id: string; email: string; name: string }>();
+    allMembers.forEach(m => {
+      const key = (m.id || m.email || "").toString().toLowerCase();
+      if (key) membersMap.set(key, m);
+    });
+    activeKpiData.forEach(p => {
+      const keyId = (p.id || "").toString().toLowerCase();
+      const keyEmail = (p.email || "").toString().toLowerCase();
+      if ((keyId && !membersMap.has(keyId)) && (keyEmail && !membersMap.has(keyEmail))) {
+        membersMap.set(keyId || keyEmail, { id: p.id, email: p.email, name: p.name || p.email });
+      }
+    });
+
+    const combinedMembers = Array.from(membersMap.values());
+
+    return combinedMembers.map(member => {
+      const kpiInfo = activeKpiData.find(k =>
+        (k.id && member.id && k.id === member.id) ||
+        (k.email && member.email && k.email.toLowerCase() === member.email.toLowerCase())
+      ) || {};
       const stats = kpiInfo.seeding_stats || {};
       const commentTarget = stats.kpi_target || 0;
       const commentCurrent = stats.verified_count || 0;
@@ -129,7 +188,7 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
         kpiInboxRange: inboxRange,
       };
     });
-  }, [team, kpiData]);
+  }, [team, activeKpiData]);
 
   if (!isOpen || !team) return null;
 
@@ -255,20 +314,28 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
                         </div>
                       </td>
                       <td className="px-2 py-2.5">
-                        <div className="flex items-center gap-1 justify-center">
-                          <button onClick={() => {
-                            setSelectedMemberSeeding(m);
-                            setSeedingModalOpen(true);
-                          }}
-                            className="inline-flex items-center gap-0.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded-md text-[10px] transition border border-blue-100">
-                            <MaterialIcon name="visibility" className="text-[11px]" />Seed
+                        <div className="flex items-center gap-1.5 justify-center">
+                          <button
+                            onClick={() => {
+                              setSelectedMemberSeeding(m);
+                              setSeedingModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold px-2 py-1 rounded-md text-[10px] transition border border-blue-200 cursor-pointer shadow-2xs"
+                            title="Xem chi tiết các bài viết đã seeding"
+                          >
+                            <MaterialIcon name="visibility" className="text-[12px]" />
+                            Xem seeding
                           </button>
-                          <button onClick={() => {
-                            setPostMember({ email: m.email, name: m.name || m.email });
-                            setPostModalOpen(true);
-                          }}
-                            className="inline-flex items-center gap-0.5 bg-red-50 hover:bg-red-100 text-[#ba244a] font-bold px-2 py-1 rounded-md text-[10px] transition border border-red-100">
-                            <MaterialIcon name="call" className="text-[11px]" />Cuộc gọi
+                          <button
+                            onClick={() => {
+                              setInboxMember({ email: m.email, name: m.name || m.email });
+                              setInboxModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold px-2 py-1 rounded-md text-[10px] transition border border-emerald-200 cursor-pointer shadow-2xs"
+                            title="Xem hộp thoại Zalo thành viên đã nhắn với khách hàng"
+                          >
+                            <MaterialIcon name="chat" className="text-[12px]" />
+                            Xem hộp thoại Zalo
                           </button>
                         </div>
                       </td>
@@ -282,21 +349,19 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
 
         <div className="flex justify-end p-4 border-t border-outline-variant bg-surface">
           <button type="button" onClick={onClose}
-            className="px-5 py-2 rounded-xl text-sm font-bold text-on-surface-variant bg-surface-container-low hover:bg-surface-container-highest transition">
+            className="px-5 py-2 rounded-xl text-sm font-bold text-on-surface-variant bg-surface-container-low hover:bg-surface-container-highest transition cursor-pointer">
             Đóng
           </button>
         </div>
       </div>
 
-      {postModalOpen && postMember && (
-        <LeaderPostView
-          isOpen={postModalOpen}
-          onClose={() => setPostModalOpen(false)}
-          memberEmail={postMember.email}
-          memberName={postMember.name}
-          startDate={membersWithKpi.find(m => m.email === postMember.email)?.kpiInboxRange?.start}
-          endDate={membersWithKpi.find(m => m.email === postMember.email)?.kpiInboxRange?.end}
-          onStatusChange={() => {}}
+      {inboxModalOpen && inboxMember && (
+        <LeaderInboxView
+          isOpen={inboxModalOpen}
+          onClose={() => setInboxModalOpen(false)}
+          memberEmail={inboxMember.email}
+          memberName={inboxMember.name}
+          leaderEmail={team?.leader_email}
         />
       )}
 
