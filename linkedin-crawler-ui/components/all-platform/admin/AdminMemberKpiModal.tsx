@@ -96,21 +96,24 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
       const stats = kpiInfo.seeding_stats || {};
       const commentTarget = stats.kpi_target || 0;
       const commentCurrent = stats.verified_count || 0;
-      const postTarget = stats.kpi_post || 0;
-      const postCurrent = stats.kpi_post_current || 0;
+      const callTarget = stats.kpi_call !== undefined ? stats.kpi_call : (stats.kpi_post || 0);
+      const callCurrent = stats.kpi_call_current !== undefined ? stats.kpi_call_current : (stats.kpi_post_current || 0);
+      const postTarget = callTarget;
+      const postCurrent = callCurrent;
       const leadTarget = stats.kpi_lead || 0;
       const leadCurrent = stats.kpi_lead_current || 0;
       const inboxTarget = stats.kpi_inbox || 0;
       const inboxCurrent = stats.kpi_inbox_current || 0;
       const inboxRange = stats.kpi_inbox_range || null;
 
-      const totalTarget = commentTarget + postTarget + leadTarget + inboxTarget;
-      const totalCurrent = commentCurrent + postCurrent + leadCurrent + inboxCurrent;
+      const totalTarget = commentTarget + callTarget + leadTarget + inboxTarget;
+      const totalCurrent = commentCurrent + callCurrent + leadCurrent + inboxCurrent;
       const percent = totalTarget > 0 ? Math.min(Math.round((totalCurrent / totalTarget) * 100), 100) : 0;
 
       return {
         ...member,
         commentTarget, commentCurrent,
+        callTarget, callCurrent,
         postTarget, postCurrent,
         leadTarget, leadCurrent,
         inboxTarget, inboxCurrent,
@@ -189,7 +192,7 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
                 <thead className="bg-surface-container-low border-b border-outline-variant text-on-surface-variant">
                   <tr>
                     <th className="text-left px-3 py-2.5 font-bold text-[10px] uppercase">Thành viên</th>
-                    <th className="text-center px-1 py-2.5 font-bold text-[10px] uppercase">Post</th>
+                    <th className="text-center px-1 py-2.5 font-bold text-[10px] uppercase text-[#ba244a]" title="Số cuộc gọi tư vấn khách hàng (CALL)">Cuộc gọi (CALL)</th>
                     <th className="text-center px-1 py-2.5 font-bold text-[10px] uppercase">Comment</th>
                     <th className="text-center px-1 py-2.5 font-bold text-[10px] uppercase">Inbox</th>
                     <th className="text-center px-1 py-2.5 font-bold text-[10px] uppercase">Lead</th>
@@ -210,8 +213,8 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
                         <div className="text-[10px] text-on-surface-variant font-medium">{m.email}</div>
                       </td>
                       <td className="px-1 py-2.5 text-center">
-                        <span className={m.postCurrent > 0 ? "font-bold text-emerald-600 text-[11px]" : "font-bold text-on-surface text-[11px]"}>{m.postCurrent}</span>
-                        <span className="text-on-surface-variant text-[10px]"> / {m.postTarget}</span>
+                        <span className={m.callCurrent > 0 ? "font-bold text-[#ba244a] text-[11px]" : "font-bold text-on-surface text-[11px]"}>{m.callCurrent}</span>
+                        <span className="text-on-surface-variant text-[10px]"> / {m.callTarget}</span>
                       </td>
                       <td className="px-1 py-2.5 text-center">
                         <span className="font-bold text-on-surface text-[11px]">{m.commentCurrent}</span>
@@ -257,8 +260,8 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
                             setPostMember({ email: m.email, name: m.name || m.email });
                             setPostModalOpen(true);
                           }}
-                            className="inline-flex items-center gap-0.5 bg-green-50 hover:bg-green-100 text-green-700 font-bold px-2 py-1 rounded-md text-[10px] transition border border-green-100">
-                            <MaterialIcon name="article" className="text-[11px]" />Posts
+                            className="inline-flex items-center gap-0.5 bg-red-50 hover:bg-red-100 text-[#ba244a] font-bold px-2 py-1 rounded-md text-[10px] transition border border-red-100">
+                            <MaterialIcon name="call" className="text-[11px]" />Cuộc gọi
                           </button>
                         </div>
                       </td>

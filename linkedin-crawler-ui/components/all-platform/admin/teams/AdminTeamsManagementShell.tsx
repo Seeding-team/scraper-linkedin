@@ -25,6 +25,7 @@ import {
   LuTrash2,
   LuChartBar,
   LuChevronRight,
+  LuPhoneCall,
 } from "react-icons/lu";
 import { LeaderInboxView } from "@/components/all-platform/leader/LeaderInboxView";
 
@@ -458,10 +459,10 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
     },
     {
       key: "post" as const,
-      label: "Post",
+      label: "Cuộc gọi (CALL)",
       weight: "10%",
-      icon: LuFileText,
-      tone: "bg-green-50 text-green-600",
+      icon: LuPhoneCall,
+      tone: "bg-red-50 text-[#ba244a]",
     },
   ];
 
@@ -585,7 +586,7 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
               </div>
               <p className="text-[12.5px] text-muted-foreground mt-0.5">
                 Xếp theo % hoàn thành KPI có trọng số: Lead 45% · Inbox 40% ·
-                Comment 5% · Post 10%
+                Comment 5% · Call 10%
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -805,7 +806,7 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
                                 : ""}
                             </span>
                             <span>
-                              Post: {leaderKpi.post}
+                              Call: {leaderKpi.post}
                               {leaderKpi.postTarget > 0
                                 ? `/${leaderKpi.postTarget}`
                                 : ""}
