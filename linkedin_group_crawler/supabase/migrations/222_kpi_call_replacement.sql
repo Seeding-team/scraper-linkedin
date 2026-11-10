@@ -32,6 +32,10 @@ CREATE INDEX IF NOT EXISTS idx_post_call_results_user_time
     ON public.post_call_results (updated_by, last_call_at DESC) 
     WHERE updated_by IS NOT NULL AND last_call_at IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS idx_post_call_results_day_vn 
+    ON public.post_call_results (updated_by, ((last_call_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)) 
+    WHERE updated_by IS NOT NULL AND last_call_at IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_kpi_tracker_member_period 
     ON public.kpi_tracker (id_member, start_date, end_date) 
     WHERE status = 'active';

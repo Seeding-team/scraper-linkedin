@@ -61,11 +61,18 @@ export function AdminMemberKpiModal({ isOpen, onClose, team }: AdminMemberKpiMod
       setError(null);
       try {
         const [startDate, endDate] = selectedWeek.split("_");
-        const res = await allPlatformKpiService.getAll(team.leader_email, undefined, startDate, endDate);
+        // Phase 3: Dùng getTeamOverviewV3 (Postgres RPC) thay cho getAll (legacy N+1 loops) để mở modal tức thì <100ms
+        const res = await allPlatformKpiService.getTeamOverviewV3(team.leader_email, team.id, startDate, endDate);
         if (res.success && res.data?.members) {
           setKpiData(res.data.members);
         } else {
-          setError(res.message || "Không thể tải dữ liệu KPI của nhóm");
+          // Fallback graceful
+          const fallbackRes = await allPlatformKpiService.getAll(team.leader_email, team.id, startDate, endDate);
+          if (fallbackRes.success && fallbackRes.data?.members) {
+            setKpiData(fallbackRes.data.members);
+          } else {
+            setError(res.message || fallbackRes.message || "Không thể tải dữ liệu KPI của nhóm");
+          }
         }
       } catch (err) {
         console.error("Lỗi khi tải KPI:", err);

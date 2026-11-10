@@ -83,6 +83,11 @@ jobs:
           echo "===== 2. Applying migration 221 to Dev DB (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/221_facebook_messenger_api.sql || true"
 
+      - name: Ap dung migration database 222 (KPI Call Replacement & Performance)
+        run: |
+          echo "===== 2b. Applying migration 222 to Dev DB (10.30.195.32) ====="
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/222_kpi_call_replacement.sql || true"
+
       - name: Cap nhat bien moi truong host DEV sang DB moi
         run: |
           echo "===== 3. Updating host .env to use new Dev Supabase ====="
