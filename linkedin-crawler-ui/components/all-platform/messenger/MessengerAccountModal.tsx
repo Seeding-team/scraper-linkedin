@@ -145,7 +145,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
       <DialogContent className="max-w-xl font-sans max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold shrink-0">
               <span className="material-symbols-outlined text-[24px]">chat</span>
             </div>
             <div>
@@ -164,14 +164,14 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
           {/* Trạng thái tiện ích */}
           <div className="flex items-center justify-between p-2.5 rounded-xl border border-outline-variant bg-surface-container-low text-xs">
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-[18px] text-blue-600">
+              <span className="material-symbols-outlined text-[18px] text-primary">
                 extension
               </span>
               <div className="flex items-center gap-1.5">
                 <span className="font-semibold text-on-surface">Trạng thái tiện ích:</span>
                 {extInstalled === null ? (
                   <span className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-                    <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
                     Đang kiểm tra...
                   </span>
                 ) : extInstalled ? (
@@ -192,7 +192,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
               <a
                 href="/api-facebook-get-extension.zip"
                 download="api-facebook-get-extension.zip"
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] shadow-2xs transition"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary hover:bg-[#a01c3d] text-white font-bold text-[11px] shadow-2xs transition"
                 title="Tải gói tiện ích FB API Crawler (.zip) cài vào Chrome"
               >
                 <span className="material-symbols-outlined text-[14px]">download</span>
@@ -202,7 +202,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
               <button
                 type="button"
                 onClick={() => setShowManualGuide((prev) => !prev)}
-                className="text-[11px] text-blue-600 hover:underline font-semibold cursor-pointer"
+                className="text-[11px] text-primary hover:underline font-semibold cursor-pointer"
               >
                 {showManualGuide || extInstalled === false ? "Ẩn hướng dẫn" : "Xem hướng dẫn"}
               </button>
@@ -211,36 +211,36 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
 
           {/* Chi tiết 3 bước hướng dẫn kết nối (tự mở nếu chưa cài, hoặc bấm toggle xem) */}
           {(showManualGuide || extInstalled === false) && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 space-y-3 text-xs text-blue-950 animate-in fade-in duration-200">
+            <div className="rounded-xl border border-primary/20 bg-rose-50/70 p-3.5 space-y-3 text-xs text-rose-950 animate-in fade-in duration-200">
               <div className="flex items-center justify-between">
-                <span className="font-bold flex items-center gap-1.5 text-blue-900">
-                  <span className="material-symbols-outlined text-[18px] text-blue-600">help</span>
+                <span className="font-bold flex items-center gap-1.5 text-primary">
+                  <span className="material-symbols-outlined text-[18px] text-primary">help</span>
                   Quy trình 3 bước kết nối tài khoản Facebook bằng Extension:
                 </span>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-primary">
                   Dành cho người mới
                 </span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
                 {/* Bước 1 */}
-                <div className="p-2.5 rounded-lg bg-white border border-blue-100 shadow-2xs flex flex-col justify-between">
+                <div className="p-2.5 rounded-lg bg-white border border-rose-100 shadow-2xs flex flex-col justify-between">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold text-blue-900">
-                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
+                    <div className="flex items-center gap-1.5 font-bold text-primary">
+                      <span className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
                         1
                       </span>
                       <span>Tải & Giải nén</span>
                     </div>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Bấm nút tải file <code className="bg-blue-50 px-1 py-0.5 rounded text-blue-700 font-mono text-[10px]">.zip</code> và giải nén ra 1 thư mục trên máy.
+                      Bấm nút tải file <code className="bg-rose-50 px-1 py-0.5 rounded text-primary font-mono text-[10px]">.zip</code> và giải nén ra 1 thư mục trên máy.
                     </p>
                   </div>
                   <div className="pt-2">
                     <a
                       href="/api-facebook-get-extension.zip"
                       download="api-facebook-get-extension.zip"
-                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition"
+                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-primary text-[10px] font-bold border border-rose-200 transition"
                     >
                       <span className="material-symbols-outlined text-[13px]">download</span>
                       <span>Tải file zip ngay</span>
@@ -249,23 +249,23 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
                 </div>
 
                 {/* Bước 2 */}
-                <div className="p-2.5 rounded-lg bg-white border border-blue-100 shadow-2xs flex flex-col justify-between">
+                <div className="p-2.5 rounded-lg bg-white border border-rose-100 shadow-2xs flex flex-col justify-between">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold text-blue-900">
-                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
+                    <div className="flex items-center gap-1.5 font-bold text-primary">
+                      <span className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
                         2
                       </span>
                       <span>Cài vào Chrome</span>
                     </div>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Vào <code className="bg-blue-50 px-1 py-0.5 rounded text-blue-700 font-mono text-[10px]">chrome://extensions</code> → Bật <b>Developer mode</b> → Bấm <b>Load unpacked</b> chọn thư mục.
+                      Vào <code className="bg-rose-50 px-1 py-0.5 rounded text-primary font-mono text-[10px]">chrome://extensions</code> → Bật <b>Developer mode</b> → Bấm <b>Load unpacked</b> chọn thư mục.
                     </p>
                   </div>
                   <div className="pt-2">
                     <button
                       type="button"
                       onClick={handleCopyExtUrl}
-                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 transition cursor-pointer"
+                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-rose-50 hover:bg-rose-100 text-primary text-[10px] font-bold border border-rose-200 transition cursor-pointer"
                     >
                       <span className="material-symbols-outlined text-[13px]">content_copy</span>
                       <span>Copy link cài đặt</span>
@@ -274,10 +274,10 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
                 </div>
 
                 {/* Bước 3 */}
-                <div className="p-2.5 rounded-lg bg-white border border-blue-100 shadow-2xs flex flex-col justify-between">
+                <div className="p-2.5 rounded-lg bg-white border border-rose-100 shadow-2xs flex flex-col justify-between">
                   <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 font-bold text-blue-900">
-                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
+                    <div className="flex items-center gap-1.5 font-bold text-primary">
+                      <span className="w-5 h-5 rounded-full bg-primary text-white flex items-center justify-center text-[10px] shrink-0 font-bold">
                         3
                       </span>
                       <span>Mở FB & Lấy Cookie</span>
@@ -291,7 +291,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
                       type="button"
                       onClick={handleCaptureFromExtension}
                       disabled={capturing}
-                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold transition cursor-pointer shadow-2xs"
+                      className="w-full inline-flex items-center justify-center gap-1 py-1 rounded-md bg-primary hover:bg-[#a01c3d] text-white text-[10px] font-bold transition cursor-pointer shadow-2xs"
                     >
                       <span className="material-symbols-outlined text-[13px]">bolt</span>
                       <span>Lấy Cookie ngay</span>
@@ -328,7 +328,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
                   "inline-flex items-center gap-1 px-3 py-1.5 rounded-lg font-bold text-[11px] shadow-xs cursor-pointer transition",
                   extInstalled
                     ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                    : "bg-blue-600 hover:bg-blue-700 text-white"
+                    : "bg-primary hover:bg-[#a01c3d] text-white"
                 )}
                 title="Tự động đọc session cookie Facebook đang đăng nhập trong trình duyệt"
               >
@@ -387,7 +387,7 @@ export function MessengerAccountModal({ open, onOpenChange, onSuccess }: Messeng
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={loading}>
               Hủy
             </Button>
-            <Button type="submit" size="sm" className="bg-blue-600 hover:bg-blue-700 text-white font-bold" disabled={loading}>
+            <Button type="submit" size="sm" className="bg-primary hover:bg-[#a01c3d] text-white font-bold" disabled={loading}>
               {loading ? "Đang xác thực..." : "Xác thực & Kết nối"}
             </Button>
           </DialogFooter>

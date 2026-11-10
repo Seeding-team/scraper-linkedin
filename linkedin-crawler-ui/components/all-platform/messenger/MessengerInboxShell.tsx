@@ -353,7 +353,7 @@ export function MessengerInboxShell() {
         <div className="p-3.5 border-b border-outline-variant bg-surface space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+              <div className="w-7 h-7 rounded-lg bg-primary text-white flex items-center justify-center font-bold text-xs shadow-xs">
                 <span className="material-symbols-outlined text-[18px]">chat</span>
               </div>
               <span className="font-bold text-sm text-on-surface">Messenger Nick</span>
@@ -361,7 +361,7 @@ export function MessengerInboxShell() {
             <button
               type="button"
               onClick={() => setShowAccountModal(true)}
-              className="px-2.5 py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center gap-1 cursor-pointer transition shadow-xs"
+              className="px-2.5 py-1 text-xs font-bold bg-primary hover:bg-[#a01c3d] text-white rounded-lg flex items-center gap-1 cursor-pointer transition shadow-xs"
             >
               <span className="material-symbols-outlined text-[15px]">add</span>
               Thêm nick
@@ -372,7 +372,7 @@ export function MessengerInboxShell() {
           <select
             value={selectedAccountId}
             onChange={(e) => setSelectedAccountId(e.target.value)}
-            className="w-full text-xs font-semibold p-2.5 bg-surface border border-outline-variant rounded-xl cursor-pointer focus:ring-2 focus:ring-blue-500/20 text-on-surface"
+            className="w-full text-xs font-semibold p-2.5 bg-surface border border-outline-variant rounded-xl cursor-pointer focus:ring-2 focus:ring-primary/20 text-on-surface"
           >
             {accounts.length === 0 ? (
               <option value="">Chưa có tài khoản Messenger nào</option>
@@ -403,7 +403,7 @@ export function MessengerInboxShell() {
                   <button
                     type="button"
                     onClick={() => handleUnfreeze(selectedAccount.id)}
-                    className="text-[10px] font-bold text-blue-600 hover:underline cursor-pointer"
+                    className="text-[10px] font-bold text-primary hover:underline cursor-pointer"
                   >
                     Rã đông ngay
                   </button>
@@ -424,7 +424,7 @@ export function MessengerInboxShell() {
                       "h-full transition-all duration-300",
                       selectedAccount.daily_sent_count >= selectedAccount.daily_sent_limit
                         ? "bg-amber-500"
-                        : "bg-blue-600"
+                        : "bg-primary"
                     )}
                     style={{
                       width: `${Math.min(100, (selectedAccount.daily_sent_count / (selectedAccount.daily_sent_limit || 1)) * 100)}%`,
@@ -445,7 +445,7 @@ export function MessengerInboxShell() {
               placeholder="Tìm theo tên hoặc ID..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-blue-500"
+              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
             />
           </div>
         </div>
@@ -468,11 +468,11 @@ export function MessengerInboxShell() {
                   className={cn(
                     "p-3.5 flex items-start gap-3 cursor-pointer transition",
                     isSelected
-                      ? "bg-blue-500/10 border-l-4 border-blue-600"
+                      ? "bg-primary/10 border-l-4 border-primary"
                       : "hover:bg-surface-container"
                   )}
                 >
-                  <div className="w-10 h-10 rounded-full bg-blue-600/10 text-blue-700 flex items-center justify-center font-bold text-sm shrink-0 border border-blue-200">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20">
                     {t.recipient_name?.charAt(0).toUpperCase() || "U"}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -507,7 +507,7 @@ export function MessengerInboxShell() {
             {/* Header khung chat */}
             <div className="p-3.5 border-b border-outline-variant flex items-center justify-between bg-surface-container-low">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-full bg-blue-600/10 text-blue-600 flex items-center justify-center font-bold text-sm shrink-0 border border-blue-200">
+                <div className="w-9 h-9 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-sm shrink-0 border border-primary/20">
                   {selectedThread.recipient_name?.charAt(0).toUpperCase() || "U"}
                 </div>
                 <div className="min-w-0">
@@ -521,7 +521,7 @@ export function MessengerInboxShell() {
                       href={`https://facebook.com/${selectedThread.recipient_id}`}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-blue-600 hover:underline flex items-center gap-0.5"
+                      className="text-primary hover:underline flex items-center gap-0.5"
                     >
                       <span>Mở Profile</span>
                       <span className="material-symbols-outlined text-[11px]">open_in_new</span>
@@ -559,7 +559,7 @@ export function MessengerInboxShell() {
                         className={cn(
                           "max-w-[75%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed font-sans shadow-xs",
                           isMe
-                            ? "bg-blue-600 text-white rounded-br-xs"
+                            ? "bg-primary text-white rounded-br-xs"
                             : "bg-surface-container border border-outline-variant text-on-surface rounded-bl-xs"
                         )}
                       >
@@ -621,7 +621,7 @@ export function MessengerInboxShell() {
                                   <div
                                     className={cn(
                                       "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold",
-                                      isMe ? "bg-white/20 text-white" : "bg-blue-500/10 text-blue-600"
+                                      isMe ? "bg-white/20 text-white" : "bg-primary/10 text-primary"
                                     )}
                                   >
                                     <span className="material-symbols-outlined text-[20px]">
@@ -676,9 +676,9 @@ export function MessengerInboxShell() {
 
             {/* Banner theo dõi mô phỏng người thật theo thời gian thực (Step Tracker) */}
             {simulationStep > 0 && (
-              <div className="px-4 py-2.5 bg-blue-50 border-t border-b border-blue-200 text-xs text-blue-900 font-medium flex items-center justify-between animate-pulse">
+              <div className="px-4 py-2.5 bg-rose-50 border-t border-b border-primary/20 text-xs text-rose-950 font-medium flex items-center justify-between animate-pulse">
                 <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px] text-blue-600">
+                  <span className="material-symbols-outlined text-[18px] text-primary">
                     {simulationStep === 1
                       ? "visibility"
                       : simulationStep === 2
@@ -697,7 +697,7 @@ export function MessengerInboxShell() {
                       key={step}
                       className={cn(
                         "w-2 h-2 rounded-full",
-                        step <= simulationStep ? "bg-blue-600" : "bg-blue-200"
+                        step <= simulationStep ? "bg-primary" : "bg-rose-200"
                       )}
                     />
                   ))}
@@ -728,7 +728,7 @@ export function MessengerInboxShell() {
                           setInputText(tpl.content.replace("{post}", "bài viết của bạn"));
                           setShowTemplateMenu(false);
                         }}
-                        className="p-2 text-left text-xs bg-surface border border-outline-variant rounded-lg hover:border-blue-500 hover:bg-blue-50/30 transition cursor-pointer"
+                        className="p-2 text-left text-xs bg-surface border border-outline-variant rounded-lg hover:border-primary hover:bg-rose-50/50 transition cursor-pointer"
                       >
                         <div className="font-bold text-on-surface truncate">{tpl.title}</div>
                         <div className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
@@ -753,7 +753,7 @@ export function MessengerInboxShell() {
                     {pf.kind === "image" && pf.previewUrl ? (
                       <img src={pf.previewUrl} alt="preview" className="w-5 h-5 rounded object-cover" />
                     ) : (
-                      <span className="material-symbols-outlined text-[16px] text-blue-600">draft</span>
+                      <span className="material-symbols-outlined text-[16px] text-primary">draft</span>
                     )}
                     <span className="truncate max-w-[120px] font-medium">{pf.name}</span>
                     <button
@@ -799,7 +799,7 @@ export function MessengerInboxShell() {
                 className="p-2.5 rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface text-xs font-bold flex items-center justify-center cursor-pointer transition shrink-0"
                 title="Gửi hình ảnh"
               >
-                <span className="material-symbols-outlined text-[18px] text-blue-600">image</span>
+                <span className="material-symbols-outlined text-[18px] text-primary">image</span>
               </button>
 
               {/* Nút đính kèm file */}
@@ -820,7 +820,7 @@ export function MessengerInboxShell() {
                 className={cn(
                   "px-3 py-2.5 rounded-xl border border-outline-variant text-xs font-bold flex items-center gap-1 cursor-pointer transition shrink-0",
                   showTemplateMenu
-                    ? "bg-blue-600 text-white border-blue-600"
+                    ? "bg-primary text-white border-primary"
                     : "bg-surface hover:bg-surface-container text-on-surface"
                 )}
                 title="Chọn mẫu câu nhanh"
@@ -835,13 +835,13 @@ export function MessengerInboxShell() {
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 disabled={sending}
-                className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 font-sans"
+                className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-sans"
               />
 
               <button
                 type="submit"
                 disabled={sending || (!inputText.trim() && pendingFiles.length === 0)}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
+                className="px-5 py-2.5 bg-primary hover:bg-[#a01c3d] disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
               >
                 <span className="material-symbols-outlined text-[16px]">send</span>
                 {sending ? "Đang xử lý..." : "Gửi tin"}
@@ -850,7 +850,7 @@ export function MessengerInboxShell() {
           </>
         ) : accounts.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 max-w-xl mx-auto space-y-4">
-            <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold shadow-xs">
+            <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-bold shadow-xs">
               <span className="material-symbols-outlined text-[36px]">mark_chat_unread</span>
             </div>
             
@@ -866,24 +866,24 @@ export function MessengerInboxShell() {
             {/* Khối tóm tắt 3 bước Onboarding */}
             <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-2.5 text-left p-3.5 bg-surface-container-low rounded-xl border border-outline-variant">
               <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
-                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">1</span>
+                <div className="flex items-center gap-1.5 font-bold text-xs text-primary">
+                  <span className="w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center text-[9px]">1</span>
                   <span>Tải Extension</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground">Tải file .zip và giải nén ra thư mục máy tính.</p>
               </div>
 
               <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
-                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">2</span>
+                <div className="flex items-center gap-1.5 font-bold text-xs text-primary">
+                  <span className="w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center text-[9px]">2</span>
                   <span>Cài vào Trình duyệt</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground">Vào chrome://extensions bật Developer mode và Load unpacked.</p>
               </div>
 
               <div className="space-y-1 p-2 rounded-lg bg-surface border border-outline-variant">
-                <div className="flex items-center gap-1.5 font-bold text-xs text-blue-600">
-                  <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px]">3</span>
+                <div className="flex items-center gap-1.5 font-bold text-xs text-primary">
+                  <span className="w-4 h-4 rounded-full bg-primary text-white flex items-center justify-center text-[9px]">3</span>
                   <span>1-Click Kết nối</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground">Đăng nhập FB và bấm nút Lấy tự động bằng Extension.</p>
@@ -895,7 +895,7 @@ export function MessengerInboxShell() {
               <button
                 type="button"
                 onClick={() => setShowAccountModal(true)}
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs"
+                className="px-4 py-2.5 bg-primary hover:bg-[#a01c3d] text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs"
               >
                 <span className="material-symbols-outlined text-[16px]">add</span>
                 <span>+ Thêm tài khoản Facebook ngay</span>
@@ -907,14 +907,14 @@ export function MessengerInboxShell() {
                 className="px-3.5 py-2.5 bg-surface hover:bg-surface-container border border-outline-variant text-on-surface font-bold text-xs rounded-xl flex items-center gap-1.5 transition"
                 title="Tải gói tiện ích cài vào Chrome"
               >
-                <span className="material-symbols-outlined text-[16px] text-blue-600">download</span>
+                <span className="material-symbols-outlined text-[16px] text-primary">download</span>
                 <span>Tải Extension (.zip)</span>
               </a>
             </div>
           </div>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-muted-foreground">
-            <div className="w-16 h-16 rounded-2xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold mb-3 shadow-xs">
+            <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary flex items-center justify-center font-bold mb-3 shadow-xs">
               <span className="material-symbols-outlined text-[36px]">forum</span>
             </div>
             <p className="text-base font-bold text-on-surface">Chọn một cuộc trò chuyện để bắt đầu</p>
