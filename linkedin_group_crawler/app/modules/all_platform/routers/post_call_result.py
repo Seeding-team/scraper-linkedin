@@ -13,6 +13,7 @@ from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.post_call_result import PostCallResultUpdate
 from app.modules.all_platform.services.post_call_result_service import (
     get_call_result,
+    get_call_result_stats,
     update_call_result,
 )
 
@@ -21,6 +22,34 @@ router = APIRouter()
 
 def _error(exc: Exception) -> BaseResponse:
     return BaseResponse(success=False, message=str(exc))
+
+
+@router.get("/call-results/stats")
+def get_post_call_result_stats(
+    date_from: Optional[str] = Query(None, description="YYYY-MM-DD, giờ VN. Mặc định 30 ngày trước date_to."),
+    date_to: Optional[str] = Query(None, description="YYYY-MM-DD, giờ VN. Mặc định hôm nay."),
+    platform: Optional[str] = Query(None),
+    member_id: Optional[str] = Query(None, description="Chỉ admin/leader dùng để lọc theo 1 thành viên."),
+    result_code: Optional[str] = Query(None, description="Lọc by_member/by_day theo đúng loại này (khớp pill FE đang chọn)."),
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    """Thống kê Kết quả liên hệ theo loại / theo thành viên / theo ngày.
+
+    Route này KHÔNG trùng `/{post_id}/call-result` (khác số segment đường dẫn)
+    nên không cần quan tâm thứ tự khai báo route.
+    """
+    try:
+        data = get_call_result_stats(
+            user,
+            date_from=date_from,
+            date_to=date_to,
+            platform=platform,
+            member_id=member_id,
+            result_code=result_code,
+        )
+        return BaseResponse(success=True, data=data, message="Thành công")
+    except Exception as exc:
+        return _error(exc)
 
 
 @router.get("/{post_id}/call-result")

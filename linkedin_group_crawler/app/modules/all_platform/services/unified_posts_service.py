@@ -126,6 +126,7 @@ def _fetch_posts(
     sort: str = "latest",
     page: int = 1,
     page_size: int = 20,
+    call_result_code: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Fetch posts from a single table with full filter + sort + pagination.
 
@@ -149,6 +150,7 @@ def _fetch_posts(
             sort=sort,
             page=page,
             page_size=page_size,
+            call_result_code=call_result_code,
         )
 
     sb = _supabase()
@@ -257,6 +259,10 @@ def _fetch_posts(
 
     if search:
         query = query.ilike("content", f"%{search}%")
+
+    if call_result_code:
+        matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     # Sort
     if sort == "lead_score_high":
@@ -524,6 +530,25 @@ _TABLE_PLATFORM = {
 _PLATFORM_TABLE = {v: k for k, v in _TABLE_PLATFORM.items()}
 
 
+def _resolve_post_ids_by_call_result(sb: Client, table: str, call_result_code: str) -> list[str]:
+    """post_id (= id của bảng post gốc) đã được gán `result_code` này, đúng platform của `table`.
+
+    `post_call_results.post_id` lưu dạng string (xem post_call_result_service.py),
+    khớp thẳng với cột `id` của facebook_posts/linkedin_posts/threads_posts/youtube_posts.
+    """
+    platform = _TABLE_PLATFORM.get(table)
+    if not platform:
+        return []
+    res = (
+        sb.table("post_call_results")
+        .select("post_id")
+        .eq("platform", platform)
+        .eq("result_code", call_result_code)
+        .execute()
+    )
+    return [str(r["post_id"]) for r in (res.data or []) if r.get("post_id")]
+
+
 def _fetch_keyword_posts(
     *,
     table: str,
@@ -536,6 +561,7 @@ def _fetch_keyword_posts(
     sort: str,
     page: int,
     page_size: int,
+    call_result_code: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Bài Threads/YouTube (bảng threads_posts/youtube_posts, cào qua "Markee Seeding Extension").
 
@@ -570,6 +596,10 @@ def _fetch_keyword_posts(
         query = query.lte(time_col, norm_to)
     if search:
         query = query.ilike("content", f"%{search}%")
+
+    if call_result_code:
+        matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if sort == "lead_score_high":
         query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order(time_col, desc=True, nullsfirst=False)
@@ -953,6 +983,7 @@ def get_unified_posts(
     sort: str = "latest",
     page: int = 1,
     page_size: int = 20,
+    call_result_code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fetch posts from one or all platforms, fully filtered server-side."""
     platforms_to_fetch = _tables_for_platform(platform)
@@ -989,6 +1020,7 @@ def get_unified_posts(
                 sort=db_sort,
                 page=1,
                 page_size=combined_limit,
+                call_result_code=call_result_code,
             )
             # Add platform tag
             platform_name = table.replace("_posts", "")
@@ -1045,6 +1077,7 @@ def get_unified_posts(
             sort=db_sort,
             page=page,
             page_size=page_size,
+            call_result_code=call_result_code,
         )
         platform_name = table.replace("_posts", "")
         for p in posts:
@@ -1252,6 +1285,7 @@ def filter_unified_posts(
     sort: str = "latest",
     page: int = 1,
     page_size: int = 20,
+    call_result_code: Optional[str] = None,
 ) -> dict[str, Any]:
     """Filter posts with ALL criteria applied server-side in Supabase."""
     date_from = date_from or date
@@ -1272,6 +1306,7 @@ def filter_unified_posts(
         sort=sort,
         page=page,
         page_size=page_size,
+        call_result_code=call_result_code,
     )
 
 
