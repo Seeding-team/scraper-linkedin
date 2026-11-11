@@ -1241,6 +1241,7 @@ export const allPlatformPostsService = {
     content_type?: string;
     product_seeding?: string;
     id_member?: string;
+    call_result_code?: string;
     search?: string;
     sort?: string;
     page?: number;
@@ -3021,6 +3022,33 @@ export const postEvaluationService = {
   },
 };
 
+export interface CallResultStatsByType {
+  code: string;
+  name: string;
+  sort_order: number;
+  count: number;
+}
+
+export interface CallResultStatsByMember {
+  member_id: string;
+  name: string | null;
+  email: string | null;
+  count: number;
+}
+
+export interface CallResultStatsByDay {
+  day: string;
+  count: number;
+}
+
+export interface CallResultStats {
+  by_type: CallResultStatsByType[];
+  by_member: CallResultStatsByMember[];
+  by_day: CallResultStatsByDay[];
+  total: number;
+  range: { start: string; end: string };
+}
+
 export const postCallResultService = {
   getCallResult: (postId: string, platform: string = "facebook"): Promise<ApiResponse<any>> => {
     return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result?platform=${encodeURIComponent(platform)}`);
@@ -3037,6 +3065,24 @@ export const postCallResultService = {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
+  },
+
+  /** Thống kê Kết quả liên hệ theo loại / theo thành viên / theo ngày. */
+  getStats: (params?: {
+    date_from?: string;
+    date_to?: string;
+    platform?: string;
+    member_id?: string;
+    result_code?: string;
+  }): Promise<ApiResponse<CallResultStats>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.date_from) searchParams.set("date_from", params.date_from);
+    if (params?.date_to) searchParams.set("date_to", params.date_to);
+    if (params?.result_code) searchParams.set("result_code", params.result_code);
+    if (params?.platform) searchParams.set("platform", params.platform);
+    if (params?.member_id) searchParams.set("member_id", params.member_id);
+    const qs = searchParams.toString();
+    return requestJson(`${BASE}/posts/call-results/stats${qs ? `?${qs}` : ""}`);
   },
 };
 
