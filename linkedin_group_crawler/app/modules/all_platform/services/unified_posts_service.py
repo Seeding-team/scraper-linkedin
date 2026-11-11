@@ -92,8 +92,22 @@ def retry_on_winerror(func):
         return execute_supabase_query(lambda: func(*args, **kwargs))
     return wrapper
 
-@retry_on_winerror
 
+def _normalize_vn_date_bounds(
+    date_from: Optional[str],
+    date_to: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Chuẩn hoá chuỗi ngày YYYY-MM-DD sang đầu ngày / cuối ngày theo múi giờ Việt Nam (+07:00)."""
+    norm_from = (date_from or "").strip() or None
+    norm_to = (date_to or "").strip() or None
+    if norm_from and len(norm_from) == 10 and "T" not in norm_from:
+        norm_from = f"{norm_from}T00:00:00+07:00"
+    if norm_to and len(norm_to) == 10 and "T" not in norm_to:
+        norm_to = f"{norm_to}T23:59:59.999+07:00"
+    return norm_from, norm_to
+
+
+@retry_on_winerror
 def _fetch_posts(
     *,
     table: str,
@@ -159,10 +173,11 @@ def _fetch_posts(
             # linkedin_posts does not have email_crawl, we must resolve via linkedin_groups
             pass # handled below in group_ids resolution
 
-    if date_from:
-        query = query.gte("crawl_date", date_from)
-    if date_to:
-        query = query.lte("crawl_date", date_to)
+    norm_from, norm_to = _normalize_vn_date_bounds(date_from, date_to)
+    if norm_from:
+        query = query.gte("crawl_date", norm_from)
+    if norm_to:
+        query = query.lte("crawl_date", norm_to)
 
     # Resolve taxonomy filters via groups table
     group_ids: list[str] | None = None
@@ -536,18 +551,21 @@ def _fetch_keyword_posts(
         else:
             allowed_member_ids = ["00000000-0000-0000-0000-000000000000"]
 
+    norm_from, norm_to = _normalize_vn_date_bounds(date_from, date_to)
+    time_col = "post_time" if table == "threads_posts" else "crawl_date"
+
     query = sb.table(table).select("*", count="exact")
     if allowed_member_ids is not None:
         query = query.in_("id_member", allowed_member_ids or ["00000000-0000-0000-0000-000000000000"])
-    if date_from:
-        query = query.gte("crawl_date", date_from)
-    if date_to:
-        query = query.lte("crawl_date", date_to)
+    if norm_from:
+        query = query.gte(time_col, norm_from)
+    if norm_to:
+        query = query.lte(time_col, norm_to)
     if search:
         query = query.ilike("content", f"%{search}%")
 
     if sort == "lead_score_high":
-        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
+        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order(time_col, desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
@@ -558,7 +576,10 @@ def _fetch_keyword_posts(
     elif sort == "crawler":
         query = query.order("id_member", desc=False, nullsfirst=False)
     else:  # latest
-        query = query.order("crawl_date", desc=True, nullsfirst=False)
+        if table == "threads_posts":
+            query = query.order("post_time", desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
+        else:
+            query = query.order("crawl_date", desc=True, nullsfirst=False)
 
     offset = (page - 1) * page_size
     result = query.range(offset, offset + page_size - 1).execute()
@@ -768,15 +789,16 @@ def _fetch_stats(
     # nhau) truoc day chay tuan tu tung cai mot (~6 round-trip Supabase noi
     # tiep) - gop lai chay song song bang thread pool, giam tu ~6 round-trip
     # tuan tu con lai bang thoi gian cua request cham nhat.
-    today_start, today_end = f"{today}T00:00:00Z", f"{today}T23:59:59Z"
-    yesterday_start, yesterday_end = f"{yesterday}T00:00:00Z", f"{yesterday}T23:59:59Z"
+    today_start, today_end = f"{today}T00:00:00+07:00", f"{today}T23:59:59.999+07:00"
+    yesterday_start, yesterday_end = f"{yesterday}T00:00:00+07:00", f"{yesterday}T23:59:59.999+07:00"
+    stats_time_col = "post_time" if table == "threads_posts" else "crawl_date"
 
     def _today_count():
-        r = apply_scope(sb.table(table).select("id", count="exact").gte("crawl_date", today_start).lte("crawl_date", today_end)).execute()
+        r = apply_scope(sb.table(table).select("id", count="exact").gte(stats_time_col, today_start).lte(stats_time_col, today_end)).execute()
         return r.count or 0
 
     def _yesterday_count():
-        r = apply_scope(sb.table(table).select("id", count="exact").gte("crawl_date", yesterday_start).lte("crawl_date", yesterday_end)).execute()
+        r = apply_scope(sb.table(table).select("id", count="exact").gte(stats_time_col, yesterday_start).lte(stats_time_col, yesterday_end)).execute()
         return r.count or 0
 
     def _total_count():
@@ -973,7 +995,7 @@ def get_unified_posts(
         if sort == "lead_score_high":
             # Loc >=80 da ap dung o tung _fetch_posts()/_fetch_threads_posts() phia tren
             # (truyen qua db_sort) - o day chi can gop lai va sap theo THOI GIAN moi nhat.
-            all_posts.sort(key=lambda p: str(p.get("crawl_date") or ""), reverse=True)
+            all_posts.sort(key=lambda p: str(p.get("post_time") or p.get("posted_at") or p.get("crawl_date") or ""), reverse=True)
         elif sort == "score_high":
             all_posts.sort(key=lambda p: p.get("score", 0), reverse=True)
         elif sort == "score_low":
@@ -982,11 +1004,11 @@ def get_unified_posts(
             all_posts.sort(key=lambda p: (p.get("reactions", 0) + p.get("comments", 0) + p.get("shares", 0)), reverse=True)
         elif sort == "crawler":
             def get_crawler_key(p):
-                return (p.get("crawler_team") or "zzz", p.get("crawler_name") or "zzz", str(p.get("crawl_date") or ""))
+                return (p.get("crawler_team") or "zzz", p.get("crawler_name") or "zzz", str(p.get("post_time") or p.get("crawl_date") or ""))
             all_posts.sort(key=get_crawler_key, reverse=False)
         else: # newest / latest
             def get_date_key(p):
-                dt = p.get("crawl_date")
+                dt = p.get("post_time") or p.get("posted_at") or p.get("crawl_date")
                 if not dt:
                     return ""
                 return str(dt)

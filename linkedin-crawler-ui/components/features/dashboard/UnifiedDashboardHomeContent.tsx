@@ -54,8 +54,22 @@ function getVietnamNow(): Date {
   return new Date(Date.now() + VIETNAM_OFFSET_HOURS * 60 * 60 * 1000);
 }
 
+function getVietnamDateOffsetStr(daysOffset = 0): string {
+  const d = new Date(Date.now() + daysOffset * 86400000);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(d);
+  const y = parts.find((p) => p.type === "year")?.value;
+  const m = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return `${y}-${m}-${day}`;
+}
+
 function getVietnamDateStr(): string {
-  return getVietnamNow().toISOString().split("T")[0];
+  return getVietnamDateOffsetStr(0);
 }
 
 function getVietnamYesterdayStr(): string {
@@ -684,20 +698,14 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       let dateTo: string | undefined;
 
       if (filters.dateRange === "today") {
-        dateFrom = new Date().toISOString().split("T")[0];
+        dateFrom = getVietnamDateOffsetStr(0);
       } else if (filters.dateRange === "yesterday") {
-        const d = new Date();
-        d.setDate(d.getDate() - 1);
-        dateFrom = d.toISOString().split("T")[0];
+        dateFrom = getVietnamDateOffsetStr(-1);
         dateTo = dateFrom;
       } else if (filters.dateRange === "7days") {
-        const d = new Date();
-        d.setDate(d.getDate() - 7);
-        dateFrom = d.toISOString().split("T")[0];
+        dateFrom = getVietnamDateOffsetStr(-7);
       } else if (filters.dateRange === "30days") {
-        const d = new Date();
-        d.setDate(d.getDate() - 30);
-        dateFrom = d.toISOString().split("T")[0];
+        dateFrom = getVietnamDateOffsetStr(-30);
       }
 
       // Mac dinh nap 50 bai/lan de luon co du du lieu san trong bo nho cho cac tab con

@@ -278,6 +278,7 @@
                     apiBase: cfg.apiBase,
                     idMember: cfg.idMember,
                     postLimit: maxPosts || 20,
+                    maxAgeDays: Number(cfg.maxAgeDays) > 0 ? Math.floor(Number(cfg.maxAgeDays)) : 7,
                     groupRestSec,
                     scrollDistance,
                     scrollDelayMinMs,

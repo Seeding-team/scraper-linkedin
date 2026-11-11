@@ -137,7 +137,14 @@ export function PostDetailModal({
                 {post.tier !== undefined && <span className="rounded bg-orange-50 px-2 py-0.5 text-xs font-bold text-orange-600">Tier {post.tier}</span>}
               </div>
               <span className="text-xs text-muted-foreground font-medium block mt-2">
-                Tác giả: <span className="font-bold text-foreground">{post.author || "Người tham gia ẩn danh"}</span> • Đăng lúc: {post.post_time ? new Date(post.post_time).toLocaleString("vi-VN") : "Không rõ"} • Cào lúc: {post.crawl_date ? new Date(post.crawl_date).toLocaleString("vi-VN") : ""}
+                Tác giả: <span className="font-bold text-foreground">{post.author || "Người tham gia ẩn danh"}</span> • Đăng lúc:{" "}
+                {(post.post_time || post.posted_at)
+                  ? new Date((post.post_time || post.posted_at)!).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+                  : "Không rõ"}{" "}
+                • Cào lúc:{" "}
+                {post.crawl_date
+                  ? new Date(post.crawl_date).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+                  : ""}
               </span>
             </div>
           </div>

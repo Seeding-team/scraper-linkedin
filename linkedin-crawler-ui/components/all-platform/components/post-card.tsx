@@ -107,14 +107,24 @@ function extractPhoneNumberFromContent(content?: string | null): string | null {
   return null;
 }
 
-// Helper formatting post publication and crawl timestamps
+// Helper formatting post publication and crawl timestamps (Vietnam Timezone UTC+7)
 function formatPostDateTime(dateStr?: string | null) {
   if (!dateStr) return null;
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return null;
-    const timeStr = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
-    const dateFormatted = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const timeStr = d.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
+    const dateFormatted = d.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      timeZone: 'Asia/Ho_Chi_Minh',
+    });
     return {
       full: `${timeStr} · ${dateFormatted}`,
       time: timeStr,
@@ -450,8 +460,8 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
           <div className="shrink-0 text-right leading-tight">
               {(() => {
                 const pubDt = formatPostDateTime(post.post_time || post.posted_at);
-                const crawlFormatted = post.crawl_date ? new Date(post.crawl_date).toLocaleDateString('vi-VN') : '';
-                
+                const crawlDt = formatPostDateTime(post.crawl_date);
+
                 if (pubDt) {
                   return (
                     <div className="flex flex-col items-end">
@@ -462,12 +472,12 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                         <span className="text-slate-400 font-normal">🕒</span>
                         <span>{pubDt.full}</span>
                       </span>
-                      {crawlFormatted && crawlFormatted !== pubDt.date && (
+                      {crawlDt && crawlDt.date !== pubDt.date && (
                         <span
                           className="text-[11px] text-muted-foreground/75 font-normal"
-                          title={`Thời gian cào về hệ thống: ${crawlFormatted}`}
+                          title={`Thời gian cào về hệ thống: ${crawlDt.full}`}
                         >
-                          Cào: {crawlFormatted}
+                          Cào: {crawlDt.date}
                         </span>
                       )}
                     </div>
@@ -475,8 +485,11 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 }
 
                 return (
-                  <span className="text-sm text-muted-foreground font-medium">
-                    {crawlFormatted}
+                  <span
+                    className="text-xs sm:text-sm text-muted-foreground font-medium"
+                    title="Bài viết không rõ giờ đăng gốc — hiển thị thời gian cào về hệ thống"
+                  >
+                    {crawlDt ? `Cào: ${crawlDt.full}` : ""}
                   </span>
                 );
               })()}

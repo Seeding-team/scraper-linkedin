@@ -31,6 +31,9 @@
     const store = new Map();
     // Danh sách post_url đã xác định là bình luận/reply để chặn cả ở API, JSON và DOM.
     const knownReplyUrls = new Set();
+    // Danh sách post_url đã xác định là quá hạn maxAgeDays để không đếm vào store.size làm dừng cuộn sớm.
+    const knownOldUrls = new Set();
+    let activeMaxAgeDays = 7;
     const stats = { domEnriched: 0, apiResponses: 0 };
     const apiNames = new Map();
     let parsedScripts = new WeakSet();
@@ -101,8 +104,95 @@
         return Math.round(num * mul);
     }
 
+    function normalizeTakenAtIso(rawTakenAt) {
+        if (rawTakenAt == null || rawTakenAt === '') return null;
+        const num = Number(rawTakenAt);
+        if (!Number.isFinite(num) || num <= 0) return null;
+        // Hỗ trợ cả unix seconds (10 chữ số) và milliseconds (13 chữ số)
+        const ms = num > 1e12 ? num : num * 1000;
+        // Chỉ nhận mốc thời gian hợp lý (từ năm 2023 đến hiện tại + 1 ngày)
+        if (ms < 1672531200000 || ms > Date.now() + 86400000) return null;
+        return new Date(ms).toISOString();
+    }
+
+    function isPostTooOld(postTimeIso) {
+        if (!activeMaxAgeDays || activeMaxAgeDays <= 0) return false;
+        if (!postTimeIso) return false;
+        const ts = new Date(postTimeIso).getTime();
+        if (!Number.isFinite(ts)) return false;
+        const cutoffMs = Date.now() - activeMaxAgeDays * 86400000;
+        return ts < cutoffMs;
+    }
+
+    function parseThreadsDomTime(timeEl, fallbackLabel) {
+        if (timeEl) {
+            const dtAttr = (timeEl.getAttribute('datetime') || '').trim();
+            if (dtAttr) {
+                const parsed = new Date(dtAttr);
+                if (!isNaN(parsed.getTime())) return parsed.toISOString();
+            }
+        }
+        const raw = String(
+            (timeEl && (timeEl.getAttribute('title') || timeEl.getAttribute('aria-label') || timeEl.innerText || timeEl.textContent)) ||
+            fallbackLabel ||
+            ''
+        ).trim();
+        if (!raw) return null;
+
+        const direct = new Date(raw);
+        if (!isNaN(direct.getTime()) && raw.length >= 8 && /\d{4}/.test(raw)) {
+            return direct.toISOString();
+        }
+
+        const lower = raw.toLowerCase();
+        const now = Date.now();
+        if (/^(vừa xong|bây giờ|just now|now)$/i.test(lower)) {
+            return new Date(now).toISOString();
+        }
+        if (/^(hôm qua|yesterday)$/i.test(lower)) {
+            return new Date(now - 86400000).toISOString();
+        }
+
+        // Khớp tương đối: "5s", "10 giây", "15m", "15 phút", "2h", "2 giờ", "3d", "3 ngày", "1w", "1 tuần"
+        let m = lower.match(/^(\d+)\s*(s|sec|secs|giây|giay)\b/i);
+        if (m) return new Date(now - Number(m[1]) * 1000).toISOString();
+
+        m = lower.match(/^(\d+)\s*(m|min|mins|minute|minutes|phút|phut|ph)\b/i);
+        if (m) return new Date(now - Number(m[1]) * 60000).toISOString();
+
+        m = lower.match(/^(\d+)\s*(h|hr|hrs|hour|hours|giờ|gio|g)\b/i);
+        if (m) return new Date(now - Number(m[1]) * 3600000).toISOString();
+
+        m = lower.match(/^(\d+)\s*(d|day|days|ngày|ngay|ng)\b/i);
+        if (m) return new Date(now - Number(m[1]) * 86400000).toISOString();
+
+        m = lower.match(/^(\d+)\s*(w|wk|wks|week|weeks|tuần|tuan)\b/i);
+        if (m) return new Date(now - Number(m[1]) * 7 * 86400000).toISOString();
+
+        // Định dạng dd/MM/yyyy hoặc dd-MM-yyyy (hoặc dd/MM trong năm hiện tại)
+        m = lower.match(/^(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?$/);
+        if (m) {
+            const day = Number(m[1]);
+            const month = Number(m[2]) - 1;
+            let year = m[3] ? Number(m[3]) : new Date(now).getFullYear();
+            if (year < 100) year += 2000;
+            const constructed = new Date(year, month, day, 12, 0, 0);
+            if (!isNaN(constructed.getTime())) return constructed.toISOString();
+        }
+
+        return null;
+    }
+
     function upsert(post, source) {
-        if (!post || !post.post_url || knownReplyUrls.has(post.post_url)) return;
+        if (!post || !post.post_url || knownReplyUrls.has(post.post_url) || knownOldUrls.has(post.post_url)) return;
+        if (post.post_time && isPostTooOld(post.post_time)) {
+            knownOldUrls.add(post.post_url);
+            if (store.has(post.post_url)) {
+                store.delete(post.post_url);
+                pendingStream.delete(post.post_url);
+            }
+            return;
+        }
         const rank = SOURCE_RANK[source];
         const cur = store.get(post.post_url);
         if (!cur) {
@@ -146,9 +236,11 @@
     }
 
     function isPostObject(o) {
+        if (!o || typeof o !== 'object') return false;
+        const takenAtIso = normalizeTakenAtIso(o.taken_at);
         return (
             typeof o.code === 'string' &&
-            typeof o.taken_at === 'number' &&
+            takenAtIso !== null &&
             o.user && typeof o.user === 'object' &&
             typeof o.user.username === 'string'
         );
@@ -211,13 +303,16 @@
         }
         const video = Array.isArray(o.video_versions) && o.video_versions[0] && o.video_versions[0].url;
 
+        const postTimeIso = normalizeTakenAtIso(o.taken_at);
+        if (!postTimeIso) return null;
+
         return {
             post_url: `https://www.threads.com/@${username}/post/${code}`,
             author_username: username,
             author_name: typeof o.user.full_name === 'string' ? o.user.full_name : '',
             author_avatar: (o.user && typeof o.user.profile_pic_url === 'string') ? o.user.profile_pic_url : null,
             content: content,
-            post_time: new Date(o.taken_at * 1000).toISOString(),
+            post_time: postTimeIso,
             reactions: toInt(o.like_count),
             comments: toInt(info.direct_reply_count),
             shares: toInt(info.repost_count) + toInt(info.quote_count),
@@ -295,15 +390,20 @@
 
     // ── Nguồn DOM ────────────────────────────────────────────────────────────
 
-    // Bài chính của 1 khung: thẻ <time> đầu tiên nằm trong link /@user/post/code (bài
-    // được trích dẫn lồng bên dưới cũng có link + time riêng nhưng đứng sau).
+    // Bài chính của 1 khung: thẻ <time> đầu tiên nằm trong link /@user/post/code thuộc đúng khung `box`
+    // (loại trừ bài trích dẫn / quoted post nằm trong khung con `[data-pressable-container]` lồng bên dưới).
     function mainPostLink(box) {
-        for (const time of box.querySelectorAll('time[datetime]')) {
+        for (const time of box.querySelectorAll('time')) {
+            if (time.closest('[data-pressable-container]') !== box) continue;
             const a = time.closest('a[href*="/post/"]');
             if (a && POST_HREF_RE.test(a.getAttribute('href') || '')) return { link: a, time };
         }
-        const a = Array.from(box.querySelectorAll('a[href*="/post/"]')).find((el) => POST_HREF_RE.test(el.getAttribute('href') || ''));
-        return a ? { link: a, time: null } : null;
+        const a = Array.from(box.querySelectorAll('a[href*="/post/"]')).find(
+            (el) => el.closest('[data-pressable-container]') === box && POST_HREF_RE.test(el.getAttribute('href') || '')
+        );
+        if (!a) return null;
+        const innerTime = a.querySelector('time') || Array.from(box.querySelectorAll('time')).find((t) => t.closest('[data-pressable-container]') === box) || null;
+        return { link: a, time: innerTime };
     }
 
     function readActionCounts(box) {
@@ -392,7 +492,8 @@
                 return;
             }
 
-            const timeLabel = found.time ? (found.time.innerText || '').trim() : '';
+            const timeLabel = found.time ? (found.time.innerText || found.time.textContent || '').trim() : (found.link.innerText || '').trim();
+            const parsedDomTime = parseThreadsDomTime(found.time, timeLabel);
             // DOM không thấy tên hiển thị tách biệt với username -> để trống, finalize() điền.
             const counts = readActionCounts(box);
             const video = box.querySelector('video[src]');
@@ -404,7 +505,7 @@
                 author_name: '',
                 author_avatar: avatarUrl || null,
                 content: readContent(box, m[1], timeLabel),
-                post_time: found.time ? found.time.getAttribute('datetime') : null,
+                post_time: parsedDomTime,
                 reactions: counts.reactions,
                 comments: counts.comments,
                 shares: counts.shares,
@@ -457,6 +558,7 @@
             lastTrackedHref = window.location.href;
             store.clear();
             knownReplyUrls.clear();
+            knownOldUrls.clear();
             pendingStream.clear();
             parsedScripts = new WeakSet();
             stats.domEnriched = 0;
@@ -677,6 +779,7 @@ function humanSmoothScroll(targetDelta, durationMs = 800) {
         if (msg && msg.action === 'MK_TH_COLLECT_POSTS') {
             const target = Math.max(1, Number(msg.targetCount) || 60);
             const maxScrolls = Math.max(0, Number(msg.maxScrolls) || 15);
+            activeMaxAgeDays = Number(msg.maxAgeDays) > 0 ? Math.floor(Number(msg.maxAgeDays)) : 7;
             collect(target, maxScrolls)
                 .then(sendResponse)
                 .catch((err) => {

@@ -52,19 +52,36 @@ def normalize_threads_post_url(url: Optional[str]) -> Optional[tuple[str, str, s
 
 
 def _parse_post_time(raw: Any) -> Optional[datetime]:
-    """Nhận ISO string (extension gửi) hoặc unix seconds; trả datetime UTC hoặc None."""
+    """Nhận ISO string (extension gửi) hoặc unix seconds/ms; trả datetime UTC hoặc None."""
     if raw is None or raw == "":
         return None
     try:
+        now_utc = datetime.now(timezone.utc)
         if isinstance(raw, (int, float)):
-            return datetime.fromtimestamp(float(raw), tz=timezone.utc)
-        text = str(raw).strip()
-        if text.isdigit():
-            return datetime.fromtimestamp(int(text), tz=timezone.utc)
-        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            val = float(raw)
+            if val > 1e12:
+                val = val / 1000.0
+            dt = datetime.fromtimestamp(val, tz=timezone.utc)
+        else:
+            text = str(raw).strip()
+            if text.isdigit():
+                val = float(text)
+                if val > 1e12:
+                    val = val / 1000.0
+                dt = datetime.fromtimestamp(val, tz=timezone.utc)
+            else:
+                dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.astimezone(timezone.utc)
+        # Chặn mốc thời gian rác (< 2023) hoặc lệch tương lai
+        if dt.year < 2023:
+            return None
+        if dt > now_utc + timedelta(hours=2):
+            return None
+        if dt > now_utc:
+            dt = now_utc
+        return dt
     except (ValueError, OverflowError, OSError):
         return None
 
@@ -142,7 +159,8 @@ def save_threads_crawl_batch(
 
     limit = post_limit if post_limit and post_limit > 0 else DEFAULT_POST_LIMIT
     limit = min(limit, MAX_POST_LIMIT)
-    cutoff = now - timedelta(days=max_age_days) if max_age_days and max_age_days > 0 else None
+    effective_max_age_days = max_age_days if (max_age_days and max_age_days > 0) else 7
+    cutoff = now - timedelta(days=effective_max_age_days)
 
     # 1 + 2a. Chuẩn hoá, bỏ URL lạ + trùng trong batch
     candidates: dict[str, dict] = {}
@@ -209,8 +227,8 @@ def save_threads_crawl_batch(
 
     fresh = [p for url, p in candidates.items() if url not in existing]
 
-    # 4. Ưu tiên bài nhiều tương tác, giới hạn số bài
-    fresh.sort(key=_engagement_score, reverse=True)
+    # 4. Ưu tiên bài mới đăng nhất (post_time giảm dần), cùng thời điểm thì ưu tiên tương tác cao
+    fresh.sort(key=lambda p: (str(p.get("post_time") or ""), _engagement_score(p)), reverse=True)
     selected = fresh[:limit]
 
     # Master Mandate 2026-11-04: Khử trùng lặp nội dung bài viết Threads (Content Deduplication)

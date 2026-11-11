@@ -72,8 +72,13 @@
         return `https://www.threads.com/search?${params.toString()}`;
     }
 
-    async function collectFromTab(tabId, targetCount, maxScrolls = 15) {
-        const message = { action: "MK_TH_COLLECT_POSTS", targetCount, maxScrolls: Number(maxScrolls) > 0 ? Number(maxScrolls) : 15 };
+    async function collectFromTab(tabId, targetCount, maxScrolls = 15, maxAgeDays = 7) {
+        const message = {
+            action: "MK_TH_COLLECT_POSTS",
+            targetCount,
+            maxScrolls: Number(maxScrolls) > 0 ? Number(maxScrolls) : 15,
+            maxAgeDays: Number(maxAgeDays) > 0 ? Math.floor(Number(maxAgeDays)) : 7,
+        };
         try {
             return await chrome.tabs.sendMessage(tabId, message);
         } catch (e) {
@@ -122,7 +127,7 @@
         if (config.dashboardTabId != null) dashboardTabId = config.dashboardTabId;
         const apiBase = config.apiBase || DEFAULT_API_BASE;
         const postLimit = Number(config.postLimit) > 0 ? Math.min(100, Math.floor(Number(config.postLimit))) : 20;
-        const maxAgeDays = Number(config.maxAgeDays) > 0 ? Math.floor(Number(config.maxAgeDays)) : null;
+        const maxAgeDays = Number(config.maxAgeDays) > 0 ? Math.floor(Number(config.maxAgeDays)) : 7;
         const sortRecent = config.sortRecent !== false;
         // Gom dư ra (x3) vì backend còn lọc bài trùng/bài cũ rồi mới cắt theo post_limit.
         const targetCount = Math.min(Math.max(postLimit * 3, 30), 150);
@@ -174,7 +179,7 @@
 
                 let result;
                 try {
-                    result = await collectFromTab(crawlTabId, targetCount, config.maxScrolls || 15);
+                    result = await collectFromTab(crawlTabId, targetCount, config.maxScrolls || 15, maxAgeDays);
                 } catch (e) {
                     log(`Không đọc được trang kết quả: ${e.message}`, "error");
                     continue;

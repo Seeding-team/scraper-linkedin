@@ -15,6 +15,29 @@ interface PostQuickViewModalProps {
   onStartSeeding?: (post: UnifiedPost) => void;
 }
 
+function formatVnDateTime(dateStr?: string | null): string | null {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    const timeStr = d.toLocaleTimeString("vi-VN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Ho_Chi_Minh",
+    });
+    const dateFormatted = d.toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: "Asia/Ho_Chi_Minh",
+    });
+    return `${timeStr} · ${dateFormatted}`;
+  } catch {
+    return null;
+  }
+}
+
 export function PostQuickViewModal({ post, teamMembers, onClose, onStartSeeding }: PostQuickViewModalProps) {
   if (!post) return null;
 
@@ -66,7 +89,14 @@ export function PostQuickViewModal({ post, teamMembers, onClose, onStartSeeding 
                 )}
               </div>
               <p className="text-xs text-muted-foreground truncate mt-0.5">
-                {post.group_name ? `Nhóm: ${post.group_name}` : "Bài viết công khai"} • {post.crawl_date || post.post_time || "Vừa cào"}
+                {post.group_name ? `Nhóm: ${post.group_name}` : "Bài viết công khai"} •{" "}
+                {(() => {
+                  const pubStr = formatVnDateTime(post.post_time || post.posted_at);
+                  const crawlStr = formatVnDateTime(post.crawl_date);
+                  if (pubStr) return `Đăng: ${pubStr}`;
+                  if (crawlStr) return `Cào: ${crawlStr}`;
+                  return "Vừa cào";
+                })()}
               </p>
             </div>
           </div>
