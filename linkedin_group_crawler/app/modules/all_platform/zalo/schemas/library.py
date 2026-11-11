@@ -137,6 +137,15 @@ class ZaloConversationSummary(BaseModel):
     # Tag phân loại khách (migration 139) — lưu server-side trên zalo_groups.tag,
     # thay cho localStorage cũ (không đồng bộ giữa nhân viên cùng quản lý 1 tài khoản).
     tag: Optional[str] = None
+    # KPI Inbox Zalo 2 chiều & attribution Post Feed (migration 223)
+    zalo_kpi_status: Optional[str] = None
+    zalo_kpi_direction: Optional[str] = None
+    zalo_kpi_source: Optional[str] = None
+    zalo_kpi_confirmed: Optional[bool] = None
+    zalo_kpi_is_lead: Optional[bool] = None
+    zalo_kpi_post_id: Optional[str] = None
+    zalo_kpi_post_url: Optional[str] = None
+    zalo_kpi_phone: Optional[str] = None
 
 
 class ZaloConversationListResponse(BaseModel):

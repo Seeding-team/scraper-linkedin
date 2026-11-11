@@ -45,6 +45,9 @@ class RecordZaloSentRequest(BaseModel):
     zalo_conversation_id: Optional[str] = None
     message_content: Optional[str] = None
     sent_by: Optional[str] = None
+    account_id: Optional[str] = None
+    sender_email: Optional[str] = None
+    source_post_url: Optional[str] = None
 
 
 @router.post("/record-zalo-sent")
@@ -205,16 +208,47 @@ def record_zalo_sent_endpoint(payload: RecordZaloSentRequest) -> BaseResponse:
             except Exception as c_err:
                 logger.debug(f"Sync customer_leads in record_zalo_sent: {c_err}")
 
+        # Ghi nhận tracking KPI 2 chiều vào zalo_inbox_kpi (nếu có account_id hoặc conversation_id)
+        zalo_kpi_result: Optional[dict[str, Any]] = None
+        if payload.account_id or payload.zalo_conversation_id:
+            try:
+                from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+                    record_post_feed_outbound,
+                )
+
+                zalo_kpi_result = record_post_feed_outbound(
+                    account_id=(payload.account_id or "").strip(),
+                    conversation_id=payload.zalo_conversation_id,
+                    phone_number=normalized_phone,
+                    sender_email=payload.sender_email,
+                    source_platform=platform,
+                    source_post_id=payload.post_id,
+                    source_post_url=payload.source_post_url,
+                    sent_at=now_iso,
+                    is_system_auto=False,
+                    supabase=supabase,
+                )
+            except Exception as kpi_err:
+                logger.warning(f"record_post_feed_outbound skipped in record_zalo_sent: {kpi_err}")
+
+        resp_data = dict(updated_row) if isinstance(updated_row, dict) else {
+            "phone_number": normalized_phone,
+            "zalo_status": "sent",
+            "zalo_sent_at": now_iso,
+            "zalo_sent_by": payload.sent_by,
+            "zalo_display_name": payload.zalo_display_name,
+            "zalo_conversation_id": payload.zalo_conversation_id,
+        }
+        if zalo_kpi_result:
+            resp_data["zalo_kpi"] = {
+                "status": zalo_kpi_result.get("status"),
+                "direction_status": zalo_kpi_result.get("direction_status"),
+                "is_confirmed": bool(zalo_kpi_result.get("is_confirmed")),
+            }
+
         return BaseResponse(
             success=True,
-            data=updated_row or {
-                "phone_number": normalized_phone,
-                "zalo_status": "sent",
-                "zalo_sent_at": now_iso,
-                "zalo_sent_by": payload.sent_by,
-                "zalo_display_name": payload.zalo_display_name,
-                "zalo_conversation_id": payload.zalo_conversation_id,
-            },
+            data=resp_data,
             message="Đã ghi nhận gửi tin nhắn Zalo thành công."
         )
     except Exception as e:

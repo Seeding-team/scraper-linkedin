@@ -80,6 +80,12 @@ export interface ZaloConv {
   archived?: boolean;
   archived_at?: string;
   avatar_url?: string | null;
+  zalo_kpi_status?: string | null;
+  zalo_kpi_source?: string | null;
+  zalo_kpi_confirmed?: boolean | null;
+  zalo_kpi_is_lead?: boolean | null;
+  zalo_kpi_post_url?: string | null;
+  zalo_kpi_phone?: string | null;
 }
 
 export interface ZaloArchiveConv {
@@ -819,6 +825,43 @@ export function useZaloAdminInbox() {
 
 
 
+  const verifyConvKpi = useCallback(async (
+    accountId: string,
+    convId: string,
+    opts: { is_confirmed?: boolean; is_lead?: boolean; member_email?: string; note?: string },
+  ) => {
+    if (!accountId || !convId) return false;
+    const ownerEmail = opts.member_email || ownerEmails[selectedOwnerId] || user?.email || undefined;
+    try {
+      const res = await allPlatformKpiService.verifyZaloInbox({
+        account_id: accountId,
+        conversation_id: convId,
+        member_email: ownerEmail,
+        is_confirmed: opts.is_confirmed,
+        is_lead: opts.is_lead,
+        note: opts.note,
+      });
+      if (res?.success) {
+        const msg =
+          opts.is_confirmed !== undefined
+            ? (opts.is_confirmed ? "Đã duyệt +1 KPI Inbox Zalo" : "Đã hủy duyệt KPI Inbox Zalo")
+            : (opts.is_lead ? "Đã gắn nhãn Lead Zalo" : "Đã bỏ nhãn Lead Zalo");
+        showToast(msg, true);
+        void loadConversations(accountId);
+        void loadKpi();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+        }
+        return true;
+      }
+      showToast(res?.message || "Cập nhật KPI Zalo thất bại", false);
+      return false;
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Lỗi cập nhật KPI Zalo", false);
+      return false;
+    }
+  }, [ownerEmails, selectedOwnerId, user?.email, showToast, loadConversations, loadKpi]);
+
   const verifyKpi = useCallback(async (payload: { leader_email: string; conv_ids: string[] }) => {
     try {
       await Promise.all(
@@ -886,13 +929,17 @@ export function useZaloAdminInbox() {
     try {
       await sendZaloMessage(accId, convId, { text });
       await loadMessages(accId, convId, true);
+      void loadConversations(accId);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+      }
     } catch (e) {
       setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
       setReply(text); // restore
     } finally {
       setIsSending(false);
     }
-  }, [reply, loadMessages]);
+  }, [reply, loadMessages, loadConversations]);
 
   // "Trả lời tin nhắn" — áp dụng cho CẢ tin của mình lẫn của đối phương (khác
   // recall, chỉ cho tin mình gửi). Preview hiện phía trên ô nhập (do shell tự
@@ -931,6 +978,10 @@ export function useZaloAdminInbox() {
       }
       setPendingMentions([]);
       await loadMessages(accId, convId, true);
+      void loadConversations(accId);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+      }
     } catch (e) {
       const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
       let userFriendlyMsg = rawMsg;
@@ -943,7 +994,7 @@ export function useZaloAdminInbox() {
     } finally {
       setIsSending(false);
     }
-  }, [loadMessages, pendingMentions, replyingTo]);
+  }, [loadMessages, loadConversations, pendingMentions, replyingTo, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính mình gửi,
@@ -1138,6 +1189,12 @@ export function useZaloAdminInbox() {
         deleted: isHidden,
         archived: isHidden,
         avatar_url: c.avatar_url ?? null,
+        zalo_kpi_status: c.zalo_kpi_status ?? null,
+        zalo_kpi_source: c.zalo_kpi_source ?? null,
+        zalo_kpi_confirmed: c.zalo_kpi_confirmed ?? null,
+        zalo_kpi_is_lead: c.zalo_kpi_is_lead ?? null,
+        zalo_kpi_post_url: c.zalo_kpi_post_url ?? null,
+        zalo_kpi_phone: c.zalo_kpi_phone ?? null,
       };
     });
   }, [conversations, isCustomerSet, hiddenConvIds]);
@@ -1266,6 +1323,7 @@ export function useZaloAdminInbox() {
     onSyncConversationMessages: syncConversationMessages,
     isSyncingMessages,
     onBulkVerifyKpi: bulkVerifyKpi,
+    verifyConvKpi,
     bulkSuggestKpi,
     sendMessage,
     reply,

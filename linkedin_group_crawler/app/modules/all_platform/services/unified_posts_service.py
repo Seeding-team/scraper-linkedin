@@ -502,6 +502,13 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
         except Exception as e:
             _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi đồng bộ trạng thái Zalo sent theo SĐT: {e}")
 
+    try:
+        from app.modules.all_platform.services.zalo_inbox_kpi_service import enrich_posts_with_zalo_kpi
+
+        enrich_posts_with_zalo_kpi(sb, posts)
+    except Exception as kpi_exc:
+        _get_logger().debug(f"[ZALO-KPI] enrich_posts_with_zalo_kpi skipped: {kpi_exc}")
+
 
 # Nền tảng không có "group" — bài tìm theo từ khoá qua "Markee Seeding Extension":
 # Threads (lệnh MK_TH_CRAWL_*) và YouTube (lệnh MK_YT_CRAWL_*, kèm link dán tay).

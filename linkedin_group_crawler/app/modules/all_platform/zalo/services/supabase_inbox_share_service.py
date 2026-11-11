@@ -469,7 +469,23 @@ def verify_inbox_share(
         )
         if not res.data:
             return {"ok": False, "error": "Không tìm thấy share row"}
-        return {"ok": True, "row": res.data[0]}
+        row = res.data[0]
+        try:
+            from app.modules.all_platform.services.zalo_inbox_kpi_service import manual_verify_conversation
+
+            manual_verify_conversation(
+                account_id=str(row.get("account_id") or ""),
+                conversation_id=str(row.get("conversation_id") or ""),
+                verifier_email=leader_email,
+                member_id=str(row.get("id_member")) if row.get("id_member") else None,
+                is_confirmed=True,
+                is_lead=bool(row.get("is_lead")) if row.get("is_lead") is not None else None,
+                note=note,
+                supabase=supabase,
+            )
+        except Exception as kpi_exc:
+            logger.debug(f"manual_verify_conversation sync skipped: {kpi_exc}")
+        return {"ok": True, "row": row}
     except Exception as exc:
         logger.exception("verify_inbox_share failed")
         return {"ok": False, "error": str(exc)}
@@ -487,7 +503,20 @@ def unverify_inbox_share(row_id: int) -> Dict[str, Any]:
         )
         if not res.data:
             return {"ok": False, "error": "Không tìm thấy share row"}
-        return {"ok": True, "row": res.data[0]}
+        row = res.data[0]
+        try:
+            from app.modules.all_platform.services.zalo_inbox_kpi_service import manual_verify_conversation
+
+            manual_verify_conversation(
+                account_id=str(row.get("account_id") or ""),
+                conversation_id=str(row.get("conversation_id") or ""),
+                verifier_email="",
+                is_confirmed=False,
+                supabase=supabase,
+            )
+        except Exception as kpi_exc:
+            logger.debug(f"manual_verify_conversation unverify sync skipped: {kpi_exc}")
+        return {"ok": True, "row": row}
     except Exception as exc:
         logger.exception("unverify_inbox_share failed")
         return {"ok": False, "error": str(exc)}
@@ -527,22 +556,28 @@ def count_verified_inbox_shares(
     start_dt: str,
     end_dt: str,
 ) -> Dict[str, Any]:
-    """Đếm số share conversation đã được leader verify cho 1 member.
-
-    Chỉ đếm các row:
-        - id_member = member_id
-        - shared_role = 'leader'
-        - is_active = true
-        - is_verify = true
-        - updated_at nằm trong khoảng [start_dt, end_dt]
-
-    Returns:
-        ``{ok: True, count: int, items: [...]}``
-    """
+    """Đếm số hội thoại Zalo KPI đã xác nhận cho 1 member (ưu tiên zalo_inbox_kpi, fallback legacy)."""
     supabase: Client = get_supabase_client()
     member_id = _resolve_user_id(supabase, member_email)
     if not member_id:
         return {"ok": False, "count": 0, "items": [], "error": f"Không tìm thấy user: {member_email}"}
+
+    try:
+        kpi_res = (
+            supabase.table("zalo_inbox_kpi")
+            .select("id, account_id, conversation_id, phone_number, source_type, direction_status, is_confirmed, is_lead, confirmed_at, updated_at, note")
+            .eq("id_member", member_id)
+            .eq("is_confirmed", True)
+            .gte("confirmed_at", start_dt)
+            .lte("confirmed_at", end_dt)
+            .order("confirmed_at", desc=True)
+            .execute()
+        )
+        items = list(kpi_res.data or [])
+        return {"ok": True, "count": len(items), "items": items}
+    except Exception as kpi_exc:
+        if "zalo_inbox_kpi" not in str(kpi_exc).lower() and "42p01" not in str(kpi_exc).lower():
+            logger.debug(f"count_verified_inbox_shares zalo_inbox_kpi query failed: {kpi_exc}")
 
     try:
         res = (
@@ -556,9 +591,9 @@ def count_verified_inbox_shares(
             .eq("is_active", True)
             .eq("is_verify", True)
             .not_.is_("verified_at", "null")
-            .gte("updated_at", start_dt)
-            .lte("updated_at", end_dt)
-            .order("updated_at", desc=True)
+            .gte("verified_at", start_dt)
+            .lte("verified_at", end_dt)
+            .order("verified_at", desc=True)
             .execute()
         )
         items = list(res.data or [])

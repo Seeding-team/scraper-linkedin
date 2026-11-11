@@ -147,6 +147,21 @@ async def maybe_send_zalo_consult(
                 "zalo_display_name": display_name if display_name != uid else None,
             },
         )
+        try:
+            from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+                record_post_feed_outbound,
+            )
+
+            record_post_feed_outbound(
+                account_id=_ZALO_SENDER_ACCOUNT_ID,
+                conversation_id=uid,
+                phone_number=contact_phone,
+                source_platform="facebook",
+                is_system_auto=True,
+                note="Auto-seeding Zalo opener",
+            )
+        except Exception as kpi_exc:
+            logger.debug(f"auto_seeding_zalo KPI tracking skipped: {kpi_exc}")
         logger.info(f"auto_seeding_zalo: đã nhắn tin tư vấn Zalo cho SĐT {contact_phone} (comment={comment_id})")
     except ZcaAuthExpiredError:
         await _update(comment_id, {"zalo_status": "failed", "zalo_error": "Phiên Zalo (tài khoản Markee) đã hết hạn."})

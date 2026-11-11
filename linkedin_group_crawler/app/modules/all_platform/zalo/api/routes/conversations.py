@@ -300,6 +300,31 @@ async def list_conversations_for_caller(
                 "thread_type": r.get("thread_type") or ("user" if r.get("is_friend") else "group"),
                 "tag": r.get("tag"),
             })
+        try:
+            from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+                get_zalo_kpi_status_by_conversations,
+            )
+
+            kpi_map = get_zalo_kpi_status_by_conversations(
+                user_id,
+                [item["conversation_id"] for item in results if item.get("conversation_id")],
+            )
+            for item in results:
+                meta = kpi_map.get(str(item.get("conversation_id") or ""))
+                if not meta:
+                    continue
+                item["zalo_kpi_status"] = "confirmed" if meta.get("is_confirmed") else (
+                    "inbound_pending" if meta.get("direction_status") == "inbound_pending" else "waiting_reply"
+                )
+                item["zalo_kpi_direction"] = meta.get("direction_status")
+                item["zalo_kpi_source"] = meta.get("source_type")
+                item["zalo_kpi_confirmed"] = bool(meta.get("is_confirmed"))
+                item["zalo_kpi_is_lead"] = bool(meta.get("is_lead"))
+                item["zalo_kpi_post_id"] = meta.get("source_post_id")
+                item["zalo_kpi_post_url"] = meta.get("source_post_url")
+                item["zalo_kpi_phone"] = meta.get("phone_number")
+        except Exception as kpi_exc:
+            logger.debug(f"Could not enrich conversations with zalo_kpi: {kpi_exc}")
         return results
     except Exception as exc:
         logger.info(f"fn_get_zalo_conversations RPC failed: {exc}. Falling back to manual queries...")
@@ -905,46 +930,64 @@ class SendMessageResponse(BaseModel):
 
 
 async def _auto_track_zalo_conversation_sender(account_id: str, conversation_id: str, caller_email: Optional[str]) -> None:
-    """Tự động lưu vết người gửi vào zalo_conversation_permissions để tính KPI Inbox Zalo chuẩn xác.
-    
-    Bất kể member hay leader nhắn tin qua Zalo chat hay postfeed, hệ thống đều lưu vết lại
-    là ai và tự động tính KPI, triệt tiêu cơ chế bật/tắt share thủ công.
+    """Lưu vết quyền chia sẻ (sửa on_conflict đúng 4 cột) và ghi nhận KPI 2 chiều vào zalo_inbox_kpi.
+
+    - Bảng ``zalo_conversation_permissions`` giữ đúng vai trò chia sẻ hộp thoại cho leader/admin,
+      KHÔNG tự đánh dấu ``is_verify=True`` bừa bãi cho tin gửi 1 chiều.
+    - Bảng ``zalo_inbox_kpi`` kiểm tra điều kiện 2 chiều (chỉ confirm khi khách đã nhắn hoặc đã phản hồi)
+      và khóa chống trùng 30 ngày.
     """
     if not caller_email:
         return
     try:
         from app.modules.all_platform.services.supabase_kpi_service import get_supabase_client
+        from app.modules.all_platform.services.zalo_inbox_kpi_service import on_staff_reply_message
+
         supabase = get_supabase_client()
         clean_email = caller_email.strip().lower()
         user_res = supabase.table("app_users").select("id").eq("email", clean_email).limit(1).execute()
         if not user_res.data:
             return
         member_id = str(user_res.data[0]["id"])
-        
-        # Tìm leader_id của member này nếu có
-        leader_id = member_id
+
+        # Ghi nhận & kiểm tra KPI 2 chiều trong zalo_inbox_kpi
+        on_staff_reply_message(
+            account_id=account_id,
+            conversation_id=conversation_id,
+            caller_email=clean_email,
+            supabase=supabase,
+        )
+
+        # Cập nhật share permission cho tất cả leader của member (nếu chưa từng share, tạo is_verify=False)
+        leader_ids: List[str] = []
         try:
-            team_res = supabase.table("member_of_teams").select("teams(id_leader)").eq("id_member", member_id).limit(1).execute()
-            if team_res.data and team_res.data[0].get("teams"):
-                t_leader = team_res.data[0]["teams"].get("id_leader")
-                if t_leader:
-                    leader_id = str(t_leader)
+            team_res = supabase.table("member_of_teams").select("teams(id_leader)").eq("id_member", member_id).execute()
+            for row in (team_res.data or []):
+                t = row.get("teams")
+                if isinstance(t, dict) and t.get("id_leader"):
+                    leader_ids.append(str(t["id_leader"]))
         except Exception:
             pass
+        if not leader_ids:
+            leader_ids = [member_id]
 
         now_iso = datetime.now(timezone.utc).isoformat()
-        supabase.table("zalo_conversation_permissions").upsert({
-            "account_id": account_id,
-            "conversation_id": conversation_id,
-            "shared_role": "leader",
-            "is_active": True,
-            "is_verify": True,
-            "verified_at": now_iso,
-            "verified_by": clean_email,
-            "id_member": member_id,
-            "id_leader": leader_id,
-            "updated_at": now_iso,
-        }, on_conflict="account_id,conversation_id,shared_role").execute()
+        upsert_rows = [
+            {
+                "account_id": account_id,
+                "conversation_id": conversation_id,
+                "shared_role": "leader",
+                "is_active": True,
+                "id_member": member_id,
+                "id_leader": lid,
+                "updated_at": now_iso,
+            }
+            for lid in dict.fromkeys(leader_ids)
+        ]
+        supabase.table("zalo_conversation_permissions").upsert(
+            upsert_rows,
+            on_conflict="account_id,conversation_id,shared_role,id_leader",
+        ).execute()
     except Exception as exc:
         logger.warning(f"Could not auto-track zalo conversation sender ({caller_email}): {exc}")
 

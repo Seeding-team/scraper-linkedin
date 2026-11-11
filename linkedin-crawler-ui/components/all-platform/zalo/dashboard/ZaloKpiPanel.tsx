@@ -18,6 +18,7 @@ interface ZaloKpiPanelProps {
 interface KpiSnapshot {
   target: number;
   current: number;
+  waiting: number;
   range: { start: string; end: string };
   loading: boolean;
   error: string | null;
@@ -28,6 +29,7 @@ interface KpiSnapshot {
 const EMPTY: KpiSnapshot = {
   target: 0,
   current: 0,
+  waiting: 0,
   range: { start: "", end: "" },
   loading: false,
   error: null,
@@ -46,8 +48,16 @@ const EMPTY: KpiSnapshot = {
 export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpiPanelProps) {
   const { user } = useAppAuth();
   const [snap, setSnap] = useState<KpiSnapshot>(EMPTY);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const resolvedEmail = (memberEmail || user?.email || "").trim().toLowerCase();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = () => setRefreshTick((prev) => prev + 1);
+    window.addEventListener("zalo-kpi-updated", handler);
+    return () => window.removeEventListener("zalo-kpi-updated", handler);
+  }, []);
 
   useEffect(() => {
     if (!resolvedEmail) {
@@ -92,6 +102,7 @@ export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpi
         setSnap({
           target,
           current: Number(progress?.kpi_inbox_current || 0),
+          waiting: Number(progress?.kpi_inbox_zalo_waiting || 0),
           range: progress?.range || { start: "", end: "" },
           loading: false,
           error: null,
@@ -112,7 +123,7 @@ export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpi
     return () => {
       cancelled = true;
     };
-  }, [resolvedEmail, accountId]);
+  }, [resolvedEmail, accountId, refreshTick]);
 
   if (!resolvedEmail) {
     return null;
@@ -166,7 +177,7 @@ export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpi
     return (
       <div
         className="flex items-center gap-2"
-        title={`KPI Inbox tuần ${snap.range.start} → ${snap.range.end}: ${snap.current}/${snap.target} tin nhắn khách gửi tới`}
+        title={`KPI Inbox tuần ${snap.range.start} → ${snap.range.end}: ${snap.current}/${snap.target} hội thoại đạt 2 chiều${snap.waiting > 0 ? ` (${snap.waiting} chờ rep)` : ""}`}
       >
         <div className="flex items-center gap-1 text-[10.5px]">
           <MaterialIcon name="chat" className={`text-[12px] ${accent}`} />
@@ -174,6 +185,11 @@ export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpi
             {snap.current}/{snap.target}
           </span>
           <span className="text-on-surface-variant">inbox</span>
+          {snap.waiting > 0 && (
+            <span className="rounded-full bg-amber-100 px-1.5 py-0.2 text-[9px] font-bold text-amber-800 border border-amber-200">
+              ⏳ {snap.waiting}
+            </span>
+          )}
         </div>
         <div className="relative w-16 h-1.5 bg-surface-container-highest rounded-full overflow-hidden">
           <div
@@ -196,9 +212,14 @@ export function ZaloKpiPanel({ accountId, memberEmail, compact = true }: ZaloKpi
         </div>
         <span className={`text-[11px] font-bold ${accent}`}>{percent}%</span>
       </div>
-      <div className="flex items-baseline gap-1">
+      <div className="flex items-baseline gap-1.5 flex-wrap">
         <span className="text-2xl font-bold text-on-surface">{snap.current}</span>
-        <span className="text-xs text-on-surface-variant">/ {snap.target} tin nhắn từ khách</span>
+        <span className="text-xs text-on-surface-variant">/ {snap.target} hội thoại 2 chiều</span>
+        {snap.waiting > 0 && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800 border border-amber-200">
+            ⏳ {snap.waiting} chờ rep
+          </span>
+        )}
       </div>
       <div className="relative w-full h-2 bg-orange-100 rounded-full overflow-hidden">
         <div

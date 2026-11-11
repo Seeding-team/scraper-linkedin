@@ -102,7 +102,16 @@ export interface UnifiedPost {
     zalo_display_name?: string | null;
     /** Tên người dùng trong hệ thống đã gửi tin nhắn Zalo tới SĐT này (migration 214). */
     zalo_sent_by?: string | null;
+    /** Trạng thái KPI Inbox Zalo 2 chiều (migration 223). */
+    zalo_kpi_status?: "confirmed" | "waiting_reply" | "inbound_pending" | "locked_30d" | string | null;
+    zalo_kpi_direction?: string | null;
+    zalo_kpi_confirmed_at?: string | null;
+    zalo_kpi_is_lead?: boolean | null;
   } | null;
+  zalo_kpi_status?: "confirmed" | "waiting_reply" | "inbound_pending" | "locked_30d" | string | null;
+  zalo_kpi_direction?: string | null;
+  zalo_kpi_confirmed_at?: string | null;
+  zalo_kpi_is_lead?: boolean | null;
 }
 
 export interface UnifiedCrawledComment {

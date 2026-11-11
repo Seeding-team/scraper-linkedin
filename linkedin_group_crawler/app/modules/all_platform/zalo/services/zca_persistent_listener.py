@@ -1298,6 +1298,29 @@ class ZcaPersistentListenerManager:
                     f"Realtime publish failed for user={state.user_id} group={group_id}: {exc}"
                 )
 
+            # ── Zalo Inbox KPI (additive, fail-soft) ───────────────────────
+            # Khi có tin nhắn realtime mới từ khách (is_sent=False), nâng cấp
+            # hàng đợi outbound -> two_way (xác nhận 2 chiều) hoặc gắn nguồn Post Feed.
+            if increment_unread:
+                inbound_msgs = [m for m in messages if not getattr(m, "is_sent", False)]
+                if inbound_msgs:
+                    latest_in = inbound_msgs[-1]
+                    try:
+                        from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+                            on_customer_inbound_message,
+                        )
+
+                        await asyncio.to_thread(
+                            on_customer_inbound_message,
+                            account_id=state.user_id,
+                            conversation_id=group_id,
+                            content=getattr(latest_in, "content", None),
+                        )
+                    except Exception as kpi_exc:
+                        logger.debug(
+                            f"Zalo Inbox KPI inbound hook failed user={state.user_id} group={group_id}: {kpi_exc}"
+                        )
+
 
 _MANAGER = ZcaPersistentListenerManager()
 

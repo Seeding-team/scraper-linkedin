@@ -1359,10 +1359,16 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
           {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
           {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
-            <KpiProgressCard
-              email={CURRENT_USER_EMAIL}
-              type="comment"
-            />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start [&:has(>div:only-child)]:grid-cols-1">
+              <KpiProgressCard
+                email={CURRENT_USER_EMAIL}
+                type="comment"
+              />
+              <KpiProgressCard
+                email={CURRENT_USER_EMAIL}
+                type="inbox"
+              />
+            </div>
           )}
           {CURRENT_USER_EMAIL && user?.role === "member" && (
             <MemberKpiRewardOverview />

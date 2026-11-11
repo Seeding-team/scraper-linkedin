@@ -5,6 +5,7 @@ import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink, FiMessageSquare } from "react-icons/fi";
 import { ZaloContactModal } from "./zalo-contact-modal";
+import { ZaloKpiStatusBadge } from "./ZaloKpiStatusBadge";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
@@ -153,19 +154,32 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
   const [localZaloSentBy, setLocalZaloSentBy] = useState<string | null>(
     post.auto_seeding_comment?.zalo_sent_by || (post as any).zalo_sent_by || null
   );
+  const [localZaloKpiStatus, setLocalZaloKpiStatus] = useState<string | null>(
+    post.auto_seeding_comment?.zalo_kpi_status || post.zalo_kpi_status || null
+  );
+  const [localZaloConvId, setLocalZaloConvId] = useState<string | null>(
+    post.auto_seeding_comment?.zalo_conversation_id || null
+  );
 
   useEffect(() => {
     setLocalZaloStatus(post.auto_seeding_comment?.zalo_status || (post as any).zalo_status || null);
     setLocalZaloSentBy(post.auto_seeding_comment?.zalo_sent_by || (post as any).zalo_sent_by || null);
+    setLocalZaloKpiStatus(post.auto_seeding_comment?.zalo_kpi_status || post.zalo_kpi_status || null);
+    setLocalZaloConvId(post.auto_seeding_comment?.zalo_conversation_id || null);
   }, [
     post.auto_seeding_comment?.zalo_status,
     post.auto_seeding_comment?.zalo_sent_by,
+    post.auto_seeding_comment?.zalo_kpi_status,
+    post.auto_seeding_comment?.zalo_conversation_id,
+    post.zalo_kpi_status,
     (post as any).zalo_status,
     (post as any).zalo_sent_by,
   ]);
 
   const effectiveZaloStatus = localZaloStatus;
   const effectiveZaloSentBy = localZaloSentBy;
+  const effectiveZaloKpiStatus = localZaloKpiStatus;
+  const effectiveZaloConvId = localZaloConvId;
 
   const detectedPhone = useMemo(() => {
     return (
@@ -625,6 +639,11 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                   ⚠️ Chưa nhắn được qua Zalo
                 </span>
               ) : null}
+
+              <ZaloKpiStatusBadge
+                kpiStatus={effectiveZaloKpiStatus}
+                zaloStatus={effectiveZaloStatus}
+              />
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -648,9 +667,9 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 <span>{effectiveZaloStatus === "sent" ? `✓ ${effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn` : "Đã nhắn Zalo"}` : "Nhắn tin Zalo"}</span>
               </button>
 
-              {post.auto_seeding_comment?.zalo_conversation_id && (
+              {(effectiveZaloConvId || post.auto_seeding_comment?.zalo_conversation_id) && (
                 <a
-                  href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(post.auto_seeding_comment.zalo_conversation_id)}`}
+                  href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(effectiveZaloConvId || post.auto_seeding_comment?.zalo_conversation_id || "")}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 rounded-lg border border-sky-300 dark:border-sky-700 px-2.5 py-1.5 text-xs font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/40 transition-colors"
@@ -917,20 +936,27 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
           onSentSuccess={(info) => {
             setLocalZaloStatus("sent");
             if (info.sentBy) setLocalZaloSentBy(info.sentBy);
+            if (info.zaloKpiStatus) setLocalZaloKpiStatus(info.zaloKpiStatus);
+            if (info.convId) setLocalZaloConvId(info.convId);
             if (post.auto_seeding_comment) {
               post.auto_seeding_comment.zalo_status = "sent";
               post.auto_seeding_comment.zalo_sent_by = info.sentBy;
               if (info.zaloDisplayName) post.auto_seeding_comment.zalo_display_name = info.zaloDisplayName;
+              if (info.convId) post.auto_seeding_comment.zalo_conversation_id = info.convId;
+              if (info.zaloKpiStatus) post.auto_seeding_comment.zalo_kpi_status = info.zaloKpiStatus;
             } else {
               (post as any).auto_seeding_comment = {
                 zalo_status: "sent",
                 zalo_sent_by: info.sentBy,
                 zalo_display_name: info.zaloDisplayName,
+                zalo_conversation_id: info.convId,
+                zalo_kpi_status: info.zaloKpiStatus,
                 phone_number: detectedPhone,
               };
             }
             (post as any).zalo_status = "sent";
             (post as any).zalo_sent_by = info.sentBy;
+            if (info.zaloKpiStatus) post.zalo_kpi_status = info.zaloKpiStatus;
             if (info.zaloDisplayName) (post as any).zalo_display_name = info.zaloDisplayName;
           }}
         />

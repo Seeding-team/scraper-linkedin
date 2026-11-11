@@ -746,24 +746,42 @@ def get_team_daily_trend(
                 if row.get("is_lead"):
                     team_buckets[team_id][day]["leads"] += 1
 
-        zalo_rows = execute_supabase_query(
-            lambda: (
-                get_supabase_client()
-                .table("zalo_conversation_permissions")
-                .select("id_member, verified_at, is_lead")
-                .in_("id_member", list(member_ids))
-                .eq("shared_role", "leader")
-                .eq("is_active", True)
-                .eq("is_verify", True)
-                .not_.is_("verified_at", "null")
-                .gte("verified_at", start_dt_utc.isoformat())
-                .lte("verified_at", end_dt_utc.isoformat())
-                .execute()
-            )
-        ).data or []
+        try:
+            zalo_rows = execute_supabase_query(
+                lambda: (
+                    get_supabase_client()
+                    .table("zalo_inbox_kpi")
+                    .select("id_member, confirmed_at, is_lead")
+                    .in_("id_member", list(member_ids))
+                    .eq("is_confirmed", True)
+                    .not_.is_("confirmed_at", "null")
+                    .gte("confirmed_at", start_dt_utc.isoformat())
+                    .lte("confirmed_at", end_dt_utc.isoformat())
+                    .execute()
+                )
+            ).data or []
+            zalo_time_key = "confirmed_at"
+        except Exception:
+            zalo_rows = execute_supabase_query(
+                lambda: (
+                    get_supabase_client()
+                    .table("zalo_conversation_permissions")
+                    .select("id_member, verified_at, is_lead")
+                    .in_("id_member", list(member_ids))
+                    .eq("shared_role", "leader")
+                    .eq("is_active", True)
+                    .eq("is_verify", True)
+                    .not_.is_("verified_at", "null")
+                    .gte("verified_at", start_dt_utc.isoformat())
+                    .lte("verified_at", end_dt_utc.isoformat())
+                    .execute()
+                )
+            ).data or []
+            zalo_time_key = "verified_at"
+
         for row in zalo_rows:
             member_id = str(row.get("id_member") or "")
-            day = _vn_day(row.get("verified_at"))
+            day = _vn_day(row.get(zalo_time_key))
             if day not in team_buckets.get(next(iter(team_buckets)), {}):
                 continue
             for team_id in member_to_team_ids.get(member_id, set()):

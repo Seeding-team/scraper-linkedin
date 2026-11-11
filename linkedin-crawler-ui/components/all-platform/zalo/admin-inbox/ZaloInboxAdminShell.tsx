@@ -24,6 +24,7 @@ import { allPlatformQuickInboxService } from "@/services/all-platform.service";
 import type { QuickInboxTemplate } from "@/types/unified.types";
 import { resolveZaloConversationAccount } from "@/services/zaloCrawlerService";
 import { KpiProgressCard } from "@/components/all-platform/components/kpi-progress-card";
+import { ZaloKpiStatusBadge } from "@/components/all-platform/components/ZaloKpiStatusBadge";
 import { MaterialIcon } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
@@ -2278,6 +2279,17 @@ export function ZaloInboxAdminShell() {
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.2 text-[9px] font-bold text-blue-600 border border-blue-100">
                           Zalo
                         </span>
+                        {conv.zalo_kpi_source?.startsWith("post_feed") && (
+                          <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.2 text-[9px] font-bold text-violet-700 border border-violet-200">
+                            Post Feed
+                          </span>
+                        )}
+                        <ZaloKpiStatusBadge compact kpiStatus={conv.zalo_kpi_status} />
+                        {conv.zalo_kpi_is_lead && (
+                          <span className="inline-flex rounded-full bg-rose-50 px-2 py-0.2 text-[9px] font-bold text-rose-700 border border-rose-200">
+                            🔥 Lead
+                          </span>
+                        )}
                         {conv.is_customer && (
                           <span className="inline-flex rounded-full bg-emerald-50 px-2 py-0.2 text-[9px] font-bold text-emerald-700 border border-emerald-100">
                             Khách
@@ -2419,7 +2431,7 @@ export function ZaloInboxAdminShell() {
                   {selectedConv?.is_customer && <span className="text-amber-500 text-xs shrink-0" title="Khách hàng">⭐</span>}
                 </div>
                 {inbox.openConv && (
-                  <div className="flex items-center gap-1.5 text-xs text-slate-500 mt-0.5 min-w-0 truncate">
+                  <div className="flex items-center flex-wrap gap-1.5 text-xs text-slate-500 mt-0.5 min-w-0">
                     <span className="font-medium text-slate-600 truncate">
                       Zalo • {inbox.selectedAccountInfo ? (inbox.selectedAccountInfo.label || inbox.selectedAccountInfo.account_id) : "Account"}
                     </span>
@@ -2427,6 +2439,50 @@ export function ZaloInboxAdminShell() {
                     <span className={cn("font-semibold shrink-0 text-[11px]", inbox.accOnline ? "text-emerald-600" : "text-slate-400")}>
                       {inbox.accOnline ? "● Online" : "● Offline"}
                     </span>
+                    <ZaloKpiStatusBadge compact kpiStatus={selectedConv?.zalo_kpi_status} />
+                    {selectedConv?.zalo_kpi_post_url ? (
+                      <a
+                        href={selectedConv.zalo_kpi_post_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Mở bài viết Post Feed nguồn"
+                        className="inline-flex items-center gap-0.5 rounded-full bg-violet-50 hover:bg-violet-100 px-2 py-0.2 text-[9px] font-bold text-violet-700 border border-violet-200 transition shrink-0"
+                      >
+                        Post Feed ↗
+                      </a>
+                    ) : selectedConv?.zalo_kpi_source?.startsWith("post_feed") ? (
+                      <span className="rounded-full bg-violet-50 px-2 py-0.2 text-[9px] font-bold text-violet-700 border border-violet-200 shrink-0">
+                        Post Feed
+                      </span>
+                    ) : null}
+                    {selectedConv?.zalo_kpi_is_lead && (
+                      <span className="rounded-full bg-rose-50 px-1.5 py-0.2 text-[9px] font-bold text-rose-700 border border-rose-200 shrink-0">
+                        🔥 Lead
+                      </span>
+                    )}
+                    {!openConvIsGroup && (inbox.role === "admin" || inbox.role === "leader") && inbox.selectedAccountId && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void inbox.verifyConvKpi(inbox.selectedAccountId, inbox.openConv, {
+                            is_confirmed: !selectedConv?.zalo_kpi_confirmed,
+                          })
+                        }
+                        title={
+                          selectedConv?.zalo_kpi_confirmed
+                            ? "Bấm để hủy duyệt KPI cho hội thoại này"
+                            : "Duyệt thủ công +1 KPI Inbox Zalo (bỏ qua chờ khách rep)"
+                        }
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.2 text-[9px] font-bold border transition shrink-0 cursor-pointer",
+                          selectedConv?.zalo_kpi_confirmed
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-300"
+                            : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-emerald-600 hover:text-white hover:border-emerald-600",
+                        )}
+                      >
+                        {selectedConv?.zalo_kpi_confirmed ? "✓ Đã tính KPI" : "+ Duyệt +1 KPI"}
+                      </button>
+                    )}
                     {selectedConv?.is_customer && (
                       <span className="rounded-full bg-emerald-100 px-1.5 py-0.2 text-[9px] font-bold text-emerald-700 shrink-0">
                         Khách hàng
@@ -2605,6 +2661,44 @@ export function ZaloInboxAdminShell() {
                     >
                       <MessageCircle size={15} className="text-slate-500" /> Đánh dấu chưa đọc
                     </button>
+
+                    {!openConvIsGroup && (inbox.role === "admin" || inbox.role === "leader") && inbox.selectedAccountId && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void inbox.verifyConvKpi(inbox.selectedAccountId, inbox.openConv, {
+                              is_confirmed: !selectedConv?.zalo_kpi_confirmed,
+                            })
+                          }
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-slate-100 font-medium text-slate-700"
+                        >
+                          <MaterialIcon
+                            name={selectedConv?.zalo_kpi_confirmed ? "cancel" : "check_circle"}
+                            className={cn(
+                              "text-base",
+                              selectedConv?.zalo_kpi_confirmed ? "text-rose-500" : "text-emerald-600",
+                            )}
+                          />
+                          {selectedConv?.zalo_kpi_confirmed ? "Hủy duyệt KPI Zalo" : "Duyệt +1 KPI Zalo"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void inbox.verifyConvKpi(inbox.selectedAccountId, inbox.openConv, {
+                              is_lead: !selectedConv?.zalo_kpi_is_lead,
+                            })
+                          }
+                          className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-slate-100 font-medium text-slate-700"
+                        >
+                          <Star
+                            size={15}
+                            className={selectedConv?.zalo_kpi_is_lead ? "text-rose-500" : "text-slate-400"}
+                          />
+                          {selectedConv?.zalo_kpi_is_lead ? "Bỏ gắn nhãn Lead Zalo" : "Gắn nhãn Lead Zalo"}
+                        </button>
+                      </>
+                    )}
 
                     <button
                       type="button"

@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import type { UnifiedPost } from "@/types/unified.types";
 import { useQuickInboxLibrary, composeQuickInboxMessage } from "./use-quick-inbox-library";
+import { ZaloKpiStatusBadge } from "./ZaloKpiStatusBadge";
 
 interface PostDetailModalProps {
   post: UnifiedPost | null;
@@ -218,6 +219,10 @@ export function PostDetailModal({
                     ⚠️ Chưa nhắn được qua Zalo
                   </span>
                 ) : null}
+                <ZaloKpiStatusBadge
+                  kpiStatus={post.auto_seeding_comment?.zalo_kpi_status || post.zalo_kpi_status}
+                  zaloStatus={post.auto_seeding_comment?.zalo_status || (post as any).zalo_status}
+                />
               </div>
               {post.auto_seeding_comment?.zalo_conversation_id && (
                 <div className="mt-2">

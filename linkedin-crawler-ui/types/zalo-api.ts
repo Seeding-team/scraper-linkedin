@@ -133,6 +133,15 @@ export interface ZaloConversationSummary {
   // Tag phân loại khách (migration 139) — lưu server-side, đồng bộ giữa các
   // nhân viên cùng quản lý 1 tài khoản Zalo tập trung.
   tag?: string | null;
+  // KPI Inbox Zalo 2 chiều & nguồn Post Feed (migration 223)
+  zalo_kpi_status?: "confirmed" | "waiting_reply" | "inbound_pending" | "locked_30d" | string | null;
+  zalo_kpi_direction?: string | null;
+  zalo_kpi_source?: string | null;
+  zalo_kpi_confirmed?: boolean | null;
+  zalo_kpi_is_lead?: boolean | null;
+  zalo_kpi_post_id?: string | null;
+  zalo_kpi_post_url?: string | null;
+  zalo_kpi_phone?: string | null;
 }
 
 export interface ZaloConversationListResponse {

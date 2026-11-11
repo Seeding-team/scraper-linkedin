@@ -8,11 +8,18 @@ import { allPlatformKpiService, allPlatformSeedingService } from "@/services/all
 /** ─── KPI Type definitions ─────────────────────────────────────────────── */
 export type KpiType = "comment" | "post" | "inbox" | "lead";
 
+interface KpiProgressDetail {
+  kpi_inbox_zalo?: number;
+  kpi_inbox_zalo_waiting?: number;
+  kpi_inbox_fb_kpi?: number;
+}
+
 interface KpiProgressData {
   target: number;
   current: number;
   startDate?: string;
   endDate?: string;
+  detail?: KpiProgressDetail;
 }
 
 interface KpiProgressCardProps {
@@ -40,7 +47,7 @@ interface KpiProgressCardProps {
 const KPI_CONFIG: Record<KpiType, { title: string; subtitle: string; unit: string }> = {
   comment: { title: "TIẾN ĐỘ HOÀN THÀNH KPI COMMENT TUẦN NÀY", subtitle: "KPI được tính dựa trên số lượng comment seeding thành công", unit: "comment" },
   post:    { title: "TIẾN ĐỘ HOÀN THÀNH KPI ĐĂNG BÀI TUẦN NÀY", subtitle: "KPI được tính dựa trên số lượng bài đăng thành công lưu nhận trong bảng fb_post_kpi",  unit: "bài đăng" },
-  inbox:   { title: "TIẾN ĐỘ HOÀN THÀNH KPI INBOX TUẦN NÀY", subtitle: "KPI được tính dựa trên số lượng tài khoản inbox thành công", unit: "inbox" },
+  inbox:   { title: "TIẾN ĐỘ HOÀN THÀNH KPI INBOX TUẦN NÀY", subtitle: "KPI được tính dựa trên hội thoại Zalo 2 chiều & Messenger hợp lệ", unit: "inbox" },
   lead:    { title: "TIẾN ĐỘ HOÀN THÀNH KPI LEAD TUẦN NÀY", subtitle: "KPI được tính dựa trên số lượng khách hàng tiềm năng mang về", unit: "lead" },
 };
 
@@ -75,6 +82,7 @@ async function fetchKpiData(
 
     let target = 0;
     let current = 0;
+    let detail: KpiProgressDetail | undefined;
 
     if (type === "comment") {
       target  = Number(activeKpi.kpi_comment || 0);
@@ -105,12 +113,17 @@ async function fetchKpiData(
     } else if (type === "inbox") {
       target  = Number(activeKpi.kpi_inbox || 0);
       current = Number(kpiData.kpi_inbox_current || 0);
+      detail = {
+        kpi_inbox_zalo: Number(kpiData.kpi_inbox_zalo || 0),
+        kpi_inbox_zalo_waiting: Number(kpiData.kpi_inbox_zalo_waiting || 0),
+        kpi_inbox_fb_kpi: Number(kpiData.kpi_inbox_fb_kpi || 0),
+      };
     } else if (type === "lead") {
       target  = Number(activeKpi.kpi_lead || 0);
       current = 0; // lead actual requires separate seeding_stats fetch
     }
 
-    return { target, current, startDate, endDate };
+    return { target, current, startDate, endDate, detail };
   } catch {
     return null;
   }
@@ -160,6 +173,7 @@ export function KpiProgressCard({
     current: number;
     startDate?: string;
     endDate?: string;
+    detail?: KpiProgressDetail;
     loading: boolean;
     error: string | null;
   }>({ target: 0, current: 0, loading: autoFetch && !data, error: null });
@@ -198,6 +212,18 @@ export function KpiProgressCard({
     }
   }, [onRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Auto-refresh Inbox KPI card immediately when Zalo KPI updates from modal or Inbox
+  useEffect(() => {
+    if (!autoFetch || data || type !== "inbox" || typeof window === "undefined") return;
+    const handler = () => {
+      void doFetch();
+    };
+    window.addEventListener("zalo-kpi-updated", handler);
+    return () => {
+      window.removeEventListener("zalo-kpi-updated", handler);
+    };
+  }, [autoFetch, data, type, doFetch]);
+
   if (snap.loading) {
     return <KpiProgressSkeleton />;
   }
@@ -223,6 +249,32 @@ export function KpiProgressCard({
             <p className="text-[10px] text-muted-foreground mt-1 font-medium">
               Tuần: {snap.startDate} → {snap.endDate}
             </p>
+          )}
+          {type === "inbox" && snap.detail && (
+            (Number(snap.detail.kpi_inbox_zalo || 0) > 0 ||
+             Number(snap.detail.kpi_inbox_zalo_waiting || 0) > 0 ||
+             Number(snap.detail.kpi_inbox_fb_kpi || 0) > 0) && (
+              <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                {Number(snap.detail.kpi_inbox_zalo || 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Zalo đã tính: {snap.detail.kpi_inbox_zalo}
+                  </span>
+                )}
+                {Number(snap.detail.kpi_inbox_zalo_waiting || 0) > 0 && (
+                  <span
+                    title="Số hội thoại đã gửi mở đầu / khách nhắn đến nhưng chưa tương tác 2 chiều để cộng KPI"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200"
+                  >
+                    ⏳ Chờ khách rep: {snap.detail.kpi_inbox_zalo_waiting}
+                  </span>
+                )}
+                {Number(snap.detail.kpi_inbox_fb_kpi || 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                    FB Messenger: {snap.detail.kpi_inbox_fb_kpi}
+                  </span>
+                )}
+              </div>
+            )
           )}
         </div>
         <div className={cn("px-3 py-1.5 rounded-xl flex items-baseline gap-1.5 shrink-0 whitespace-nowrap self-start xl:self-center", colors.bg)}>

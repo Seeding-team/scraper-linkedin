@@ -331,11 +331,7 @@ class ZaloInboxProgressRequest(BaseModel):
 
 @router.post("/zalo-inbox-progress")
 def zalo_inbox_progress(payload: ZaloInboxProgressRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
-    """Tính số tin nhắn Zalo khách gửi tới member trong khoảng [start_date, end_date].
-
-    Phục vụ progress bar "Tin nhắn KPI" — chỉ đếm ``is_sent=false`` trên
-    tất cả Zalo accounts mà member này đang sở hữu.
-    """
+    """Tính KPI Inbox Zalo (2 chiều đã xác nhận + số hội thoại đang chờ khách rep) trong [start_date, end_date]."""
     try:
         _require_view_access(user, payload.email)
         start = payload.start_date.strip() or None
@@ -347,9 +343,137 @@ def zalo_inbox_progress(payload: ZaloInboxProgressRequest, user: dict = Depends(
         )
         return BaseResponse(success=True, data=data or {
             "kpi_inbox_current": 0,
+            "kpi_inbox_zalo_waiting": 0,
             "account_ids": [],
             "range": {"start": start or "", "end": end or ""},
         })
+    except HTTPException:
+        raise
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+class ZaloInboxSyncRequest(BaseModel):
+    account_id: str = Field(..., min_length=1)
+    conversation_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    sender_email: Optional[str] = None
+    source_platform: Optional[str] = None
+    source_post_id: Optional[str] = None
+    source_post_url: Optional[str] = None
+    mode: str = Field("post_feed", description="'post_feed' | 'reply'")
+
+
+class ZaloInboxVerifyRequest(BaseModel):
+    account_id: str = Field(..., min_length=1)
+    conversation_id: str = Field(..., min_length=1)
+    member_email: Optional[str] = None
+    is_confirmed: bool = True
+    is_lead: Optional[bool] = None
+    note: Optional[str] = None
+
+
+class ZaloInboxListRequest(BaseModel):
+    member_email: Optional[str] = None
+    account_id: Optional[str] = None
+    status_filter: Optional[str] = Field(None, description="'confirmed' | 'waiting' | None")
+    start_date: str = ""
+    end_date: str = ""
+    limit: int = Field(100, ge=1, le=500)
+
+
+@router.post("/zalo-inbox-sync")
+def zalo_inbox_sync(payload: ZaloInboxSyncRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Ghi nhận gửi/trả lời tin nhắn Zalo vào bảng zalo_inbox_kpi theo quy tắc 2 chiều & chống trùng 30 ngày."""
+    try:
+        from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+            on_staff_reply_message,
+            record_post_feed_outbound,
+        )
+
+        target_email = (payload.sender_email or user.get("email") or "").strip().lower()
+        _require_self_or_leader(user, target_email)
+
+        if payload.mode == "reply" and payload.conversation_id:
+            result = on_staff_reply_message(
+                account_id=payload.account_id,
+                conversation_id=payload.conversation_id,
+                caller_email=target_email,
+            )
+        else:
+            result = record_post_feed_outbound(
+                account_id=payload.account_id,
+                conversation_id=payload.conversation_id,
+                phone_number=payload.phone_number,
+                sender_email=target_email,
+                source_platform=payload.source_platform,
+                source_post_id=payload.source_post_id,
+                source_post_url=payload.source_post_url,
+            )
+        if result.get("is_confirmed"):
+            invalidate_overview_cache()
+        return BaseResponse(success=True, data=result)
+    except HTTPException:
+        raise
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/zalo-inbox-verify")
+def zalo_inbox_verify(payload: ZaloInboxVerifyRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Leader/Admin duyệt hoặc hủy KPI thủ công / đánh dấu Lead cho hội thoại Zalo."""
+    try:
+        _require_leader_or_admin(user)
+        from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+            manual_verify_conversation,
+        )
+
+        verifier_email = str(user.get("email") or "").strip().lower()
+        res = manual_verify_conversation(
+            account_id=payload.account_id,
+            conversation_id=payload.conversation_id,
+            verifier_email=verifier_email,
+            member_email=payload.member_email,
+            is_confirmed=payload.is_confirmed,
+            is_lead=payload.is_lead,
+            note=payload.note,
+        )
+        if not res.get("ok"):
+            return BaseResponse(
+                success=False,
+                message=res.get("error") or "Không thể cập nhật KPI Zalo.",
+                data=res,
+            )
+        invalidate_overview_cache()
+        return BaseResponse(success=True, data=res.get("row"), message="Đã cập nhật KPI Inbox Zalo.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return BaseResponse(success=False, message=str(e))
+
+
+@router.post("/zalo-inbox-list")
+def zalo_inbox_list(payload: ZaloInboxListRequest, user: dict = Depends(get_current_user)) -> BaseResponse:
+    """Liệt kê chi tiết hội thoại Zalo KPI (đã confirm / đang chờ khách rep / nguồn Post Feed)."""
+    try:
+        target_email = (payload.member_email or "").strip().lower() or None
+        if target_email:
+            _require_view_access(user, target_email)
+        else:
+            _require_leader_or_admin(user)
+        from app.modules.all_platform.services.zalo_inbox_kpi_service import (
+            list_member_zalo_inbox_kpi,
+        )
+
+        rows = list_member_zalo_inbox_kpi(
+            member_email=target_email,
+            account_id=payload.account_id,
+            status_filter=payload.status_filter,
+            start_date=payload.start_date.strip() or None,
+            end_date=payload.end_date.strip() or None,
+            limit=payload.limit,
+        )
+        return BaseResponse(success=True, data={"items": rows, "total": len(rows)})
     except HTTPException:
         raise
     except Exception as e:

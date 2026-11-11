@@ -589,6 +589,7 @@ export const allPlatformKpiService = {
   ): Promise<
     ApiResponse<{
       kpi_inbox_current: number;
+      kpi_inbox_zalo_waiting?: number;
       account_ids: string[];
       range: { start: string; end: string };
     }>
@@ -596,6 +597,50 @@ export const allPlatformKpiService = {
     return requestJson(`${BASE}/kpi/zalo-inbox-progress`, {
       method: "POST",
       body: JSON.stringify({ email, start_date: startDate, end_date: endDate }),
+    });
+  },
+
+  syncZaloInbox: (payload: {
+    account_id: string;
+    conversation_id?: string;
+    phone_number?: string;
+    sender_email?: string;
+    source_platform?: string;
+    source_post_id?: string;
+    source_post_url?: string;
+    mode?: "post_feed" | "reply";
+  }): Promise<ApiResponse<Record<string, unknown>>> => {
+    return requestJson(`${BASE}/kpi/zalo-inbox-sync`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  verifyZaloInbox: (payload: {
+    account_id: string;
+    conversation_id: string;
+    member_email?: string;
+    is_confirmed?: boolean;
+    is_lead?: boolean;
+    note?: string;
+  }): Promise<ApiResponse<Record<string, unknown>>> => {
+    return requestJson(`${BASE}/kpi/zalo-inbox-verify`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  listZaloInbox: (payload: {
+    member_email?: string;
+    account_id?: string;
+    status_filter?: "confirmed" | "waiting";
+    start_date?: string;
+    end_date?: string;
+    limit?: number;
+  }): Promise<ApiResponse<{ items: Record<string, unknown>[]; total: number }>> => {
+    return requestJson(`${BASE}/kpi/zalo-inbox-list`, {
+      method: "POST",
+      body: JSON.stringify(payload),
     });
   },
 
@@ -1152,6 +1197,9 @@ export const allPlatformPostsService = {
     zalo_conversation_id?: string;
     message_content?: string;
     sent_by?: string;
+    account_id?: string;
+    sender_email?: string;
+    source_post_url?: string;
   }): Promise<ApiResponse<any>> => {
     return requestJson(`${BASE}/auto-seeding-comments/record-zalo-sent`, {
       method: "POST",

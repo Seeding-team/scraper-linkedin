@@ -512,10 +512,12 @@ def get_all_kpis_for_leader(
         post_current = 0
 
         # Zalo inbox: số tin nhắn khách gửi tới trong tuần KPI.
+        inbox_zalo_waiting = 0
         try:
             inbox_progress = compute_kpi_inbox_progress([mid], eff_start_date, eff_end_date)
             inbox_current = int(inbox_progress.get(mid, {}).get("kpi_inbox_current", 0))
             lead_current = int(inbox_progress.get(mid, {}).get("kpi_lead_current", 0))
+            inbox_zalo_waiting = int(inbox_progress.get(mid, {}).get("kpi_inbox_zalo_waiting", 0))
         except Exception as exc:
             logger.warning(f"compute_kpi_inbox_progress failed for member={mid}: {exc}")
             inbox_current = 0
@@ -572,6 +574,7 @@ def get_all_kpis_for_leader(
                 "kpi_inbox": active_kpi.get("kpi_inbox", 0),
                 "kpi_inbox_current": total_inbox_current,
                 "kpi_inbox_zalo": inbox_current,
+                "kpi_inbox_zalo_waiting": inbox_zalo_waiting,
                 "kpi_inbox_fb_seeder": fb_inbox_from_seeder,
                 "kpi_inbox_fb_kpi": fb_inbox_from_kpi,
                 "kpi_inbox_range": {
@@ -657,6 +660,7 @@ def get_kpi_by_email(email: str) -> dict:
         kpi_inbox_target = int(kpi.get("kpi_inbox") or 0)
         kpi_inbox_current = 0
         kpi_inbox_zalo = 0
+        kpi_inbox_zalo_waiting = 0
         kpi_inbox_fb = 0
         if kpi_inbox_target > 0:
             try:
@@ -665,7 +669,9 @@ def get_kpi_by_email(email: str) -> dict:
                     kpi.get("start_date"),
                     kpi.get("end_date"),
                 )
-                kpi_inbox_zalo = int(progress.get(str(user_id), {}).get("kpi_inbox_current", 0))
+                p_info = progress.get(str(user_id), {})
+                kpi_inbox_zalo = int(p_info.get("kpi_inbox_current", 0))
+                kpi_inbox_zalo_waiting = int(p_info.get("kpi_inbox_zalo_waiting", 0))
             except Exception as exc:
                 logger.warning(f"compute_kpi_inbox_progress failed for email={email}: {exc}")
 
@@ -708,6 +714,7 @@ def get_kpi_by_email(email: str) -> dict:
             "kpi": [kpi],
             "kpi_inbox_current": kpi_inbox_current,
             "kpi_inbox_zalo": kpi_inbox_zalo,
+            "kpi_inbox_zalo_waiting": kpi_inbox_zalo_waiting,
             "kpi_inbox_fb_seeder": kpi_inbox_fb_seeder,
             "kpi_inbox_fb_kpi": kpi_inbox_fb_kpi,
             "kpi_inbox_target": kpi_inbox_target,
@@ -966,44 +973,19 @@ def compute_kpi_inbox_progress(
         start_date = start_date or monday.isoformat()
         end_date = end_date or sunday.isoformat()
 
-    start_iso = _parse_iso_date(start_date) or date.today()
-    end_iso = _parse_iso_date(end_date) or date.today()
+    mids = [str(mid) for mid in member_user_ids if mid]
+    from app.modules.all_platform.services.zalo_inbox_kpi_service import compute_zalo_kpi_counts
 
-    # Tạo timezone Vietnam (+07:00) để đảm bảo so sánh thời gian trùng khớp với mốc ngày của user
-    vn_tz = VN_TZ
-
-    # Mở rộng end_date lên cuối ngày (VN) cho so sánh updated_at/created_at, sau đó chuyển sang UTC để so sánh chuỗi ISO
-    end_dt = datetime.combine(end_iso, datetime.max.time(), tzinfo=vn_tz).astimezone(timezone.utc).isoformat()
-    start_dt = datetime.combine(start_iso, datetime.min.time(), tzinfo=vn_tz).astimezone(timezone.utc).isoformat()
+    zalo_counts = compute_zalo_kpi_counts(mids, start_date, end_date, supabase=supabase)
 
     out: Dict[str, Dict[str, Any]] = {}
-    for mid in member_user_ids:
-        # Đếm số conversation của member này trong khoảng
-        # (Xóa cơ chế share thủ công, tính trực tiếp mọi hộp thoại có lưu vết của member)
-        try:
-            res = (
-                supabase.table("zalo_conversation_permissions")
-                .select("id, verified_at, updated_at, is_lead")
-                .eq("id_member", mid)
-                .execute()
-            )
-            current = 0
-            lead_current = 0
-            for r in res.data or []:
-                v_at = r.get("verified_at") or r.get("updated_at") or ""
-                if v_at >= start_dt and v_at <= end_dt:
-                    current += 1
-                    if r.get("is_lead"):
-                        lead_current += 1
-        except Exception as exc:
-            logger.warning(f"compute_kpi_inbox_progress failed for member={mid}: {exc}")
-            current = 0
-            lead_current = 0
-
+    for mid in mids:
+        cnt = zalo_counts.get(mid, {"inbox": 0, "lead": 0, "waiting": 0})
         account_ids = _member_zalo_account_ids(supabase, mid)
         out[mid] = {
-            "kpi_inbox_current": current,
-            "kpi_lead_current": lead_current,
+            "kpi_inbox_current": int(cnt.get("inbox", 0)),
+            "kpi_lead_current": int(cnt.get("lead", 0)),
+            "kpi_inbox_zalo_waiting": int(cnt.get("waiting", 0)),
             "account_ids": account_ids,
             "range": {"start": start_date, "end": end_date},
         }
@@ -2262,34 +2244,14 @@ def get_team_kpi_overview_v2(
         mid = str(s.get("id_member"))
         seeding_by_member.setdefault(mid, []).append(s)
 
-    # ── 3. Bulk inbox Zalo (1 truy vấn) ─────────────────────────────────────
-    # Chi xet verified_at (thoi diem leader xac minh) de xac dinh tuan tinh
-    # KPI - truoc day OR ca created_at/updated_at khien 1 conversation cu bi
-    # dem lai/lech tuan khi bi update vi ly do khac (xem fix cung logic o
-    # compute_kpi_inbox_progress).
-    zalo_res = (
-        supabase.table("zalo_conversation_permissions")
-        .select("id_member, verified_at, is_lead")
-        .in_("id_member", member_ids)
-        .eq("shared_role", "leader")
-        .eq("is_active", True)
-        .eq("is_verify", True)
-        # .not_ là property, phải chain .is_(col, "null") — gọi .not_(...) như hàm
-        # sẽ ném "'SyncSelectRequestBuilder' object is not callable" và làm hỏng
-        # cả nhánh fallback v2 khi RPC lỗi.
-        .not_.is_("verified_at", "null")
-        .execute()
-    )
+    # ── 3. Bulk inbox Zalo (zalo_inbox_kpi 2 chiều + fallback legacy) ─────────
+    from app.modules.all_platform.services.zalo_inbox_kpi_service import compute_zalo_kpi_counts
+
     start_iso_utc, end_iso_utc = _vn_week_range_to_utc(default_start, default_end)
-    zalo_inbox: Dict[str, int] = {m: 0 for m in member_ids}
-    zalo_lead: Dict[str, int] = {m: 0 for m in member_ids}
-    for r in (zalo_res.data or []):
-        mid = str(r.get("id_member"))
-        v_at = r.get("verified_at") or ""
-        if start_iso_utc <= v_at <= end_iso_utc:
-            zalo_inbox[mid] = zalo_inbox.get(mid, 0) + 1
-            if r.get("is_lead"):
-                zalo_lead[mid] = zalo_lead.get(mid, 0) + 1
+    zalo_counts = compute_zalo_kpi_counts(member_ids, default_start, default_end, supabase=supabase)
+    zalo_inbox: Dict[str, int] = {m: int(zalo_counts.get(m, {}).get("inbox", 0)) for m in member_ids}
+    zalo_lead: Dict[str, int] = {m: int(zalo_counts.get(m, {}).get("lead", 0)) for m in member_ids}
+    zalo_waiting: Dict[str, int] = {m: int(zalo_counts.get(m, {}).get("waiting", 0)) for m in member_ids}
 
     # ── 4. Bulk FB inbox KPI (1 truy vấn) ───────────────────────────────────
     # created_at (on dinh, khong bi ghi de khi xac nhan lai) - xem migration 022.
@@ -2408,6 +2370,7 @@ def get_team_kpi_overview_v2(
                 "kpi_inbox": active_kpi.get("kpi_inbox", 0),
                 "kpi_inbox_current": total_inbox_current,
                 "kpi_inbox_zalo": inbox_zalo,
+                "kpi_inbox_zalo_waiting": int(zalo_waiting.get(mid, 0)),
                 "kpi_inbox_fb_seeder": inbox_fb_seeder,
                 "kpi_inbox_fb_kpi": inbox_fb_kpi,
                 "kpi_inbox_range": {"start": eff_start, "end": eff_end},

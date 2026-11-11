@@ -28,7 +28,13 @@ interface ZaloContactModalProps {
   postUrl?: string;
   postId?: string;
   platform?: string;
-  onSentSuccess?: (info: { phoneNumber: string; sentBy: string; zaloDisplayName?: string }) => void;
+  onSentSuccess?: (info: {
+    phoneNumber: string;
+    sentBy: string;
+    zaloDisplayName?: string;
+    convId?: string;
+    zaloKpiStatus?: string;
+  }) => void;
 }
 
 export function ZaloContactModal({
@@ -260,8 +266,9 @@ export function ZaloContactModal({
       }
 
       const senderName = user?.name || (user?.email ? user.email.split("@")[0] : "Thành viên hệ thống");
+      let zaloKpiStatus: string = "waiting_reply";
       try {
-        await allPlatformPostsService.recordZaloSent({
+        const recRes = await allPlatformPostsService.recordZaloSent({
           post_id: postId,
           platform: platform || "facebook",
           phone_number: phoneNumber,
@@ -269,16 +276,34 @@ export function ZaloContactModal({
           zalo_conversation_id: convId,
           message_content: message.trim(),
           sent_by: senderName,
+          account_id: selectedAccountId,
+          sender_email: user?.email || undefined,
+          source_post_url: postUrl || undefined,
         });
+        const kpiInfo = recRes?.data?.zalo_kpi as { status?: string; is_confirmed?: boolean } | undefined;
+        if (kpiInfo?.status === "auto_confirmed_two_way" || kpiInfo?.is_confirmed) {
+          zaloKpiStatus = "confirmed";
+        } else if (kpiInfo?.status === "locked_30d") {
+          zaloKpiStatus = "locked_30d";
+        }
       } catch (recErr) {
         console.warn("Could not record zalo sent:", recErr);
       }
 
       if (onSentSuccess) {
-        onSentSuccess({ phoneNumber, sentBy: senderName, zaloDisplayName: dName });
+        onSentSuccess({ phoneNumber, sentBy: senderName, zaloDisplayName: dName, convId, zaloKpiStatus });
+      }
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
       }
 
-      toast.success(`Đã nhắn tin với ${dName} (${phoneNumber}) thành công!`, { id: toastId, duration: 4000 });
+      if (zaloKpiStatus === "confirmed") {
+        toast.success(`Đã gửi tin Zalo cho ${dName} · Đã tính +1 KPI Inbox (tương tác 2 chiều)!`, { id: toastId, duration: 4500 });
+      } else if (zaloKpiStatus === "locked_30d") {
+        toast.info(`Đã gửi tin Zalo cho ${dName} · Lưu ý: SĐT này đã tính KPI trong 30 ngày gần nhất.`, { id: toastId, duration: 5000 });
+      } else {
+        toast.success(`Đã nhắn Zalo tới ${dName} (${phoneNumber}) · Đang chờ khách phản hồi để tính +1 KPI!`, { id: toastId, duration: 4500 });
+      }
       onClose();
     } catch (err: any) {
       console.error("Zalo connect error:", err);
