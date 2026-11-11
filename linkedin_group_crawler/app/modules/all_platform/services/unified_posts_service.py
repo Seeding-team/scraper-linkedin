@@ -1685,8 +1685,27 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
 
     member_ids = [m["id"] for m in members]
 
-    # Giai đoạn 1: Lấy nhóm FB, nhóm LinkedIn, tài khoản Telegram đồng thời (Parallel Stage 1)
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    now_vn = datetime.now(timezone(timedelta(hours=7)))
+    today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start.astimezone(timezone.utc)
+    presence_Lookback_utc = (now_vn - timedelta(days=7)).astimezone(timezone.utc)
+
+    # Giai đoạn 1: Lấy nhóm FB, nhóm LinkedIn, tài khoản Telegram, và trạng thái Online đồng thời (Parallel Stage 1)
+    def _fetch_online_rows():
+        try:
+            oq = (
+                sb.table("member_online_minutes")
+                .select("id_member, minute_bucket")
+                .gte("minute_bucket", presence_Lookback_utc.isoformat())
+            )
+            if role != "admin":
+                oq = oq.in_("id_member", member_ids)
+            return oq.order("minute_bucket", desc=True).limit(10000).execute().data or []
+        except Exception as err:
+            logger.warning(f"Error fetching member_online_minutes in overview: {err}")
+            return []
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
         if role == "admin":
             f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").execute().data or [])
             f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").execute().data or [])
@@ -1695,10 +1714,32 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
             f_fb_g = executor.submit(lambda: sb.table("facebook_groups").select("id, id_member, chay_24h, time_crawl").in_("id_member", member_ids).execute().data or [])
             f_li_g = executor.submit(lambda: sb.table("linkedin_groups").select("id, id_member").in_("id_member", member_ids).execute().data or [])
             f_tg_a = executor.submit(lambda: sb.table("telegram_accounts").select("id_member").in_("id_member", member_ids).eq("status", "connected").execute().data or [])
+        f_online = executor.submit(_fetch_online_rows)
 
         fb_groups = f_fb_g.result()
         li_groups = f_li_g.result()
         tg_accounts = f_tg_a.result()
+        online_rows = f_online.result()
+
+    now_utc = datetime.now(timezone.utc)
+    online_stale_seconds = 120
+    last_seen_map: dict[str, datetime] = {}
+    today_online_buckets: dict[str, set] = {}
+    for orow in online_rows:
+        mid = orow.get("id_member")
+        raw_bucket = orow.get("minute_bucket")
+        if not mid or not raw_bucket:
+            continue
+        try:
+            b_dt = datetime.fromisoformat(str(raw_bucket).replace("Z", "+00:00"))
+            if b_dt.tzinfo is None:
+                b_dt = b_dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if mid not in last_seen_map or b_dt > last_seen_map[mid]:
+            last_seen_map[mid] = b_dt
+        if b_dt >= today_start_utc:
+            today_online_buckets.setdefault(mid, set()).add(b_dt)
 
     fb_group_owner_map: dict[str, str] = {}
     fb_group_count: dict[str, int] = {}
@@ -1720,9 +1761,6 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
             li_group_count[mid] = li_group_count.get(mid, 0) + 1
 
     tg_connected = {a["id_member"] for a in tg_accounts if a.get("id_member")}
-
-    now_vn = datetime.now(timezone(timedelta(hours=7)))
-    today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0)
 
     start_iso: Optional[str] = None
     end_iso: Optional[str] = None
@@ -1847,11 +1885,16 @@ def get_member_seeding_overview(email: str, time_range: str = "all") -> dict:
         total_crawled = post_count.get(mid, 0)
         ai_passed = ai_passed_count.get(mid, 0)
         ai_percent = round((ai_passed / total_crawled) * 100, 1) if total_crawled > 0 else 0
+        seen_dt = last_seen_map.get(mid)
+        is_online = bool(seen_dt and (now_utc - seen_dt).total_seconds() <= online_stale_seconds)
         accounts.append(
             {
                 "id_member": mid,
                 "name": m.get("name") or (m.get("email") or "").split("@")[0] or "Thành viên",
                 "email": m.get("email"),
+                "is_online": is_online,
+                "last_seen_at": seen_dt.isoformat() if seen_dt else None,
+                "online_today_minutes": len(today_online_buckets.get(mid, ())),
                 "fb_groups": fb_group_count.get(mid, 0),
                 "li_groups": li_group_count.get(mid, 0),
                 "scheduled_crawls_count": fb_scheduled_count.get(mid, 0),

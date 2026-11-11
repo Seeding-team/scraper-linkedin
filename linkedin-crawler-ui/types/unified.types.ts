@@ -349,6 +349,9 @@ export interface MemberSeedingAccount {
   id_member: string;
   name: string;
   email: string;
+  is_online?: boolean;
+  last_seen_at?: string | null;
+  online_today_minutes?: number;
   fb_groups: number;
   li_groups: number;
   scheduled_crawls_count?: number;

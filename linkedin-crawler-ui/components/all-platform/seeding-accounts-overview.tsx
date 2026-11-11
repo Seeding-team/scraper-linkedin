@@ -35,6 +35,27 @@ function formatRelative(iso: string | null): string {
   return d.toLocaleDateString("vi-VN");
 }
 
+function formatLastSeenRelative(iso?: string | null): string {
+  if (!iso) return "Chưa ghi nhận";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Chưa ghi nhận";
+  const diffMin = Math.max(1, Math.floor((Date.now() - d.getTime()) / 60_000));
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH} giờ trước`;
+  const diffD = Math.floor(diffH / 24);
+  return `${diffD} ngày trước`;
+}
+
+function formatOnlineDuration(minutes?: number): string {
+  const m = Math.max(0, Number(minutes || 0));
+  if (m === 0) return "";
+  if (m < 60) return `${m}p hôm nay`;
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem > 0 ? `${h}g ${rem}p hôm nay` : `${h}g hôm nay`;
+}
+
 export function SeedingAccountsOverview() {
   const { user } = useAppAuth();
   const [accounts, setAccounts] = useState<MemberSeedingAccount[]>([]);
@@ -74,23 +95,37 @@ export function SeedingAccountsOverview() {
 
   useEffect(() => {
     load();
+    const timer = setInterval(load, 45_000);
+    return () => clearInterval(timer);
   }, [load]);
 
   // Mở khóa cho cả Member và Leader: Thành viên xem tài khoản của chính mình, Leader xem toàn team
   const isMember = user?.role === "member";
+  const onlineCount = accounts.filter((a) => a.is_online).length;
 
   return (
     <div className="w-full min-w-0 space-y-4 font-sans">
-      <div className="rounded-2xl border border-outline-variant bg-surface p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_4px_10px_-2px_rgba(16,24,40,0.06)] flex items-center gap-3">
-        <div className="rounded-2xl bg-primary/10 p-3">
-          <span className="material-symbols-outlined text-primary text-[26px]">manage_accounts</span>
+      <div className="rounded-2xl border border-outline-variant bg-surface p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04),0_4px_10px_-2px_rgba(16,24,40,0.06)] flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="rounded-2xl bg-primary/10 p-3">
+            <span className="material-symbols-outlined text-primary text-[26px]">manage_accounts</span>
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-on-surface">Tài khoản seeding</h2>
+            <p className="text-xs text-on-surface-variant">
+              {isMember ? "Thống kê tài khoản seeding cá nhân của bạn" : (user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý")} — bấm vào 1 hàng để xem chi tiết.
+            </p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-lg font-bold text-on-surface">Tài khoản seeding</h2>
-          <p className="text-xs text-on-surface-variant">
-            {isMember ? "Thống kê tài khoản seeding cá nhân của bạn" : (user?.role === "admin" ? "Toàn bộ thành viên đang seeding" : "Thành viên trong team bạn quản lý")} — bấm vào 1 hàng để xem chi tiết.
-          </p>
-        </div>
+        {accounts.length > 0 && (
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-700">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            </span>
+            <span>{onlineCount} / {accounts.length} đang online</span>
+          </div>
+        )}
       </div>
 
       {error ? (
@@ -125,27 +160,29 @@ export function SeedingAccountsOverview() {
 
       <div className="overflow-hidden rounded-xl border border-outline-variant bg-surface shadow-sm">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[850px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1060px] border-collapse text-left text-sm">
             <thead className="bg-surface-container-low border-b border-outline-variant text-[11px] font-bold text-on-surface-variant uppercase">
               <tr>
                 <th className="py-3 px-4 min-w-[200px]">Người dùng</th>
+                <th className="py-3 px-4 text-center min-w-[140px]">Trạng thái online</th>
                 <th className="py-3 px-4 min-w-[170px]">Nền tảng đang dùng</th>
                 <th className="py-3 px-4 text-center min-w-[130px]">Số group cào</th>
-                <th className="py-3 px-4 text-center min-w-[130px]">Số bài cào</th>
+                <th className="py-3 px-4 text-center min-w-[120px]">Số lịch cào</th>
+                <th className="py-3 px-4 text-center min-w-[120px]">Số bài cào</th>
                 <th className="py-3 px-4 text-center min-w-[170px]">Số bài viết vượt AI check</th>
-                <th className="py-3 px-4 min-w-[140px]">Lần cào gần nhất</th>
+                <th className="py-3 px-4 min-w-[150px]">Lần cào gần nhất</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={8} className="py-10 text-center text-xs text-muted-foreground">
                     Đang tải dữ liệu...
                   </td>
                 </tr>
               ) : accounts.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-xs text-muted-foreground">
+                  <td colSpan={8} className="py-10 text-center text-xs text-muted-foreground">
                     Chưa có tài khoản seeding nào.
                   </td>
                 </tr>
@@ -157,8 +194,45 @@ export function SeedingAccountsOverview() {
                     className="hover:bg-primary/5 cursor-pointer transition"
                   >
                     <td className="py-3 px-4 min-w-[200px]">
-                      <div className="font-bold text-on-surface">{a.name}</div>
-                      <div className="text-[11px] text-on-surface-variant">{a.email}</div>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "inline-block w-2 h-2 rounded-full shrink-0",
+                            a.is_online ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.7)]" : "bg-slate-300",
+                          )}
+                          title={a.is_online ? "Đang online" : "Offline"}
+                        />
+                        <div className="font-bold text-on-surface">{a.name}</div>
+                      </div>
+                      <div className="text-[11px] text-on-surface-variant pl-4">{a.email}</div>
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      {a.is_online ? (
+                        <div className="inline-flex flex-col items-center">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                            </span>
+                            Đang online
+                          </span>
+                          {formatOnlineDuration(a.online_today_minutes) ? (
+                            <span className="text-[10px] text-emerald-600/90 mt-0.5 font-medium">
+                              {formatOnlineDuration(a.online_today_minutes)}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="inline-flex flex-col items-center">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                            <span className="inline-block w-2 h-2 rounded-full bg-slate-400" />
+                            Offline
+                          </span>
+                          <span className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                            {a.last_seen_at ? formatLastSeenRelative(a.last_seen_at) : "Chưa hoạt động"}
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -277,7 +351,20 @@ function MemberDetailDrawer({ account, onClose }: { account: MemberSeedingAccoun
               <span className="text-primary font-bold text-lg">{account.name.charAt(0).toUpperCase()}</span>
             </div>
             <div className="min-w-0">
-              <div className="font-bold text-base text-foreground truncate">{account.name}</div>
+              <div className="flex items-center gap-2">
+                <div className="font-bold text-base text-foreground truncate">{account.name}</div>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0",
+                    account.is_online
+                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      : "bg-slate-100 text-slate-600 border-slate-200",
+                  )}
+                >
+                  <span className={cn("w-1.5 h-1.5 rounded-full", account.is_online ? "bg-emerald-500" : "bg-slate-400")} />
+                  {account.is_online ? "Đang online" : "Offline"}
+                </span>
+              </div>
               <div className="text-xs text-muted-foreground truncate">{account.email}</div>
             </div>
           </div>
