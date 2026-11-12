@@ -60,6 +60,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             stopCrawlAndCloseCrawlTabs('Người dùng chủ động đóng tab Web Seeding');
         }
         sendResponse({ stopped: true });
+    } else if (msg.action === 'MESSENGER_SYNC') {
+        syncMessengerRow(msg.row).then(sendResponse);
+        return true;
     } else if (msg.action === 'CAPTURE_FB_SESSION') {
         captureFacebookSession()
             .then(res => sendResponse(res))
@@ -658,3 +661,28 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         pollNextJob();
     }
 });
+
+
+// Gửi 1 tin (đọc từ danh sách chat Messenger) về Hộp thư Messenger trên Seeding.
+// Dùng cookie đăng nhập Seeding (credentials: include) - webhook yêu cầu đăng nhập.
+async function syncMessengerRow(row) {
+    try {
+        const { api_base_url } = await chrome.storage.local.get('api_base_url');
+        const base = api_base_url || API_BASE;
+        const cUser = await new Promise((resolve) =>
+            chrome.cookies.get({ url: 'https://www.facebook.com', name: 'c_user' }, (c) => resolve(c?.value || null))
+        );
+        if (!cUser || !row?.thread_id) return { success: false };
+        const res = await fetch(`${base}/api/all-platform/messenger/webhook/sync`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fb_user_id: cUser, ...row }),
+        });
+        if (!res.ok) console.warn('[MessengerSync]', res.status, await res.text().catch(() => ''));
+        return { success: res.ok, status: res.status };
+    } catch (e) {
+        console.warn('[MessengerSync] error', e);
+        return { success: false };
+    }
+}

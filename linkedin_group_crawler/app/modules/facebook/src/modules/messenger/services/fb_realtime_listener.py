@@ -46,16 +46,19 @@ class FbRealtimeListener:
         recipient_name: Optional[str] = None,
         attachments: Optional[List[Dict[str, Any]]] = None,
         offline_threading_id: Optional[str] = None,
+        fb_message_id: Optional[str] = None,
+        created_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Xử lý và lưu trữ một gói tin nhắn (cả chiều khách gửi và echo từ điện thoại)."""
         sb = get_supabase_client()
         now_iso = datetime.now(timezone.utc).isoformat()
+        msg_created_at = created_at or now_iso
 
         # Thread ID: Trong chat 1-1, thread ID là đối phương (không phải chính mình)
         thread_id = str(recipient_id if is_self else sender_id).strip()
 
         # 1. Lưu bản ghi tin nhắn vào fb_messenger_messages
-        msg_payload = {
+        msg_payload: Dict[str, Any] = {
             "account_id": account_id,
             "thread_id": thread_id,
             "sender_id": str(sender_id),
@@ -67,8 +70,10 @@ class FbRealtimeListener:
             "is_echo": is_echo,
             "status": "sent",
             "offline_threading_id": offline_threading_id,
-            "created_at": now_iso,
+            "created_at": msg_created_at,
         }
+        if fb_message_id is not None:
+            msg_payload["fb_message_id"] = fb_message_id
 
         try:
             msg_res = sb.table("fb_messenger_messages").insert(msg_payload).execute()
@@ -83,7 +88,7 @@ class FbRealtimeListener:
             "thread_id": thread_id,
             "recipient_id": thread_id,
             "last_message": content or "(Tệp đính kèm/Hình ảnh)",
-            "last_message_at": now_iso,
+            "last_message_at": msg_created_at,
             "updated_at": now_iso,
         }
         if recipient_name:

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FB API Crawler",
-  "version": "2.1",
+  "version": "2.2",
   "description": "Lấy bài viết Group Facebook siêu tốc qua API GraphQL",
   "permissions": [
     "activeTab",
@@ -40,7 +40,8 @@
         "*://*.facebook.com/*"
       ],
       "js": [
-        "content.js"
+        "content.js",
+        "messenger-sync.js"
       ],
       "run_at": "document_idle"
     },

@@ -7,7 +7,17 @@ import {
   FbMessengerAccount,
   FbMessengerThread,
   FbMessengerMessage,
+  extractFbUid,
+  FB_ACCOUNT_STATUS_LABELS,
 } from "@/services/facebook-messenger.service";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { MessengerAccountModal } from "./MessengerAccountModal";
 import { INBOX_TEMPLATES } from "@/components/all-platform/components/inbox-templates";
 import { toast } from "sonner";
@@ -31,7 +41,19 @@ export function MessengerInboxShell() {
   const [searchQuery, setSearchQuery] = useState("");
   const [inputText, setInputText] = useState("");
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [showNewMessageModal, setShowNewMessageModal] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+
+  const selectedAccountIdRef = useRef(selectedAccountId);
+  selectedAccountIdRef.current = selectedAccountId;
+
+  const selectedThreadRef = useRef<FbMessengerThread | null>(selectedThread);
+  useEffect(() => {
+    selectedThreadRef.current = selectedThread;
+  }, [selectedThread]);
+
+  const loadThreadsReqIdRef = useRef(0);
+  const loadMessagesReqIdRef = useRef(0);
 
   // Danh sách tệp đính kèm chờ gửi & lightbox phóng to ảnh
   const [pendingFiles, setPendingFiles] = useState<
@@ -85,7 +107,7 @@ export function MessengerInboxShell() {
       const res = await fbMessengerService.getAccounts();
       if (res.success && res.data) {
         setAccounts(res.data);
-        if (res.data.length > 0 && !selectedAccountId) {
+        if (res.data.length > 0 && !selectedAccountIdRef.current) {
           setSelectedAccountId(res.data[0].id);
         }
       }
@@ -94,31 +116,74 @@ export function MessengerInboxShell() {
     } finally {
       setLoadingAccounts(false);
     }
-  }, [selectedAccountId]);
+  }, []);
 
   useEffect(() => {
     loadAccounts();
   }, [loadAccounts]);
 
   // 2. Tải danh sách threads khi chọn account
-  const loadThreads = useCallback(async (accId: string) => {
+  const loadThreads = useCallback(async (accId: string, preferredThreadId?: string) => {
     if (!accId) return;
+    const reqId = ++loadThreadsReqIdRef.current;
     setLoadingThreads(true);
     try {
       const res = await fbMessengerService.getThreads(accId);
+      if (reqId !== loadThreadsReqIdRef.current || accId !== selectedAccountIdRef.current) return;
       if (res.success && res.data) {
-        setThreads(res.data);
-        if (res.data.length > 0) {
-          setSelectedThread(res.data[0]);
+        const fetchedThreads = res.data;
+        const currentSelected =
+          selectedThreadRef.current?.account_id === accId
+            ? selectedThreadRef.current
+            : null;
+        const targetId = currentSelected?.thread_id ?? preferredThreadId;
+
+        // Tìm thread tương ứng trong danh sách từ server (theo thread_id hoặc recipient_id)
+        const matched = targetId
+          ? fetchedThreads.find(
+              (t) => t.thread_id === targetId || t.recipient_id === targetId
+            )
+          : null;
+
+        if (matched) {
+          // Server đã có thread thật -> thay thế thread tạm thời hoàn toàn, không duplicate
+          setThreads(fetchedThreads);
+          const isAlreadySelected =
+            currentSelected &&
+            !currentSelected.id.startsWith("temp_") &&
+            currentSelected.thread_id === matched.thread_id;
+          if (!isAlreadySelected) {
+            setSelectedThread(matched);
+          }
+        } else if (currentSelected?.id.startsWith("temp_")) {
+          // Server chưa kịp đồng bộ thread mới -> giữ thread tạm ở đầu danh sách nhưng lọc bỏ trùng
+          setThreads([
+            currentSelected,
+            ...fetchedThreads.filter(
+              (t) =>
+                t.recipient_id !== currentSelected.recipient_id &&
+                t.thread_id !== currentSelected.thread_id
+            ),
+          ]);
         } else {
-          setSelectedThread(null);
-          setMessages([]);
+          setThreads(fetchedThreads);
+          const nextSelected = currentSelected
+            ? (fetchedThreads.find((t) => t.thread_id === currentSelected.thread_id) ?? fetchedThreads[0] ?? null)
+            : (fetchedThreads[0] ?? null);
+          setSelectedThread(nextSelected);
+          if (!nextSelected) {
+            setMessages([]);
+          }
         }
       }
     } catch {
-      toast.error("Không tải được danh sách hội thoại.");
+      if (reqId === loadThreadsReqIdRef.current && accId === selectedAccountIdRef.current) {
+        toast.error("Không tải được danh sách hội thoại.");
+      }
     } finally {
-      setLoadingThreads(false);
+      if (reqId === loadThreadsReqIdRef.current && accId === selectedAccountIdRef.current) {
+        setLoadingThreads(false);
+      }
     }
   }, []);
 
@@ -131,22 +196,31 @@ export function MessengerInboxShell() {
   // 3. Tải tin nhắn khi chọn thread
   const loadMessages = useCallback(async (accId: string, threadId: string) => {
     if (!accId || !threadId) return;
+    const reqId = ++loadMessagesReqIdRef.current;
     setLoadingMessages(true);
     try {
       const res = await fbMessengerService.getThreadMessages(accId, threadId);
+      if (reqId !== loadMessagesReqIdRef.current || accId !== selectedAccountIdRef.current || threadId !== selectedThreadRef.current?.thread_id) return;
       if (res.success && res.data) {
         setMessages(res.data);
       }
     } catch {
-      toast.error("Không tải được tin nhắn hội thoại.");
+      if (reqId === loadMessagesReqIdRef.current && accId === selectedAccountIdRef.current && threadId === selectedThreadRef.current?.thread_id) {
+        toast.error("Không tải được tin nhắn hội thoại.");
+      }
     } finally {
-      setLoadingMessages(false);
+      if (reqId === loadMessagesReqIdRef.current) {
+        setLoadingMessages(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    if (selectedAccountId && selectedThread) {
+    if (selectedAccountId && selectedThread && selectedThread.account_id === selectedAccountId) {
       loadMessages(selectedAccountId, selectedThread.thread_id);
+    } else {
+      loadMessagesReqIdRef.current++;
+      setLoadingMessages(false);
     }
   }, [selectedAccountId, selectedThread, loadMessages]);
 
@@ -192,6 +266,9 @@ export function MessengerInboxShell() {
     e.preventDefault();
     if ((!inputText.trim() && pendingFiles.length === 0) || !selectedAccountId || !selectedThread) return;
 
+    const sendAccountId = selectedAccountId;
+    const sentThreadId = selectedThread.thread_id;
+    const sentRecipientName = selectedThread.recipient_name;
     const content = inputText.trim();
     const filesToUpload = [...pendingFiles];
     setInputText("");
@@ -199,6 +276,10 @@ export function MessengerInboxShell() {
     setShowTemplateMenu(false);
 
     setSending(true);
+
+    const isCurrentThread = () =>
+      selectedAccountIdRef.current === sendAccountId &&
+      selectedThreadRef.current?.thread_id === sentThreadId;
 
     // 1. Upload các file đính kèm (nếu có)
     const uploadedAttachments: {
@@ -214,7 +295,7 @@ export function MessengerInboxShell() {
       setSimulationText(`Đang tải lên ${filesToUpload.length} tệp đính kèm...`);
       for (const pf of filesToUpload) {
         try {
-          const upRes = await fbMessengerService.uploadMedia(pf.file, selectedAccountId);
+          const upRes = await fbMessengerService.uploadMedia(pf.file, sendAccountId);
           if (upRes.success && upRes.data) {
             uploadedAttachments.push(upRes.data);
           } else {
@@ -229,10 +310,10 @@ export function MessengerInboxShell() {
     // Optimistic UI Message (Hiện ngay trong 0ms)
     const optimisticMsg: FbMessengerMessage = {
       id: `opt_${Date.now()}`,
-      account_id: selectedAccountId,
-      thread_id: selectedThread.thread_id,
-      sender_id: selectedAccountId,
-      recipient_id: selectedThread.thread_id,
+      account_id: sendAccountId,
+      thread_id: sentThreadId,
+      sender_id: sendAccountId,
+      recipient_id: sentThreadId,
       content,
       attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
       is_self: true,
@@ -241,7 +322,9 @@ export function MessengerInboxShell() {
       created_at: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, optimisticMsg]);
+    if (isCurrentThread()) {
+      setMessages((prev) => [...prev, optimisticMsg]);
+    }
 
     // Kích hoạt chuỗi bước mô phỏng thị giác (Visual Simulation Stepper)
     setSimulationStep(1);
@@ -264,9 +347,9 @@ export function MessengerInboxShell() {
 
     try {
       const res = await fbMessengerService.sendMessage({
-        account_id: selectedAccountId,
-        recipient_id: selectedThread.thread_id,
-        recipient_name: selectedThread.recipient_name,
+        account_id: sendAccountId,
+        recipient_id: sentThreadId,
+        recipient_name: sentRecipientName,
         content,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         simulate_human: true,
@@ -278,9 +361,11 @@ export function MessengerInboxShell() {
 
       if (!res.success) {
         toast.error(res.message || "Gửi tin nhắn thất bại.");
-        setMessages((prev) =>
-          prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
-        );
+        if (isCurrentThread()) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
+          );
+        }
         setSimulationStep(0);
         return;
       }
@@ -290,9 +375,11 @@ export function MessengerInboxShell() {
 
       if (res.data?.message) {
         const saved = res.data.message;
-        setMessages((prev) =>
-          prev.map((m) => (m.id === optimisticMsg.id ? saved : m))
-        );
+        if (isCurrentThread()) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticMsg.id ? saved : m))
+          );
+        }
       }
 
       setTimeout(() => {
@@ -302,14 +389,26 @@ export function MessengerInboxShell() {
 
       // Cập nhật lại số lượng tin đã gửi của tài khoản
       loadAccounts();
+
+      // Sau khi gửi thành công tin nhắn đầu tiên (hoặc bất kỳ tin nào),
+      // reload lại threads để thay thế thread tạm thời bằng thread thật từ server (tránh trùng lặp)
+      if (sendAccountId === selectedAccountIdRef.current) {
+        if (selectedThreadRef.current?.thread_id === sentThreadId) {
+          await loadThreads(sendAccountId, res.data?.thread_id || sentThreadId);
+        } else {
+          await loadThreads(sendAccountId);
+        }
+      }
     } catch {
       clearTimeout(timer1);
       clearTimeout(timer2);
       clearTimeout(timer3);
       toast.error("Lỗi mạng khi gửi tin nhắn.");
-      setMessages((prev) =>
-        prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
-      );
+      if (isCurrentThread()) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
+        );
+      }
       setSimulationStep(0);
     } finally {
       setSending(false);
@@ -332,6 +431,78 @@ export function MessengerInboxShell() {
   };
 
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+
+  // Xử lý tạo cuộc trò chuyện mới hoặc chọn cuộc trò chuyện đã có
+  const handleStartNewChat = (uid: string, nickname?: string) => {
+    // 1. Nếu cuộc trò chuyện với recipient_id này đã tồn tại -> chọn luôn
+    const existing = threads.find(
+      (t) => t.recipient_id === uid || t.thread_id === uid
+    );
+
+    if (existing) {
+      selectedThreadRef.current = existing;
+      setSelectedThread(existing);
+      setSearchQuery("");
+      return;
+    }
+
+    // 2. Tạo đối tượng thread tạm thời trong bộ nhớ (cùng cấu trúc FbMessengerThread)
+    const now = new Date().toISOString();
+    const tempThread: FbMessengerThread = {
+      id: `temp_${uid}`,
+      account_id: selectedAccountId,
+      thread_id: uid,
+      recipient_id: uid,
+      recipient_name: nickname || `Người dùng ${uid}`,
+      unread_count: 0,
+      created_at: now,
+      updated_at: now,
+    };
+
+    setThreads((prev) => [
+      tempThread,
+      ...prev.filter((t) => t.recipient_id !== uid && t.thread_id !== uid),
+    ]);
+    selectedThreadRef.current = tempThread;
+    setSelectedThread(tempThread);
+    setMessages([]);
+    setSearchQuery("");
+  };
+
+  const getAccountStatusBadge = (status: FbMessengerAccount["status"]) => {
+    switch (status) {
+      case "connected":
+        return {
+          label: FB_ACCOUNT_STATUS_LABELS.connected,
+          className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        };
+      case "disconnected":
+        return {
+          label: FB_ACCOUNT_STATUS_LABELS.disconnected,
+          className: "bg-gray-100 text-gray-700 border-gray-300",
+        };
+      case "checkpoint":
+        return {
+          label: FB_ACCOUNT_STATUS_LABELS.checkpoint,
+          className: "bg-amber-50 text-amber-700 border-amber-200",
+        };
+      case "frozen":
+        return {
+          label: FB_ACCOUNT_STATUS_LABELS.frozen,
+          className: "bg-blue-50 text-blue-700 border-blue-200",
+        };
+      case "expired":
+        return {
+          label: FB_ACCOUNT_STATUS_LABELS.expired,
+          className: "bg-rose-50 text-rose-700 border-rose-200",
+        };
+      default:
+        return {
+          label: status,
+          className: "bg-gray-100 text-gray-700 border-gray-200",
+        };
+    }
+  };
 
   // Lọc hội thoại theo thanh tìm kiếm
   const filteredThreads = useMemo(() => {
@@ -371,7 +542,14 @@ export function MessengerInboxShell() {
           {/* Hộp chọn nick */}
           <select
             value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              selectedAccountIdRef.current = val;
+              selectedThreadRef.current = null;
+              setSelectedThread(null);
+              setMessages([]);
+              setSelectedAccountId(val);
+            }}
             className="w-full text-xs font-semibold p-2.5 bg-surface border border-outline-variant rounded-xl cursor-pointer focus:ring-2 focus:ring-primary/20 text-on-surface"
           >
             {accounts.length === 0 ? (
@@ -379,74 +557,101 @@ export function MessengerInboxShell() {
             ) : (
               accounts.map((acc) => (
                 <option key={acc.id} value={acc.id}>
-                  {acc.name} ({acc.status === "frozen" ? "Đóng băng" : acc.status === "connected" ? "Hoạt động" : acc.status})
+                  {acc.name} ({FB_ACCOUNT_STATUS_LABELS[acc.status] || acc.status})
                 </option>
               ))
             )}
           </select>
 
           {/* Chi tiết tài khoản & Thanh Quota */}
-          {selectedAccount && (
-            <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-2.5 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className={cn(
-                  "inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full text-[10px]",
-                  selectedAccount.status === "connected" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
-                  selectedAccount.status === "frozen" ? "bg-amber-50 text-amber-700 border border-amber-200" :
-                  "bg-rose-50 text-rose-700 border border-rose-200"
-                )}>
-                  ● {selectedAccount.status === "connected" ? "Đang kết nối an toàn" :
-                      selectedAccount.status === "frozen" ? "Đóng băng bảo vệ" : selectedAccount.status}
-                </span>
-
-                {selectedAccount.status === "frozen" && (
-                  <button
-                    type="button"
-                    onClick={() => handleUnfreeze(selectedAccount.id)}
-                    className="text-[10px] font-bold text-primary hover:underline cursor-pointer"
-                  >
-                    Rã đông ngay
-                  </button>
-                )}
-              </div>
-
-              {/* Progress bar hạn mức ngày */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
-                  <span>Hạn mức ngày:</span>
-                  <span className="font-bold text-on-surface">
-                    {selectedAccount.daily_sent_count} / {selectedAccount.daily_sent_limit} tin
-                  </span>
-                </div>
-                <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
-                  <div
+          {selectedAccount && (() => {
+            const statusBadge = getAccountStatusBadge(selectedAccount.status);
+            return (
+              <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-2.5 space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span
                     className={cn(
-                      "h-full transition-all duration-300",
-                      selectedAccount.daily_sent_count >= selectedAccount.daily_sent_limit
-                        ? "bg-amber-500"
-                        : "bg-primary"
+                      "inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-full text-[10px] border",
+                      statusBadge.className
                     )}
-                    style={{
-                      width: `${Math.min(100, (selectedAccount.daily_sent_count / (selectedAccount.daily_sent_limit || 1)) * 100)}%`,
-                    }}
-                  />
+                    title={
+                      selectedAccount.status === "checkpoint" && selectedAccount.checkpoint_reason
+                        ? selectedAccount.checkpoint_reason
+                        : undefined
+                    }
+                  >
+                    ● {statusBadge.label}
+                  </span>
+
+                  {selectedAccount.status === "frozen" && (
+                    <button
+                      type="button"
+                      onClick={() => handleUnfreeze(selectedAccount.id)}
+                      className="text-[10px] font-bold text-primary hover:underline cursor-pointer"
+                    >
+                      Rã đông ngay
+                    </button>
+                  )}
+                </div>
+
+                {/* Progress bar hạn mức ngày */}
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] text-muted-foreground font-medium">
+                    <span>Hạn mức ngày:</span>
+                    <span className="font-bold text-on-surface">
+                      {selectedAccount.daily_sent_count} / {selectedAccount.daily_sent_limit} tin
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
+                    <div
+                      className={cn(
+                        "h-full transition-all duration-300",
+                        selectedAccount.daily_sent_count >= selectedAccount.daily_sent_limit
+                          ? "bg-amber-500"
+                          : "bg-primary"
+                      )}
+                      style={{
+                        width: `${Math.min(100, (selectedAccount.daily_sent_count / (selectedAccount.daily_sent_limit || 1)) * 100)}%`,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
-          {/* Ô tìm kiếm hội thoại */}
-          <div className="relative">
-            <span className="material-symbols-outlined absolute left-2.5 top-2.5 text-muted-foreground text-[16px]">
-              search
-            </span>
-            <input
-              type="text"
-              placeholder="Tìm theo tên hoặc ID..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
-            />
+          {/* Ô tìm kiếm hội thoại và nút Tin nhắn mới */}
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1">
+              <span className="material-symbols-outlined absolute left-2.5 top-2.5 text-muted-foreground text-[16px]">
+                search
+              </span>
+              <input
+                type="text"
+                placeholder="Tìm theo tên hoặc ID..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-2.5 py-1.5 text-xs rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-1 focus:ring-primary"
+              />
+            </div>
+            <div
+              title={
+                !selectedAccountId
+                  ? "Vui lòng chọn tài khoản để tạo tin nhắn mới"
+                  : "Tạo tin nhắn mới"
+              }
+              className="shrink-0"
+            >
+              <button
+                type="button"
+                onClick={() => setShowNewMessageModal(true)}
+                disabled={!selectedAccountId}
+                className="px-2.5 py-1.5 text-xs font-bold bg-primary hover:bg-[#a01c3d] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl flex items-center gap-1 cursor-pointer transition shadow-xs"
+              >
+                <span className="material-symbols-outlined text-[15px]">edit_square</span>
+                <span className="whitespace-nowrap">Tin nhắn mới</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -464,7 +669,10 @@ export function MessengerInboxShell() {
               return (
                 <div
                   key={t.id}
-                  onClick={() => setSelectedThread(t)}
+                  onClick={() => {
+                    selectedThreadRef.current = t;
+                    setSelectedThread(t);
+                  }}
                   className={cn(
                     "p-3.5 flex items-start gap-3 cursor-pointer transition",
                     isSelected
@@ -953,6 +1161,148 @@ export function MessengerInboxShell() {
         onOpenChange={setShowAccountModal}
         onSuccess={loadAccounts}
       />
+
+      <NewMessageModal
+        open={showNewMessageModal}
+        onOpenChange={setShowNewMessageModal}
+        onConfirm={handleStartNewChat}
+      />
     </div>
+  );
+}
+
+interface NewMessageModalProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: (uid: string, nickname?: string) => void;
+}
+
+function NewMessageModal({ open, onOpenChange, onConfirm }: NewMessageModalProps) {
+  const [targetInput, setTargetInput] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      setTargetInput("");
+      setNickname("");
+      setError(null);
+    }
+  }, [open]);
+
+  const handleInputChange = (val: string) => {
+    setTargetInput(val);
+    if (error) {
+      setError(null);
+    }
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = targetInput.trim();
+    if (!trimmed) {
+      setError("Vui lòng nhập UID hoặc link Facebook.");
+      inputRef.current?.focus();
+      return;
+    }
+
+    const { uid, error: extractError } = extractFbUid(trimmed);
+    if (extractError || !uid) {
+      setError(extractError || "Không thể trích xuất UID hợp lệ.");
+      inputRef.current?.focus();
+      return;
+    }
+
+    onConfirm(uid, nickname.trim() || undefined);
+    onOpenChange(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-md font-sans p-6"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          inputRef.current?.focus();
+        }}
+      >
+        <DialogHeader>
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center font-bold shrink-0">
+              <span className="material-symbols-outlined text-[22px]">edit_square</span>
+            </div>
+            <div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Tin nhắn mới
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+                Nhập UID hoặc liên kết Facebook của người nhận
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+
+        <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <div className="space-y-1.5">
+            <label htmlFor="fb-target-uid" className="text-xs font-bold text-foreground">
+              UID hoặc link Facebook <span className="text-primary">*</span>
+            </label>
+            <input
+              id="fb-target-uid"
+              ref={inputRef}
+              type="text"
+              placeholder="VD: 100012345678 hoặc link facebook.com/profile.php?id=..."
+              value={targetInput}
+              onChange={(e) => handleInputChange(e.target.value)}
+              className={cn(
+                "w-full text-xs px-3.5 py-2.5 rounded-xl border bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 font-sans transition",
+                error
+                  ? "border-rose-500 focus:ring-rose-500/20"
+                  : "border-outline-variant focus:ring-primary/20"
+              )}
+              aria-invalid={!!error}
+              aria-describedby={error ? "uid-error" : undefined}
+            />
+            {error && (
+              <p id="uid-error" className="text-xs text-rose-600 font-medium flex items-center gap-1 mt-1">
+                <span className="material-symbols-outlined text-[15px] shrink-0">error</span>
+                <span>{error}</span>
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="fb-target-nickname" className="text-xs font-bold text-foreground">
+              Tên gợi nhớ <span className="text-[11px] font-normal text-muted-foreground">(Không bắt buộc)</span>
+            </label>
+            <input
+              id="fb-target-nickname"
+              type="text"
+              placeholder="VD: Khách hàng Nguyễn Văn A"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-sans transition"
+            />
+          </div>
+
+          <DialogFooter className="pt-2 gap-2 sm:justify-end">
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="px-4 py-2 text-xs font-semibold rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface transition cursor-pointer"
+            >
+              Huỷ
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 text-xs font-bold rounded-xl bg-primary hover:bg-[#a01c3d] text-white shadow-xs transition cursor-pointer"
+            >
+              Bắt đầu chat
+            </button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

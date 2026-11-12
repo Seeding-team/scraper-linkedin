@@ -55,6 +55,8 @@ services:
       DIRECT_DATABASE_URL: "postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres"
       SUPABASE_DB_PASSWORD: "NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM"
       SUPABASE_STUDIO_URL: "https://seeding-dev-test-studio.db.markeeai.com"
+      MESSENGER_BRIDGE_URL: http://messenger-bridge-dev:8090
+      MESSENGER_BRIDGE_KEY: ${MESSENGER_BRIDGE_DEV_KEY:-}
     expose:
       - "8000"
     volumes:
@@ -64,6 +66,29 @@ services:
       seeding-net:
         aliases:
           - backend-dev
+
+  messenger-bridge-dev:
+    profiles: ["messenger-bridge"]
+    build:
+      context: ./messenger-bridge
+      dockerfile: Dockerfile
+    image: scraper-linkedin-messenger-bridge-dev:latest
+    container_name: seeding-messenger-bridge-dev
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      BRIDGE_KEY: ${MESSENGER_BRIDGE_DEV_KEY:-}
+      BACKEND_WEBHOOK_URL: http://backend-dev:8000/api/all-platform/messenger/webhook/bridge
+      BRIDGE_DATA_DIR: /data
+    expose:
+      - "8090"
+    volumes:
+      - messenger-bridge-dev-data:/data
+    networks:
+      seeding-net:
+        aliases:
+          - messenger-bridge-dev
 
 networks:
   seeding-net:
@@ -76,3 +101,5 @@ volumes:
     external: true
   backend-dev-artifacts:
     name: scraper-linkedin_backend-dev-artifacts
+  messenger-bridge-dev-data:
+    name: scraper-linkedin_messenger-bridge-dev-data

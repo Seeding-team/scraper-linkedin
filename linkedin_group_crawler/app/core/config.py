@@ -484,6 +484,9 @@ class Settings:
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3ODc3Njc3ODIsImV4cCI6MjEwMzEyNzc4Mn0.sTHQs9H3tzdnk3y9oLhWZx_4CBWwYXd3RAPiZiG44wg",
     )
 
+    messenger_bridge_url: str = os.getenv("MESSENGER_BRIDGE_URL", "").strip().rstrip("/")
+    messenger_bridge_key: str = os.getenv("MESSENGER_BRIDGE_KEY", "").strip()
+
     def __post_init__(self) -> None:
         if self.cors_origins is None:
             self.cors_origins = _parse_csv(
