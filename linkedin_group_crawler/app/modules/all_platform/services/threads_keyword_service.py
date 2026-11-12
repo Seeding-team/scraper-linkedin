@@ -30,19 +30,57 @@ logger = get_logger(__name__)
 
 TABLE = "threads_keyword_registry"
 MAX_KEYWORDS = 50
-INITIAL_GENERATE_COUNT = 20
-DAILY_ADD_COUNT = 5
+TARGET_ACTIVE_KEYWORDS = 30
+INITIAL_GENERATE_COUNT = 30
+DAILY_ADD_COUNT = 6
+
+DEFAULT_THREADS_FALLBACK_KEYWORDS: tuple[str, ...] = (
+    "thiết kế website",
+    "làm website",
+    "làm web",
+    "cần làm web",
+    "tìm người làm web",
+    "báo giá website",
+    "landing page",
+    "làm landing page",
+    "thiết kế landing page",
+    "làm app",
+    "thiết kế app",
+    "cần làm app",
+    "lập trình app",
+    "outsource phần mềm",
+    "gia công phần mềm",
+    "phần mềm quản lý",
+    "làm web bán hàng",
+    "web bán hàng",
+    "tìm dev freelance",
+    "tuyển freelance dev",
+    "code tool",
+    "viết phần mềm",
+    "nâng cấp website",
+    "sửa website",
+    "thiết kế ui ux",
+    "làm web doanh nghiệp",
+    "web giới thiệu",
+    "làm hệ thống crm",
+    "phần mềm bán hàng",
+    "thuê code web",
+    "công ty làm web",
+    "cần tìm dev",
+)
 
 _KEYWORD_GEN_SYSTEM_PROMPT = (
-    "Bạn là chuyên gia tìm kiếm khách hàng (sales/SEO) cho 1 đơn vị làm website/app/landing "
-    "page. Đề xuất ĐÚNG {n} từ khoá/chủ đề NGẮN GỌN bằng tiếng Việt (2-6 từ mỗi cái) để tìm "
-    "kiếm trên Threads (threads.com/search), có khả năng cao ra các bài đăng của người ĐANG "
-    "CẦN THUÊ đơn vị làm website, app di động, landing page, hoặc outsource phần mềm. Ví dụ "
-    "hướng đúng: \"tìm đơn vị làm web\", \"cần làm app\", \"báo giá thiết kế website\", "
-    "\"outsource lập trình\". TUYỆT ĐỐI KHÔNG đề xuất trùng hoặc gần giống các từ khoá đã có "
-    "sẵn sau: {existing}.\n\n"
-    'Chỉ trả về DUY NHẤT JSON: {{"keywords": ["...", ...]}} — đúng {n} phần tử, không thêm '
-    "giải thích, không markdown."
+    "Bạn là chuyên gia tìm kiếm khách hàng (sales/growth) cho 1 công ty thiết kế website, "
+    "landing page, mobile app, phần mềm quản lý (CRM/ERP/POS) và outsource IT tại Việt Nam.\n"
+    "Hãy đề xuất ĐÚNG {n} từ khoá tìm kiếm NGẮN GỌN bằng tiếng Việt (ƯU TIÊN 2 ĐẾN 4 TỪ mỗi từ khoá) "
+    "để search trực tiếp trên Threads (threads.com/search).\n"
+    "LƯU Ý THỰC NGHIỆM: Threads search KHÔNG trả kết quả với cụm dài 5-7 từ; các cụm 2-4 từ tự nhiên "
+    "như \"thiết kế website\", \"cần làm app\", \"làm landing page\", \"thuê code web\", \"outsource phần mềm\", "
+    "\"làm web bán hàng\", \"cần tìm dev\", \"sửa website\" lại trả về rất nhiều bài thật.\n"
+    "Ưu tiên xen kẽ từ khoá ngách nhu cầu mới (AI chatbot, web bất động sản, web đặt lịch, mini app zalo, "
+    "tối ưu tốc độ web, tự động hoá n8n, web học trực tuyến, app ios android...) nhưng phải GIỮ NGẮN 2-4 TỪ.\n"
+    "TUYỆT ĐỐI KHÔNG đề xuất trùng hoặc gần giống các từ khoá đã có / vừa bị loại sau: {existing}.\n\n"
+    'Chỉ trả về DUY NHẤT JSON: {{"keywords": ["...", ...]}} — đúng {n} phần tử, không giải thích, không markdown.'
 )
 
 
@@ -176,3 +214,190 @@ def record_keyword_result(keyword: str, total_found: int, high_score_count: int)
         }).eq("keyword", keyword).execute()
     except Exception as exc:
         logger.warning(f"threads_keyword: record_keyword_result lỗi cho '{keyword}': {exc}")
+
+
+def _keyword_efficiency_key(row: dict) -> tuple[float, int, int]:
+    """Score keyword effectiveness: high-score leads per run first, then total posts found."""
+    used = max(0, int(row.get("times_used") or 0))
+    high = max(0, int(row.get("high_score_posts") or 0))
+    total = max(0, int(row.get("total_posts_found") or 0))
+    high_rate = high / max(1, used)
+    return (round(high_rate, 4), high, total)
+
+
+async def evolve_and_select_keywords(
+    target_count: int = TARGET_ACTIVE_KEYWORDS,
+    rotate_replace_count: int = DAILY_ADD_COUNT,
+) -> dict:
+    """Self-evolving keyword selector executed before every Threads 4G phase.
+
+    1. Guarantees ~30 active short Vietnamese intent queries (`2-4` words).
+    2. Retires up to `rotate_replace_count` lowest-yield tried keywords (`times_used >= 2`,
+       zero high-score leads) and generates fresh AI variations (or unused curated fallbacks)
+       so Threads continuously probes new buyer niches without drifting stale.
+    3. Interleaves untried/newly generated keywords with proven top performers so every round
+       both exploits high-converting terms and explores new angles.
+    """
+    import random
+
+    bounded_target = max(5, min(MAX_KEYWORDS, int(target_count or TARGET_ACTIVE_KEYWORDS)))
+    replace_quota = max(0, min(12, int(rotate_replace_count or 0)))
+
+    try:
+        supabase = get_supabase_client()
+        all_rows = supabase.table(TABLE).select("*").execute().data or []
+    except Exception as exc:
+        logger.warning(f"threads_keyword: không đọc được DB registry, dùng fallback pool: {exc}")
+        fallback = list(DEFAULT_THREADS_FALLBACK_KEYWORDS)[:bounded_target]
+        return {
+            "keywords": fallback,
+            "meta": {
+                "total_active": len(fallback),
+                "newly_generated": 0,
+                "deactivated": [],
+                "ai_powered": False,
+                "used_fallback": True,
+                "items": [{"keyword": kw, "times_used": 0, "total_posts_found": 0, "high_score_posts": 0} for kw in fallback],
+            },
+        }
+
+    active_rows = [r for r in all_rows if r.get("is_active")]
+    existing_lower = {str(r.get("keyword") or "").strip().lower() for r in all_rows if r.get("keyword")}
+    existing_all = [str(r.get("keyword") or "").strip() for r in all_rows if r.get("keyword")]
+
+    deactivated: list[str] = []
+    newly_added: list[str] = []
+    ai_powered = False
+
+    # 1. Retire weakest tried keywords when we have enough tried history to rotate safely
+    tried_rows = [r for r in active_rows if int(r.get("times_used") or 0) >= 2]
+    zero_lead_tried = [
+        r for r in tried_rows
+        if int(r.get("high_score_posts") or 0) == 0
+    ]
+    zero_lead_tried.sort(
+        key=lambda r: (
+            int(r.get("total_posts_found") or 0),
+            -int(r.get("times_used") or 0),
+        )
+    )
+    retire_candidates: list[dict] = []
+    if zero_lead_tried and replace_quota > 0 and len(active_rows) >= min(15, bounded_target):
+        retire_candidates = zero_lead_tried[:replace_quota]
+    elif replace_quota > 0 and is_configured() and len(active_rows) >= bounded_target:
+        mature_low = [
+            r for r in tried_rows
+            if int(r.get("times_used") or 0) >= 4 and int(r.get("high_score_posts") or 0) < 3
+        ]
+        if len(mature_low) >= 8:
+            mature_low.sort(key=_keyword_efficiency_key)
+            retire_candidates = mature_low[: min(2, replace_quota)]
+
+    if retire_candidates:
+        retire_kws = [str(r["keyword"]) for r in retire_candidates if r.get("keyword")]
+        for kw in retire_kws:
+            try:
+                supabase.table(TABLE).update({"is_active": False}).eq("keyword", kw).execute()
+                deactivated.append(kw)
+            except Exception as exc:
+                logger.warning(f"threads_keyword: tắt từ khóa kém '{kw}' thất bại: {exc}")
+        if deactivated:
+            retired_set = set(deactivated)
+            active_rows = [r for r in active_rows if r.get("keyword") not in retired_set]
+
+    # 2. Compute deficit to reach bounded_target (~30) + optional fresh exploration swap
+    deficit = max(0, bounded_target - len(active_rows))
+    want_generate = deficit
+    if want_generate > 0:
+        if is_configured():
+            ai_candidates = await _generate_keywords(want_generate, existing_all)
+            if ai_candidates:
+                ai_powered = True
+            for kw in ai_candidates:
+                clean = str(kw).strip()
+                if clean and clean.lower() not in existing_lower:
+                    newly_added.append(clean)
+                    existing_lower.add(clean.lower())
+                    existing_all.append(clean)
+
+        # Backfill remaining gap from curated high-recall fallback list
+        if len(newly_added) < want_generate:
+            for fb_kw in DEFAULT_THREADS_FALLBACK_KEYWORDS:
+                if len(newly_added) >= want_generate:
+                    break
+                if fb_kw.lower() not in existing_lower:
+                    newly_added.append(fb_kw)
+                    existing_lower.add(fb_kw.lower())
+                    existing_all.append(fb_kw)
+
+        if newly_added:
+            try:
+                supabase.table(TABLE).insert([{"keyword": k, "is_active": True} for k in newly_added]).execute()
+            except Exception as exc:
+                logger.warning(f"threads_keyword: lưu từ khóa mới thất bại: {exc}")
+            for k in newly_added:
+                active_rows.append({
+                    "keyword": k,
+                    "is_active": True,
+                    "times_used": 0,
+                    "total_posts_found": 0,
+                    "high_score_posts": 0,
+                })
+
+    # 3. Safety cap at MAX_KEYWORDS
+    if len(active_rows) > MAX_KEYWORDS:
+        tried_extra = [r for r in active_rows if int(r.get("times_used") or 0) > 0]
+        tried_extra.sort(key=_keyword_efficiency_key)
+        excess = len(active_rows) - MAX_KEYWORDS
+        for r in tried_extra[:excess]:
+            kw = r.get("keyword")
+            if kw:
+                try:
+                    supabase.table(TABLE).update({"is_active": False}).eq("keyword", kw).execute()
+                    deactivated.append(str(kw))
+                except Exception:
+                    pass
+        retired_set = set(deactivated)
+        active_rows = [r for r in active_rows if r.get("keyword") not in retired_set]
+
+    # 4. Build balanced round order: interleave untried/new explorations & top winners
+    untried = [r for r in active_rows if int(r.get("times_used") or 0) == 0]
+    tried = [r for r in active_rows if int(r.get("times_used") or 0) > 0]
+    tried.sort(key=_keyword_efficiency_key, reverse=True)
+    random.shuffle(untried)
+
+    # Mildly shuffle within top/mid buckets so consecutive loops vary keyword sequence
+    ordered_rows: list[dict] = []
+    u_idx, t_idx = 0, 0
+    while (u_idx < len(untried) or t_idx < len(tried)) and len(ordered_rows) < bounded_target:
+        if t_idx < len(tried):
+            ordered_rows.append(tried[t_idx])
+            t_idx += 1
+        if u_idx < len(untried) and len(ordered_rows) < bounded_target:
+            ordered_rows.append(untried[u_idx])
+            u_idx += 1
+
+    keywords = [str(r["keyword"]).strip() for r in ordered_rows if r.get("keyword")]
+    if not keywords:
+        keywords = list(DEFAULT_THREADS_FALLBACK_KEYWORDS)[:bounded_target]
+
+    return {
+        "keywords": keywords,
+        "meta": {
+            "total_active": len(active_rows),
+            "selected_count": len(keywords),
+            "newly_generated": len(newly_added),
+            "new_keywords": newly_added,
+            "deactivated": deactivated,
+            "ai_powered": ai_powered,
+            "items": [
+                {
+                    "keyword": str(r.get("keyword") or ""),
+                    "times_used": int(r.get("times_used") or 0),
+                    "total_posts_found": int(r.get("total_posts_found") or 0),
+                    "high_score_posts": int(r.get("high_score_posts") or 0),
+                }
+                for r in ordered_rows[:bounded_target]
+            ],
+        },
+    }

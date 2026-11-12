@@ -25,6 +25,7 @@ class RunPublicCrawlBody(BaseModel):
     keywords: Optional[List[str]] = None
     only_due: bool = False
     limit_groups: Optional[int] = Field(None, ge=1, le=50)
+    platform: Literal["auto", "facebook", "threads"] = "auto"
 
 
 class ConfigUpdateBody(BaseModel):
@@ -57,6 +58,22 @@ class ConfigUpdateBody(BaseModel):
     auto_skip_private: Optional[bool] = None
     headless: Optional[bool] = None
     proxy_urls: Optional[Union[List[str], str]] = None
+    alternating_threads_enabled: Optional[bool] = None
+    threads_keyword_target: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"][1],
+    )
+    threads_max_posts_per_keyword: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_posts_per_keyword"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_posts_per_keyword"][1],
+    )
+    threads_max_age_days: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_age_days"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_age_days"][1],
+    )
 
 
 class GroupPublicSettingsBody(BaseModel):
@@ -99,6 +116,7 @@ async def start_public_crawl_run(
         triggered_by=user.get("id"),
         only_due=req.only_due,
         limit_groups=req.limit_groups,
+        platform=req.platform,
     )
     return {"success": bool(result.get("started")), **result}
 
@@ -124,6 +142,8 @@ async def update_public_crawl_config(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.enabled is False:
+        public_crawl_orchestrator._cancel_next_round_wait()
     safe_cfg = public_crawl_orchestrator.mask_config_for_api(updated)
     sims = public_crawl_orchestrator.rotator.snapshot_nodes(updated.get("proxy_urls"))
     public_crawl_orchestrator.append_log(
@@ -131,6 +151,8 @@ async def update_public_crawl_config(
         "config",
         (
             f"Cập nhật cấu hình: auto={'BẬT' if updated.get('enabled') else 'TẮT'}, "
+            f"luân_phiên_threads={'BẬT' if updated.get('alternating_threads_enabled', True) else 'TẮT'} "
+            f"({updated.get('threads_keyword_target', 30)} từ khóa), "
             f"proxy={len(sims)}, bài={updated.get('max_posts_per_group')}, "
             f"độ_sâu={updated.get('max_scrolls_per_group')}, xoay={updated.get('groups_per_ip_rotate')}, "
             f"luồng={updated.get('concurrent_sims')}, chu kỳ {updated.get('cycle_interval_min')}p"

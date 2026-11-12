@@ -39,6 +39,7 @@ export const publicCrawlerService = {
     keywords?: string[];
     only_due?: boolean;
     limit_groups?: number;
+    platform?: "auto" | "facebook" | "threads";
   }) =>
     request<PublicCrawlActionResponse>("/run", {
       method: "POST",

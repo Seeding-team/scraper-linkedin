@@ -575,8 +575,9 @@ def test_rotating_proxy_pool_formats_masking_fast_ssr_and_limit_groups(monkeypat
     monkeypatch.setattr(orch, "_create_run_record_sync", lambda **_kw: "run-quick-3")
     monkeypatch.setattr(orch, "_finish_run_record_sync", lambda **_kw: None)
 
-    async def fake_execute(*, groups, **_kw):
-        captured.extend(g["id"] for g in groups)
+    async def fake_execute(*, work_items=None, groups=None, **_kw):
+        src_items = groups if groups is not None else [item.get("group", item) for item in (work_items or [])]
+        captured.extend(g["id"] for g in src_items if isinstance(g, dict) and g.get("id"))
         orch.is_running = False
 
     monkeypatch.setattr(orch, "_execute_run_task", fake_execute)
@@ -746,7 +747,7 @@ def test_safer_config_bounds_proxy_sync_and_due_interval(monkeypatch):
             "max_posts_per_group": 100,
             "max_scrolls_per_group": 10,
             "groups_per_ip_rotate": 50,
-            "cycle_interval_min": 5,
+            "cycle_interval_min": -5,
             "concurrent_sims": 8,
             "proxy_urls": ["203.0.113.10:1080:u:p"],
         }
@@ -754,7 +755,7 @@ def test_safer_config_bounds_proxy_sync_and_due_interval(monkeypatch):
     assert clamped_one_proxy["max_posts_per_group"] == 25
     assert clamped_one_proxy["max_scrolls_per_group"] == 3
     assert clamped_one_proxy["groups_per_ip_rotate"] == 6
-    assert clamped_one_proxy["cycle_interval_min"] == 15
+    assert clamped_one_proxy["cycle_interval_min"] == 0
     assert clamped_one_proxy["concurrent_sims"] == 1
     assert clamped_one_proxy["max_allowed_concurrent_sims"] == 1
 
@@ -828,12 +829,14 @@ def test_safer_config_bounds_proxy_sync_and_due_interval(monkeypatch):
 
     monkeypatch.setattr(svc, "get_supabase_client", lambda: _FakeSb())
     orch = svc.PublicCrawlOrchestrator()
+    due_0m = orch._select_due_groups_sync(group_ids=None, default_interval_min=0, only_due=True)
+    assert [r["id"] for r in due_0m] == ["g-20m", "g-5m"]
     due_15m = orch._select_due_groups_sync(group_ids=None, default_interval_min=15, only_due=True)
     assert [r["id"] for r in due_15m] == ["g-20m"]
     due_60m = orch._select_due_groups_sync(group_ids=None, default_interval_min=60, only_due=True)
     assert due_60m == []
 
-    # 4. API Pydantic validation rejects values more aggressive than safer limits (HTTP 422)
+    # 4. API Pydantic validation rejects values out of safer limits (HTTP 422)
     app = FastAPI()
     app.include_router(public_crawler.router, prefix="/api/all-platform/public-crawler")
     app.dependency_overrides[auth_deps.get_current_user] = lambda: {"id": "u-adm", "role": "admin"}
@@ -843,7 +846,7 @@ def test_safer_config_bounds_proxy_sync_and_due_interval(monkeypatch):
         assert client.put("/api/all-platform/public-crawler/config", json={"max_posts_per_group": 26}).status_code == 422
         assert client.put("/api/all-platform/public-crawler/config", json={"max_scrolls_per_group": 4}).status_code == 422
         assert client.put("/api/all-platform/public-crawler/config", json={"groups_per_ip_rotate": 7}).status_code == 422
-        assert client.put("/api/all-platform/public-crawler/config", json={"cycle_interval_min": 5}).status_code == 422
+        assert client.put("/api/all-platform/public-crawler/config", json={"cycle_interval_min": -1}).status_code == 422
         assert client.put("/api/all-platform/public-crawler/config", json={"concurrent_sims": 5}).status_code == 422
     finally:
         app.dependency_overrides.clear()
@@ -1091,3 +1094,525 @@ def test_crawled_post_audit_and_ai_check_endpoint(monkeypatch):
     finally:
         app.dependency_overrides.clear()
         audit_svc.clear_memory_audit_for_tests()
+
+
+def test_continuous_24h_loop_reloads_new_db_groups_and_stops_only_on_proxy_expiry(monkeypatch):
+    """Verify 24/24 continuous loop reloads newly added groups first and pauses ONLY on proxy expiry."""
+    monkeypatch.setenv("PUBLIC_CRAWL_CONTINUOUS_BREATH_SEC", "0.05")
+    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_WAIT_SEC", "0")
+    monkeypatch.delenv("PUBLIC_CRAWL_PROXIES", raising=False)
+
+    cfg_store: dict[str, object] = {
+        "id": "default",
+        "enabled": True,
+        "cycle_interval_min": 0,
+        "groups_per_ip_rotate": 6,
+        "max_posts_per_group": 10,
+        "max_scrolls_per_group": 1,
+        "concurrent_sims": 1,
+        "auto_skip_private": True,
+        "headless": True,
+        "proxy_urls": ["203.0.113.10:1080:u:p"],
+        "auto_pause_reason": None,
+        "proxy_expired_error": None,
+        "alternating_threads_enabled": False,
+    }
+    groups_store: list[dict] = [
+        {
+            "id": "g-old",
+            "group_name": "Nhom Cu",
+            "group_url": "https://www.facebook.com/groups/oldgroup",
+            "visibility": "public",
+            "public_crawl_enabled": True,
+            "last_public_crawled_at": "2026-11-12T00:00:00+00:00",
+        }
+    ]
+    ws_events: list[dict] = []
+
+    class _FakeExec:
+        def __init__(self, data):
+            self.data = data
+
+    class _FakeTable:
+        def __init__(self, name: str):
+            self.name = name
+            self._payload = None
+
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def upsert(self, payload, **_kwargs):
+            self._payload = payload
+            return self
+
+        def update(self, payload, **_kwargs):
+            self._payload = payload
+            return self
+
+        def insert(self, payload, **_kwargs):
+            self._payload = payload
+            return self
+
+        def execute(self):
+            if self.name == "public_crawl_config":
+                if isinstance(self._payload, dict):
+                    cfg_store.update(self._payload)
+                    return _FakeExec([dict(cfg_store)])
+                return _FakeExec([dict(cfg_store)])
+            if self.name == "facebook_groups":
+                return _FakeExec([dict(r) for r in groups_store])
+            if self.name == "public_crawl_runs":
+                return _FakeExec([])
+            return _FakeExec([])
+
+    class _FakeSb:
+        def table(self, name: str):
+            return _FakeTable(name)
+
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr(svc, "get_group_post_watermarks", lambda **_kw: {"latest_ts": None, "known_ids": set()})
+    monkeypatch.setattr(svc, "_update_group_crawl_meta_sync", lambda **_kw: None)
+    monkeypatch.setattr(
+        svc.manager,
+        "broadcast",
+        lambda msg: asyncio.sleep(0, result=ws_events.append(msg)),
+    )
+
+    orch = svc.PublicCrawlOrchestrator()
+
+    async def _dead_or_live_probe(_url: str, timeout: float = 10.0):
+        if round_orders and len(round_orders) >= 2:
+            return {"ok": False, "error": "SOCKS5 username/password authentication failed (status=2)"}
+        return {"ok": True, "egressIp": "198.51.100.7"}
+
+    orch.rotator._probe_fn = _dead_or_live_probe
+
+    round_orders: list[tuple[int, str]] = []
+
+    async def _attempt_fetcher(_sim, group, _watermarks, _attempt):
+        gid = group["id"]
+        cur_round = orch.loop_round
+        round_orders.append((cur_round, gid))
+        if cur_round == 1:
+            # Add brand-new group to DB during round 1; simulate transient login_wall (must NOT pause 24/24!)
+            if not any(g["id"] == "g-new" for g in groups_store):
+                groups_store.append(
+                    {
+                        "id": "g-new",
+                        "group_name": "Nhom Moi Add",
+                        "group_url": "https://www.facebook.com/groups/newgroup",
+                        "visibility": "public",
+                        "public_crawl_enabled": True,
+                        "last_public_crawled_at": None,
+                    }
+                )
+            return {"state": "login_wall", "posts": [], "early_stop_reason": ""}
+        if gid == "g-new":
+            # Round 2 runs new group FIRST, then proxy expires cleanly on next attempt
+            raise PermissionError("SOCKS5 username/password authentication failed (status=2)")
+        return {"state": "ok", "posts": [], "early_stop_reason": ""}
+
+    async def _run_scenario():
+        start_res = await orch.start_run(
+            trigger_source="manual",
+            attempt_fetcher=_attempt_fetcher,
+            continuous=True,
+        )
+        assert start_res["started"] is True
+        assert start_res["continuous"] is True
+
+        deadline = asyncio.get_running_loop().time() + 4.0
+        while orch.auto_pause_reason != "proxy_expired" and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+        # Allow cleanup/final state flip
+        await asyncio.sleep(0.08)
+
+        round1_groups = [gid for rnd, gid in round_orders if rnd == 1]
+        round2_groups = [gid for rnd, gid in round_orders if rnd == 2]
+        assert round1_groups and round1_groups[0] == "g-old"
+        assert round2_groups == ["g-new"]  # Newly added DB group prioritized first in round 2 before proxy expiry!
+        assert orch.loop_round == 2
+        assert orch.is_running is False
+        assert orch._continuous_waiting is False
+        assert orch.auto_pause_reason == "proxy_expired"
+        assert "authentication failed" in (orch.proxy_expired_error or "").lower()
+        assert cfg_store["enabled"] is False
+        assert any(e.get("event") == "public_4g_proxy_expired" for e in ws_events)
+
+        # Scheduler tick MUST NOT restart loop while proxy is expired
+        assert await orch.maybe_trigger_scheduled_run() is None
+
+        # Replacing proxy URLs clears proxy_expired & re-enables 24/24 loop
+        orch.update_config_sync({"proxy_urls": ["203.0.113.99:1080:newu:newp"], "enabled": True})
+        assert orch.auto_pause_reason is None
+        assert orch.proxy_expired_error is None
+        assert cfg_store["enabled"] is True
+
+    asyncio.run(_run_scenario())
+
+
+def test_threads_no_acc_merge_timestamps_and_state_classification() -> None:
+    """Verify Threads No-Acc parser merges Embedded JSON + DOM cleanly, filters replies, and detects walls."""
+    from datetime import datetime, timezone
+    from app.modules.all_platform.services import threads_no_acc_crawler_service as th_svc
+
+    now_fixed = datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)
+    iso_2h = th_svc.normalize_threads_time_raw("2 giờ", now_utc=now_fixed)
+    assert iso_2h == "2026-11-12T08:00:00+00:00"
+    assert th_svc.normalize_threads_time_raw("2026-11-12T05:30:00Z") == "2026-11-12T05:30:00+00:00"
+
+    merged = th_svc.merge_threads_extracted_posts(
+        embedded_posts=[
+            {
+                "post_url": "https://www.threads.net/@alice/post/ABC123",
+                "author_username": "alice",
+                "content": "Can lam landing page",
+                "post_time": "2026-11-12T05:00:00Z",
+                "reactions": 10,
+                "comments": 2,
+                "shares": 1,
+                "is_reply": False,
+            },
+            {
+                "post_url": "https://www.threads.com/@bob/post/REP999",
+                "author_username": "bob",
+                "content": "Inbox minh nha",
+                "post_time": "2026-11-12T05:10:00Z",
+                "is_reply": True,
+            },
+        ],
+        dom_posts=[
+            {
+                "post_url": "https://www.threads.com/@alice/post/ABC123",
+                "author_username": "alice",
+                "content": "Can lam landing page gap cho shop my pham trong tuan nay",
+                "post_time": None,
+                "reactions": 14,
+                "comments": 3,
+                "shares": 1,
+                "is_reply": False,
+            }
+        ],
+    )
+    assert len(merged) == 1
+    assert merged[0]["post_url"] == "https://www.threads.com/@alice/post/ABC123"
+    assert "gap cho shop my pham" in merged[0]["content"]
+    assert merged[0]["reactions"] == 14
+    assert merged[0]["post_time"] == "2026-11-12T05:00:00+00:00"
+
+    assert th_svc.classify_threads_page_state(
+        http_status=200,
+        final_url="https://www.threads.com/login",
+        body_snippet="Hãy tiếp tục bằng Instagram",
+        extracted_count=0,
+    )[:2] == ("login_wall", True)
+    assert th_svc.classify_threads_page_state(
+        http_status=200,
+        final_url="https://www.threads.com/search?q=abc",
+        body_snippet="Không có kết quả nào.",
+        extracted_count=0,
+    )[:2] == ("empty", False)
+    assert th_svc.classify_threads_page_state(
+        http_status=429,
+        final_url="https://www.threads.com/search?q=abc",
+        body_snippet="Rate limit exceeded",
+        extracted_count=0,
+    )[:2] == ("rate_limited", True)
+
+
+def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> None:
+    """Verify evolve_and_select_keywords maintains ~30 short queries, retires 0-lead terms & evolves new ones."""
+    from app.modules.all_platform.services import threads_keyword_service as kw_svc
+
+    registry_rows: list[dict] = [
+        {
+            "keyword": f"tu khoa yeu {i}",
+            "is_active": True,
+            "times_used": 3,
+            "total_posts_found": 0,
+            "high_score_posts": 0,
+        }
+        for i in range(6)
+    ] + [
+        {
+            "keyword": kw,
+            "is_active": True,
+            "times_used": 2,
+            "total_posts_found": 12,
+            "high_score_posts": 3,
+        }
+        for kw in list(kw_svc.DEFAULT_THREADS_FALLBACK_KEYWORDS)[:24]
+    ]
+
+    class _FakeExec:
+        def __init__(self, data):
+            self.data = data
+
+    class _FakeKwTable:
+        def __init__(self):
+            self._action = None
+            self._payload = None
+            self._eq_kw = None
+
+        def select(self, *_args):
+            self._action = "select"
+            return self
+
+        def insert(self, payload):
+            self._action = "insert"
+            self._payload = payload
+            return self
+
+        def update(self, payload):
+            self._action = "update"
+            self._payload = payload
+            return self
+
+        def eq(self, _col, val):
+            self._eq_kw = val
+            return self
+
+        def execute(self):
+            if self._action == "select":
+                return _FakeExec([dict(r) for r in registry_rows])
+            if self._action == "insert" and isinstance(self._payload, list):
+                for item in self._payload:
+                    registry_rows.append(
+                        {
+                            "keyword": item["keyword"],
+                            "is_active": item.get("is_active", True),
+                            "times_used": 0,
+                            "total_posts_found": 0,
+                            "high_score_posts": 0,
+                        }
+                    )
+                return _FakeExec(self._payload)
+            if self._action == "update" and isinstance(self._payload, dict):
+                for r in registry_rows:
+                    if r["keyword"] == self._eq_kw:
+                        r.update(self._payload)
+                return _FakeExec([])
+            return _FakeExec([])
+
+    class _FakeSb:
+        def table(self, _name: str):
+            return _FakeKwTable()
+
+    monkeypatch.setattr(kw_svc, "get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr(kw_svc, "is_configured", lambda: True)
+
+    async def _fake_ai_gen(n: int, existing: list[str]) -> list[str]:
+        existing_low = {e.lower() for e in existing}
+        candidates = [f"ai tu khoa moi {idx}" for idx in range(1, n + 5)]
+        return [c for c in candidates if c.lower() not in existing_low][:n]
+
+    monkeypatch.setattr(kw_svc, "_generate_keywords", _fake_ai_gen)
+
+    res = asyncio.run(kw_svc.evolve_and_select_keywords(target_count=30, rotate_replace_count=6))
+    assert len(res["keywords"]) == 30
+    meta = res["meta"]
+    assert meta["ai_powered"] is True
+    assert len(meta["deactivated"]) == 6
+    assert all(k.startswith("tu khoa yeu") for k in meta["deactivated"])
+    assert meta["newly_generated"] == 6
+    assert all(not k.startswith("tu khoa yeu") for k in res["keywords"])
+
+
+def test_alternating_24h_facebook_then_threads_then_facebook_loop(monkeypatch) -> None:
+    """Verify 1-proxy alternating cycle: R1 Facebook (all groups) -> R2 Threads (~30 AI kw) -> R3 Facebook -> stops cleanly."""
+    from app.modules.all_platform.services import public_4g_crawler_service as svc
+    from app.modules.all_platform.services import threads_keyword_service as kw_svc
+    from app.modules.all_platform.services import threads_no_acc_crawler_service as th_svc
+
+    monkeypatch.setenv("PUBLIC_CRAWL_CONTINUOUS_BREATH_SEC", "0.03")
+    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_WAIT_SEC", "0")
+    monkeypatch.delenv("PUBLIC_CRAWL_PROXIES", raising=False)
+
+    cfg_store: dict[str, object] = {
+        "id": "default",
+        "enabled": True,
+        "cycle_interval_min": 0,
+        "groups_per_ip_rotate": 6,
+        "max_posts_per_group": 10,
+        "max_scrolls_per_group": 1,
+        "concurrent_sims": 1,
+        "auto_skip_private": True,
+        "headless": True,
+        "proxy_urls": ["203.0.113.20:1080:u:p"],
+        "auto_pause_reason": None,
+        "proxy_expired_error": None,
+        "alternating_threads_enabled": True,
+        "threads_keyword_target": 10,
+        "threads_max_posts_per_keyword": 20,
+        "threads_max_age_days": 7,
+        "last_completed_platform": None,
+    }
+    groups_store: list[dict] = [
+        {
+            "id": "fb-g1",
+            "group_name": "FB Public 1",
+            "group_url": "https://www.facebook.com/groups/fbg1",
+            "visibility": "public",
+            "public_crawl_enabled": True,
+            "last_public_crawled_at": "2026-11-12T00:00:00+00:00",
+        }
+    ]
+    ws_events: list[dict] = []
+
+    class _FakeExec:
+        def __init__(self, data):
+            self.data = data
+
+    class _FakeTable:
+        def __init__(self, name: str):
+            self.name = name
+            self._payload = None
+
+        def select(self, *_a):
+            return self
+
+        def eq(self, *_a):
+            return self
+
+        def limit(self, *_a):
+            return self
+
+        def order(self, *_a, **_kw):
+            return self
+
+        def upsert(self, payload, **_kw):
+            self._payload = payload
+            return self
+
+        def update(self, payload, **_kw):
+            self._payload = payload
+            return self
+
+        def insert(self, payload, **_kw):
+            self._payload = payload
+            return self
+
+        def execute(self):
+            if self.name == "public_crawl_config":
+                if isinstance(self._payload, dict):
+                    cfg_store.update(self._payload)
+                return _FakeExec([dict(cfg_store)])
+            if self.name == "facebook_groups":
+                return _FakeExec([dict(r) for r in groups_store])
+            return _FakeExec([])
+
+    class _FakeSb:
+        def table(self, name: str):
+            return _FakeTable(name)
+
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr(svc, "get_group_post_watermarks", lambda **_kw: {"latest_ts": None, "known_ids": set()})
+    monkeypatch.setattr(svc, "_update_group_crawl_meta_sync", lambda **_kw: None)
+    monkeypatch.setattr(svc.manager, "broadcast", lambda msg: asyncio.sleep(0, result=ws_events.append(msg)))
+
+    async def _fake_evolve(target_count: int = 30, rotate_replace_count: int = 6):
+        kws = [f"kw threads {i}" for i in range(1, target_count + 1)]
+        return {
+            "keywords": kws,
+            "meta": {
+                "total_active": len(kws),
+                "selected_count": len(kws),
+                "newly_generated": 2,
+                "deactivated": ["old bad kw"],
+                "ai_powered": True,
+                "items": [{"keyword": k, "times_used": 0, "total_posts_found": 0, "high_score_posts": 0} for k in kws],
+            },
+        }
+
+    monkeypatch.setattr(kw_svc, "evolve_and_select_keywords", _fake_evolve)
+
+    async def _fake_ingest(res, **_kw):
+        res.saved_count = 1
+        res.high_score_count = 1
+        return res
+
+    monkeypatch.setattr(th_svc, "ingest_threads_4g_keyword_batch", _fake_ingest)
+
+    orch = svc.PublicCrawlOrchestrator()
+
+    async def _live_probe(_url: str, timeout: float = 10.0):
+        return {"ok": True, "egressIp": "198.51.100.88"}
+
+    orch.rotator._probe_fn = _live_probe
+
+    phase_trace: list[tuple[int, str, str]] = []
+
+    async def _fb_fetcher(_sim, group, _wm, _attempt):
+        phase_trace.append((orch.loop_round, "facebook", group["id"]))
+        return {"state": "ok", "posts": [], "early_stop_reason": ""}
+
+    async def _threads_fetcher(_sim, kw: str, _attempt: int):
+        phase_trace.append((orch.loop_round, "threads", kw))
+        if kw == "kw threads 1":
+            # Add new FB group mid-Threads phase; Round 3 FB must pick it up automatically!
+            if not any(g["id"] == "fb-g2" for g in groups_store):
+                groups_store.append(
+                    {
+                        "id": "fb-g2",
+                        "group_name": "FB New Mid Threads",
+                        "group_url": "https://www.facebook.com/groups/fbg2",
+                        "visibility": "public",
+                        "public_crawl_enabled": True,
+                        "last_public_crawled_at": None,
+                    }
+                )
+        return {
+            "status": "ok",
+            "posts": [
+                {
+                    "post_url": f"https://www.threads.com/@user/post/{abs(hash(kw)) % 999999}",
+                    "author_username": "user",
+                    "content": f"Can thue don vi {kw}",
+                    "post_time": "2026-11-12T06:00:00+00:00",
+                    "reactions": 5,
+                    "comments": 2,
+                    "shares": 0,
+                }
+            ],
+        }
+
+    async def _run_alt():
+        res = await orch.start_run(
+            trigger_source="manual",
+            attempt_fetcher=_fb_fetcher,
+            threads_attempt_fetcher=_threads_fetcher,
+            continuous=True,
+        )
+        assert res["started"] is True
+        assert res["platform"] == "facebook"
+        assert res["next_platform"] == "threads"
+
+        deadline = asyncio.get_running_loop().time() + 5.0
+        while orch.loop_round < 3 and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.03)
+        await asyncio.sleep(0.15)
+        orch.request_stop()
+        deadline2 = asyncio.get_running_loop().time() + 2.0
+        while orch.is_running and asyncio.get_running_loop().time() < deadline2:
+            await asyncio.sleep(0.03)
+
+        r1 = [(p, item) for rnd, p, item in phase_trace if rnd == 1]
+        r2 = [(p, item) for rnd, p, item in phase_trace if rnd == 2]
+        r3 = [(p, item) for rnd, p, item in phase_trace if rnd == 3]
+
+        assert r1 == [("facebook", "fb-g1")]
+        assert len(r2) == 10 and all(p == "threads" for p, _ in r2)
+        assert r3[0] == ("facebook", "fb-g2")  # New FB group detected after Threads round!
+        assert cfg_store["last_completed_platform"] in {"threads", "facebook"}
+
+    asyncio.run(_run_alt())
+

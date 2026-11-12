@@ -110,11 +110,14 @@ _GQL_RELAY_INTERNAL_DEFAULTS: dict[str, Any] = {
 }
 
 PUBLIC_CRAWL_CONFIG_BOUNDS: dict[str, tuple[int, int]] = {
-    "cycle_interval_min": (15, 1440),
+    "cycle_interval_min": (0, 1440),
     "groups_per_ip_rotate": (1, 6),
     "max_posts_per_group": (1, 25),
     "max_scrolls_per_group": (0, 3),
     "concurrent_sims": (1, 4),
+    "threads_keyword_target": (5, 50),
+    "threads_max_posts_per_keyword": (5, 30),
+    "threads_max_age_days": (1, 30),
 }
 
 _SCROLL_DEPTH_GQL_BUDGET: dict[int, int] = {
@@ -126,8 +129,8 @@ _SCROLL_DEPTH_GQL_BUDGET: dict[int, int] = {
 
 DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "id": "default",
-    "enabled": False,
-    "cycle_interval_min": 15,
+    "enabled": True,
+    "cycle_interval_min": 0,
     "groups_per_ip_rotate": 6,
     "max_posts_per_group": 25,
     "max_scrolls_per_group": 2,
@@ -135,7 +138,61 @@ DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "auto_skip_private": True,
     "headless": True,
     "proxy_urls": [],
+    "auto_pause_reason": None,
+    "proxy_expired_error": None,
+    "alternating_threads_enabled": True,
+    "threads_keyword_target": 30,
+    "threads_max_posts_per_keyword": 20,
+    "threads_max_age_days": 7,
+    "last_completed_platform": None,
 }
+
+MAX_CONSECUTIVE_PROXY_FAILURES = 3
+
+_PROXY_EXPIRED_KEYWORDS: tuple[str, ...] = (
+    "socks5 username/password authentication failed",
+    "proxy authentication required",
+    "407 proxy",
+    "socks5 handshake rejected",
+    "no acceptable authentication methods",
+    "authentication failed (status=",
+    "proxy expired",
+    "proxy_expired",
+)
+
+_PROXY_TRANSPORT_KEYWORDS: tuple[str, ...] = (
+    "err_proxy_connection_failed",
+    "err_tunnel_connection_failed",
+    "err_socks_connection_failed",
+    "connection refused",
+    "upstream tcp connect",
+    "upstream http connect failed",
+    "timed out",
+    "incomplete read",
+    "eof occurred",
+    "network is unreachable",
+    "host unreachable",
+)
+
+
+def is_proxy_expired_error(err: str | None) -> bool:
+    """Return True when proxy explicitly rejects credentials/auth or signals expiry."""
+    low = (err or "").strip().lower()
+    return bool(low and any(tok in low for tok in _PROXY_EXPIRED_KEYWORDS))
+
+
+def is_proxy_transport_failure(err: str | None) -> bool:
+    """Return True when proxy tunnel/transport fails instead of a Facebook content block."""
+    low = (err or "").strip().lower()
+    return bool(low and any(tok in low for tok in _PROXY_TRANSPORT_KEYWORDS))
+
+
+def _continuous_breath_seconds() -> float:
+    raw = os.getenv("PUBLIC_CRAWL_CONTINUOUS_BREATH_SEC", "2.0").strip()
+    try:
+        return max(0.02, min(10.0, float(raw)))
+    except ValueError:
+        return 2.0
 
 
 def compute_gql_page_budget(max_posts: int, max_scrolls: int) -> int:
@@ -192,6 +249,11 @@ def clamp_public_crawl_config(
     )
     clamped["concurrent_sims"] = max(1, min(int(clamped["concurrent_sims"]), max_lanes_cap))
     clamped["max_allowed_concurrent_sims"] = max_lanes_cap
+    clamped["alternating_threads_enabled"] = (
+        True
+        if clamped.get("alternating_threads_enabled") is None
+        else bool(clamped.get("alternating_threads_enabled"))
+    )
     return clamped
 
 _TRACKER_URL_SUBSTRINGS = (
@@ -302,11 +364,12 @@ class SimNodeRuntime:
     socks_url: str | None = None
     console_url: str | None = None  # Deprecated: intentionally always None (no mobile phone bridge)
     api_key: str | None = None
-    status: str = "idle"  # idle | crawling | rotating | error
+    status: str = "idle"  # idle | crawling | rotating | error | expired
     epoch: int = 0
     groups_in_epoch: int = 0
     total_groups: int = 0
     total_rotations: int = 0
+    consecutive_proxy_failures: int = 0
     last_egress_ip: str | None = None
     last_rotated_at: str | None = None
     last_error: str | None = None
@@ -333,6 +396,7 @@ class SimNodeRuntime:
             "groups_in_epoch": self.groups_in_epoch,
             "total_groups": self.total_groups,
             "total_rotations": self.total_rotations,
+            "consecutive_proxy_failures": self.consecutive_proxy_failures,
             "last_egress_ip": self.last_egress_ip,
             "last_rotated_at": self.last_rotated_at,
             "last_error": self.last_error,
@@ -447,6 +511,10 @@ class RotatingProxyPool:
             else:
                 if existing.socks_url != runtime_url:
                     existing.last_egress_ip = None
+                    existing.consecutive_proxy_failures = 0
+                    existing.last_error = None
+                    if existing.status in {"expired", "error"}:
+                        existing.status = "idle"
                 existing.label = label
                 existing.socks_url = runtime_url
                 existing.console_url = None
@@ -458,6 +526,14 @@ class RotatingProxyPool:
                 self._states.pop(stale_id, None)
 
         return runtimes
+
+    def reset_proxy_health(self) -> None:
+        """Clear consecutive proxy failures / expired markers when new proxies or manual run start."""
+        for st in self._states.values():
+            st.consecutive_proxy_failures = 0
+            st.last_error = None
+            if st.status in {"expired", "error"}:
+                st.status = "idle"
 
     def snapshot_nodes(self, proxy_urls: list[str] | str | None = None) -> list[dict[str, Any]]:
         return [s.to_public_dict() for s in self.sync_nodes(proxy_urls)]
@@ -531,6 +607,23 @@ class RotatingProxyPool:
 
             try:
                 first_probe = await self._probe_fn(state.socks_url, timeout=10.0)
+                first_err = str(first_probe.get("error") or "")
+                if not first_probe.get("ok") and is_proxy_expired_error(first_err):
+                    state.status = "expired"
+                    state.last_error = first_err
+                    state.consecutive_proxy_failures += 1
+                    if log_cb:
+                        log_cb(
+                            "error",
+                            node_id,
+                            f"[{node_id}] Proxy HẾT HẠN / Lỗi xác thực SOCKS5 ({first_err}) — dừng xoay IP.",
+                        )
+                    return {
+                        "ok": False,
+                        "proxy_expired": True,
+                        "node_id": node_id,
+                        "error": first_err,
+                    }
                 cur_ip = first_probe.get("egressIp")
                 if first_probe.get("latencyMs") is not None:
                     state.last_latency_ms = int(first_probe["latencyMs"])
@@ -601,6 +694,23 @@ class RotatingProxyPool:
                         break
 
                     probe = await self._probe_fn(state.socks_url, timeout=10.0)
+                    probe_err = str(probe.get("error") or "")
+                    if not probe.get("ok") and is_proxy_expired_error(probe_err):
+                        state.status = "expired"
+                        state.last_error = probe_err
+                        state.consecutive_proxy_failures += 1
+                        if log_cb:
+                            log_cb(
+                                "error",
+                                node_id,
+                                f"[{node_id}] Proxy HẾT HẠN trong lúc chờ xoay IP ({probe_err}).",
+                            )
+                        return {
+                            "ok": False,
+                            "proxy_expired": True,
+                            "node_id": node_id,
+                            "error": probe_err,
+                        }
                     cand_ip = probe.get("egressIp")
                     if probe.get("latencyMs") is not None:
                         state.last_latency_ms = int(probe["latencyMs"])
@@ -709,13 +819,20 @@ class RotatingProxyPool:
                     entry["egressIpAfter"] = cur_ip
                     sim.last_egress_ip = cur_ip
                     sim.last_error = None
+                    sim.consecutive_proxy_failures = 0
+                    if sim.status in {"expired", "error"}:
+                        sim.status = "idle"
                     if prev_cached_ip and cur_ip != prev_cached_ip:
                         entry["rotated"] = True
                         sim.total_rotations += 1
                         sim.last_rotated_at = _utc_now_iso()
                 elif probe_now.get("error"):
-                    entry["error"] = f"Lỗi kết nối proxy: {probe_now['error']}"
+                    raw_probe_err = str(probe_now["error"])
+                    entry["error"] = f"Lỗi kết nối proxy: {raw_probe_err}"
                     sim.last_error = entry["error"]
+                    if is_proxy_expired_error(raw_probe_err):
+                        sim.status = "expired"
+                        entry["proxyExpired"] = True
 
                 if do_rotate and entry["socksOk"]:
                     wait_res = await self.wait_for_ip_rotation(
@@ -761,6 +878,7 @@ class GuestPublicGroupWorker:
         progress_cb: Callable[[dict[str, Any]], None],
         keywords: list[str] | None = None,
         attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
         run_id: str | None = None,
     ) -> None:
         self.sim = sim
@@ -771,6 +889,7 @@ class GuestPublicGroupWorker:
         self.progress_cb = progress_cb
         self.keywords = keywords
         self._attempt_fetcher = attempt_fetcher
+        self._threads_attempt_fetcher = threads_attempt_fetcher
         self.run_id = run_id
 
         self._bridge: Socks5HttpBridge | None = None
@@ -787,7 +906,7 @@ class GuestPublicGroupWorker:
         await self.close()
 
     async def start(self) -> None:
-        if self._attempt_fetcher is not None:
+        if self._attempt_fetcher is not None or self._threads_attempt_fetcher is not None:
             return  # Unit test mode with injected fetcher (no Chromium spawn needed)
 
         if self.sim.socks_url and self.sim.socks_url.lower().startswith("socks"):
@@ -798,7 +917,7 @@ class GuestPublicGroupWorker:
         """Lazily boot headless Chromium only when deep scroll / JS fallback is actually needed."""
         if self._browser is not None and self._context is not None:
             return
-        if self._attempt_fetcher is not None:
+        if self._attempt_fetcher is not None and self._threads_attempt_fetcher is not None:
             return
 
         proxy_arg: dict[str, str] | None = None
@@ -1491,6 +1610,7 @@ class GuestPublicGroupWorker:
         outcome: dict[str, Any] = {"state": "error", "posts": [], "early_stop_reason": ""}
         rotated_on_retry = False
         error_msg: str | None = None
+        proxy_expired_detected = False
 
         for attempt in range(2):
             try:
@@ -1498,8 +1618,14 @@ class GuestPublicGroupWorker:
                     outcome = await self._attempt_fetcher(self.sim, group, watermarks, attempt)
                 else:
                     outcome = await self._fetch_group_with_playwright(group, watermarks)
+                if outcome.get("error") and not error_msg:
+                    error_msg = str(outcome.get("error"))
             except Exception as exc:
                 error_msg = str(exc)
+                if is_proxy_expired_error(error_msg):
+                    proxy_expired_detected = True
+                    outcome = {"state": "error", "posts": [], "early_stop_reason": ""}
+                    break
                 if attempt == 0 and self.sim.socks_url and self._attempt_fetcher is None:
                     self.log_cb(
                         "warn",
@@ -1513,6 +1639,11 @@ class GuestPublicGroupWorker:
                         stop_check=self.stop_check,
                         log_cb=self.log_cb,
                     )
+                    if rot.get("proxy_expired"):
+                        proxy_expired_detected = True
+                        error_msg = str(rot.get("error") or error_msg)
+                        outcome = {"state": "error", "posts": [], "early_stop_reason": ""}
+                        break
                     if rot.get("ok"):
                         rotated_on_retry = bool(rot.get("ip_changed") or rot.get("ok"))
                         if rot.get("ip_changed"):
@@ -1523,6 +1654,9 @@ class GuestPublicGroupWorker:
                 break
 
             state = outcome.get("state") or "ok"
+            if state == "error" and is_proxy_expired_error(error_msg):
+                proxy_expired_detected = True
+                break
             fallback_proxies = self.config.get("proxy_urls") or ([self.sim.socks_url] if self.sim.socks_url else None)
             if state in {"rate_limit", "login_wall"} and attempt == 0 and fallback_proxies:
                 rot = await self.rotator.wait_for_ip_rotation(
@@ -1532,6 +1666,10 @@ class GuestPublicGroupWorker:
                     stop_check=self.stop_check,
                     log_cb=self.log_cb,
                 )
+                if rot.get("proxy_expired"):
+                    proxy_expired_detected = True
+                    error_msg = str(rot.get("error") or error_msg or state)
+                    break
                 if rot.get("ok"):
                     rotated_on_retry = True
                     if rot.get("ip_changed"):
@@ -1547,6 +1685,9 @@ class GuestPublicGroupWorker:
         raw_posts: list[dict[str, Any]] = outcome.get("posts") or []
 
         if final_state == "private_group":
+            self.sim.consecutive_proxy_failures = 0
+            if self.sim.status in {"expired", "error"}:
+                self.sim.status = "idle"
             await asyncio.to_thread(
                 _update_group_crawl_meta_sync,
                 group_id=group_id,
@@ -1567,23 +1708,70 @@ class GuestPublicGroupWorker:
         if final_state in {"rate_limit", "login_wall", "error"} and not raw_posts:
             status_label = "blocked" if final_state in {"rate_limit", "login_wall"} else "error"
             err_text = error_msg or f"Guest blocked ({final_state})"
+
+            if final_state in {"rate_limit", "login_wall"}:
+                # Temporary FB block means proxy itself is still alive -> never trip 24/24 proxy expiry
+                self.sim.consecutive_proxy_failures = 0
+                if self.sim.status in {"expired", "error"}:
+                    self.sim.status = "idle"
+            else:
+                if proxy_expired_detected or is_proxy_expired_error(err_text):
+                    self.sim.consecutive_proxy_failures += 1
+                    self.sim.status = "expired"
+                    self.sim.last_error = err_text
+                    status_label = "proxy_expired"
+                elif is_proxy_transport_failure(err_text) or error_msg is not None:
+                    self.sim.consecutive_proxy_failures += 1
+                    if self.sim.consecutive_proxy_failures >= MAX_CONSECUTIVE_PROXY_FAILURES:
+                        probe_dead = True
+                        probe_err = err_text
+                        if self.sim.socks_url:
+                            try:
+                                probe_res = await self.rotator._probe_fn(self.sim.socks_url, timeout=8.0)
+                                if probe_res.get("ok"):
+                                    probe_dead = False
+                                    self.sim.consecutive_proxy_failures = 0
+                                elif probe_res.get("error"):
+                                    probe_err = str(probe_res["error"])
+                            except Exception as probe_exc:
+                                probe_err = str(probe_exc)
+                        if probe_dead:
+                            self.sim.status = "expired"
+                            self.sim.last_error = probe_err
+                            err_text = probe_err
+                            status_label = "proxy_expired"
+
             await asyncio.to_thread(
                 _update_group_crawl_meta_sync,
                 group_id=group_id,
-                status=status_label,
+                status="error" if status_label == "proxy_expired" else status_label,
                 error=err_text,
                 posts_count=0,
                 mark_private=False,
             )
-            self.log_cb("error", self.sim.id, f"[{group_name}] Thất bại ({status_label}): {err_text}")
+            log_lvl = "error"
+            if status_label == "proxy_expired":
+                self.log_cb(
+                    log_lvl,
+                    self.sim.id,
+                    f"[{group_name}] PROXY HẾT HẠN / LỖI KẾT NỐI ({err_text}) — tạm dừng luồng {self.sim.id}.",
+                )
+            else:
+                self.log_cb(log_lvl, self.sim.id, f"[{group_name}] Thất bại ({status_label}): {err_text}")
             self.sim.total_groups += 1
             return {
                 "group_id": group_id,
                 "status": status_label,
+                "proxy_expired": status_label == "proxy_expired",
                 "posts_saved": 0,
                 "elapsed_ms": elapsed_ms,
                 "error": err_text,
             }
+
+        self.sim.consecutive_proxy_failures = 0
+        self.sim.last_error = None
+        if self.sim.status in {"expired", "error"}:
+            self.sim.status = "idle"
 
         # Convert extracted dicts -> ExtensionPost payload and ingest through shared service
         ext_posts = [
@@ -1684,6 +1872,252 @@ class GuestPublicGroupWorker:
             "elapsed_ms": elapsed_ms,
         }
 
+    async def process_threads_keyword(self, keyword: str) -> dict[str, Any]:
+        """Crawl one Threads search keyword without any account over the rotating 4G proxy."""
+        from app.modules.all_platform.services.threads_no_acc_crawler_service import (
+            ThreadsKeywordCrawlResult,
+            build_threads_search_url,
+            crawl_threads_keyword_guest,
+            ingest_threads_4g_keyword_batch,
+        )
+
+        t0 = time.perf_counter()
+        kw = str(keyword or "").strip()
+        search_url = build_threads_search_url(kw)
+        self.sim.status = "crawling"
+
+        p_lo, p_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_posts_per_keyword"]
+        raw_limit = self.config.get("threads_max_posts_per_keyword")
+        max_posts = 20 if raw_limit is None else max(p_lo, min(p_hi, int(raw_limit)))
+
+        a_lo, a_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_age_days"]
+        raw_age = self.config.get("threads_max_age_days")
+        max_age_days = 7 if raw_age is None else max(a_lo, min(a_hi, int(raw_age)))
+
+        s_lo, s_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"]
+        raw_scrolls = self.config.get("max_scrolls_per_group")
+        scrolls = 1 if raw_scrolls is None else max(0, min(2, int(raw_scrolls) if int(raw_scrolls) > 0 else 0))
+
+        result: ThreadsKeywordCrawlResult = ThreadsKeywordCrawlResult(
+            keyword=kw,
+            search_url=search_url,
+            status="transport_error",
+            should_rotate=False,
+        )
+        rotated_on_retry = False
+        proxy_expired_detected = False
+
+        for attempt in range(2):
+            if self.stop_check():
+                break
+            try:
+                if self._threads_attempt_fetcher is not None:
+                    raw_out = await self._threads_attempt_fetcher(self.sim, kw, attempt)
+                    if isinstance(raw_out, ThreadsKeywordCrawlResult):
+                        result = raw_out
+                    else:
+                        st = str((raw_out or {}).get("status") or (raw_out or {}).get("state") or "ok")
+                        result = ThreadsKeywordCrawlResult(
+                            keyword=kw,
+                            search_url=search_url,
+                            status=st,
+                            should_rotate=bool(
+                                (raw_out or {}).get(
+                                    "should_rotate",
+                                    st in {"login_wall", "rate_limited", "empty_or_throttled", "transport_error", "http_error"},
+                                )
+                            ),
+                            raw_extracted=len((raw_out or {}).get("posts") or []),
+                            error=(raw_out or {}).get("error"),
+                            posts=list((raw_out or {}).get("posts") or []),
+                        )
+                else:
+                    await self._ensure_playwright_browser()
+                    if self._context is None:
+                        await self.reset_guest_context()
+                    if self._context is None:
+                        raise RuntimeError("Playwright Guest context could not be initialized for Threads")
+                    page = await self._context.new_page()
+                    try:
+                        result = await crawl_threads_keyword_guest(
+                            page,
+                            kw,
+                            max_posts=max_posts,
+                            scrolls=scrolls,
+                            is_proxy_expired_fn=is_proxy_expired_error,
+                        )
+                    finally:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+            except Exception as exc:
+                err_str = str(exc)
+                expired = is_proxy_expired_error(err_str)
+                result = ThreadsKeywordCrawlResult(
+                    keyword=kw,
+                    search_url=search_url,
+                    status="proxy_expired" if expired else "transport_error",
+                    should_rotate=not expired,
+                    error=err_str[:280],
+                )
+
+            if result.status == "proxy_expired" or is_proxy_expired_error(result.error):
+                proxy_expired_detected = True
+                break
+
+            fallback_proxies = self.config.get("proxy_urls") or (
+                [self.sim.socks_url] if self.sim.socks_url else None
+            )
+            if result.should_rotate and attempt == 0 and fallback_proxies:
+                rot = await self.rotator.wait_for_ip_rotation(
+                    self.sim.id,
+                    reason=f"threads_{result.status}",
+                    proxy_urls=fallback_proxies,
+                    stop_check=self.stop_check,
+                    log_cb=self.log_cb,
+                )
+                if rot.get("proxy_expired"):
+                    proxy_expired_detected = True
+                    result.error = str(rot.get("error") or result.error or result.status)
+                    break
+                if rot.get("ok"):
+                    rotated_on_retry = True
+                    if rot.get("ip_changed"):
+                        self.progress_cb({"ip_rotations": 1})
+                    await self.reset_guest_context()
+                    continue
+                if rot.get("error") and not result.error:
+                    result.error = str(rot["error"])
+                break
+            break
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+
+        if result.status in {"login_wall", "rate_limited", "empty", "empty_or_throttled", "ok"} and not proxy_expired_detected:
+            self.sim.consecutive_proxy_failures = 0
+            if self.sim.status in {"expired", "error"}:
+                self.sim.status = "idle"
+        else:
+            err_text = result.error or result.status
+            if proxy_expired_detected or is_proxy_expired_error(err_text):
+                self.sim.consecutive_proxy_failures += 1
+                self.sim.status = "expired"
+                self.sim.last_error = err_text
+                self.log_cb(
+                    "error",
+                    self.sim.id,
+                    f"[Threads: {kw}] PROXY HẾT HẠN / LỖI KẾT NỐI ({err_text}) — tạm dừng luồng {self.sim.id}.",
+                )
+                self.sim.total_groups += 1
+                return {
+                    "keyword": kw,
+                    "status": "proxy_expired",
+                    "proxy_expired": True,
+                    "posts_saved": 0,
+                    "extracted": 0,
+                    "elapsed_ms": elapsed_ms,
+                    "error": err_text,
+                }
+            if result.status in {"transport_error", "http_error"}:
+                self.sim.consecutive_proxy_failures += 1
+                if self.sim.consecutive_proxy_failures >= MAX_CONSECUTIVE_PROXY_FAILURES:
+                    probe_dead = True
+                    probe_err = err_text
+                    if self.sim.socks_url:
+                        try:
+                            probe_res = await self.rotator._probe_fn(self.sim.socks_url, timeout=8.0)
+                            if probe_res.get("ok"):
+                                probe_dead = False
+                                self.sim.consecutive_proxy_failures = 0
+                            elif probe_res.get("error"):
+                                probe_err = str(probe_res["error"])
+                        except Exception as probe_exc:
+                            probe_err = str(probe_exc)
+                    if probe_dead:
+                        self.sim.status = "expired"
+                        self.sim.last_error = probe_err
+                        self.sim.total_groups += 1
+                        return {
+                            "keyword": kw,
+                            "status": "proxy_expired",
+                            "proxy_expired": True,
+                            "posts_saved": 0,
+                            "extracted": 0,
+                            "elapsed_ms": elapsed_ms,
+                            "error": probe_err,
+                        }
+
+        # Ingest extracted posts into threads_posts -> crawled_post_audit_logs -> AI scoring -> keyword registry
+        if result.posts:
+            result = await ingest_threads_4g_keyword_batch(
+                result,
+                keyword=kw,
+                post_limit=max_posts,
+                max_age_days=max_age_days,
+                proxy_node=self.sim.id,
+                run_id=self.run_id,
+            )
+            status_out = "rotated_retry" if rotated_on_retry else "ok"
+            lead_note = f" · {result.high_score_count} Lead >=70đ" if result.high_score_count > 0 else ""
+            self.log_cb(
+                "success",
+                self.sim.id,
+                (
+                    f"[Threads: {kw}] Đọc {result.raw_extracted} bài -> lưu mới {result.saved_count} bài"
+                    f"{lead_note} ({elapsed_ms}ms)"
+                ),
+            )
+        elif result.status == "empty":
+            try:
+                from app.modules.all_platform.services.threads_keyword_service import record_keyword_result
+                await asyncio.to_thread(record_keyword_result, kw, 0, 0)
+            except Exception:
+                pass
+            status_out = "ok"
+            self.log_cb(
+                "info",
+                self.sim.id,
+                f"[Threads: {kw}] 0 bài khớp từ khóa ({elapsed_ms}ms)",
+            )
+        else:
+            status_out = "blocked" if result.status in {"login_wall", "rate_limited", "empty_or_throttled"} else "error"
+            self.log_cb(
+                "warn" if status_out == "blocked" else "error",
+                self.sim.id,
+                f"[Threads: {kw}] Bị chặn / lỗi tạm thời ({result.error or result.status}) ({elapsed_ms}ms)",
+            )
+
+        self.sim.total_groups += 1
+        self.sim.groups_in_epoch += 1
+        k_lo, k_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["groups_per_ip_rotate"]
+        k_rotate = max(k_lo, min(k_hi, int(self.config.get("groups_per_ip_rotate") or 6)))
+        if (
+            self.sim.socks_url
+            and self.sim.groups_in_epoch >= k_rotate
+            and not self.stop_check()
+        ):
+            probe_res = await self.rotator.refresh_egress_ip(
+                self.sim.id,
+                proxy_urls=self.config.get("proxy_urls") or [self.sim.socks_url],
+                log_cb=self.log_cb,
+            )
+            if probe_res.get("ip_changed"):
+                self.progress_cb({"ip_rotations": 1})
+            self.sim.groups_in_epoch = 0
+            await self.reset_guest_context()
+
+        self.sim.status = "idle"
+        return {
+            "keyword": kw,
+            "status": status_out,
+            "posts_saved": result.saved_count,
+            "high_score_count": result.high_score_count,
+            "extracted": result.raw_extracted,
+            "elapsed_ms": elapsed_ms,
+            "error": result.error,
+        }
+
 
 def _update_group_crawl_meta_sync(
     *,
@@ -1720,6 +2154,22 @@ class PublicCrawlOrchestrator:
         self.active_run_id: str | None = None
         self.started_at: str | None = None
         self._active_task: asyncio.Task[Any] | None = None
+        self._next_round_task: asyncio.Task[Any] | None = None
+        self._continuous_waiting: bool = False
+        self._continuous_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None
+        self._continuous_threads_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None
+        self._continuous_keywords: list[str] | None = None
+        self._continuous_limit_groups: int | None = None
+        self.loop_round: int = 0
+        self.last_round_finished_at: str | None = None
+        self.new_groups_detected: int = 0
+        self.auto_pause_reason: str | None = None
+        self.proxy_expired_error: str | None = None
+        self.current_platform: str = "facebook"
+        self.next_platform: str = "threads"
+        self.last_completed_platform: str | None = None
+        self.active_threads_keywords: list[dict[str, Any]] = []
+        self.threads_keyword_meta: dict[str, Any] = {}
         self._logs: deque[dict[str, str]] = deque(maxlen=250)
         self._stats: dict[str, Any] = {
             "total_groups": 0,
@@ -1749,6 +2199,8 @@ class PublicCrawlOrchestrator:
 
     def get_config_sync(self) -> dict[str, Any]:
         cfg = dict(DEFAULT_PUBLIC_CRAWL_CONFIG)
+        cfg["auto_pause_reason"] = self.auto_pause_reason
+        cfg["proxy_expired_error"] = self.proxy_expired_error
         try:
             supabase = get_supabase_client()
             res = (
@@ -1759,12 +2211,93 @@ class PublicCrawlOrchestrator:
                 .execute()
             )
             if res.data:
-                for k, v in res.data[0].items():
+                row = res.data[0]
+                for k, v in row.items():
                     if v is not None:
                         cfg[k] = v
+                if "auto_pause_reason" in row:
+                    self.auto_pause_reason = row.get("auto_pause_reason")
+                    cfg["auto_pause_reason"] = self.auto_pause_reason
+                if "proxy_expired_error" in row:
+                    self.proxy_expired_error = row.get("proxy_expired_error")
+                    cfg["proxy_expired_error"] = self.proxy_expired_error
+                if row.get("last_completed_platform") in {"facebook", "threads"} and self.last_completed_platform is None:
+                    self.last_completed_platform = row.get("last_completed_platform")
         except Exception as exc:
             logger.debug("[PUBLIC-4G] get_config fallback defaults (%s)", exc)
         return clamp_public_crawl_config(cfg)
+
+    def _persist_last_platform_sync(self, platform_name: str) -> None:
+        self.last_completed_platform = platform_name
+        try:
+            supabase = get_supabase_client()
+            supabase.table("public_crawl_config").upsert(
+                {
+                    "id": "default",
+                    "last_completed_platform": platform_name,
+                    "updated_at": _utc_now_iso(),
+                },
+                on_conflict="id",
+            ).execute()
+        except Exception as exc:
+            logger.debug("[PUBLIC-4G] _persist_last_platform_sync skipped (%s)", exc)
+
+    def _persist_pause_state_sync(
+        self,
+        *,
+        enabled: bool | None = None,
+        auto_pause_reason: str | None,
+        proxy_expired_error: str | None,
+    ) -> None:
+        self.auto_pause_reason = auto_pause_reason
+        self.proxy_expired_error = proxy_expired_error
+        try:
+            supabase = get_supabase_client()
+            payload: dict[str, Any] = {
+                "id": "default",
+                "updated_at": _utc_now_iso(),
+                "auto_pause_reason": auto_pause_reason,
+                "proxy_expired_error": proxy_expired_error,
+            }
+            if enabled is not None:
+                payload["enabled"] = bool(enabled)
+            try:
+                supabase.table("public_crawl_config").upsert(payload, on_conflict="id").execute()
+            except Exception:
+                # Backward-compatible fallback when migration 228 columns aren't applied yet
+                fallback_payload: dict[str, Any] = {
+                    "id": "default",
+                    "updated_at": payload["updated_at"],
+                }
+                if enabled is not None:
+                    fallback_payload["enabled"] = bool(enabled)
+                if len(fallback_payload) > 2:
+                    supabase.table("public_crawl_config").upsert(fallback_payload, on_conflict="id").execute()
+        except Exception as exc:
+            logger.debug("[PUBLIC-4G] _persist_pause_state_sync skipped (%s)", exc)
+
+    def _send_proxy_expired_alert_sync(self, error_text: str) -> None:
+        chat_id = (
+            os.getenv("PUBLIC_CRAWL_ALERT_TELEGRAM_CHAT_ID")
+            or os.getenv("TELEGRAM_ALERT_CHAT_ID")
+            or ""
+        ).strip()
+        if not chat_id:
+            return
+        try:
+            from app.modules.facebook.src.modules.telegram.services.telegram_service import (
+                TelegramService,
+            )
+
+            TelegramService().send_message(
+                chat_id=chat_id,
+                text=(
+                    "⚠️ [Cào FB No-Acc 4G 24/24] Đã TẠM DỪNG tự động vì Proxy 4G hết hạn / lỗi kết nối:\n"
+                    f"{error_text}"
+                ),
+            )
+        except Exception as exc:
+            logger.debug("[PUBLIC-4G] Telegram proxy-expired alert skipped (%s)", exc)
 
     def update_config_sync(self, patch: dict[str, Any], updated_by: str | None = None) -> dict[str, Any]:
         current = self.get_config_sync()
@@ -1778,6 +2311,10 @@ class PublicCrawlOrchestrator:
             "auto_skip_private",
             "headless",
             "proxy_urls",
+            "alternating_threads_enabled",
+            "threads_keyword_target",
+            "threads_max_posts_per_keyword",
+            "threads_max_age_days",
         }
         clean_patch: dict[str, Any] = {}
         for k, v in patch.items():
@@ -1799,12 +2336,44 @@ class PublicCrawlOrchestrator:
         if updated_by:
             merged["updated_by"] = updated_by
 
+        proxy_updated = "proxy_urls" in clean_patch
+        re_enabled = clean_patch.get("enabled") is True
+        if proxy_updated or re_enabled:
+            self.auto_pause_reason = None
+            self.proxy_expired_error = None
+            self.rotator.reset_proxy_health()
+            merged["auto_pause_reason"] = None
+            merged["proxy_expired_error"] = None
+        elif clean_patch.get("enabled") is False:
+            self.auto_pause_reason = "manual_stop"
+            merged["auto_pause_reason"] = "manual_stop"
+
         try:
             supabase = get_supabase_client()
-            supabase.table("public_crawl_config").upsert(
-                {k: v for k, v in merged.items() if k in allowed or k in {"id", "updated_at", "updated_by"}},
-                on_conflict="id",
-            ).execute()
+            upsert_cols = allowed | {"id", "updated_at", "updated_by", "auto_pause_reason", "proxy_expired_error"}
+            payload = {k: v for k, v in merged.items() if k in upsert_cols}
+            try:
+                supabase.table("public_crawl_config").upsert(payload, on_conflict="id").execute()
+            except Exception:
+                # Backward-compatible retry without migration 228/229 columns if pending
+                base_only = {
+                    "id",
+                    "updated_at",
+                    "updated_by",
+                    "enabled",
+                    "cycle_interval_min",
+                    "groups_per_ip_rotate",
+                    "max_posts_per_group",
+                    "max_scrolls_per_group",
+                    "concurrent_sims",
+                    "auto_skip_private",
+                    "headless",
+                    "proxy_urls",
+                }
+                supabase.table("public_crawl_config").upsert(
+                    {k: v for k, v in merged.items() if k in base_only},
+                    on_conflict="id",
+                ).execute()
         except Exception as exc:
             logger.error("[PUBLIC-4G] update_config failed: %s", exc)
             raise
@@ -1899,13 +2468,25 @@ class PublicCrawlOrchestrator:
         if group_ids:
             return rows
 
-        # Oldest crawled first so every run & limit_groups test rotates fairly across groups
-        rows.sort(key=lambda r: str(r.get("last_public_crawled_at") or ""))
+        # Newly added groups (last_public_crawled_at IS NULL) always jump to head of queue, then oldest crawled first
+        rows.sort(
+            key=lambda r: (
+                0 if not r.get("last_public_crawled_at") else 1,
+                str(r.get("last_public_crawled_at") or ""),
+            )
+        )
         if not only_due:
             return rows
 
         ci_lo, ci_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"]
-        global_interval = max(ci_lo, min(ci_hi, int(default_interval_min or 15)))
+        raw_interval = (
+            DEFAULT_PUBLIC_CRAWL_CONFIG["cycle_interval_min"]
+            if default_interval_min is None
+            else int(default_interval_min)
+        )
+        global_interval = max(ci_lo, min(ci_hi, raw_interval))
+        if global_interval <= 0:
+            return rows
         now = datetime.now(timezone.utc)
         due: list[dict[str, Any]] = []
         for row in rows:
@@ -1932,21 +2513,26 @@ class PublicCrawlOrchestrator:
         triggered_by: str | None,
         total_groups: int,
         sim_ids: list[str],
+        platform: str = "facebook",
     ) -> str:
         run_id = str(uuid.uuid4())
         try:
             supabase = get_supabase_client()
-            supabase.table("public_crawl_runs").insert(
-                {
-                    "id": run_id,
-                    "trigger_source": trigger_source,
-                    "triggered_by": triggered_by or None,
-                    "status": "running",
-                    "started_at": _utc_now_iso(),
-                    "total_groups": int(total_groups),
-                    "sim_nodes": sim_ids,
-                }
-            ).execute()
+            row = {
+                "id": run_id,
+                "trigger_source": trigger_source,
+                "triggered_by": triggered_by or None,
+                "status": "running",
+                "started_at": _utc_now_iso(),
+                "total_groups": int(total_groups),
+                "sim_nodes": sim_ids,
+                "platform": platform,
+            }
+            try:
+                supabase.table("public_crawl_runs").insert(row).execute()
+            except Exception:
+                row.pop("platform", None)
+                supabase.table("public_crawl_runs").insert(row).execute()
         except Exception as exc:
             logger.warning("[PUBLIC-4G] Could not insert public_crawl_runs row: %s", exc)
         return run_id
@@ -2014,12 +2600,94 @@ class PublicCrawlOrchestrator:
                 "stop_requested": self.stop_requested,
                 "active_run_id": self.active_run_id,
                 "started_at": self.started_at,
+                "loop_round": self.loop_round,
+                "last_round_finished_at": self.last_round_finished_at,
+                "new_groups_detected": self.new_groups_detected,
+                "auto_pause_reason": self.auto_pause_reason,
+                "proxy_expired_error": self.proxy_expired_error,
+                "continuous_waiting": self._continuous_waiting,
+                "current_platform": self.current_platform,
+                "next_platform": self.next_platform,
+                "last_completed_platform": self.last_completed_platform,
+                "active_threads_keywords": self.active_threads_keywords[:50],
+                "threads_keyword_meta": self.threads_keyword_meta,
                 **self._stats,
             },
             "sims": sims,
             "recent_runs": recent_runs,
             "logs": list(self._logs)[-80:],
         }
+
+    def _cancel_next_round_wait(self) -> None:
+        self._continuous_waiting = False
+        cur: asyncio.Task[Any] | None = None
+        try:
+            cur = asyncio.current_task()
+        except RuntimeError:
+            cur = None
+        if (
+            self._next_round_task is not None
+            and not self._next_round_task.done()
+            and self._next_round_task is not cur
+        ):
+            self._next_round_task.cancel()
+        if self._next_round_task is not cur:
+            self._next_round_task = None
+
+    def _schedule_next_continuous_round(
+        self,
+        *,
+        keywords: list[str] | None,
+        limit_groups: int | None,
+        attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None,
+        threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        next_platform: str = "auto",
+    ) -> None:
+        self._cancel_next_round_wait()
+        self._continuous_waiting = True
+        breath_sec = _continuous_breath_seconds()
+
+        async def _next_round_runner() -> None:
+            try:
+                await asyncio.sleep(breath_sec)
+                self._continuous_waiting = False
+                if self.stop_requested or self.is_running or self.auto_pause_reason is not None:
+                    return
+                fresh_cfg = await asyncio.to_thread(self.get_config_sync)
+                fresh_interval = (
+                    int(fresh_cfg["cycle_interval_min"])
+                    if fresh_cfg.get("cycle_interval_min") is not None
+                    else 0
+                )
+                if not fresh_cfg.get("enabled") or fresh_interval > 0:
+                    self.append_log(
+                        "info",
+                        "orchestrator",
+                        "Dừng vòng xoay 24/24 do cấu hình Auto đã tắt hoặc đổi chu kỳ nghỉ > 0 phút.",
+                    )
+                    return
+                resolved_platform = (
+                    next_platform
+                    if (next_platform == "facebook" or fresh_cfg.get("alternating_threads_enabled", True))
+                    else "facebook"
+                )
+                await self.start_run(
+                    keywords=keywords,
+                    trigger_source="continuous_24h",
+                    only_due=False,
+                    limit_groups=limit_groups,
+                    attempt_fetcher=attempt_fetcher,
+                    threads_attempt_fetcher=threads_attempt_fetcher,
+                    continuous=True,
+                    platform=resolved_platform,
+                )
+            except asyncio.CancelledError:
+                self._continuous_waiting = False
+            except Exception as exc:
+                self._continuous_waiting = False
+                logger.error("[PUBLIC-4G] _next_round_runner failed: %s", exc, exc_info=True)
+
+        self._next_round_task = asyncio.create_task(_next_round_runner())
 
     async def start_run(
         self,
@@ -2031,6 +2699,9 @@ class PublicCrawlOrchestrator:
         only_due: bool = False,
         limit_groups: int | None = None,
         attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        continuous: bool | None = None,
+        platform: str = "auto",
     ) -> dict[str, Any]:
         if self.is_running:
             return {
@@ -2039,21 +2710,26 @@ class PublicCrawlOrchestrator:
                 "active_run_id": self.active_run_id,
             }
 
+        self._cancel_next_round_wait()
+
+        if trigger_source == "manual":
+            # User explicitly clicked Start: clear previous pause states & proxy expiry flags
+            self.rotator.reset_proxy_health()
+            if self.auto_pause_reason is not None or self.proxy_expired_error is not None:
+                await asyncio.to_thread(
+                    self._persist_pause_state_sync,
+                    enabled=None,
+                    auto_pause_reason=None,
+                    proxy_expired_error=None,
+                )
+
         cfg = await asyncio.to_thread(self.get_config_sync)
-        groups = await asyncio.to_thread(
-            self._select_due_groups_sync,
-            group_ids=group_ids,
-            default_interval_min=int(cfg.get("cycle_interval_min") or 15),
-            only_due=only_due,
+        cfg_interval = (
+            int(cfg["cycle_interval_min"])
+            if cfg.get("cycle_interval_min") is not None
+            else 0
         )
-        if limit_groups is not None and limit_groups > 0 and not group_ids:
-            groups = groups[:limit_groups]
-        if not groups:
-            return {
-                "started": False,
-                "reason": "no_eligible_groups",
-                "message": "Không có nhóm Public nào cần cào lúc này.",
-            }
+        effective_only_due = False if cfg_interval <= 0 else only_due
 
         sims = self.rotator.sync_nodes(cfg.get("proxy_urls"))
         allow_direct = os.getenv("PUBLIC_CRAWL_ALLOW_DIRECT_NO_PROXY", "").strip().lower() in {
@@ -2062,7 +2738,7 @@ class PublicCrawlOrchestrator:
             "yes",
         }
         if not sims:
-            if not allow_direct and attempt_fetcher is None:
+            if not allow_direct and attempt_fetcher is None and threads_attempt_fetcher is None:
                 return {
                     "started": False,
                     "reason": "no_rotating_proxy_configured",
@@ -2073,15 +2749,115 @@ class PublicCrawlOrchestrator:
                 }
             sims = [SimNodeRuntime(id="direct-local", label="Direct Guest (Dev)", status="idle")]
 
+        alternating_enabled = bool(cfg.get("alternating_threads_enabled", True))
+        if group_ids:
+            target_platform = "facebook"
+        elif platform in {"facebook", "threads"}:
+            target_platform = platform
+        else:
+            prev_completed = self.last_completed_platform or cfg.get("last_completed_platform")
+            if alternating_enabled and prev_completed == "facebook":
+                target_platform = "threads"
+            else:
+                target_platform = "facebook"
+
+        groups: list[dict[str, Any]] = []
+        threads_keywords: list[str] = []
+        new_groups_count = 0
+
+        if target_platform == "facebook":
+            groups = await asyncio.to_thread(
+                self._select_due_groups_sync,
+                group_ids=group_ids,
+                default_interval_min=cfg_interval,
+                only_due=effective_only_due,
+            )
+            if limit_groups is not None and limit_groups > 0 and not group_ids:
+                groups = groups[:limit_groups]
+            if not groups:
+                if platform == "auto" and alternating_enabled:
+                    target_platform = "threads"
+                else:
+                    return {
+                        "started": False,
+                        "reason": "no_eligible_groups",
+                        "message": "Không có nhóm Public nào cần cào lúc này.",
+                    }
+            else:
+                new_groups_count = sum(1 for g in groups if not g.get("last_public_crawled_at"))
+
+        if target_platform == "threads":
+            explicit_kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+            if explicit_kws:
+                threads_keywords = explicit_kws
+                self.active_threads_keywords = [
+                    {"keyword": kw, "times_used": 0, "total_posts_found": 0, "high_score_posts": 0}
+                    for kw in threads_keywords
+                ]
+                self.threads_keyword_meta = {
+                    "total_active": len(threads_keywords),
+                    "selected_count": len(threads_keywords),
+                    "newly_generated": 0,
+                    "deactivated": [],
+                    "ai_powered": False,
+                    "manual_keywords": True,
+                }
+            else:
+                from app.modules.all_platform.services.threads_keyword_service import (
+                    evolve_and_select_keywords,
+                )
+
+                kw_lo, kw_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"]
+                kw_target = max(kw_lo, min(kw_hi, int(cfg.get("threads_keyword_target") or 30)))
+                evolved = await evolve_and_select_keywords(target_count=kw_target, rotate_replace_count=6)
+                threads_keywords = evolved.get("keywords") or []
+                meta = evolved.get("meta") or {}
+                self.active_threads_keywords = list(meta.get("items") or [])
+                self.threads_keyword_meta = {k: v for k, v in meta.items() if k != "items"}
+            if limit_groups is not None and limit_groups > 0:
+                threads_keywords = threads_keywords[:limit_groups]
+            if not threads_keywords:
+                return {
+                    "started": False,
+                    "reason": "no_threads_keywords",
+                    "message": "Không có từ khóa Threads nào để chạy.",
+                }
+
+        work_items: list[dict[str, Any]] = (
+            [{"kind": "threads", "keyword": kw} for kw in threads_keywords]
+            if target_platform == "threads"
+            else [{"kind": "facebook", "group": g} for g in groups]
+        )
+
+        if continuous is None:
+            is_continuous = bool(not group_ids and cfg.get("enabled") and cfg_interval == 0)
+        else:
+            is_continuous = bool(continuous and not group_ids)
+
         _, max_sims_bound = PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"]
         max_lanes = max(1, min(len(sims), max_sims_bound, int(cfg.get("concurrent_sims") or len(sims))))
         active_sims = sims[:max_lanes]
+        for s in active_sims:
+            s.groups_in_epoch = 0
+
+        self.loop_round += 1
+        self.new_groups_detected = new_groups_count
+        self.current_platform = target_platform
+        self.next_platform = (
+            ("threads" if target_platform == "facebook" else "facebook")
+            if alternating_enabled
+            else "facebook"
+        )
+        self._continuous_attempt_fetcher = attempt_fetcher if is_continuous else None
+        self._continuous_threads_fetcher = threads_attempt_fetcher if is_continuous else None
+        self._continuous_keywords = keywords if is_continuous else None
+        self._continuous_limit_groups = limit_groups if is_continuous else None
 
         self.is_running = True
         self.stop_requested = False
         self.started_at = _utc_now_iso()
         self._stats = {
-            "total_groups": len(groups),
+            "total_groups": len(work_items),
             "completed_groups": 0,
             "groups_ok": 0,
             "groups_failed": 0,
@@ -2094,30 +2870,62 @@ class PublicCrawlOrchestrator:
             self._create_run_record_sync,
             trigger_source=trigger_source,
             triggered_by=triggered_by,
-            total_groups=len(groups),
+            total_groups=len(work_items),
             sim_ids=[s.id for s in active_sims],
+            platform=target_platform,
         )
 
-        self.append_log(
-            "info",
-            "orchestrator",
-            f"Bắt đầu cào {len(groups)} nhóm Public qua {len(active_sims)} luồng Proxy Xoay ({', '.join(s.id for s in active_sims)}) — 0 Cookie",
-        )
+        mode_note = f"Vòng #{self.loop_round} · 24/24 luân phiên" if is_continuous else f"Vòng #{self.loop_round}"
+        if target_platform == "threads":
+            ai_added = int(self.threads_keyword_meta.get("newly_generated") or 0)
+            deactivated_n = len(self.threads_keyword_meta.get("deactivated") or [])
+            ai_note = (
+                f" | AI biến đổi: +{ai_added} mới, loại {deactivated_n} từ yếu"
+                if (ai_added or deactivated_n)
+                else ""
+            )
+            self.append_log(
+                "info",
+                "orchestrator",
+                (
+                    f"[{mode_note} · THREADS NO-ACC] Bắt đầu quét {len(threads_keywords)} từ khóa AI "
+                    f"qua {len(active_sims)} luồng Proxy Xoay ({', '.join(s.id for s in active_sims)}){ai_note}"
+                ),
+            )
+        else:
+            new_note = f" ({new_groups_count} nhóm mới chưa từng cào)" if new_groups_count > 0 else ""
+            self.append_log(
+                "info",
+                "orchestrator",
+                (
+                    f"[{mode_note} · FACEBOOK PUBLIC] Bắt đầu cào {len(groups)} nhóm Public{new_note} "
+                    f"qua {len(active_sims)} luồng Proxy Xoay ({', '.join(s.id for s in active_sims)}) — 0 Cookie"
+                ),
+            )
 
         self._active_task = asyncio.create_task(
             self._execute_run_task(
                 run_id=self.active_run_id,
-                groups=groups,
+                platform=target_platform,
+                work_items=work_items,
                 active_sims=active_sims,
                 config=cfg,
                 keywords=keywords,
                 attempt_fetcher=attempt_fetcher,
+                threads_attempt_fetcher=threads_attempt_fetcher,
+                continuous=is_continuous,
+                limit_groups=limit_groups,
             )
         )
         return {
             "started": True,
             "run_id": self.active_run_id,
-            "total_groups": len(groups),
+            "platform": target_platform,
+            "next_platform": self.next_platform,
+            "loop_round": self.loop_round,
+            "continuous": is_continuous,
+            "new_groups_detected": new_groups_count,
+            "total_groups": len(work_items),
             "sim_nodes": [s.id for s in active_sims],
         }
 
@@ -2125,16 +2933,20 @@ class PublicCrawlOrchestrator:
         self,
         *,
         run_id: str,
-        groups: list[dict[str, Any]],
+        platform: str,
+        work_items: list[dict[str, Any]],
         active_sims: list[SimNodeRuntime],
         config: dict[str, Any],
         keywords: list[str] | None,
         attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None,
+        threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        continuous: bool = False,
+        limit_groups: int | None = None,
     ) -> None:
         t0 = time.perf_counter()
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        for g in groups:
-            queue.put_nowait(g)
+        for item in work_items:
+            queue.put_nowait(item)
 
         elapsed_samples: list[int] = []
         run_error: str | None = None
@@ -2150,15 +2962,34 @@ class PublicCrawlOrchestrator:
                     progress_cb=self._bump_progress,
                     keywords=keywords,
                     attempt_fetcher=attempt_fetcher,
+                    threads_attempt_fetcher=threads_attempt_fetcher,
                     run_id=run_id,
                 ) as worker:
-                    while not self.stop_requested:
+                    # Clean platform handoff on shared proxy: probe fresh IP status once when switching platform
+                    if (
+                        self.last_completed_platform is not None
+                        and self.last_completed_platform != platform
+                        and sim.socks_url
+                        and not self.stop_requested
+                    ):
+                        probe_res = await self.rotator.refresh_egress_ip(
+                            sim.id,
+                            proxy_urls=config.get("proxy_urls") or [sim.socks_url],
+                            log_cb=self.append_log,
+                        )
+                        if probe_res.get("ip_changed"):
+                            self._bump_progress({"ip_rotations": 1})
+
+                    while not self.stop_requested and sim.status != "expired":
                         try:
-                            group = queue.get_nowait()
+                            work_item = queue.get_nowait()
                         except asyncio.QueueEmpty:
                             break
                         try:
-                            res = await worker.process_group(group)
+                            if work_item.get("kind") == "threads":
+                                res = await worker.process_threads_keyword(str(work_item.get("keyword") or ""))
+                            else:
+                                res = await worker.process_group(work_item["group"])
                             elapsed_samples.append(int(res.get("elapsed_ms") or 0))
                             self._stats["completed_groups"] += 1
                             st = res.get("status")
@@ -2173,8 +3004,10 @@ class PublicCrawlOrchestrator:
                                 self._stats["avg_ms_per_group"] = int(
                                     sum(elapsed_samples) / len(elapsed_samples)
                                 )
+                            if res.get("proxy_expired") or sim.status == "expired":
+                                break
                         except Exception as exc:
-                            logger.error("[PUBLIC-4G] Worker %s group failure: %s", sim.id, exc, exc_info=True)
+                            logger.error("[PUBLIC-4G] Worker %s item failure: %s", sim.id, exc, exc_info=True)
                             self._stats["completed_groups"] += 1
                             self._stats["groups_failed"] += 1
                         finally:
@@ -2182,32 +3015,53 @@ class PublicCrawlOrchestrator:
             except Exception as exc:
                 nonlocal run_error
                 run_error = str(exc)
-                sim.status = "error"
+                sim.status = "expired" if is_proxy_expired_error(run_error) else "error"
                 sim.last_error = run_error
                 self.append_log("error", sim.id, f"[SIM {sim.id}] Lỗi khởi tạo worker: {run_error}")
             finally:
-                if sim.status != "error":
+                if sim.status not in {"error", "expired"}:
                     sim.status = "idle"
+
+        all_proxies_expired = False
+        expired_reason_msg: str | None = None
+        should_continue_loop = False
+        user_stopped = False
+        scheduled_next_platform = "facebook"
 
         try:
             await asyncio.gather(*[_sim_lane(s) for s in active_sims])
         finally:
             total_ms = int((time.perf_counter() - t0) * 1000)
-            final_status = "stopped" if self.stop_requested else ("failed" if run_error else "completed")
+            user_stopped = bool(self.stop_requested)
+            all_proxies_expired = bool(active_sims) and all(s.status == "expired" for s in active_sims)
+            if all_proxies_expired:
+                expired_reason_msg = next(
+                    (s.last_error for s in active_sims if s.last_error),
+                    "Tất cả Proxy 4G đã hết hạn hoặc lỗi kết nối.",
+                )
+
+            final_status = (
+                "stopped"
+                if user_stopped
+                else ("failed" if (run_error or all_proxies_expired) else "completed")
+            )
             await asyncio.to_thread(
                 self._finish_run_record_sync,
                 run_id=run_id,
                 status=final_status,
                 duration_ms=total_ms,
                 stats=dict(self._stats),
-                error_summary=run_error,
+                error_summary=expired_reason_msg or run_error,
             )
+            self.last_round_finished_at = _utc_now_iso()
+            platform_tag = "Threads" if platform == "threads" else "Facebook"
+            unit_note = "Từ khóa OK" if platform == "threads" else f"{self._stats['groups_private']} Private"
             self.append_log(
-                "info",
+                "error" if all_proxies_expired else "info",
                 "orchestrator",
                 (
-                    f"Kết thúc ({final_status}): {self._stats['groups_ok']} OK, "
-                    f"{self._stats['groups_private']} Private, {self._stats['groups_failed']} Lỗi, "
+                    f"Kết thúc Vòng #{self.loop_round} [{platform_tag}] ({final_status}): "
+                    f"{self._stats['groups_ok']} OK ({unit_note}), {self._stats['groups_failed']} Lỗi, "
                     f"+{self._stats['posts_saved']} bài mới, {self._stats['ip_rotations']} lần xoay IP 4G ({total_ms}ms)."
                 ),
             )
@@ -2216,6 +3070,8 @@ class PublicCrawlOrchestrator:
                     {
                         "event": "public_4g_run_finished",
                         "run_id": run_id,
+                        "platform": platform,
+                        "loop_round": self.loop_round,
                         "status": final_status,
                         "posts_saved": self._stats["posts_saved"],
                         "groups_ok": self._stats["groups_ok"],
@@ -2223,24 +3079,112 @@ class PublicCrawlOrchestrator:
                 )
             except Exception:
                 pass
+
+            if all_proxies_expired:
+                await asyncio.to_thread(
+                    self._persist_pause_state_sync,
+                    enabled=False,
+                    auto_pause_reason="proxy_expired",
+                    proxy_expired_error=expired_reason_msg,
+                )
+                self.append_log(
+                    "error",
+                    "orchestrator",
+                    f"DỪNG KHẨN CẤP AUTO 24/24: Tất cả Proxy 4G hết hạn / chết ({expired_reason_msg}). Hãy cập nhật proxy mới rồi bật lại.",
+                )
+                try:
+                    await manager.broadcast(
+                        {
+                            "event": "public_4g_proxy_expired",
+                            "run_id": run_id,
+                            "loop_round": self.loop_round,
+                            "error": expired_reason_msg,
+                        }
+                    )
+                except Exception:
+                    pass
+                asyncio.create_task(
+                    asyncio.to_thread(self._send_proxy_expired_alert_sync, expired_reason_msg or "")
+                )
+            elif not user_stopped:
+                await asyncio.to_thread(self._persist_last_platform_sync, platform)
+                fresh_cfg = await asyncio.to_thread(self.get_config_sync)
+                alternating = bool(fresh_cfg.get("alternating_threads_enabled", True))
+                scheduled_next_platform = (
+                    ("threads" if platform == "facebook" else "facebook")
+                    if alternating
+                    else "facebook"
+                )
+                self.next_platform = scheduled_next_platform
+                fresh_interval = (
+                    int(fresh_cfg["cycle_interval_min"])
+                    if fresh_cfg.get("cycle_interval_min") is not None
+                    else 0
+                )
+                if continuous and fresh_cfg.get("enabled") and fresh_interval == 0 and self.auto_pause_reason is None:
+                    should_continue_loop = True
+
             self.is_running = False
             self.stop_requested = False
 
+        if should_continue_loop:
+            breath = _continuous_breath_seconds()
+            next_label = "Threads (~từ khóa AI)" if scheduled_next_platform == "threads" else "Facebook Public (reload nhóm DB)"
+            self.append_log(
+                "info",
+                "orchestrator",
+                f"🔄 Chuyển pha 24/24: Chuẩn bị chạy {next_label} ở Vòng #{self.loop_round + 1} sau {breath:.1f}s...",
+            )
+            self._schedule_next_continuous_round(
+                keywords=keywords,
+                limit_groups=limit_groups,
+                attempt_fetcher=attempt_fetcher,
+                threads_attempt_fetcher=threads_attempt_fetcher,
+                next_platform=scheduled_next_platform,
+            )
+
     def request_stop(self) -> dict[str, Any]:
-        if not self.is_running:
+        was_waiting = self._continuous_waiting or (
+            self._next_round_task is not None and not self._next_round_task.done()
+        )
+        self._cancel_next_round_wait()
+        self._continuous_attempt_fetcher = None
+        self._continuous_threads_fetcher = None
+        if not self.is_running and not was_waiting:
             return {"stopped": False, "message": "Không có phiên cào Public 4G nào đang chạy."}
-        self.stop_requested = True
-        self.append_log("warn", "orchestrator", "Đã nhận lệnh DỪNG từ người dùng — dừng sau nhóm hiện tại.")
+        if self.is_running:
+            self.stop_requested = True
+        self._persist_pause_state_sync(
+            enabled=False,
+            auto_pause_reason="manual_stop",
+            proxy_expired_error=None,
+        )
+        self.append_log(
+            "warn",
+            "orchestrator",
+            "Đã nhận lệnh DỪNG từ người dùng — dừng sau nhóm hiện tại & tạm tắt Auto 24/24.",
+        )
         return {"stopped": True, "active_run_id": self.active_run_id}
 
-    async def maybe_trigger_scheduled_run(self) -> dict[str, Any] | None:
-        """Called every minute by APScheduler when continuous auto-crawl is enabled."""
-        if self.is_running:
+    async def maybe_trigger_scheduled_run(self, *, trigger_source: str = "scheduler") -> dict[str, Any] | None:
+        """Called on app startup & every minute by APScheduler when continuous auto-crawl is enabled."""
+        if self.is_running or self._continuous_waiting:
             return None
         cfg = await asyncio.to_thread(self.get_config_sync)
         if not cfg.get("enabled"):
             return None
-        return await self.start_run(trigger_source="scheduler", only_due=True)
+        if self.auto_pause_reason in {"proxy_expired", "manual_stop"}:
+            return None
+        cfg_interval = (
+            int(cfg["cycle_interval_min"])
+            if cfg.get("cycle_interval_min") is not None
+            else 0
+        )
+        return await self.start_run(
+            trigger_source=trigger_source,
+            only_due=cfg_interval > 0,
+            continuous=(cfg_interval == 0),
+        )
 
 
 public_crawl_orchestrator = PublicCrawlOrchestrator()

@@ -13,6 +13,20 @@ export interface PublicCrawlConfig {
   proxies_configured?: number;
   proxies_masked?: string[];
   proxy_urls?: string[] | string;
+  auto_pause_reason?: string | null;
+  proxy_expired_error?: string | null;
+  alternating_threads_enabled?: boolean;
+  threads_keyword_target?: number;
+  threads_max_posts_per_keyword?: number;
+  threads_max_age_days?: number;
+  last_completed_platform?: "facebook" | "threads" | null;
+}
+
+export interface ThreadsKeywordStatItem {
+  keyword: string;
+  times_used: number;
+  total_posts_found: number;
+  high_score_posts: number;
 }
 
 export interface PublicCrawlRuntime {
@@ -20,6 +34,23 @@ export interface PublicCrawlRuntime {
   stop_requested: boolean;
   active_run_id: string | null;
   started_at: string | null;
+  loop_round?: number;
+  last_round_finished_at?: string | null;
+  new_groups_detected?: number;
+  auto_pause_reason?: string | null;
+  proxy_expired_error?: string | null;
+  continuous_waiting?: boolean;
+  current_platform?: "facebook" | "threads";
+  next_platform?: "facebook" | "threads";
+  last_completed_platform?: "facebook" | "threads" | null;
+  active_threads_keywords?: ThreadsKeywordStatItem[];
+  threads_keyword_meta?: {
+    total_active?: number;
+    selected_count?: number;
+    newly_generated?: number;
+    deactivated?: string[];
+    ai_powered?: boolean;
+  };
   total_groups: number;
   completed_groups: number;
   groups_ok: number;
@@ -41,11 +72,12 @@ export interface PublicSimNodeRuntime {
   socksHost?: string | null;
   socksPort?: number | null;
   scheme?: string;
-  status: "idle" | "crawling" | "rotating" | "error";
+  status: "idle" | "crawling" | "rotating" | "error" | "expired";
   epoch: number;
   groups_in_epoch: number;
   total_groups: number;
   total_rotations: number;
+  consecutive_proxy_failures?: number;
   last_egress_ip: string | null;
   last_rotated_at: string | null;
   last_error: string | null;

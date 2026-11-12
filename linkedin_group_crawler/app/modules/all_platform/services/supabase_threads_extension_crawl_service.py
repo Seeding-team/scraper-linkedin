@@ -247,7 +247,20 @@ def save_threads_crawl_batch(
             .execute()
         )
         inserted_urls = [r["post_url"] for r in (res.data or []) if r.get("post_url")]
-        inserted_rows = [{"id": r.get("id"), "content": r.get("content")} for r in (res.data or []) if r.get("id")]
+        inserted_rows = [
+            {
+                "id": r.get("id"),
+                "content": r.get("content"),
+                "post_url": r.get("post_url"),
+                "author_name": r.get("author_name") or r.get("author_username"),
+                "post_time": r.get("post_time"),
+                "reactions": r.get("reactions") or 0,
+                "comments": r.get("comments") or 0,
+                "shares": r.get("shares") or 0,
+            }
+            for r in (res.data or [])
+            if r.get("id")
+        ]
     else:
         inserted_rows = []
 

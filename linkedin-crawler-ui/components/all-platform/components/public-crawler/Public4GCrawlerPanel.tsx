@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   CheckCircle2,
   Globe,
   Lock,
@@ -31,7 +32,10 @@ type NumericConfigField =
   | "cycle_interval_min"
   | "concurrent_sims"
   | "max_posts_per_group"
-  | "max_scrolls_per_group";
+  | "max_scrolls_per_group"
+  | "threads_keyword_target"
+  | "threads_max_posts_per_keyword"
+  | "threads_max_age_days";
 
 const PUBLIC_CRAWL_LIMITS: Record<
   NumericConfigField,
@@ -41,13 +45,13 @@ const PUBLIC_CRAWL_LIMITS: Record<
     min: 1,
     max: 6,
     fallback: 6,
-    label: "Xoay IP sau mỗi (nhóm)",
+    label: "Xoay IP sau mỗi (nhóm/từ khóa)",
   },
   cycle_interval_min: {
-    min: 15,
+    min: 0,
     max: 1440,
-    fallback: 15,
-    label: "Chu kỳ quét lại (phút)",
+    fallback: 0,
+    label: "Chu kỳ nghỉ giữa các vòng (phút)",
   },
   concurrent_sims: {
     min: 1,
@@ -67,6 +71,24 @@ const PUBLIC_CRAWL_LIMITS: Record<
     fallback: 2,
     label: "Độ sâu phân trang (0 = 1 bài)",
   },
+  threads_keyword_target: {
+    min: 5,
+    max: 50,
+    fallback: 30,
+    label: "Số từ khóa AI Threads / vòng",
+  },
+  threads_max_posts_per_keyword: {
+    min: 5,
+    max: 30,
+    fallback: 20,
+    label: "Số bài Threads / từ khóa",
+  },
+  threads_max_age_days: {
+    min: 1,
+    max: 30,
+    fallback: 7,
+    label: "Giới hạn tuổi bài Threads (ngày)",
+  },
 };
 
 const NUMERIC_CONFIG_FIELDS: NumericConfigField[] = [
@@ -75,6 +97,9 @@ const NUMERIC_CONFIG_FIELDS: NumericConfigField[] = [
   "concurrent_sims",
   "max_posts_per_group",
   "max_scrolls_per_group",
+  "threads_keyword_target",
+  "threads_max_posts_per_keyword",
+  "threads_max_age_days",
 ];
 
 function getNumericBounds(
@@ -134,6 +159,15 @@ function configToNumberStrings(
     max_scrolls_per_group: String(
       clampNumericField("max_scrolls_per_group", cfg.max_scrolls_per_group, maxConcurrentByProxy).value,
     ),
+    threads_keyword_target: String(
+      clampNumericField("threads_keyword_target", cfg.threads_keyword_target, maxConcurrentByProxy).value,
+    ),
+    threads_max_posts_per_keyword: String(
+      clampNumericField("threads_max_posts_per_keyword", cfg.threads_max_posts_per_keyword, maxConcurrentByProxy).value,
+    ),
+    threads_max_age_days: String(
+      clampNumericField("threads_max_age_days", cfg.threads_max_age_days, maxConcurrentByProxy).value,
+    ),
   };
 }
 
@@ -168,19 +202,39 @@ function sanitizeConfigObject(
       cfg.max_scrolls_per_group,
       maxConcurrentByProxy,
     ).value,
+    alternating_threads_enabled: cfg.alternating_threads_enabled ?? true,
+    threads_keyword_target: clampNumericField(
+      "threads_keyword_target",
+      cfg.threads_keyword_target,
+      maxConcurrentByProxy,
+    ).value,
+    threads_max_posts_per_keyword: clampNumericField(
+      "threads_max_posts_per_keyword",
+      cfg.threads_max_posts_per_keyword,
+      maxConcurrentByProxy,
+    ).value,
+    threads_max_age_days: clampNumericField(
+      "threads_max_age_days",
+      cfg.threads_max_age_days,
+      maxConcurrentByProxy,
+    ).value,
   };
 }
 
 const DEFAULT_CONFIG: PublicCrawlConfig = {
   id: "default",
-  enabled: false,
-  cycle_interval_min: 15,
+  enabled: true,
+  cycle_interval_min: 0,
   groups_per_ip_rotate: 6,
   max_posts_per_group: 25,
   max_scrolls_per_group: 2,
   concurrent_sims: 1,
   auto_skip_private: true,
   headless: true,
+  alternating_threads_enabled: true,
+  threads_keyword_target: 30,
+  threads_max_posts_per_keyword: 20,
+  threads_max_age_days: 7,
 };
 
 const LOG_TEXT_COLOR: Record<string, string> = {
@@ -324,17 +378,18 @@ export function Public4GCrawlerPanel() {
     };
   }, [syncFormFromServer]);
 
-  // Adaptive polling: fast when running (2.5s), light when idle (15s)
+  // Adaptive polling: fast when running or switching rounds (2.5s), light when idle (15s)
   const isRunning = Boolean(statusData?.runtime.is_running);
+  const isLoopActive = isRunning || Boolean(statusData?.runtime.continuous_waiting);
   useEffect(() => {
     const timer = window.setInterval(
       () => {
         void loadAll(false);
       },
-      isRunning ? 2500 : 15000,
+      isLoopActive ? 2500 : 15000,
     );
     return () => window.clearInterval(timer);
-  }, [isRunning, loadAll]);
+  }, [isLoopActive, loadAll]);
 
   const filteredGroups = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -421,6 +476,10 @@ export function Public4GCrawlerPanel() {
       max_scrolls_per_group: nextDraft.max_scrolls_per_group,
       concurrent_sims: nextDraft.concurrent_sims,
       auto_skip_private: nextDraft.auto_skip_private,
+      alternating_threads_enabled: nextDraft.alternating_threads_enabled ?? true,
+      threads_keyword_target: nextDraft.threads_keyword_target ?? 30,
+      threads_max_posts_per_keyword: nextDraft.threads_max_posts_per_keyword ?? 20,
+      threads_max_age_days: nextDraft.threads_max_age_days ?? 7,
     });
     syncFormFromServer(res.config, (statusData?.sims || []).length);
     return { config: res.config, notes };
@@ -432,7 +491,10 @@ export function Public4GCrawlerPanel() {
     setFeedback(null);
     try {
       const { config, notes } = await persistSanitizedConfig();
-      const summary = `Đã khớp cấu hình: ${config.max_posts_per_group} bài/nhóm · sâu ${config.max_scrolls_per_group} · xoay IP/${config.groups_per_ip_rotate} nhóm · ${config.concurrent_sims} luồng · chu kỳ ${config.cycle_interval_min}p.`;
+      const threadsLabel = config.alternating_threads_enabled
+        ? `Threads AI (${config.threads_keyword_target ?? 30} từ khóa)`
+        : "Threads: Tắt";
+      const summary = `Đã khớp cấu hình: ${config.max_posts_per_group} bài/nhóm · sâu ${config.max_scrolls_per_group} · xoay IP/${config.groups_per_ip_rotate} · ${config.concurrent_sims} luồng · chu kỳ ${config.cycle_interval_min}p · ${threadsLabel}.`;
       setFeedback({
         type: "success",
         text: notes.length > 0 ? `${summary} (${notes.join(" ")})` : summary,
@@ -479,7 +541,11 @@ export function Public4GCrawlerPanel() {
     }
   };
 
-  const handleRunNow = async (onlySelected = false, limitGroups?: number) => {
+  const handleRunNow = async (
+    onlySelected = false,
+    limitGroups?: number,
+    platform: "auto" | "facebook" | "threads" = "auto",
+  ) => {
     if (!canControl) return;
     setTriggeringRun(true);
     setFeedback(null);
@@ -494,14 +560,19 @@ export function Public4GCrawlerPanel() {
         group_ids,
         keywords: parsedKeywords.length > 0 ? parsedKeywords : undefined,
         limit_groups: limitGroups,
+        platform,
       });
       if (res.started) {
+        const runPlatformLabel =
+          platform === "threads"
+            ? `${res.total_groups ?? 0} từ khóa Threads (No-Acc)`
+            : `${res.total_groups ?? 0} nhóm Public`;
         setFeedback({
           type: "success",
           text:
             (limitGroups
-              ? `Đang Test Cào Nhanh ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`
-              : `Đã khởi chạy cào ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`) +
+              ? `Đang Test Cào Nhanh ${runPlatformLabel} bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`
+              : `Đã khởi chạy cào ${runPlatformLabel} bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`) +
             autoSavedText,
         });
       } else {
@@ -634,13 +705,12 @@ export function Public4GCrawlerPanel() {
             </span>
           </div>
           <h2 className="text-base font-black text-slate-900">
-            Cào Nhóm Facebook Public Siêu Tốc Qua Proxy Xoay Tự Động
+            Cào Facebook Public &amp; Threads No-Acc Luân Phiên 24/24 Qua Proxy Xoay 4G
           </h2>
           <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
-            Hoạt động 100% ở chế độ Khách không cookie, kết hợp{" "}
-            <span className="font-semibold text-slate-800">HTTPX SSR Fast-Path (~1s/nhóm)</span>{" "}
-            và <span className="font-semibold text-slate-800">Playwright Guest Fallback</span>{" "}
-            qua Proxy dân cư/4G tự xoay mỗi 60s (tách biệt hoàn toàn khỏi Mobile Phone Bridge).{" "}
+            Hoạt động 100% ở chế độ Khách không cookie: chạy hết nhóm Facebook Public (ưu tiên nhóm mới thêm) rồi tự
+            chuyển sang cào <span className="font-semibold text-slate-800">Threads ~30 từ khóa AI tự biến đổi</span>{" "}
+            trên chính Proxy Xoay 4G, lặp lại liên tục 24/24 (chỉ dừng khi Proxy hết hạn).{" "}
             <span className="font-semibold text-slate-800">Nhóm kín (Private)</span> tự động bỏ qua để dùng Extension.
           </p>
         </div>
@@ -655,16 +725,25 @@ export function Public4GCrawlerPanel() {
             <RotateCw className={cn("size-3.5", testingProxyNode !== null && "animate-spin")} />
             {testingProxyNode === "all:probe" ? "Đang kiểm tra..." : "Kiểm tra Proxy Xoay (1 Bấm)"}
           </button>
-          {!isRunning ? (
+          {!isLoopActive ? (
             <>
               <button
                 type="button"
                 disabled={!canControl || triggeringRun || publicEnabledCount === 0}
-                onClick={() => void handleRunNow(false, 3)}
+                onClick={() => void handleRunNow(false, 3, "facebook")}
                 className="px-3.5 py-2 rounded-xl text-xs font-bold border border-emerald-300 bg-white hover:bg-emerald-50 disabled:opacity-50 text-emerald-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition"
               >
                 <Zap className="size-3.5" />
-                {triggeringRun ? "Đang khởi chạy..." : "Test Cào Nhanh 3 Nhóm"}
+                {triggeringRun ? "Đang khởi chạy..." : "Test Nhanh 3 Nhóm FB"}
+              </button>
+              <button
+                type="button"
+                disabled={!canControl || triggeringRun}
+                onClick={() => void handleRunNow(false, 5, "threads")}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold border border-purple-300 bg-white hover:bg-purple-50 disabled:opacity-50 text-purple-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <Zap className="size-3.5" />
+                {triggeringRun ? "Đang khởi chạy..." : "Test Nhanh Threads (5 từ khóa)"}
               </button>
               <button
                 type="button"
@@ -831,20 +910,74 @@ export function Public4GCrawlerPanel() {
         </div>
       )}
 
+      {/* Proxy Expired Critical Banner */}
+      {runtime?.auto_pause_reason === "proxy_expired" && (
+        <div className="rounded-2xl border-2 border-rose-300 bg-rose-50 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="size-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs">
+              <div className="font-black text-rose-900">
+                AUTO CÀO 24/24 ĐÃ TỰ DỪNG VÌ PROXY 4G HẾT HẠN / LỖI XÁC THỰC
+              </div>
+              <p className="text-rose-800 leading-relaxed">
+                {runtime.proxy_expired_error ||
+                  "Tất cả proxy trong pool đều không thể kết nối hoặc từ chối xác thực SOCKS5."}
+              </p>
+              <p className="text-rose-700">
+                Dán Proxy mới và bấm <strong>Lưu danh sách Proxy</strong> để hệ thống tự phục hồi chạy tiếp 24/24.
+              </p>
+            </div>
+          </div>
+          {canControl && (
+            <button
+              type="button"
+              onClick={() => setShowProxyEditor(true)}
+              className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shrink-0 cursor-pointer"
+            >
+              Cập nhật Proxy ngay
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Telemetry KPI Strip */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="rounded-xl border border-slate-200 bg-white p-3.5">
-          <div className="text-[11px] font-bold text-slate-500 uppercase">Trạng thái</div>
+          <div className="text-[11px] font-bold text-slate-500 uppercase flex items-center justify-between gap-1">
+            <span>Trạng thái {runtime?.loop_round ? `· Vòng #${runtime.loop_round}` : ""}</span>
+            {runtime?.current_platform && (
+              <span
+                className={cn(
+                  "px-1.5 py-0.5 rounded text-[10px] font-black",
+                  runtime.current_platform === "threads"
+                    ? "bg-purple-100 text-purple-800"
+                    : "bg-sky-100 text-sky-800",
+                )}
+              >
+                {runtime.current_platform === "threads" ? "THREADS" : "FACEBOOK"}
+              </span>
+            )}
+          </div>
           <div className="mt-1 flex items-center gap-2 text-sm font-black text-slate-900">
             <span
               className={cn(
-                "size-2.5 rounded-full",
-                isRunning ? "bg-emerald-500 animate-pulse" : "bg-slate-300",
+                "size-2.5 rounded-full shrink-0",
+                runtime?.auto_pause_reason === "proxy_expired"
+                  ? "bg-rose-500"
+                  : isLoopActive
+                    ? "bg-emerald-500 animate-pulse"
+                    : "bg-slate-300",
               )}
             />
             {isRunning
-              ? `Đang chạy (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
-              : "Sẵn sàng"}
+              ? `${runtime?.current_platform === "threads" ? "Threads" : "FB"} (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
+              : runtime?.continuous_waiting
+                ? `Chuyển pha → ${runtime?.next_platform === "threads" ? "Threads AI" : "Facebook"}...`
+                : runtime?.auto_pause_reason === "proxy_expired"
+                  ? "Dừng: Proxy hết hạn"
+                  : configDraft.enabled && configDraft.cycle_interval_min === 0
+                    ? "Auto 24/24 · Sẵn sàng"
+                    : "Sẵn sàng"}
           </div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-3.5">
@@ -1015,8 +1148,17 @@ export function Public4GCrawlerPanel() {
                         FB Guest: HTTP {sim.last_fb_status}
                       </span>
                     )}
-                    <span className="px-2 py-0.5 rounded font-bold bg-slate-100 text-slate-700">
-                      Trạng thái: {sim.status}
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded font-bold border",
+                        sim.status === "expired"
+                          ? "bg-rose-100 text-rose-800 border-rose-300"
+                          : sim.status === "crawling"
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-slate-100 text-slate-700 border-slate-200",
+                      )}
+                    >
+                      Trạng thái: {sim.status === "expired" ? "Hết hạn / Lỗi Auth" : sim.status}
                     </span>
                   </div>
                   {sim.last_error && (
@@ -1071,11 +1213,11 @@ export function Public4GCrawlerPanel() {
             </label>
             <label
               className="space-y-1 text-xs"
-              title="Khóa tối thiểu 15 phút để không spam nhóm; có thể tăng lên 30–1440 phút cho nhẹ proxy."
+              title="Đặt 0 phút để chạy xoay vòng liên tục 24/24 không nghỉ (tự nạp lại nhóm mới mỗi vòng); tăng 1–1440 nếu muốn nghỉ giữa các vòng."
             >
               <span className="font-bold text-slate-600 block">
-                Chu kỳ quét lại (phút){" "}
-                <span className="font-normal text-[10px] text-slate-400">(≥ 15p)</span>
+                Chu kỳ nghỉ (phút){" "}
+                <span className="font-normal text-[10px] text-emerald-700">(0 = 24/24 liên tục)</span>
               </span>
               <input
                 type="number"
@@ -1160,6 +1302,119 @@ export function Public4GCrawlerPanel() {
               />
               Tự gắn cờ Private nếu nhóm kín
             </label>
+          </div>
+
+          {/* Cấu hình Threads No-Acc (~30 từ khóa AI) & Luân phiên FB <-> Threads */}
+          <div className="rounded-xl border border-purple-200/80 bg-purple-50/40 p-3 space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-black text-purple-950">
+                <input
+                  type="checkbox"
+                  disabled={!canControl}
+                  checked={configDraft.alternating_threads_enabled ?? true}
+                  onChange={(e) => {
+                    setConfigDraft((p) => ({ ...p, alternating_threads_enabled: e.target.checked }));
+                    setConfigDirty(true);
+                  }}
+                  className="size-4 accent-purple-600 rounded"
+                />
+                Luân phiên 24/24 sang Threads No-Acc (từ khóa AI tự biến đổi)
+              </label>
+              <span className="text-[11px] font-semibold text-purple-700">
+                FB Hết Nhóm → Threads AI → FB → ...
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <label
+                className="space-y-1 text-xs"
+                title="AI tự sinh & thay thế từ khóa kém hiệu quả mỗi vòng để luôn giữ khoảng 30 từ khóa ngon nhất (5–50)."
+              >
+                <span className="font-bold text-slate-600 block">
+                  Số từ khóa AI Threads{" "}
+                  <span className="font-normal text-[10px] text-slate-400">(5–50)</span>
+                </span>
+                <input
+                  type="number"
+                  min={PUBLIC_CRAWL_LIMITS.threads_keyword_target.min}
+                  max={PUBLIC_CRAWL_LIMITS.threads_keyword_target.max}
+                  disabled={!canControl}
+                  value={numberInputs.threads_keyword_target}
+                  onChange={(e) => handleNumericChange("threads_keyword_target", e.target.value)}
+                  onBlur={() => commitNumericField("threads_keyword_target")}
+                  className="w-full rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
+                />
+              </label>
+              <label
+                className="space-y-1 text-xs"
+                title="Số bài tối đa lưu mỗi từ khóa Threads trong 1 vòng (5–30)."
+              >
+                <span className="font-bold text-slate-600 block">
+                  Số bài Threads / từ khóa{" "}
+                  <span className="font-normal text-[10px] text-slate-400">(5–30)</span>
+                </span>
+                <input
+                  type="number"
+                  min={PUBLIC_CRAWL_LIMITS.threads_max_posts_per_keyword.min}
+                  max={PUBLIC_CRAWL_LIMITS.threads_max_posts_per_keyword.max}
+                  disabled={!canControl}
+                  value={numberInputs.threads_max_posts_per_keyword}
+                  onChange={(e) =>
+                    handleNumericChange("threads_max_posts_per_keyword", e.target.value)
+                  }
+                  onBlur={() => commitNumericField("threads_max_posts_per_keyword")}
+                  className="w-full rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
+                />
+              </label>
+              <label
+                className="space-y-1 text-xs"
+                title="Bỏ qua bài Threads đăng cũ hơn N ngày (1–30 ngày, khuyên dùng 7)."
+              >
+                <span className="font-bold text-slate-600 block">
+                  Giới hạn tuổi bài (ngày){" "}
+                  <span className="font-normal text-[10px] text-slate-400">(1–30)</span>
+                </span>
+                <input
+                  type="number"
+                  min={PUBLIC_CRAWL_LIMITS.threads_max_age_days.min}
+                  max={PUBLIC_CRAWL_LIMITS.threads_max_age_days.max}
+                  disabled={!canControl}
+                  value={numberInputs.threads_max_age_days}
+                  onChange={(e) => handleNumericChange("threads_max_age_days", e.target.value)}
+                  onBlur={() => commitNumericField("threads_max_age_days")}
+                  className="w-full rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
+                />
+              </label>
+            </div>
+
+            {runtime?.active_threads_keywords && runtime.active_threads_keywords.length > 0 && (
+              <div className="pt-1.5 border-t border-purple-200/60">
+                <div className="text-[11px] font-bold text-purple-900 mb-1.5">
+                  Bộ từ khóa Threads đang quay vòng ({runtime.active_threads_keywords.length} từ):
+                </div>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {runtime.active_threads_keywords.map((kwItem) => (
+                    <span
+                      key={kwItem.keyword}
+                      title={`Đã dùng ${kwItem.times_used} vòng · ${kwItem.total_posts_found} bài · ${kwItem.high_score_posts} Lead >=70đ`}
+                      className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border",
+                        kwItem.high_score_posts > 0
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                          : "bg-white text-purple-900 border-purple-200",
+                      )}
+                    >
+                      <span>{kwItem.keyword}</span>
+                      {(kwItem.high_score_posts > 0 || kwItem.total_posts_found > 0) && (
+                        <span className="font-mono text-[9px] opacity-80">
+                          ({kwItem.high_score_posts}L/{kwItem.total_posts_found}B)
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-100">

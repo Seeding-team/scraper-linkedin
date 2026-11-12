@@ -545,9 +545,21 @@ export function Public4GCrawledPostsPanel() {
                       <div className="font-mono text-[11px] font-semibold text-slate-700">
                         {formatVnDateTime(item.crawled_at)}
                       </div>
-                      <span className="inline-block mt-1 font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
-                        {item.proxy_node || "proxy-01"}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-1 mt-1">
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold">
+                          {item.proxy_node || "proxy-01"}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-[10px] px-1.5 py-0.5 rounded font-bold uppercase border",
+                            item.platform === "threads"
+                              ? "bg-purple-50 text-purple-700 border-purple-200"
+                              : "bg-sky-50 text-sky-700 border-sky-200",
+                          )}
+                        >
+                          {item.platform}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-2.5 px-3 max-w-[210px]">
                       <div className="font-bold text-slate-900 truncate" title={item.group_name || ""}>

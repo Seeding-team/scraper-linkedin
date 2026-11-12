@@ -58,6 +58,7 @@ async def lifespan(_: FastAPI):
     zalo_automation_task: asyncio.Task[None] | None = None
     zalo_push_task: asyncio.Task[None] | None = None
     zalo_bot_task: asyncio.Task[None] | None = None
+    public_4g_startup_task: asyncio.Task[None] | None = None
     email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
@@ -82,6 +83,20 @@ async def lifespan(_: FastAPI):
             from app.modules.all_platform.jobs.crawl_24h_job import setup_all_platform_jobs
             setup_all_platform_jobs()
             logger.info("All-platform maintenance scheduler started (24h Facebook crawl stays gated by DISABLE_ALL_PLATFORM_CRAWL_24H)")
+            if _os.getenv("DISABLE_ALL_PLATFORM_CRAWL_24H", "").strip().lower() not in ("1", "true", "yes"):
+                async def _boot_public_4g_24h() -> None:
+                    try:
+                        await asyncio.sleep(5)
+                        from app.modules.all_platform.services.public_4g_crawler_service import (
+                            public_crawl_orchestrator,
+                        )
+                        await public_crawl_orchestrator.maybe_trigger_scheduled_run(trigger_source="startup")
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:
+                        logger.exception("[PUBLIC-4G] Startup auto-resume 24/24 failed")
+
+                public_4g_startup_task = asyncio.create_task(_boot_public_4g_24h())
         except Exception:
             logger.exception("Failed to start all-platform maintenance scheduler")
         try:
@@ -228,7 +243,7 @@ async def lifespan(_: FastAPI):
                 email_imap_scheduler.shutdown(wait=False)
             except Exception:
                 logger.exception("Email IMAP sync worker shutdown failed")
-        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task, zalo_bot_task):
+        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task, zalo_bot_task, public_4g_startup_task):
             if task is not None and not task.done():
                 task.cancel()
                 try:
