@@ -18,6 +18,7 @@ import { CrmVendorSelect } from '@/modules/crm/components/CrmVendorSelect';
 import { CurrencyInput } from '@/components/CurrencyInput';
 import { VendorImportFlow } from './VendorImportFlow';
 import { ChevronDown, ChevronUp, CheckCircle2, Info, Building2, Box, X } from 'lucide-react';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 
 function foldDiacritics(input: string): string {
   return input
@@ -455,8 +456,19 @@ export function QuickAddProductModal({
         return trimmed ? trimmed : undefined;
       };
       // TÍCH HỢP BỘ LỌC WORKSPACE: Kế thừa workspace instance từ nhóm cha hoặc item đang chỉnh sửa
+      //
+      // Fix (2026-11-12, "tạo sản phẩm lẻ (không chọn nhóm cha) bị báo 'Không
+      // tìm thấy sau khi tạo'"): KHI tạo sản phẩm ĐỨNG RIÊNG (không chọn nhóm
+      // cha, không phải sửa item có sẵn), inheritedInstance TRƯỚC ĐÂY rơi về
+      // undefined — backend (create_service_catalog_item) không nhận được
+      // instance nên item bị tạo vào workspace mặc định của DB ('markee'),
+      // KHÔNG PHẢI workspace hiện tại của CRM clone đang dùng (vd
+      // 'securityzone'/'cloudgate'). refreshCatalogTree() sau khi tạo chỉ đọc
+      // đúng workspace hiện tại nên không bao giờ thấy item vừa tạo. Fallback
+      // về CRM_INSTANCE (workspace của chính deployment đang chạy) khi không
+      // có nhóm cha/item đang sửa để item luôn nằm đúng workspace đang thao tác.
       const selectedParent = localGroups.find(g => g.id === parentId);
-      const inheritedInstance = selectedParent?.instance || editingItem?.instance || undefined;
+      const inheritedInstance = selectedParent?.instance || editingItem?.instance || CRM_INSTANCE;
 
       const payload: ServiceCatalogItemInput = itemType === 'bundle'
         ? {

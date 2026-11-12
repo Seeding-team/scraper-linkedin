@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { X } from '@/modules/crm/components/icons';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from './types';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 import './styles/service-catalog.css';
 import '@/modules/crm/styles/quote-center.css';
 
@@ -32,11 +33,16 @@ export function QuickAddGroupModal({
     setSaving(true);
     setError(null);
     try {
+      // Fix (2026-11-12): nhom moi KHONG chon nhom cha nen khong co gi de
+      // ke thua instance - phai gan dung workspace HIEN TAI (CRM_INSTANCE),
+      // khong de backend roi ve mac dinh DB ('markee') nhu truoc - cung bug
+      // voi QuickAddProductModal.tsx (xem comment o do).
       const created = await serviceCatalogRepository.create({
         itemType: 'group',
         name: name.trim(),
         description: description.trim() || undefined,
         status: 'active',
+        instance: CRM_INSTANCE,
       });
       onCreated(created);
     } catch (err) {
