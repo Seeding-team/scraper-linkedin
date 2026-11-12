@@ -7,6 +7,7 @@ import { usePricingLogic } from './usePricingLogic';
 import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { ServiceCatalogItem } from './types';
+import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 
 type Step = 1 | 2 | 3 | 4;
 
@@ -57,7 +58,9 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
     setSavingDefaultGroup(true);
     setDefaultGroupError(null);
     try {
-      const created = await serviceCatalogRepository.create({ itemType: 'group', name: trimmed, status: 'active' });
+      // Fix (2026-11-12): cung bug voi QuickAddGroupModal.tsx - nhom moi
+      // khong co nhom cha de ke thua instance, phai gan dung workspace hien tai.
+      const created = await serviceCatalogRepository.create({ itemType: 'group', name: trimmed, status: 'active', instance: CRM_INSTANCE });
       setGroups(prev => [...prev, created]);
       setDefaultGroupId(created.id);
       setCreatingDefaultGroup(false);
