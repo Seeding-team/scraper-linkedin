@@ -160,11 +160,19 @@ all_platform_router.include_router(
     tags=["All-Platform Facebook VPS VNC"],
 )
 
-from app.modules.facebook.src.modules.messenger.router.index import messenger_router
+from app.modules.facebook.src.modules.messenger.router.index import (
+    messenger_bridge_webhook_router,
+    messenger_router,
+)
 all_platform_router.include_router(
     messenger_router,
     prefix="/messenger",
     tags=["Facebook Messenger Automation"],
+)
+all_platform_router.include_router(
+    messenger_bridge_webhook_router,
+    prefix="/messenger",
+    tags=["Facebook Messenger Bridge"],
 )
 
 # ── LinkedIn ───────────────────────────────────────────────────────────────────

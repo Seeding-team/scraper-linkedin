@@ -4,6 +4,16 @@ sai nguồn, race condition auto-chọn, thiếu `notifyDealsChanged()`/callback
 để không sửa lại từ đầu hoặc tái tạo đúng bug đã fix ở chỗ khác. Gặp lỗi mới đã sửa xong thì note tiếp
 vào cuối file đó theo đúng format (Triệu chứng / Nguyên nhân gốc / Cách fix / File liên quan).
 
+# Tiến độ phiên làm việc (2026-11-12) — Messenger nick cá nhân nhận/gửi tin 24/7 qua `messenger-bridge`
+
+**ĐỌC `docs/MESSENGER_BRIDGE_HANDOFF_2026-11-12.md` TRƯỚC KHI SỬA Hộp thư Messenger / messenger-bridge / deploy phần này.**
+Tóm tắt: service Go mới `messenger-bridge/` (mautrix-meta messagix + whatsmeow, AGPL → tiến trình riêng) giữ phiên
+Messenger 24/7, giải mã chat E2EE, gửi tin; backend gọi bridge + nhận webhook `/webhook/bridge` (`X-Bridge-Key`);
+migration **`230_fb_messenger_bridge.sql`**. Đã chạy thật trên máy với nick clone (nhận + gửi E2EE OK). `libsignal`
+phải ≥ commit `7735375` (bản cũ làm mọi tin E2EE lỗi "mismatching MAC"). Mọi API Messenger giờ bắt đăng nhập.
+**CHƯA merge/deploy, migration 230 CHƯA áp DB thật**, bridge chưa có trong workflow deploy (service dùng
+`profiles: ["messenger-bridge"]`). Việc còn lại + các bước deploy: mục 3–4 của doc trên.
+
 # Tiến độ phiên làm việc (2026-10-26) — Cào Threads kết hợp DOM + bắt API
 
 Extension 2.11: `platforms/threads/crawl-sniffer.js` (bắt fetch + XHR `/graphql`, ghi tên query), `platforms/threads/crawl.js`

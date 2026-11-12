@@ -1,0 +1,10 @@
+cookies.txt
+*.db
+*.db-wal
+*.db-shm
+data/
+poc-data/
+accounts.json
+accounts.json.tmp
+*.md
+.git

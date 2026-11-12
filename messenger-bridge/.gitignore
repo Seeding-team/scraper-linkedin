@@ -1,0 +1,11 @@
+# Cookie & dữ liệu runtime/PoC — KHÔNG commit
+cookies.txt
+*.db
+*.db-wal
+*.db-shm
+data/
+poc-data/
+accounts.json
+accounts.json.tmp
+/messenger-bridge
+/poc

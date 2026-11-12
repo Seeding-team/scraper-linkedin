@@ -23,6 +23,65 @@ export interface FbMessengerAccount {
   updated_at: string;
 }
 
+export type FbMessengerAccountStatus = FbMessengerAccount["status"];
+
+export const FB_ACCOUNT_STATUS_LABELS: Record<FbMessengerAccountStatus, string> = {
+  connected: "Đang kết nối",
+  disconnected: "Mất kết nối",
+  checkpoint: "Bị checkpoint",
+  frozen: "Tạm đóng băng",
+  expired: "Cookie hết hạn — đăng nhập lại",
+};
+
+/**
+ * Trích xuất UID Facebook từ chuỗi nhập vào:
+ * - Dạng số thuần túy (VD: 100012345678)
+ * - facebook.com/profile.php?id=<digits>
+ * - facebook.com/messages/t/<digits>
+ * - facebook.com/messages/e2ee/t/<digits>
+ * - m.me/<digits>
+ *
+ * Nếu là vanity username hoặc không trích xuất được UID số -> trả về lỗi tiếng Việt.
+ */
+export function extractFbUid(input: string): { uid: string | null; error: string | null } {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return { uid: null, error: "Vui lòng nhập UID hoặc link Facebook." };
+  }
+
+  // 1. Dạng số thuần túy (yêu cầu tối thiểu 5 chữ số)
+  if (/^\d{5,}$/.test(trimmed)) {
+    return { uid: trimmed, error: null };
+  }
+
+  // 2. facebook.com/profile.php?id=<digits>
+  if (trimmed.includes("profile.php")) {
+    const match = /[?&]id=(\d+)(?:[/?#&]|$)/.exec(trimmed);
+    if (match) {
+      return { uid: match[1], error: null };
+    }
+  }
+
+  // 3. facebook.com/messages/e2ee/t/<digits> hoặc facebook.com/messages/t/<digits>
+  const msgMatch = /(?:messages\/(?:e2ee\/)?t\/)(\d+)(?:[/?#&]|$)/.exec(trimmed);
+  if (msgMatch) {
+    return { uid: msgMatch[1], error: null };
+  }
+
+  // 4. m.me/<digits>
+  const mmeMatch = /(?:^|\/\/|\.)(?:www\.)?m\.me\/(\d+)(?:[/?#]|$)/i.exec(trimmed);
+  if (mmeMatch) {
+    return { uid: mmeMatch[1], error: null };
+  }
+
+  // Trường hợp vanity username hoặc định dạng không hợp lệ
+  return {
+    uid: null,
+    error:
+      "Không thể trích xuất UID dạng số. Hệ thống chưa hỗ trợ tên người dùng (vanity username), vui lòng nhập UID bằng số hoặc link Facebook chứa UID số.",
+  };
+}
+
 export interface FbMessengerThread {
   id: string;
   account_id: string;
@@ -84,6 +143,7 @@ const BASE = `${API_BASE_URL}/api/all-platform/messenger`;
 async function requestApi<T>(url: string, options: RequestInit = {}): Promise<{ success: boolean; message: string; data?: T }> {
   try {
     const res = await fetch(url, {
+      credentials: "include",
       ...options,
       headers: {
         "Content-Type": "application/json",
@@ -174,6 +234,7 @@ export const fbMessengerService = {
       if (accountId) formData.append("account_id", accountId);
 
       const res = await fetch(`${BASE}/upload`, {
+        credentials: "include",
         method: "POST",
         body: formData,
       });
@@ -195,7 +256,7 @@ export const fbMessengerService = {
 
   /** Tạo kết nối SSE lắng nghe sự kiện tin nhắn mới thời gian thực */
   subscribeEvents: (onMessage: (event: any) => void): (() => void) => {
-    const eventSource = new EventSource(`${BASE}/events`);
+    const eventSource = new EventSource(`${BASE}/events`, { withCredentials: true });
     eventSource.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);

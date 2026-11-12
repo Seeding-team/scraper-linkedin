@@ -59,6 +59,7 @@ async def lifespan(_: FastAPI):
     zalo_push_task: asyncio.Task[None] | None = None
     zalo_bot_task: asyncio.Task[None] | None = None
     public_4g_startup_task: asyncio.Task[None] | None = None
+    messenger_bridge_startup_task: asyncio.Task[None] | None = None
     email_imap_scheduler = None
     # An toàn khi chạy dev/local: đặt env DISABLE_SCHEDULER=1 để KHÔNG bật scheduler tự cào
     # (tránh cào bằng acc production khi dev). Production không set -> chạy như cũ.
@@ -235,6 +236,54 @@ async def lifespan(_: FastAPI):
         from app.modules.all_platform.zalo.services.zalo_chatwoot_bridge import run_bridge_tick
         zalo_bot_task = asyncio.create_task(_tick_loop("zalo-chatwoot-bridge", run_bridge_tick, "ZALO_BOT_POLL_INTERVAL_MS", 3000))
 
+    async def _reconnect_messenger_bridge_accounts_background() -> None:
+        try:
+            from app.modules.facebook.src.modules.messenger.services import bridge_client
+            if not bridge_client.is_enabled():
+                return
+            from app.core.supabase_client import get_supabase_client
+
+            def _sync_reconnect() -> None:
+                sb = get_supabase_client()
+                res = (
+                    sb.table("fb_messenger_accounts")
+                    .select("id, fb_user_id, cookie, user_agent, proxy_url")
+                    .eq("is_active", True)
+                    .execute()
+                )
+                for row in res.data or []:
+                    acc_id = str(row.get("id") or "").strip()
+                    fb_uid = str(row.get("fb_user_id") or "").strip()
+                    cookie_val = str(row.get("cookie") or "").strip()
+                    if not acc_id or not fb_uid or not cookie_val:
+                        continue
+                    try:
+                        bridge_client.connect(
+                            account_id=acc_id,
+                            fb_user_id=fb_uid,
+                            cookie=cookie_val,
+                            user_agent=row.get("user_agent"),
+                            proxy_url=row.get("proxy_url"),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Failed to reconnect messenger account %s to bridge", acc_id
+                        )
+
+            await asyncio.to_thread(_sync_reconnect)
+            logger.info("Messenger bridge active accounts auto-reconnect finished")
+        except Exception:
+            logger.exception("Messenger bridge startup reconnect failed")
+
+    try:
+        from app.modules.facebook.src.modules.messenger.services import bridge_client as _bridge_client
+        if _bridge_client.is_enabled():
+            messenger_bridge_startup_task = asyncio.create_task(
+                _reconnect_messenger_bridge_accounts_background()
+            )
+    except Exception:
+        logger.exception("Failed to schedule messenger bridge startup task")
+
     try:
         yield
     finally:
@@ -243,7 +292,14 @@ async def lifespan(_: FastAPI):
                 email_imap_scheduler.shutdown(wait=False)
             except Exception:
                 logger.exception("Email IMAP sync worker shutdown failed")
-        for task in (zalo_forward_task, zalo_automation_task, zalo_push_task, zalo_bot_task, public_4g_startup_task):
+        for task in (
+            zalo_forward_task,
+            zalo_automation_task,
+            zalo_push_task,
+            zalo_bot_task,
+            public_4g_startup_task,
+            messenger_bridge_startup_task,
+        ):
             if task is not None and not task.done():
                 task.cancel()
                 try:

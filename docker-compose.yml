@@ -45,6 +45,8 @@ services:
       ONLYOFFICE_PUBLIC_URL: ${ONLYOFFICE_PUBLIC_URL:-http://localhost:8094}
       ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
       DISABLE_ZCA_LISTENERS: "0"
+      MESSENGER_BRIDGE_URL: http://messenger-bridge:8090
+      MESSENGER_BRIDGE_KEY: ${MESSENGER_BRIDGE_KEY:-}
     expose:
       - "8000"
     volumes:
@@ -98,10 +100,34 @@ services:
         aliases:
           - router
 
+  messenger-bridge:
+    profiles: ["messenger-bridge"]
+    build:
+      context: ./messenger-bridge
+      dockerfile: Dockerfile
+    image: seeding-messenger-bridge:latest
+    container_name: seeding-messenger-bridge
+    restart: unless-stopped
+    stop_grace_period: 20s
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+      BRIDGE_KEY: ${MESSENGER_BRIDGE_KEY:-}
+      BACKEND_WEBHOOK_URL: http://backend:8000/api/all-platform/messenger/webhook/bridge
+      BRIDGE_DATA_DIR: /data
+    expose:
+      - "8090"
+    volumes:
+      - messenger-bridge-data:/data
+    networks:
+      seeding-net:
+        aliases:
+          - messenger-bridge
+
 volumes:
   backend-artifacts:
   backend-storage:
   backend-data:
+  messenger-bridge-data:
 
 networks:
   seeding-net:

@@ -12,7 +12,7 @@ import random
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -30,6 +30,7 @@ from app.modules.facebook.src.modules.messenger.constants import (
     LINGER_LATENCY_MIN,
     LINGER_LATENCY_MAX,
 )
+from app.modules.facebook.src.modules.messenger.services import bridge_client
 from app.modules.facebook.src.modules.messenger.services.fb_circuit_breaker import FbCircuitBreaker
 
 logger = logging.getLogger("fb_messenger.service")
@@ -156,7 +157,10 @@ class FbMessengerService:
             }
 
         ua = user_agent or DEFAULT_USER_AGENT
-        fb_dtsg, jazoest = cls.extract_dtsg_tokens(cookies, ua, proxy_url)
+        if bridge_client.is_enabled():
+            fb_dtsg, jazoest = None, None
+        else:
+            fb_dtsg, jazoest = cls.extract_dtsg_tokens(cookies, ua, proxy_url)
 
         account_name = name or f"Facebook User {uid}"
         now_iso = datetime.now(timezone.utc).isoformat()
@@ -184,14 +188,50 @@ class FbMessengerService:
                 .execute()
             )
             saved = res.data[0] if res.data else payload
-            return {
-                "success": True,
-                "message": "Kết nối tài khoản Facebook Messenger thành công!",
-                "data": saved,
-            }
         except Exception as e:
             logger.exception(f"Error saving fb_messenger_account: {e}")
             return {"success": False, "message": f"Lỗi lưu trữ tài khoản: {e}"}
+
+        if bridge_client.is_enabled():
+            acc_id = str(saved.get("id") or uid)
+            bridge_res = bridge_client.connect(
+                account_id=acc_id,
+                fb_user_id=uid,
+                cookie=cookie_str,
+                user_agent=ua,
+                proxy_url=proxy_url,
+            )
+            raw_status = str(bridge_res.get("status") or "").strip().lower()
+            valid_statuses = ("connected", "checkpoint", "expired", "disconnected")
+            if bridge_res.get("ok"):
+                new_status = raw_status if raw_status in valid_statuses else "connected"
+            else:
+                new_status = raw_status if raw_status in valid_statuses else "disconnected"
+            checkpoint_reason = bridge_res.get("error") or None
+            update_fields: Dict[str, Any] = {
+                "status": new_status,
+                "checkpoint_reason": checkpoint_reason,
+            }
+            try:
+                upd_q = sb.table("fb_messenger_accounts").update(update_fields)
+                if saved.get("id"):
+                    upd_q = upd_q.eq("id", saved["id"])
+                else:
+                    upd_q = upd_q.eq("fb_user_id", uid)
+                upd_res = upd_q.execute()
+                if upd_res.data:
+                    saved = upd_res.data[0]
+                else:
+                    saved = {**saved, **update_fields}
+            except Exception as upd_err:
+                logger.warning(f"Error updating account status after bridge connect: {upd_err}")
+                saved = {**saved, **update_fields}
+
+        return {
+            "success": True,
+            "message": "Kết nối tài khoản Facebook Messenger thành công!",
+            "data": saved,
+        }
 
     @classmethod
     def send_typing_ping(
@@ -263,153 +303,169 @@ class FbMessengerService:
             return {"success": False, "message": reason, "is_circuit_breaker_block": True}
 
         assert account is not None
-        cookies = cls.parse_cookie_string(account.get("cookie", ""))
-        ua = account.get("user_agent") or DEFAULT_USER_AGENT
-        proxy_url = account.get("proxy_url")
-        proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-
-        fb_dtsg = account.get("fb_dtsg")
-        jazoest = account.get("jazoest")
-
-        # Nếu thiếu dtsg thì bóc tách lại ngay lập tức
-        if not fb_dtsg:
-            fb_dtsg, jazoest = cls.extract_dtsg_tokens(cookies, ua, proxy_url)
-            if fb_dtsg:
-                sb.table("fb_messenger_accounts").update(
-                    {"fb_dtsg": fb_dtsg, "jazoest": jazoest}
-                ).eq("id", account_id).execute()
 
         # Tạo offline_threading_id ngẫu nhiên 19 chữ số theo chuẩn Facebook Client
         offline_threading_id = str(random.randint(1000000000000000000, 9999999999999999999))
 
         now_utc = datetime.now(timezone.utc)
         thread_id = str(recipient_id).strip()
+        fb_message_id: Optional[str] = None
 
-        # ── BƯỚC 1: TRỄ ĐỌC TIN CŨ (1.5s - 3.2s) ──────────────────────────────────
-        if simulate_human:
-            read_delay = random.uniform(READ_LATENCY_MIN, READ_LATENCY_MAX)
-            await asyncio.sleep(read_delay)
-
-        # ── BƯỚC 2: PHÁT SỰ KIỆN TYPING & TRỄ GÕ PHÍM WPM ────────────────────────
-        if simulate_human and fb_dtsg and jazoest:
-            # Phát tín hiệu typing thật sự lên Facebook
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: cls.send_typing_ping(
-                    account_id, thread_id, 1, fb_dtsg, jazoest, cookies, ua, proxies
-                ),
+        if bridge_client.is_enabled():
+            # shortcut: gửi qua bridge bỏ qua bước giả lập đọc/gõ và chưa nối lỗi rate-limit của bridge vào circuit breaker; nâng cấp khi có số liệu checkpoint thật.
+            bridge_res = await asyncio.to_thread(
+                bridge_client.send,
+                account_id=account_id,
+                recipient_id=thread_id,
+                text=content or "",
+                client_msg_id=offline_threading_id,
             )
-            # Gõ phím theo tốc độ tự nhiên WPM 35-50 từ/phút
-            await cls.simulate_human_typing_delay(content)
+            if not bridge_res.get("ok"):
+                err_msg = bridge_res.get("error") or "Không thể gửi tin qua messenger-bridge"
+                return {"success": False, "message": str(err_msg)}
+            fb_message_id = bridge_res.get("message_id")
+        else:
+            cookies = cls.parse_cookie_string(account.get("cookie", ""))
+            ua = account.get("user_agent") or DEFAULT_USER_AGENT
+            proxy_url = account.get("proxy_url")
+            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
-        # ── BƯỚC 3: GỌI DIRECT API GỬI TIN NHẮN META ─────────────────────────────
-        post_url = "https://www.facebook.com/messaging/send/"
-        headers = {
-            "User-Agent": ua,
-            "Referer": f"https://www.facebook.com/messages/t/{thread_id}",
-            "Origin": "https://www.facebook.com",
-            "Content-Type": "application/x-www-form-urlencoded",
-            **CHROME_BROWSER_HEADERS,
-        }
+            fb_dtsg = account.get("fb_dtsg")
+            jazoest = account.get("jazoest")
 
-        form_data = {
-            "client": "mercury",
-            "action_type": "ma-type:user-generated-message",
-            "body": content,
-            "ephemeral_ttl_mode": "0",
-            "has_attachment": "false",
-            "message_id": offline_threading_id,
-            "offline_threading_id": offline_threading_id,
-            "other_user_fbid": thread_id,
-            "specific_to_list[0]": f"fbid:{thread_id}",
-            "specific_to_list[1]": f"fbid:{account.get('fb_user_id')}",
-            "source": "source:chat:web",
-            "timestamp": str(int(time.time() * 1000)),
-            "fb_dtsg": fb_dtsg or "",
-            "jazoest": jazoest or "",
-        }
+            # Nếu thiếu dtsg thì bóc tách lại ngay lập tức
+            if not fb_dtsg:
+                fb_dtsg, jazoest = cls.extract_dtsg_tokens(cookies, ua, proxy_url)
+                if fb_dtsg:
+                    sb.table("fb_messenger_accounts").update(
+                        {"fb_dtsg": fb_dtsg, "jazoest": jazoest}
+                    ).eq("id", account_id).execute()
 
-        try:
-            loop = asyncio.get_running_loop()
-            res = await loop.run_in_executor(
-                None,
-                lambda: requests.post(
-                    post_url,
-                    data=form_data,
-                    cookies=cookies,
-                    headers=headers,
-                    proxies=proxies,
-                    timeout=20,
-                ),
-            )
-            raw_text = res.text
-        except Exception as req_err:
-            logger.exception(f"HTTP request error sending fb message: {req_err}")
-            return {"success": False, "message": f"Lỗi kết nối tới Facebook Gateway: {req_err}"}
+            # ── BƯỚC 1: TRỄ ĐỌC TIN CŨ (1.5s - 3.2s) ──────────────────────────────────
+            if simulate_human:
+                read_delay = random.uniform(READ_LATENCY_MIN, READ_LATENCY_MAX)
+                await asyncio.sleep(read_delay)
 
-        # Tắt trạng thái typing sau khi gửi xong
-        if simulate_human and fb_dtsg and jazoest:
-            await loop.run_in_executor(
-                None,
-                lambda: cls.send_typing_ping(
-                    account_id, thread_id, 0, fb_dtsg, jazoest, cookies, ua, proxies
-                ),
-            )
+            # ── BƯỚC 2: PHÁT SỰ KIỆN TYPING & TRỄ GÕ PHÍM WPM ────────────────────────
+            if simulate_human and fb_dtsg and jazoest:
+                # Phát tín hiệu typing thật sự lên Facebook
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: cls.send_typing_ping(
+                        account_id, thread_id, 1, fb_dtsg, jazoest, cookies, ua, proxies
+                    ),
+                )
+                # Gõ phím theo tốc độ tự nhiên WPM 35-50 từ/phút
+                await cls.simulate_human_typing_delay(content)
 
-        # ── BƯỚC 4: BÓC TÁCH MÃ LỖI & PHẢN HỒI TỪ META ────────────────────────────
-        is_blocked = False
-        error_code = None
-        error_msg = ""
+            # ── BƯỚC 3: GỌI DIRECT API GỬI TIN NHẮN META ─────────────────────────────
+            post_url = "https://www.facebook.com/messaging/send/"
+            headers = {
+                "User-Agent": ua,
+                "Referer": f"https://www.facebook.com/messages/t/{thread_id}",
+                "Origin": "https://www.facebook.com",
+                "Content-Type": "application/x-www-form-urlencoded",
+                **CHROME_BROWSER_HEADERS,
+            }
 
-        if res.status_code != 200:
-            error_msg = f"HTTP {res.status_code} từ Facebook"
-        elif "for (;;);" in raw_text:
-            clean_json = raw_text.replace("for (;;);", "").strip()
-            # Bắt mã lỗi 1357004 (Tạm thời chặn tính năng)
-            if str(FB_ERROR_TEMPORARILY_BLOCKED) in clean_json or "temporarily blocked" in clean_json.lower():
-                is_blocked = True
-                error_code = FB_ERROR_TEMPORARILY_BLOCKED
-                error_msg = "Bạn tạm thời bị chặn sử dụng tính năng nhắn tin trên Facebook."
-            # Bắt mã lỗi 368 (Thao tác quá nhanh)
-            elif '"error":368' in clean_json or "thao tác quá nhanh" in clean_json.lower():
-                is_blocked = True
-                error_code = 368
-                error_msg = "Meta cảnh báo thao tác quá nhanh. Tự động đóng băng để bảo vệ nick."
-            # Bắt mã lỗi 190 (Cookie / Token hết hạn)
-            elif '"error":190' in clean_json or '"error_subcode":463' in clean_json:
-                is_blocked = True
-                error_code = FB_ERROR_SESSION_EXPIRED
-                error_msg = "Phiên đăng nhập Cookie đã hết hạn, vui lòng cập nhật lại."
-            # Bắt trang Checkpoint / Đăng nhập
-            elif "checkpoint" in clean_json.lower() or "login.php" in clean_json.lower():
-                is_blocked = True
-                error_code = FB_ERROR_CHECKPOINT
-                error_msg = "Tài khoản bị đẩy sang trang xác minh Checkpoint."
-
-        if is_blocked or error_code:
-            FbCircuitBreaker.trigger_circuit_breaker(sb, account_id, error_code, error_msg)
-            # Lưu vết tin nhắn thất bại
-            sb.table("fb_messenger_messages").insert({
-                "thread_id": thread_id,
-                "account_id": account_id,
-                "sender_id": str(account.get("fb_user_id")),
-                "recipient_id": thread_id,
-                "content": content,
-                "is_self": True,
-                "status": "failed",
+            form_data = {
+                "client": "mercury",
+                "action_type": "ma-type:user-generated-message",
+                "body": content,
+                "ephemeral_ttl_mode": "0",
+                "has_attachment": "false",
+                "message_id": offline_threading_id,
                 "offline_threading_id": offline_threading_id,
-                "created_at": now_utc.isoformat(),
-            }).execute()
-            return {"success": False, "message": f"Không thể gửi tin: {error_msg}"}
+                "other_user_fbid": thread_id,
+                "specific_to_list[0]": f"fbid:{thread_id}",
+                "specific_to_list[1]": f"fbid:{account.get('fb_user_id')}",
+                "source": "source:chat:web",
+                "timestamp": str(int(time.time() * 1000)),
+                "fb_dtsg": fb_dtsg or "",
+                "jazoest": jazoest or "",
+            }
 
-        # ── BƯỚC 5: NÁN LẠI NGẪU NHIÊN & LƯU TRỮ VĨNH VIỄN ────────────────────────
-        if simulate_human:
-            linger = random.uniform(LINGER_LATENCY_MIN, LINGER_LATENCY_MAX)
-            await asyncio.sleep(linger)
+            try:
+                loop = asyncio.get_running_loop()
+                res = await loop.run_in_executor(
+                    None,
+                    lambda: requests.post(
+                        post_url,
+                        data=form_data,
+                        cookies=cookies,
+                        headers=headers,
+                        proxies=proxies,
+                        timeout=20,
+                    ),
+                )
+                raw_text = res.text
+            except Exception as req_err:
+                logger.exception(f"HTTP request error sending fb message: {req_err}")
+                return {"success": False, "message": f"Lỗi kết nối tới Facebook Gateway: {req_err}"}
+
+            # Tắt trạng thái typing sau khi gửi xong
+            if simulate_human and fb_dtsg and jazoest:
+                await loop.run_in_executor(
+                    None,
+                    lambda: cls.send_typing_ping(
+                        account_id, thread_id, 0, fb_dtsg, jazoest, cookies, ua, proxies
+                    ),
+                )
+
+            # ── BƯỚC 4: BÓC TÁCH MÃ LỖI & PHẢN HỒI TỪ META ────────────────────────────
+            is_blocked = False
+            error_code = None
+            error_msg = ""
+
+            if res.status_code != 200:
+                error_msg = f"HTTP {res.status_code} từ Facebook"
+            elif "for (;;);" in raw_text:
+                clean_json = raw_text.replace("for (;;);", "").strip()
+                # Bắt mã lỗi 1357004 (Tạm thời chặn tính năng)
+                if str(FB_ERROR_TEMPORARILY_BLOCKED) in clean_json or "temporarily blocked" in clean_json.lower():
+                    is_blocked = True
+                    error_code = FB_ERROR_TEMPORARILY_BLOCKED
+                    error_msg = "Bạn tạm thời bị chặn sử dụng tính năng nhắn tin trên Facebook."
+                # Bắt mã lỗi 368 (Thao tác quá nhanh)
+                elif '"error":368' in clean_json or "thao tác quá nhanh" in clean_json.lower():
+                    is_blocked = True
+                    error_code = 368
+                    error_msg = "Meta cảnh báo thao tác quá nhanh. Tự động đóng băng để bảo vệ nick."
+                # Bắt mã lỗi 190 (Cookie / Token hết hạn)
+                elif '"error":190' in clean_json or '"error_subcode":463' in clean_json:
+                    is_blocked = True
+                    error_code = FB_ERROR_SESSION_EXPIRED
+                    error_msg = "Phiên đăng nhập Cookie đã hết hạn, vui lòng cập nhật lại."
+                # Bắt trang Checkpoint / Đăng nhập
+                elif "checkpoint" in clean_json.lower() or "login.php" in clean_json.lower():
+                    is_blocked = True
+                    error_code = FB_ERROR_CHECKPOINT
+                    error_msg = "Tài khoản bị đẩy sang trang xác minh Checkpoint."
+
+            if is_blocked or error_code:
+                FbCircuitBreaker.trigger_circuit_breaker(sb, account_id, error_code, error_msg)
+                # Lưu vết tin nhắn thất bại
+                sb.table("fb_messenger_messages").insert({
+                    "thread_id": thread_id,
+                    "account_id": account_id,
+                    "sender_id": str(account.get("fb_user_id")),
+                    "recipient_id": thread_id,
+                    "content": content,
+                    "is_self": True,
+                    "status": "failed",
+                    "offline_threading_id": offline_threading_id,
+                    "created_at": now_utc.isoformat(),
+                }).execute()
+                return {"success": False, "message": f"Không thể gửi tin: {error_msg}"}
+
+            # ── BƯỚC 5: NÁN LẠI NGẪU NHIÊN & LƯU TRỮ VĨNH VIỄN ────────────────────────
+            if simulate_human:
+                linger = random.uniform(LINGER_LATENCY_MIN, LINGER_LATENCY_MAX)
+                await asyncio.sleep(linger)
 
         # Lưu tin nhắn vào bảng fb_messenger_messages
-        msg_payload = {
+        msg_payload: Dict[str, Any] = {
             "thread_id": thread_id,
             "account_id": account_id,
             "sender_id": str(account.get("fb_user_id")),
@@ -423,8 +479,74 @@ class FbMessengerService:
             "offline_threading_id": offline_threading_id,
             "created_at": now_utc.isoformat(),
         }
-        msg_res = sb.table("fb_messenger_messages").insert(msg_payload).execute()
-        created_msg = msg_res.data[0] if msg_res.data else msg_payload
+        if fb_message_id is not None:
+            msg_payload["fb_message_id"] = fb_message_id
+
+        created_msg: Optional[Dict[str, Any]] = None
+        if fb_message_id:
+            existing_res = (
+                sb.table("fb_messenger_messages")
+                .select("*")
+                .eq("account_id", account_id)
+                .eq("fb_message_id", fb_message_id)
+                .limit(1)
+                .execute()
+            )
+            if existing_res.data:
+                upd_fields = {
+                    "offline_threading_id": offline_threading_id,
+                    "is_echo": False,
+                    "status": "sent",
+                }
+                upd_res = (
+                    sb.table("fb_messenger_messages")
+                    .update(upd_fields)
+                    .eq("account_id", account_id)
+                    .eq("fb_message_id", fb_message_id)
+                    .execute()
+                )
+                created_msg = (
+                    upd_res.data[0]
+                    if upd_res.data
+                    else {**existing_res.data[0], **upd_fields}
+                )
+
+        if created_msg is None:
+            try:
+                msg_res = sb.table("fb_messenger_messages").insert(msg_payload).execute()
+                created_msg = msg_res.data[0] if msg_res.data else msg_payload
+            except Exception:
+                if fb_message_id:
+                    race_res = (
+                        sb.table("fb_messenger_messages")
+                        .select("*")
+                        .eq("account_id", account_id)
+                        .eq("fb_message_id", fb_message_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if race_res.data:
+                        upd_fields = {
+                            "offline_threading_id": offline_threading_id,
+                            "is_echo": False,
+                            "status": "sent",
+                        }
+                        upd_res = (
+                            sb.table("fb_messenger_messages")
+                            .update(upd_fields)
+                            .eq("account_id", account_id)
+                            .eq("fb_message_id", fb_message_id)
+                            .execute()
+                        )
+                        created_msg = (
+                            upd_res.data[0]
+                            if upd_res.data
+                            else {**race_res.data[0], **upd_fields}
+                        )
+                    else:
+                        raise
+                else:
+                    raise
 
         # Cập nhật thông tin Thread
         last_msg = content
