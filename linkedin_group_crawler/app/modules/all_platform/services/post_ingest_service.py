@@ -20,6 +20,10 @@ from pydantic import BaseModel, model_validator
 
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services import supabase_crawl_queue_service as queue_service
+from app.modules.all_platform.services.crawled_post_audit_service import (
+    detect_crawl_source,
+    record_crawled_posts_audit_sync,
+)
 from app.modules.all_platform.services.fb_story_parser import extract_post_id_from_url
 from app.modules.all_platform.services.lead_score_service import score_and_save_posts
 from app.modules.all_platform.services.post_deduplication_service import filter_posts_by_unique_content
@@ -421,6 +425,7 @@ def sync_process_and_save_posts_db(
                 inserted_rows = [
                     {
                         "id": p.get("id"),
+                        "group_id": p.get("group_id"),
                         "content": p.get("content"),
                         "post_url": p.get("post_url"),
                     }
@@ -449,6 +454,48 @@ async def ingest_facebook_posts(
     )
 
     if inserted_rows:
+        crawl_source = detect_crawl_source(payload.worker_id, extra_broadcast_fields)
+        proxy_node = (
+            str((extra_broadcast_fields or {}).get("sim_node") or "").strip()
+            or (
+                str(payload.worker_id).split(":", 1)[1]
+                if payload.worker_id and str(payload.worker_id).startswith("public-4g:")
+                else None
+            )
+        )
+        run_id = (extra_broadcast_fields or {}).get("run_id")
+        ext_by_url = {
+            (p.post_url or p.url): p
+            for p in payload.posts
+            if (p.post_url or p.url)
+        }
+        audit_entries = []
+        for row in inserted_rows:
+            p_url = str(row.get("post_url") or "")
+            src_post = ext_by_url.get(p_url)
+            audit_entries.append(
+                {
+                    "platform": "facebook",
+                    "crawl_source": crawl_source,
+                    "run_id": run_id,
+                    "proxy_node": proxy_node,
+                    "group_id": row.get("group_id") or payload.group_id,
+                    "group_name": payload.group_name,
+                    "group_url": payload.group_url,
+                    "post_id": row.get("id"),
+                    "post_url": p_url,
+                    "author_name": src_post.author_name if src_post else None,
+                    "content": row.get("content") or "",
+                    "post_time": (src_post.timestamp_raw or src_post.date) if src_post else None,
+                    "reactions": int(src_post.reactions or 0) if src_post else 0,
+                    "comments": int(src_post.comments or 0) if src_post else 0,
+                    "shares": int(src_post.shares or 0) if src_post else 0,
+                    "ai_status": "pending",
+                    "crawled_at": (src_post.crawled_at if src_post and src_post.crawled_at else None),
+                }
+            )
+        await asyncio.to_thread(record_crawled_posts_audit_sync, audit_entries)
+
         asyncio.create_task(
             score_and_save_posts(
                 "facebook_posts",
@@ -456,6 +503,10 @@ async def ingest_facebook_posts(
                 id_member=payload.id_member,
                 group_name=payload.group_name,
                 keywords=payload.keywords,
+                crawl_source=crawl_source,
+                proxy_node=proxy_node,
+                run_id=run_id,
+                group_url=payload.group_url,
             )
         )
 

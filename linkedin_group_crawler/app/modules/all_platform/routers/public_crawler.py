@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.modules.all_platform.auth_deps import get_current_user, require_admin_or_leader
+from app.modules.all_platform.services.crawled_post_audit_service import (
+    list_crawled_posts_overview_sync,
+)
 from app.modules.all_platform.services.public_4g_crawler_service import (
+    PUBLIC_CRAWL_CONFIG_BOUNDS,
     public_crawl_orchestrator,
 )
 
@@ -25,11 +29,31 @@ class RunPublicCrawlBody(BaseModel):
 
 class ConfigUpdateBody(BaseModel):
     enabled: Optional[bool] = None
-    cycle_interval_min: Optional[int] = Field(None, ge=5, le=1440)
-    groups_per_ip_rotate: Optional[int] = Field(None, ge=1, le=50)
-    max_posts_per_group: Optional[int] = Field(None, ge=1, le=100)
-    max_scrolls_per_group: Optional[int] = Field(None, ge=0, le=10)
-    concurrent_sims: Optional[int] = Field(None, ge=1, le=10)
+    cycle_interval_min: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"][1],
+    )
+    groups_per_ip_rotate: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["groups_per_ip_rotate"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["groups_per_ip_rotate"][1],
+    )
+    max_posts_per_group: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"][1],
+    )
+    max_scrolls_per_group: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"][1],
+    )
+    concurrent_sims: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"][1],
+    )
     auto_skip_private: Optional[bool] = None
     headless: Optional[bool] = None
     proxy_urls: Optional[Union[List[str], str]] = None
@@ -38,7 +62,11 @@ class ConfigUpdateBody(BaseModel):
 class GroupPublicSettingsBody(BaseModel):
     visibility: Optional[Literal["public", "private"]] = None
     public_crawl_enabled: Optional[bool] = None
-    public_crawl_interval_min: Optional[int] = Field(None, ge=5, le=1440)
+    public_crawl_interval_min: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"][1],
+    )
 
 
 class BulkToggleGroupsBody(BaseModel):
@@ -103,7 +131,9 @@ async def update_public_crawl_config(
         "config",
         (
             f"Cập nhật cấu hình: auto={'BẬT' if updated.get('enabled') else 'TẮT'}, "
-            f"proxy={len(sims)}, cuộn={updated.get('max_scrolls_per_group')}, chu kỳ {updated.get('cycle_interval_min')}p"
+            f"proxy={len(sims)}, bài={updated.get('max_posts_per_group')}, "
+            f"độ_sâu={updated.get('max_scrolls_per_group')}, xoay={updated.get('groups_per_ip_rotate')}, "
+            f"luồng={updated.get('concurrent_sims')}, chu kỳ {updated.get('cycle_interval_min')}p"
         ),
     )
     return {"success": True, "config": safe_cfg, "sims": sims}
@@ -188,3 +218,23 @@ async def test_mobile_proxy_nodes(
                 ),
             )
     return {"success": bool(res.get("ok")), **res}
+
+
+@router.get("/crawled-posts")
+async def list_public_crawled_and_ai_posts(
+    time_range: str = Query("all", description="Filter window: today | 7d | all"),
+    search: Optional[str] = Query(None, description="Keyword/group/author/AI reason filter"),
+    ai_filter: str = Query("all", description="AI status filter: all | lead_high | kept | deleted | pending"),
+    source_filter: str = Query("all", description="AI table source filter: all | public_4g | extension"),
+    limit: int = Query(100, ge=1, le=300),
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    data = await asyncio.to_thread(
+        list_crawled_posts_overview_sync,
+        time_range=time_range,
+        search=search,
+        ai_filter=ai_filter,
+        source_filter=source_filter,
+        limit=limit,
+    )
+    return {"success": True, **data}

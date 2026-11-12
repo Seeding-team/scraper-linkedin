@@ -92,10 +92,10 @@ jobs:
           echo "===== Applying migration 222 to Dev DB (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/222_kpi_call_replacement.sql || true"
 
-      - name: Ap dung migration database 223 + 224 + 225 + 226 (Zalo Inbox KPI + Call Stats Index + Public Rotating Proxy Crawler)
+      - name: Ap dung migration database 223..227 (Zalo Inbox KPI + Call Stats Index + Public Rotating Proxy & Audit)
         run: |
-          echo "===== Applying migrations 223 + 224 + 225 + 226 to Dev DB (10.30.195.32) ====="
-          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/223_zalo_inbox_kpi.sql -f /repo/linkedin_group_crawler/supabase/migrations/224_post_call_results_stats_index.sql -f /repo/linkedin_group_crawler/supabase/migrations/225_public_4g_crawler.sql -f /repo/linkedin_group_crawler/supabase/migrations/226_public_rotating_proxies.sql || true"
+          echo "===== Applying migrations 223..227 to Dev DB (10.30.195.32) ====="
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/223_zalo_inbox_kpi.sql -f /repo/linkedin_group_crawler/supabase/migrations/224_post_call_results_stats_index.sql -f /repo/linkedin_group_crawler/supabase/migrations/225_public_4g_crawler.sql -f /repo/linkedin_group_crawler/supabase/migrations/226_public_rotating_proxies.sql -f /repo/linkedin_group_crawler/supabase/migrations/227_public_crawl_post_audit.sql || true"
 
       - name: Cap nhat bien moi truong host DEV sang DB moi
         run: |

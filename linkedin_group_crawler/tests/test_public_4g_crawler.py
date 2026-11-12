@@ -734,3 +734,360 @@ def test_httpx_graphql_cursor_pagination_collects_22_posts_with_reconnect_retry(
     pool.sync_nodes(["203.0.113.10:1080:u:p"])
     assert len(pool.sync_nodes(None)) == 1
     assert pool.sync_nodes([]) == []
+
+
+def test_safer_config_bounds_proxy_sync_and_due_interval(monkeypatch):
+    """Ensure safer upper/lower limits cannot be exceeded, and edits always take effect."""
+    monkeypatch.delenv("PUBLIC_CRAWL_PROXIES", raising=False)
+
+    # 1. Aggressive old/dirty values clamp strictly down to safer limits & match real proxy count
+    clamped_one_proxy = svc.clamp_public_crawl_config(
+        {
+            "max_posts_per_group": 100,
+            "max_scrolls_per_group": 10,
+            "groups_per_ip_rotate": 50,
+            "cycle_interval_min": 5,
+            "concurrent_sims": 8,
+            "proxy_urls": ["203.0.113.10:1080:u:p"],
+        }
+    )
+    assert clamped_one_proxy["max_posts_per_group"] == 25
+    assert clamped_one_proxy["max_scrolls_per_group"] == 3
+    assert clamped_one_proxy["groups_per_ip_rotate"] == 6
+    assert clamped_one_proxy["cycle_interval_min"] == 15
+    assert clamped_one_proxy["concurrent_sims"] == 1
+    assert clamped_one_proxy["max_allowed_concurrent_sims"] == 1
+
+    # Adding 3 proxies raises concurrent cap to 3; gentler (lower/slower) user values stay intact
+    clamped_gentler = svc.clamp_public_crawl_config(
+        {
+            "max_posts_per_group": 15,
+            "max_scrolls_per_group": 1,
+            "groups_per_ip_rotate": 3,
+            "cycle_interval_min": 45,
+            "concurrent_sims": 2,
+            "proxy_urls": [
+                "203.0.113.10:1080:u:p",
+                "203.0.113.11:1080:u:p",
+                "203.0.113.12:1080:u:p",
+            ],
+        }
+    )
+    assert clamped_gentler["max_posts_per_group"] == 15
+    assert clamped_gentler["max_scrolls_per_group"] == 1
+    assert clamped_gentler["groups_per_ip_rotate"] == 3
+    assert clamped_gentler["cycle_interval_min"] == 45
+    assert clamped_gentler["concurrent_sims"] == 2
+    assert clamped_gentler["max_allowed_concurrent_sims"] == 3
+
+    # 2. Pagination page budget obeys BOTH max_scrolls_per_group and max_posts_per_group
+    assert svc.compute_gql_page_budget(25, 0) == 0
+    assert svc.compute_gql_page_budget(25, 1) == 4
+    assert svc.compute_gql_page_budget(25, 2) == 9
+    assert svc.compute_gql_page_budget(25, 3) == 10
+    assert svc.compute_gql_page_budget(6, 3) == 3
+
+    # 3. _select_due_groups_sync honors global cycle_interval_min (ignores stale DB DEFAULT 30)
+    now = datetime.now(timezone.utc)
+    fake_rows = [
+        {
+            "id": "g-20m",
+            "group_url": "https://www.facebook.com/groups/20m",
+            "visibility": "public",
+            "public_crawl_enabled": True,
+            "public_crawl_interval_min": 30,  # Legacy SQL default must NOT shadow global 15m setting
+            "last_public_crawled_at": (now - timedelta(minutes=20)).isoformat(),
+        },
+        {
+            "id": "g-5m",
+            "group_url": "https://www.facebook.com/groups/5m",
+            "visibility": "public",
+            "public_crawl_enabled": True,
+            "public_crawl_interval_min": 30,
+            "last_public_crawled_at": (now - timedelta(minutes=5)).isoformat(),
+        },
+    ]
+
+    class _FakeExec:
+        def __init__(self, data):
+            self.data = data
+
+    class _FakeTable:
+        def select(self, *_args):
+            return self
+
+        def eq(self, *_args):
+            return self
+
+        def execute(self):
+            return _FakeExec(fake_rows)
+
+    class _FakeSb:
+        def table(self, _name):
+            return _FakeTable()
+
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _FakeSb())
+    orch = svc.PublicCrawlOrchestrator()
+    due_15m = orch._select_due_groups_sync(group_ids=None, default_interval_min=15, only_due=True)
+    assert [r["id"] for r in due_15m] == ["g-20m"]
+    due_60m = orch._select_due_groups_sync(group_ids=None, default_interval_min=60, only_due=True)
+    assert due_60m == []
+
+    # 4. API Pydantic validation rejects values more aggressive than safer limits (HTTP 422)
+    app = FastAPI()
+    app.include_router(public_crawler.router, prefix="/api/all-platform/public-crawler")
+    app.dependency_overrides[auth_deps.get_current_user] = lambda: {"id": "u-adm", "role": "admin"}
+    monkeypatch.setattr(auth_deps, "get_current_user", lambda _req, _auth=None: {"id": "u-adm", "role": "admin"})
+    client = TestClient(app)
+    try:
+        assert client.put("/api/all-platform/public-crawler/config", json={"max_posts_per_group": 26}).status_code == 422
+        assert client.put("/api/all-platform/public-crawler/config", json={"max_scrolls_per_group": 4}).status_code == 422
+        assert client.put("/api/all-platform/public-crawler/config", json={"groups_per_ip_rotate": 7}).status_code == 422
+        assert client.put("/api/all-platform/public-crawler/config", json={"cycle_interval_min": 5}).status_code == 422
+        assert client.put("/api/all-platform/public-crawler/config", json={"concurrent_sims": 5}).status_code == 422
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_crawled_post_audit_and_ai_check_endpoint(monkeypatch):
+    """Verify Public 4G posts + AI check outcomes (kept & deleted) persist for both UI tables."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.modules.all_platform import auth_deps
+    from app.modules.all_platform.routers import public_crawler
+    from app.modules.all_platform.services import (
+        auto_seeding_comment_service as auto_cmt,
+        crawled_post_audit_service as audit_svc,
+        lead_score_service as lead_svc,
+        post_ingest_service as ingest_svc,
+    )
+    from app.modules.all_platform.websocket import manager
+
+    audit_svc.clear_memory_audit_for_tests()
+
+    audit_store: dict[tuple[str, str], dict] = {}
+    deleted_ids: list[str] = []
+    updated_ids: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, data):
+            self.data = data
+
+    class _FakeAuditTable:
+        def __init__(self):
+            self._rows = None
+            self._in_urls = None
+
+        def select(self, *_args):
+            return self
+
+        def in_(self, col, vals):
+            if col == "post_url":
+                self._in_urls = set(vals or [])
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def upsert(self, rows, **_kwargs):
+            self._rows = rows if isinstance(rows, list) else [rows]
+            return self
+
+        def execute(self):
+            if self._rows is not None:
+                for r in self._rows:
+                    key = (str(r.get("platform") or "facebook"), str(r.get("post_url") or ""))
+                    prev = audit_store.get(key, {})
+                    audit_store[key] = {**prev, **r}
+                return _FakeResp(list(self._rows))
+            rows = list(audit_store.values())
+            if self._in_urls is not None:
+                rows = [r for r in rows if r.get("post_url") in self._in_urls]
+            return _FakeResp(rows)
+
+    class _FakePostsTable:
+        def __init__(self):
+            self._mode = "select"
+            self._eq_id = None
+
+        def select(self, *_args):
+            self._mode = "select"
+            return self
+
+        def in_(self, *_args):
+            return self
+
+        def not_(self):
+            return self
+
+        def delete(self):
+            self._mode = "delete"
+            return self
+
+        def update(self, _fields):
+            self._mode = "update"
+            return self
+
+        def eq(self, col, val):
+            if col == "id":
+                self._eq_id = str(val)
+            return self
+
+        def order(self, *_args, **_kwargs):
+            return self
+
+        def limit(self, *_args):
+            return self
+
+        def execute(self):
+            if self._mode == "delete" and self._eq_id:
+                deleted_ids.append(self._eq_id)
+            elif self._mode == "update" and self._eq_id:
+                updated_ids.append(self._eq_id)
+            return _FakeResp([])
+
+    class _FakeSb:
+        def table(self, name):
+            if name == "crawled_post_audit_logs":
+                return _FakeAuditTable()
+            return _FakePostsTable()
+
+    monkeypatch.setattr(audit_svc, "get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr(lead_svc, "get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr(lead_svc, "is_lead_scoring_configured", lambda: True)
+    monkeypatch.setattr(
+        ingest_svc,
+        "sync_process_and_save_posts_db",
+        lambda payload, legacy=False: (
+            2,
+            [p.post_url or "" for p in payload.posts],
+            [
+                {
+                    "id": f"fb-post-{idx + 1}",
+                    "group_id": "grp-1",
+                    "content": p.content or "",
+                    "post_url": p.post_url or "",
+                }
+                for idx, p in enumerate(payload.posts)
+            ],
+        ),
+    )
+
+    scheduled_coros = []
+
+    def _capture_task(coro):
+        scheduled_coros.append(coro)
+        return None
+
+    async def _noop_broadcast(_payload):
+        return None
+
+    monkeypatch.setattr(ingest_svc.asyncio, "create_task", _capture_task)
+    monkeypatch.setattr(manager, "broadcast", _noop_broadcast)
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    req = ingest_svc.ExtensionCrawlRequest(
+        group_name="Hội Thiết Kế Website",
+        group_url="https://www.facebook.com/groups/thietkeweb",
+        group_id="grp-1",
+        worker_id="public-4g:proxy-01",
+        post_limit=25,
+        posts=[
+            ingest_svc.ExtensionPost(
+                post_url="https://www.facebook.com/groups/thietkeweb/posts/1001/",
+                author_name="Nguyen Khach",
+                timestamp_raw=now_iso,
+                content="Mình cần tìm đơn vị thiết kế website bán hàng gấp",
+                reactions=4,
+                comments=2,
+            ),
+            ingest_svc.ExtensionPost(
+                post_url="https://www.facebook.com/groups/thietkeweb/posts/1002/",
+                author_name="Agency Quang Cao",
+                timestamp_raw=now_iso,
+                content="Bên em chuyên nhận thiết kế website giá rẻ inbox tư vấn 24/7",
+                reactions=1,
+                comments=0,
+            ),
+        ],
+    )
+
+    async def _run_ingest_and_ai():
+        ingest_res = await ingest_svc.ingest_facebook_posts(
+            req,
+            event_name="public_4g_crawl_saved",
+            extra_broadcast_fields={"source": "public_4g", "sim_node": "proxy-01"},
+        )
+        assert ingest_res["count"] == 2
+        assert len(scheduled_coros) == 1
+
+        # Before AI runs, Table 1 shows 2 pending 4G posts
+        before_overview = audit_svc.list_crawled_posts_overview_sync()
+        assert before_overview["summary"]["total_4g_posts"] == 2
+        assert before_overview["summary"]["pending_ai_count"] == 2
+
+        async def _fake_score_text(content: str, *, keywords=None):
+            if "Mình cần tìm" in content:
+                return {
+                    "score": 88,
+                    "is_competitor": False,
+                    "is_buyer": True,
+                    "reason": "Khách thật đang cần thuê làm website bán hàng",
+                    "need_category": "website",
+                    "contact_phone": None,
+                }
+            return {
+                "score": 0,
+                "is_competitor": True,
+                "is_buyer": False,
+                "reason": "Đối thủ chào hàng dịch vụ làm web",
+                "need_category": None,
+                "contact_phone": None,
+            }
+
+        async def _fake_auto_comment(**_kw):
+            return {"id": "auto-cmt-1"}
+
+        monkeypatch.setattr(lead_svc, "score_text_for_lead", _fake_score_text)
+        monkeypatch.setattr(auto_cmt, "maybe_create_auto_seeding_comment", _fake_auto_comment)
+
+        ai_summary = await scheduled_coros[0]
+        assert ai_summary == {"total": 2, "high": 1, "deleted": 1}
+        assert deleted_ids == ["fb-post-2"]
+        assert updated_ids == ["fb-post-1"]
+
+    asyncio.run(_run_ingest_and_ai())
+
+    # Query API endpoint for both UI tables
+    app = FastAPI()
+    app.include_router(public_crawler.router, prefix="/api/all-platform/public-crawler")
+    app.dependency_overrides[auth_deps.get_current_user] = lambda: {"id": "u-adm", "role": "admin"}
+    client = TestClient(app)
+    try:
+        resp = client.get("/api/all-platform/public-crawler/crawled-posts?time_range=all")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["summary"]["total_4g_posts"] == 2
+        assert body["summary"]["pending_ai_count"] == 0
+        assert body["summary"]["ai_checked_total"] == 2
+        assert body["summary"]["ai_lead_high_count"] == 1
+        assert body["summary"]["ai_deleted_count"] == 1
+        assert body["summary"]["auto_seeding_count"] == 1
+        assert len(body["public_4g_posts"]) == 2
+        assert len(body["ai_checked_posts"]) == 2
+
+        resp_deleted = client.get(
+            "/api/all-platform/public-crawler/crawled-posts?ai_filter=deleted&source_filter=public_4g"
+        )
+        assert resp_deleted.status_code == 200
+        del_rows = resp_deleted.json()["ai_checked_posts"]
+        assert len(del_rows) == 1
+        assert del_rows[0]["ai_status"] == "deleted_competitor"
+        assert del_rows[0]["proxy_node"] == "proxy-01"
+    finally:
+        app.dependency_overrides.clear()
+        audit_svc.clear_memory_audit_for_tests()

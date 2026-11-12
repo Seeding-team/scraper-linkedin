@@ -6,6 +6,7 @@ export interface PublicCrawlConfig {
   max_posts_per_group: number;
   max_scrolls_per_group: number;
   concurrent_sims: number;
+  max_allowed_concurrent_sims?: number;
   auto_skip_private: boolean;
   headless: boolean;
   updated_at?: string | null;
@@ -138,4 +139,61 @@ export interface ProxyTestResponse {
   ok: boolean;
   results: ProxyTestResultItem[];
   error?: string;
+}
+
+export type CrawledPostAiStatus =
+  | "pending"
+  | "kept"
+  | "deleted_competitor"
+  | "deleted_low_score"
+  | "unconfigured"
+  | "error"
+  | string;
+
+export interface CrawledPostAuditItem {
+  id?: string;
+  platform: string;
+  crawl_source: "public_4g" | "vps_queue" | "extension" | "historical" | string;
+  run_id?: string | null;
+  proxy_node?: string | null;
+  group_id?: string | null;
+  group_name?: string | null;
+  group_url?: string | null;
+  post_id?: string | null;
+  post_url: string;
+  author_name?: string | null;
+  content: string;
+  post_time?: string | null;
+  reactions: number;
+  comments: number;
+  shares: number;
+  ai_status: CrawledPostAiStatus;
+  lead_score?: number | null;
+  is_competitor?: boolean | null;
+  is_buyer?: boolean | null;
+  lead_need_category?: string | null;
+  lead_score_reason?: string | null;
+  contact_phone?: string | null;
+  auto_seeding_created?: boolean;
+  zalo_triggered?: boolean;
+  crawled_at?: string | null;
+  ai_checked_at?: string | null;
+}
+
+export interface CrawledPostsSummary {
+  total_4g_posts: number;
+  today_4g_posts: number;
+  pending_ai_count: number;
+  ai_checked_total: number;
+  ai_lead_high_count: number;
+  ai_kept_mid_count: number;
+  ai_deleted_count: number;
+  auto_seeding_count: number;
+}
+
+export interface CrawledPostsOverviewResponse {
+  success: boolean;
+  summary: CrawledPostsSummary;
+  public_4g_posts: CrawledPostAuditItem[];
+  ai_checked_posts: CrawledPostAuditItem[];
 }

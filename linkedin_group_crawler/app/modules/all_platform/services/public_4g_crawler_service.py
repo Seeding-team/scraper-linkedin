@@ -109,6 +109,21 @@ _GQL_RELAY_INTERNAL_DEFAULTS: dict[str, Any] = {
     "__relay_internal__pv__StoriesShouldIncludeFbNotesrelayprovider": False,
 }
 
+PUBLIC_CRAWL_CONFIG_BOUNDS: dict[str, tuple[int, int]] = {
+    "cycle_interval_min": (15, 1440),
+    "groups_per_ip_rotate": (1, 6),
+    "max_posts_per_group": (1, 25),
+    "max_scrolls_per_group": (0, 3),
+    "concurrent_sims": (1, 4),
+}
+
+_SCROLL_DEPTH_GQL_BUDGET: dict[int, int] = {
+    0: 0,
+    1: 4,
+    2: 9,
+    3: 10,
+}
+
 DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "id": "default",
     "enabled": False,
@@ -116,11 +131,68 @@ DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "groups_per_ip_rotate": 6,
     "max_posts_per_group": 25,
     "max_scrolls_per_group": 2,
-    "concurrent_sims": 2,
+    "concurrent_sims": 1,
     "auto_skip_private": True,
     "headless": True,
     "proxy_urls": [],
 }
+
+
+def compute_gql_page_budget(max_posts: int, max_scrolls: int) -> int:
+    """Compute bounded GraphQL cursor pagination rounds so UI depth & max_posts both take effect."""
+    p_lo, p_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"]
+    s_lo, s_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"]
+    capped_posts = max(p_lo, min(p_hi, int(max_posts)))
+    capped_scrolls = max(s_lo, min(s_hi, int(max_scrolls)))
+    if capped_scrolls <= 0:
+        return 0
+    by_scroll = _SCROLL_DEPTH_GQL_BUDGET.get(capped_scrolls, 9)
+    by_posts = max(1, (capped_posts + 2) // 3 + 1)
+    return max(1, min(by_scroll, by_posts, 10))
+
+
+def _resolve_configured_proxy_count(proxy_urls: Any = None) -> int:
+    if isinstance(proxy_urls, list):
+        cleaned = [str(u or "").strip() for u in proxy_urls if str(u or "").strip()]
+        if cleaned:
+            return len(cleaned)
+    env_raw = os.getenv("PUBLIC_CRAWL_PROXIES", "").strip()
+    if env_raw:
+        try:
+            return len(normalize_proxy_list(env_raw))
+        except ValueError:
+            pass
+    return 0
+
+
+def clamp_public_crawl_config(
+    cfg: dict[str, Any],
+    *,
+    proxy_count: int | None = None,
+) -> dict[str, Any]:
+    """Enforce safer-only bounds across every config knob and sync concurrent_sims to real proxy count."""
+    clamped = dict(cfg)
+    for field_name, (lo, hi) in PUBLIC_CRAWL_CONFIG_BOUNDS.items():
+        raw_val = clamped.get(field_name)
+        fallback = DEFAULT_PUBLIC_CRAWL_CONFIG[field_name]
+        try:
+            parsed = int(raw_val) if raw_val is not None else int(fallback)
+        except (TypeError, ValueError):
+            parsed = int(fallback)
+        clamped[field_name] = max(lo, min(hi, parsed))
+
+    resolved_proxies = (
+        max(0, int(proxy_count))
+        if proxy_count is not None
+        else _resolve_configured_proxy_count(clamped.get("proxy_urls"))
+    )
+    max_lanes_cap = max(
+        1,
+        min(PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"][1], max(1, resolved_proxies)),
+    )
+    clamped["concurrent_sims"] = max(1, min(int(clamped["concurrent_sims"]), max_lanes_cap))
+    clamped["max_allowed_concurrent_sims"] = max_lanes_cap
+    return clamped
 
 _TRACKER_URL_SUBSTRINGS = (
     "facebook.com/tr",
@@ -689,6 +761,7 @@ class GuestPublicGroupWorker:
         progress_cb: Callable[[dict[str, Any]], None],
         keywords: list[str] | None = None,
         attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        run_id: str | None = None,
     ) -> None:
         self.sim = sim
         self.rotator = rotator
@@ -698,6 +771,7 @@ class GuestPublicGroupWorker:
         self.progress_cb = progress_cb
         self.keywords = keywords
         self._attempt_fetcher = attempt_fetcher
+        self.run_id = run_id
 
         self._bridge: Socks5HttpBridge | None = None
         self._http_client: httpx.AsyncClient | None = None
@@ -1001,13 +1075,14 @@ class GuestPublicGroupWorker:
                         "method": "httpx_fast",
                     }
 
+                non_pinned_count = sum(1 for p in collected if not p.get("is_pinned"))
                 should_stop, stop_reason = evaluate_watermark_early_stop(
                     collected,
                     known_urls=known_urls,
                     known_post_ids=known_ids,
                     max_posts=max_posts,
                 )
-                if (max_scrolls <= 0 and len(collected) > 0) or (should_stop and len(collected) > 0) or (len(collected) >= max_posts):
+                if (max_scrolls <= 0 and len(collected) > 0) or (should_stop and len(collected) > 0) or (non_pinned_count >= max_posts):
                     return {
                         "state": "ok",
                         "posts": collected,
@@ -1028,9 +1103,10 @@ class GuestPublicGroupWorker:
                 gql_pages_done = 0
 
                 if max_scrolls > 0 and cursor and has_next and gid and lsd and hasattr(c, "post"):
-                    max_gql_pages = min(16, max(max_scrolls * 4, (max_posts + 2) // 3 + 2))
+                    max_gql_pages = compute_gql_page_budget(max_posts, max_scrolls)
                     for page_no in range(1, max_gql_pages + 1):
-                        if self.stop_check() or len(collected) >= max_posts or not cursor or not has_next:
+                        non_pinned_count = sum(1 for p in collected if not p.get("is_pinned"))
+                        if self.stop_check() or non_pinned_count >= max_posts or not cursor or not has_next:
                             break
                         vp = {
                             "count": 10,
@@ -1129,13 +1205,14 @@ class GuestPublicGroupWorker:
                         if new_posts:
                             collected.extend(new_posts)
 
+                        non_pinned_count = sum(1 for p in collected if not p.get("is_pinned"))
                         should_stop, stop_reason = evaluate_watermark_early_stop(
                             collected,
                             known_urls=known_urls,
                             known_post_ids=known_ids,
                             max_posts=max_posts,
                         )
-                        if should_stop or len(collected) >= max_posts:
+                        if should_stop or non_pinned_count >= max_posts:
                             stop_reason = stop_reason or "max_posts_reached"
                             break
 
@@ -1218,10 +1295,12 @@ class GuestPublicGroupWorker:
         """Hybrid public group loader: HTTPX SSR Fast-Path first (~1s), Playwright scroll when needed."""
         raw_url = (group.get("group_url") or "").strip()
         target_url = normalize_group_crawl_url(raw_url)
+        p_lo, p_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"]
+        s_lo, s_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"]
         raw_max_posts = self.config.get("max_posts_per_group")
-        max_posts = 25 if raw_max_posts is None else max(1, int(raw_max_posts))
+        max_posts = 25 if raw_max_posts is None else max(p_lo, min(p_hi, int(raw_max_posts)))
         raw_max_scrolls = self.config.get("max_scrolls_per_group")
-        max_scrolls = 2 if raw_max_scrolls is None else max(0, int(raw_max_scrolls))
+        max_scrolls = 2 if raw_max_scrolls is None else max(s_lo, min(s_hi, int(raw_max_scrolls)))
         known_urls = watermarks.get("urls") or set()
         known_ids = watermarks.get("post_ids") or set()
 
@@ -1406,7 +1485,7 @@ class GuestPublicGroupWorker:
             get_group_post_watermarks,
             group_id=group_id or None,
             group_url=group_url or None,
-            limit=30,
+            limit=40,
         )
 
         outcome: dict[str, Any] = {"state": "error", "posts": [], "early_stop_reason": ""}
@@ -1530,6 +1609,13 @@ class GuestPublicGroupWorker:
             if p.get("post_url")
         ]
 
+        effective_max_posts = max(
+            PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"][0],
+            min(
+                PUBLIC_CRAWL_CONFIG_BOUNDS["max_posts_per_group"][1],
+                int(self.config.get("max_posts_per_group") or 25),
+            ),
+        )
         saved_count = 0
         if ext_posts:
             ingest_req = ExtensionCrawlRequest(
@@ -1538,13 +1624,17 @@ class GuestPublicGroupWorker:
                 group_url=group_url,
                 group_id=group_id or None,
                 keywords=self.keywords,
-                post_limit=int(self.config.get("max_posts_per_group") or 25),
+                post_limit=effective_max_posts,
                 worker_id=f"public-4g:{self.sim.id}",
             )
             ingest_res = await ingest_facebook_posts(
                 ingest_req,
                 event_name="public_4g_crawl_saved",
-                extra_broadcast_fields={"source": "public_4g", "sim_node": self.sim.id},
+                extra_broadcast_fields={
+                    "source": "public_4g",
+                    "sim_node": self.sim.id,
+                    "run_id": self.run_id,
+                },
             )
             saved_count = int(ingest_res.get("count") or 0)
 
@@ -1568,7 +1658,8 @@ class GuestPublicGroupWorker:
         # Track epoch count & probe passively every K groups to detect 60s auto-rotated IP + clean Guest context
         self.sim.total_groups += 1
         self.sim.groups_in_epoch += 1
-        k_rotate = max(1, int(self.config.get("groups_per_ip_rotate") or 6))
+        k_lo, k_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["groups_per_ip_rotate"]
+        k_rotate = max(k_lo, min(k_hi, int(self.config.get("groups_per_ip_rotate") or 6)))
         if (
             self.sim.socks_url
             and self.sim.groups_in_epoch >= k_rotate
@@ -1673,7 +1764,7 @@ class PublicCrawlOrchestrator:
                         cfg[k] = v
         except Exception as exc:
             logger.debug("[PUBLIC-4G] get_config fallback defaults (%s)", exc)
-        return cfg
+        return clamp_public_crawl_config(cfg)
 
     def update_config_sync(self, patch: dict[str, Any], updated_by: str | None = None) -> dict[str, Any]:
         current = self.get_config_sync()
@@ -1694,17 +1785,6 @@ class PublicCrawlOrchestrator:
                 continue
             clean_patch[k] = v
 
-        # Clamp bounds safely
-        if "cycle_interval_min" in clean_patch:
-            clean_patch["cycle_interval_min"] = max(5, min(1440, int(clean_patch["cycle_interval_min"])))
-        if "groups_per_ip_rotate" in clean_patch:
-            clean_patch["groups_per_ip_rotate"] = max(1, min(50, int(clean_patch["groups_per_ip_rotate"])))
-        if "max_posts_per_group" in clean_patch:
-            clean_patch["max_posts_per_group"] = max(1, min(100, int(clean_patch["max_posts_per_group"])))
-        if "max_scrolls_per_group" in clean_patch:
-            clean_patch["max_scrolls_per_group"] = max(0, min(10, int(clean_patch["max_scrolls_per_group"])))
-        if "concurrent_sims" in clean_patch:
-            clean_patch["concurrent_sims"] = max(1, min(10, int(clean_patch["concurrent_sims"])))
         if "proxy_urls" in clean_patch:
             # Guard against accidental UI re-submit of masked placeholders
             raw_list = clean_patch["proxy_urls"]
@@ -1713,7 +1793,9 @@ class PublicCrawlOrchestrator:
             else:
                 clean_patch["proxy_urls"] = normalize_proxy_list(raw_list)
 
-        merged = {**current, **clean_patch, "id": "default", "updated_at": _utc_now_iso()}
+        merged = clamp_public_crawl_config(
+            {**current, **clean_patch, "id": "default", "updated_at": _utc_now_iso()}
+        )
         if updated_by:
             merged["updated_by"] = updated_by
 
@@ -1753,7 +1835,8 @@ class PublicCrawlOrchestrator:
         if patch.get("public_crawl_enabled") is not None:
             allowed["public_crawl_enabled"] = bool(patch["public_crawl_enabled"])
         if patch.get("public_crawl_interval_min") is not None:
-            allowed["public_crawl_interval_min"] = max(5, min(1440, int(patch["public_crawl_interval_min"])))
+            ci_lo, ci_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"]
+            allowed["public_crawl_interval_min"] = max(ci_lo, min(ci_hi, int(patch["public_crawl_interval_min"])))
         if not allowed:
             return {}
         allowed["updated_at"] = _utc_now_iso()
@@ -1821,6 +1904,8 @@ class PublicCrawlOrchestrator:
         if not only_due:
             return rows
 
+        ci_lo, ci_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["cycle_interval_min"]
+        global_interval = max(ci_lo, min(ci_hi, int(default_interval_min or 15)))
         now = datetime.now(timezone.utc)
         due: list[dict[str, Any]] = []
         for row in rows:
@@ -1832,8 +1917,8 @@ class PublicCrawlOrchestrator:
                 last_dt = datetime.fromisoformat(str(last_raw).replace("Z", "+00:00"))
                 if last_dt.tzinfo is None:
                     last_dt = last_dt.replace(tzinfo=timezone.utc)
-                interval = int(row.get("public_crawl_interval_min") or default_interval_min or 15)
-                if (now - last_dt).total_seconds() >= max(5, interval) * 60:
+                # Always honor the configured global cycle_interval_min instead of letting SQL column DEFAULT 30 shadow UI edits
+                if (now - last_dt).total_seconds() >= global_interval * 60:
                     due.append(row)
             except ValueError:
                 due.append(row)
@@ -1912,7 +1997,7 @@ class PublicCrawlOrchestrator:
                     masked_list = [mask_proxy_url(u) for u in normalize_proxy_list(env_raw)]
                 except ValueError:
                     pass
-        safe = dict(cfg)
+        safe = clamp_public_crawl_config(cfg, proxy_count=len(masked_list))
         safe["proxy_urls"] = masked_list
         safe["proxies_masked"] = masked_list
         safe["proxies_configured"] = len(masked_list)
@@ -1988,7 +2073,8 @@ class PublicCrawlOrchestrator:
                 }
             sims = [SimNodeRuntime(id="direct-local", label="Direct Guest (Dev)", status="idle")]
 
-        max_lanes = max(1, min(len(sims), int(cfg.get("concurrent_sims") or len(sims))))
+        _, max_sims_bound = PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"]
+        max_lanes = max(1, min(len(sims), max_sims_bound, int(cfg.get("concurrent_sims") or len(sims))))
         active_sims = sims[:max_lanes]
 
         self.is_running = True
@@ -2064,6 +2150,7 @@ class PublicCrawlOrchestrator:
                     progress_cb=self._bump_progress,
                     keywords=keywords,
                     attempt_fetcher=attempt_fetcher,
+                    run_id=run_id,
                 ) as worker:
                     while not self.stop_requested:
                         try:

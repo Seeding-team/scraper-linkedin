@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -26,6 +26,151 @@ import type {
   PublicCrawlStatusResponse,
 } from "@/types/public-crawler";
 
+type NumericConfigField =
+  | "groups_per_ip_rotate"
+  | "cycle_interval_min"
+  | "concurrent_sims"
+  | "max_posts_per_group"
+  | "max_scrolls_per_group";
+
+const PUBLIC_CRAWL_LIMITS: Record<
+  NumericConfigField,
+  { min: number; max: number; fallback: number; label: string }
+> = {
+  groups_per_ip_rotate: {
+    min: 1,
+    max: 6,
+    fallback: 6,
+    label: "Xoay IP sau mỗi (nhóm)",
+  },
+  cycle_interval_min: {
+    min: 15,
+    max: 1440,
+    fallback: 15,
+    label: "Chu kỳ quét lại (phút)",
+  },
+  concurrent_sims: {
+    min: 1,
+    max: 4,
+    fallback: 1,
+    label: "Số luồng Proxy song song",
+  },
+  max_posts_per_group: {
+    min: 1,
+    max: 25,
+    fallback: 25,
+    label: "Số bài tối đa / nhóm",
+  },
+  max_scrolls_per_group: {
+    min: 0,
+    max: 3,
+    fallback: 2,
+    label: "Độ sâu phân trang (0 = 1 bài)",
+  },
+};
+
+const NUMERIC_CONFIG_FIELDS: NumericConfigField[] = [
+  "groups_per_ip_rotate",
+  "cycle_interval_min",
+  "concurrent_sims",
+  "max_posts_per_group",
+  "max_scrolls_per_group",
+];
+
+function getNumericBounds(
+  field: NumericConfigField,
+  maxConcurrentByProxy: number,
+): { min: number; max: number } {
+  const base = PUBLIC_CRAWL_LIMITS[field];
+  if (field === "concurrent_sims") {
+    return {
+      min: base.min,
+      max: Math.min(base.max, Math.max(1, maxConcurrentByProxy)),
+    };
+  }
+  return { min: base.min, max: base.max };
+}
+
+function clampNumericField(
+  field: NumericConfigField,
+  raw: unknown,
+  maxConcurrentByProxy: number,
+): { value: number; adjustedNote: string | null } {
+  const { min, max } = getNumericBounds(field, maxConcurrentByProxy);
+  const meta = PUBLIC_CRAWL_LIMITS[field];
+  const parsed = typeof raw === "string" ? Number(raw.trim()) : Number(raw);
+  if (raw === "" || raw === null || raw === undefined || !Number.isFinite(parsed)) {
+    const safeFallback = Math.max(min, Math.min(max, meta.fallback));
+    return { value: safeFallback, adjustedNote: null };
+  }
+  const intVal = Math.trunc(parsed);
+  const clamped = Math.max(min, Math.min(max, intVal));
+  if (clamped !== intVal) {
+    return {
+      value: clamped,
+      adjustedNote: `${meta.label} được giới hạn an toàn trong khoảng ${min}–${max} (đã khớp về ${clamped}).`,
+    };
+  }
+  return { value: clamped, adjustedNote: null };
+}
+
+function configToNumberStrings(
+  cfg: PublicCrawlConfig,
+  maxConcurrentByProxy: number,
+): Record<NumericConfigField, string> {
+  return {
+    groups_per_ip_rotate: String(
+      clampNumericField("groups_per_ip_rotate", cfg.groups_per_ip_rotate, maxConcurrentByProxy).value,
+    ),
+    cycle_interval_min: String(
+      clampNumericField("cycle_interval_min", cfg.cycle_interval_min, maxConcurrentByProxy).value,
+    ),
+    concurrent_sims: String(
+      clampNumericField("concurrent_sims", cfg.concurrent_sims, maxConcurrentByProxy).value,
+    ),
+    max_posts_per_group: String(
+      clampNumericField("max_posts_per_group", cfg.max_posts_per_group, maxConcurrentByProxy).value,
+    ),
+    max_scrolls_per_group: String(
+      clampNumericField("max_scrolls_per_group", cfg.max_scrolls_per_group, maxConcurrentByProxy).value,
+    ),
+  };
+}
+
+function sanitizeConfigObject(
+  cfg: PublicCrawlConfig,
+  maxConcurrentByProxy: number,
+): PublicCrawlConfig {
+  return {
+    ...cfg,
+    groups_per_ip_rotate: clampNumericField(
+      "groups_per_ip_rotate",
+      cfg.groups_per_ip_rotate,
+      maxConcurrentByProxy,
+    ).value,
+    cycle_interval_min: clampNumericField(
+      "cycle_interval_min",
+      cfg.cycle_interval_min,
+      maxConcurrentByProxy,
+    ).value,
+    concurrent_sims: clampNumericField(
+      "concurrent_sims",
+      cfg.concurrent_sims,
+      maxConcurrentByProxy,
+    ).value,
+    max_posts_per_group: clampNumericField(
+      "max_posts_per_group",
+      cfg.max_posts_per_group,
+      maxConcurrentByProxy,
+    ).value,
+    max_scrolls_per_group: clampNumericField(
+      "max_scrolls_per_group",
+      cfg.max_scrolls_per_group,
+      maxConcurrentByProxy,
+    ).value,
+  };
+}
+
 const DEFAULT_CONFIG: PublicCrawlConfig = {
   id: "default",
   enabled: false,
@@ -33,7 +178,7 @@ const DEFAULT_CONFIG: PublicCrawlConfig = {
   groups_per_ip_rotate: 6,
   max_posts_per_group: 25,
   max_scrolls_per_group: 2,
-  concurrent_sims: 2,
+  concurrent_sims: 1,
   auto_skip_private: true,
   headless: true,
 };
@@ -81,7 +226,23 @@ export function Public4GCrawlerPanel() {
 
   const [statusData, setStatusData] = useState<PublicCrawlStatusResponse | null>(null);
   const [configDraft, setConfigDraft] = useState<PublicCrawlConfig>(DEFAULT_CONFIG);
+  const [numberInputs, setNumberInputs] = useState<Record<NumericConfigField, string>>(() =>
+    configToNumberStrings(DEFAULT_CONFIG, 1),
+  );
   const [configDirty, setConfigDirty] = useState(false);
+  const configDirtyRef = useRef(false);
+  useEffect(() => {
+    configDirtyRef.current = configDirty;
+  }, [configDirty]);
+
+  const maxConcurrentByProxy = useMemo(() => {
+    const serverCap = statusData?.config?.max_allowed_concurrent_sims;
+    const byProxyCount = Math.min(
+      PUBLIC_CRAWL_LIMITS.concurrent_sims.max,
+      Math.max(1, (statusData?.sims || []).length),
+    );
+    return serverCap ? Math.min(PUBLIC_CRAWL_LIMITS.concurrent_sims.max, Math.max(1, serverCap)) : byProxyCount;
+  }, [statusData?.config?.max_allowed_concurrent_sims, statusData?.sims]);
 
   const [groups, setGroups] = useState<PublicCrawlGroupItem[]>([]);
   const [visibilityFilter, setVisibilityFilter] = useState<"all" | "public" | "private">("all");
@@ -101,27 +262,37 @@ export function Public4GCrawlerPanel() {
     null,
   );
 
-  const loadAll = useCallback(async (syncDraft = false) => {
-    try {
-      const [statusRes, groupsRes] = await Promise.all([
-        publicCrawlerService.getStatus(),
-        publicCrawlerService.listGroups(),
-      ]);
-      setStatusData(statusRes);
-      if (syncDraft) {
-        setConfigDraft(statusRes.config);
-        setConfigDirty(false);
-      }
-      setGroups(groupsRes.groups || []);
-    } catch (err) {
-      setFeedback({
-        type: "error",
-        text: err instanceof Error ? err.message : "Không tải được trạng thái Public 4G Crawler",
-      });
-    } finally {
-      setLoading(false);
-    }
+  const syncFormFromServer = useCallback((cfg: PublicCrawlConfig, proxyCount: number) => {
+    const cap = Math.min(PUBLIC_CRAWL_LIMITS.concurrent_sims.max, Math.max(1, proxyCount));
+    const clean = sanitizeConfigObject(cfg, cfg.max_allowed_concurrent_sims ?? cap);
+    setConfigDraft(clean);
+    setNumberInputs(configToNumberStrings(clean, cfg.max_allowed_concurrent_sims ?? cap));
+    setConfigDirty(false);
   }, []);
+
+  const loadAll = useCallback(
+    async (syncDraft = false) => {
+      try {
+        const [statusRes, groupsRes] = await Promise.all([
+          publicCrawlerService.getStatus(),
+          publicCrawlerService.listGroups(),
+        ]);
+        setStatusData(statusRes);
+        if (syncDraft || !configDirtyRef.current) {
+          syncFormFromServer(statusRes.config, (statusRes.sims || []).length);
+        }
+        setGroups(groupsRes.groups || []);
+      } catch (err) {
+        setFeedback({
+          type: "error",
+          text: err instanceof Error ? err.message : "Không tải được trạng thái Public 4G Crawler",
+        });
+      } finally {
+        setLoading(false);
+      }
+    },
+    [syncFormFromServer],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -132,8 +303,7 @@ export function Public4GCrawlerPanel() {
       .then(([statusRes, groupsRes]) => {
         if (cancelled) return;
         setStatusData(statusRes);
-        setConfigDraft(statusRes.config);
-        setConfigDirty(false);
+        syncFormFromServer(statusRes.config, (statusRes.sims || []).length);
         setGroups(groupsRes.groups || []);
       })
       .catch((err) => {
@@ -152,7 +322,7 @@ export function Public4GCrawlerPanel() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [syncFormFromServer]);
 
   // Adaptive polling: fast when running (2.5s), light when idle (15s)
   const isRunning = Boolean(statusData?.runtime.is_running);
@@ -196,23 +366,77 @@ export function Public4GCrawlerPanel() {
     [keywordsInput],
   );
 
+  const buildSanitizedDraft = useCallback(() => {
+    const notes: string[] = [];
+    const nextNumbers: Record<NumericConfigField, string> = { ...numberInputs };
+    const nextDraft: PublicCrawlConfig = { ...configDraft };
+
+    for (const field of NUMERIC_CONFIG_FIELDS) {
+      const res = clampNumericField(field, numberInputs[field], maxConcurrentByProxy);
+      nextDraft[field] = res.value;
+      nextNumbers[field] = String(res.value);
+      if (res.adjustedNote) notes.push(res.adjustedNote);
+    }
+
+    return { nextDraft, nextNumbers, notes };
+  }, [configDraft, maxConcurrentByProxy, numberInputs]);
+
+  const handleNumericChange = (field: NumericConfigField, raw: string) => {
+    setNumberInputs((prev) => ({ ...prev, [field]: raw }));
+    setConfigDirty(true);
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return;
+    const { min, max } = getNumericBounds(field, maxConcurrentByProxy);
+    const intVal = Math.trunc(parsed);
+    if (intVal >= min && intVal <= max) {
+      setConfigDraft((prev) => ({ ...prev, [field]: intVal }));
+    }
+  };
+
+  const commitNumericField = (field: NumericConfigField) => {
+    const { value, adjustedNote } = clampNumericField(
+      field,
+      numberInputs[field],
+      maxConcurrentByProxy,
+    );
+    setNumberInputs((prev) => ({ ...prev, [field]: String(value) }));
+    setConfigDraft((prev) => ({ ...prev, [field]: value }));
+    if (adjustedNote) {
+      setFeedback({ type: "info", text: adjustedNote });
+    }
+  };
+
+  const persistSanitizedConfig = async (): Promise<{
+    config: PublicCrawlConfig;
+    notes: string[];
+  }> => {
+    const { nextDraft, notes } = buildSanitizedDraft();
+    const res = await publicCrawlerService.updateConfig({
+      enabled: nextDraft.enabled,
+      cycle_interval_min: nextDraft.cycle_interval_min,
+      groups_per_ip_rotate: nextDraft.groups_per_ip_rotate,
+      max_posts_per_group: nextDraft.max_posts_per_group,
+      max_scrolls_per_group: nextDraft.max_scrolls_per_group,
+      concurrent_sims: nextDraft.concurrent_sims,
+      auto_skip_private: nextDraft.auto_skip_private,
+    });
+    syncFormFromServer(res.config, (statusData?.sims || []).length);
+    return { config: res.config, notes };
+  };
+
   const handleSaveConfig = async () => {
     if (!canControl) return;
     setSavingConfig(true);
     setFeedback(null);
     try {
-      const res = await publicCrawlerService.updateConfig({
-        enabled: configDraft.enabled,
-        cycle_interval_min: configDraft.cycle_interval_min,
-        groups_per_ip_rotate: configDraft.groups_per_ip_rotate,
-        max_posts_per_group: configDraft.max_posts_per_group,
-        max_scrolls_per_group: configDraft.max_scrolls_per_group,
-        concurrent_sims: configDraft.concurrent_sims,
-        auto_skip_private: configDraft.auto_skip_private,
+      const { config, notes } = await persistSanitizedConfig();
+      const summary = `Đã khớp cấu hình: ${config.max_posts_per_group} bài/nhóm · sâu ${config.max_scrolls_per_group} · xoay IP/${config.groups_per_ip_rotate} nhóm · ${config.concurrent_sims} luồng · chu kỳ ${config.cycle_interval_min}p.`;
+      setFeedback({
+        type: "success",
+        text: notes.length > 0 ? `${summary} (${notes.join(" ")})` : summary,
       });
-      setConfigDraft(res.config);
-      setConfigDirty(false);
-      setFeedback({ type: "success", text: "Đã lưu cấu hình Cào Public Proxy Xoay." });
       await loadAll(false);
     } catch (err) {
       setFeedback({
@@ -234,7 +458,7 @@ export function Public4GCrawlerPanel() {
         .map((s) => s.trim())
         .filter(Boolean);
       const res = await publicCrawlerService.updateConfig({ proxy_urls: lines });
-      setConfigDraft(res.config);
+      syncFormFromServer(res.config, lines.length);
       setProxyPoolInput("");
       setShowProxyEditor(false);
       setFeedback({
@@ -260,6 +484,11 @@ export function Public4GCrawlerPanel() {
     setTriggeringRun(true);
     setFeedback(null);
     try {
+      let autoSavedText = "";
+      if (configDirtyRef.current) {
+        const { config } = await persistSanitizedConfig();
+        autoSavedText = ` (Đã tự đồng bộ: ${config.max_posts_per_group} bài · sâu ${config.max_scrolls_per_group} · ${config.concurrent_sims} luồng)`;
+      }
       const group_ids = onlySelected && selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
       const res = await publicCrawlerService.runNow({
         group_ids,
@@ -269,9 +498,11 @@ export function Public4GCrawlerPanel() {
       if (res.started) {
         setFeedback({
           type: "success",
-          text: limitGroups
-            ? `Đang Test Cào Nhanh ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`
-            : `Đã khởi chạy cào ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`,
+          text:
+            (limitGroups
+              ? `Đang Test Cào Nhanh ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`
+              : `Đã khởi chạy cào ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`) +
+            autoSavedText,
         });
       } else {
         setFeedback({
@@ -819,99 +1050,100 @@ export function Public4GCrawlerPanel() {
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Xoay IP sau mỗi (nhóm)</span>
+            <label
+              className="space-y-1 text-xs"
+              title="Giới hạn an toàn 1–6 nhóm/lần reset phiên. Chỉnh thấp hơn (2–4) giúp proxy xoay 60s ít chạm tường 302."
+            >
+              <span className="font-bold text-slate-600 block">
+                Xoay IP sau mỗi (nhóm){" "}
+                <span className="font-normal text-[10px] text-slate-400">(1–6)</span>
+              </span>
               <input
                 type="number"
-                min={1}
-                max={50}
+                min={PUBLIC_CRAWL_LIMITS.groups_per_ip_rotate.min}
+                max={PUBLIC_CRAWL_LIMITS.groups_per_ip_rotate.max}
                 disabled={!canControl}
-                value={configDraft.groups_per_ip_rotate}
-                onChange={(e) => {
-                  setConfigDraft((p) => ({
-                    ...p,
-                    groups_per_ip_rotate: Math.max(1, Number(e.target.value) || 6),
-                  }));
-                  setConfigDirty(true);
-                }}
-                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
-              />
-            </label>
-            <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Chu kỳ quét lại (phút)</span>
-              <input
-                type="number"
-                min={5}
-                max={1440}
-                disabled={!canControl}
-                value={configDraft.cycle_interval_min}
-                onChange={(e) => {
-                  setConfigDraft((p) => ({
-                    ...p,
-                    cycle_interval_min: Math.max(5, Number(e.target.value) || 15),
-                  }));
-                  setConfigDirty(true);
-                }}
-                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
-              />
-            </label>
-            <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Số luồng Proxy song song</span>
-              <input
-                type="number"
-                min={1}
-                max={10}
-                disabled={!canControl}
-                value={configDraft.concurrent_sims}
-                onChange={(e) => {
-                  setConfigDraft((p) => ({
-                    ...p,
-                    concurrent_sims: Math.max(1, Number(e.target.value) || 2),
-                  }));
-                  setConfigDirty(true);
-                }}
-                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
-              />
-            </label>
-            <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Số bài tối đa / nhóm</span>
-              <input
-                type="number"
-                min={1}
-                max={100}
-                disabled={!canControl}
-                value={configDraft.max_posts_per_group}
-                onChange={(e) => {
-                  setConfigDraft((p) => ({
-                    ...p,
-                    max_posts_per_group: Math.max(1, Number(e.target.value) || 25),
-                  }));
-                  setConfigDirty(true);
-                }}
+                value={numberInputs.groups_per_ip_rotate}
+                onChange={(e) => handleNumericChange("groups_per_ip_rotate", e.target.value)}
+                onBlur={() => commitNumericField("groups_per_ip_rotate")}
                 className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
               />
             </label>
             <label
               className="space-y-1 text-xs"
-              title=">= 1: tự động nối trang HTTPX GraphQL lấy 20–25 bài mới nhất/nhóm (~10–15s); 0: chỉ đọc nhanh 1 bài đầu SSR (~1.3s)"
+              title="Khóa tối thiểu 15 phút để không spam nhóm; có thể tăng lên 30–1440 phút cho nhẹ proxy."
             >
               <span className="font-bold text-slate-600 block">
-                Độ sâu phân trang (0 = 1 bài)
+                Chu kỳ quét lại (phút){" "}
+                <span className="font-normal text-[10px] text-slate-400">(≥ 15p)</span>
               </span>
               <input
                 type="number"
-                min={0}
-                max={10}
+                min={PUBLIC_CRAWL_LIMITS.cycle_interval_min.min}
+                max={PUBLIC_CRAWL_LIMITS.cycle_interval_min.max}
                 disabled={!canControl}
-                value={configDraft.max_scrolls_per_group}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  setConfigDraft((p) => ({
-                    ...p,
-                    max_scrolls_per_group: Number.isNaN(parsed) ? 2 : Math.max(0, parsed),
-                  }));
-                  setConfigDirty(true);
-                }}
+                value={numberInputs.cycle_interval_min}
+                onChange={(e) => handleNumericChange("cycle_interval_min", e.target.value)}
+                onBlur={() => commitNumericField("cycle_interval_min")}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label
+              className="space-y-1 text-xs"
+              title={`Tự khớp theo số proxy trong Pool (hiện có ${sims.length} proxy, trần tối đa ${PUBLIC_CRAWL_LIMITS.concurrent_sims.max}).`}
+            >
+              <span className="font-bold text-slate-600 block">
+                Số luồng Proxy song song{" "}
+                <span className="font-normal text-[10px] text-slate-400">
+                  ({maxConcurrentByProxy === 1 ? "khớp 1 proxy" : `1–${maxConcurrentByProxy}`})
+                </span>
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={maxConcurrentByProxy}
+                disabled={!canControl || maxConcurrentByProxy <= 1}
+                value={numberInputs.concurrent_sims}
+                onChange={(e) => handleNumericChange("concurrent_sims", e.target.value)}
+                onBlur={() => commitNumericField("concurrent_sims")}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold disabled:bg-slate-50 disabled:text-slate-500"
+              />
+            </label>
+            <label
+              className="space-y-1 text-xs"
+              title="Trần an toàn tối đa 25 bài/nhóm (khuyên dùng 15–20 bài). Không cho chỉnh căng hơn 25 để tránh cháy IP 60s."
+            >
+              <span className="font-bold text-slate-600 block">
+                Số bài tối đa / nhóm{" "}
+                <span className="font-normal text-[10px] text-slate-400">(1–25)</span>
+              </span>
+              <input
+                type="number"
+                min={PUBLIC_CRAWL_LIMITS.max_posts_per_group.min}
+                max={PUBLIC_CRAWL_LIMITS.max_posts_per_group.max}
+                disabled={!canControl}
+                value={numberInputs.max_posts_per_group}
+                onChange={(e) => handleNumericChange("max_posts_per_group", e.target.value)}
+                onBlur={() => commitNumericField("max_posts_per_group")}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label
+              className="space-y-1 text-xs"
+              title="0: quét nhanh SSR 1–3 bài (~1s); 1: nhẹ (~4 trang, ~12 bài); 2: chuẩn (~20–25 bài); 3: tối đa (~10 trang GraphQL)."
+            >
+              <span className="font-bold text-slate-600 block">
+                Độ sâu phân trang (0 = 1 bài){" "}
+                <span className="font-normal text-[10px] text-slate-400">(0–3)</span>
+              </span>
+              <input
+                type="number"
+                min={PUBLIC_CRAWL_LIMITS.max_scrolls_per_group.min}
+                max={PUBLIC_CRAWL_LIMITS.max_scrolls_per_group.max}
+                disabled={!canControl}
+                value={numberInputs.max_scrolls_per_group}
+                onChange={(e) => handleNumericChange("max_scrolls_per_group", e.target.value)}
+                onBlur={() => commitNumericField("max_scrolls_per_group")}
                 className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
               />
             </label>

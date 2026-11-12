@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.phone import vn_phone_to_e164
 from app.core.supabase_client import get_supabase_client
+from app.modules.all_platform.services.crawled_post_audit_service import update_ai_check_audit_sync
 from app.modules.all_platform.services.post_deduplication_service import is_obvious_competitor_seller
 
 logger = get_logger(__name__)
@@ -183,6 +184,14 @@ async def score_text_for_lead(content: str, *, keywords: Optional[list[str]] = N
     return None
 
 
+def _table_to_platform(table: str) -> str:
+    if table == "linkedin_posts":
+        return "linkedin"
+    if table == "threads_posts":
+        return "threads"
+    return "facebook"
+
+
 async def score_and_save_posts(
     table: str,
     rows: list[dict[str, Any]],
@@ -190,30 +199,82 @@ async def score_and_save_posts(
     id_member: Optional[str] = None,
     group_name: Optional[str] = None,
     keywords: Optional[list[str]] = None,
+    crawl_source: Optional[str] = None,
+    proxy_node: Optional[str] = None,
+    run_id: Optional[str] = None,
+    group_url: Optional[str] = None,
 ) -> dict[str, int]:
     """Chấm điểm + lưu lead_score/lead_score_reason/lead_need_category cho các bài vừa insert.
     Nếu bài là ĐỐI THỦ CHÀO MỜI hoặc ĐIỂM < 40: XÓA NGAY LẬP TỨC khỏi database.
     """
     summary = {"total": 0, "high": 0, "deleted": 0}
-    if not is_lead_scoring_configured() or not rows:
+    if not rows:
+        return summary
+
+    platform_name = _table_to_platform(table)
+    src_label = crawl_source or ("extension" if (id_member or platform_name != "facebook") else "public_4g")
+
+    if not is_lead_scoring_configured():
+        unconfigured_entries = [
+            {
+                "platform": platform_name,
+                "crawl_source": src_label,
+                "run_id": run_id,
+                "proxy_node": proxy_node,
+                "group_name": group_name,
+                "group_url": group_url,
+                "post_id": r.get("id"),
+                "post_url": r.get("post_url"),
+                "content": r.get("content") or "",
+                "ai_status": "unconfigured",
+                "lead_score": None,
+                "lead_score_reason": "Chưa cấu hình OPENAI_API_KEY để AI chấm điểm",
+            }
+            for r in rows
+            if r.get("post_url")
+        ]
+        if unconfigured_entries:
+            await asyncio.to_thread(update_ai_check_audit_sync, unconfigured_entries)
         return summary
 
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_SCORING)
     supabase = get_supabase_client()
+    audit_results: list[dict[str, Any]] = []
 
     async def _score_one(row: dict[str, Any]) -> None:
         post_id = row.get("id")
+        post_url = row.get("post_url") or ""
         content = row.get("content") or ""
         if not post_id or not content.strip():
             return
         async with semaphore:
             result = await score_text_for_lead(content, keywords=keywords)
         if not result:
+            if post_url:
+                audit_results.append(
+                    {
+                        "platform": platform_name,
+                        "crawl_source": src_label,
+                        "run_id": run_id,
+                        "proxy_node": proxy_node,
+                        "group_name": group_name,
+                        "group_url": group_url,
+                        "post_id": post_id,
+                        "post_url": post_url,
+                        "content": content,
+                        "ai_status": "error",
+                        "lead_score": None,
+                        "lead_score_reason": "AI tạm lỗi phản hồi — bài vẫn được giữ trong DB",
+                    }
+                )
             return
         summary["total"] += 1
         try:
             is_competitor = result.get("is_competitor") is True or result.get("is_buyer") is False
+            is_buyer = bool(result.get("is_buyer"))
             score = result.get("score", 0)
+            auto_created = False
+            zalo_triggered = False
 
             # ĐIỀU KIỆN XÓA TRIỆT ĐỂ: Nếu là đối thủ chào hàng HOẶC điểm < 40 -> XÓA NGAY
             if is_competitor or score < _DELETE_BELOW_SCORE:
@@ -223,6 +284,7 @@ async def score_and_save_posts(
                     f"(điểm {score}, is_competitor={is_competitor} - {result.get('reason')})"
                 )
                 summary["deleted"] += 1
+                ai_status = "deleted_competitor" if is_competitor else "deleted_low_score"
             else:
                 await asyncio.to_thread(
                     lambda: supabase.table(table)
@@ -236,6 +298,7 @@ async def score_and_save_posts(
                 )
                 if score >= _HIGH_SCORE:
                     summary["high"] += 1
+                ai_status = "kept"
 
                 if table in ("facebook_posts", "linkedin_posts") and score >= 70:
                     from app.modules.all_platform.services.auto_seeding_comment_service import (
@@ -245,7 +308,7 @@ async def score_and_save_posts(
                     created = await maybe_create_auto_seeding_comment(
                         post_id=post_id,
                         platform=platform,
-                        post_url=row.get("post_url") or "",
+                        post_url=post_url,
                         group_name=group_name,
                         id_member=id_member,
                         content=content,
@@ -253,17 +316,46 @@ async def score_and_save_posts(
                         need_category=result.get("need_category"),
                         contact_phone=result.get("contact_phone"),
                     )
+                    auto_created = bool(created)
                     if created and result.get("contact_phone"):
                         from app.modules.all_platform.services.auto_seeding_zalo_service import (
                             maybe_send_zalo_consult,
                         )
+                        zalo_triggered = True
                         await maybe_send_zalo_consult(
                             comment_id=created["id"],
                             contact_phone=result["contact_phone"],
                             need_category=result.get("need_category"),
                         )
+
+            if post_url:
+                audit_results.append(
+                    {
+                        "platform": platform_name,
+                        "crawl_source": src_label,
+                        "run_id": run_id,
+                        "proxy_node": proxy_node,
+                        "group_id": row.get("group_id"),
+                        "group_name": group_name,
+                        "group_url": group_url,
+                        "post_id": post_id,
+                        "post_url": post_url,
+                        "content": content,
+                        "ai_status": ai_status,
+                        "lead_score": score,
+                        "is_competitor": is_competitor,
+                        "is_buyer": is_buyer,
+                        "lead_need_category": result.get("need_category"),
+                        "lead_score_reason": result.get("reason"),
+                        "contact_phone": result.get("contact_phone"),
+                        "auto_seeding_created": auto_created,
+                        "zalo_triggered": zalo_triggered,
+                    }
+                )
         except Exception as exc:
             logger.warning(f"lead_score: lưu/xoá bài {table}#{post_id} thất bại: {exc}")
 
     await asyncio.gather(*(_score_one(r) for r in rows))
+    if audit_results:
+        await asyncio.to_thread(update_ai_check_audit_sync, audit_results)
     return summary

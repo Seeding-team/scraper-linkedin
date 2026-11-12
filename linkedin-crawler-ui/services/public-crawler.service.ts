@@ -1,4 +1,5 @@
 import type {
+  CrawledPostsOverviewResponse,
   ProxyTestResponse,
   PublicCrawlActionResponse,
   PublicCrawlConfig,
@@ -92,4 +93,21 @@ export const publicCrawlerService = {
       method: "POST",
       body: JSON.stringify(body ?? {}),
     }),
+
+  getCrawledPosts: (params?: {
+    time_range?: "today" | "7d" | "all";
+    search?: string;
+    ai_filter?: "all" | "lead_high" | "kept" | "deleted" | "pending";
+    source_filter?: "all" | "public_4g" | "extension";
+    limit?: number;
+  }) => {
+    const searchParams = new URLSearchParams();
+    if (params?.time_range) searchParams.set("time_range", params.time_range);
+    if (params?.search?.trim()) searchParams.set("search", params.search.trim());
+    if (params?.ai_filter) searchParams.set("ai_filter", params.ai_filter);
+    if (params?.source_filter) searchParams.set("source_filter", params.source_filter);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    const qs = searchParams.toString();
+    return request<CrawledPostsOverviewResponse>(`/crawled-posts${qs ? `?${qs}` : ""}`);
+  },
 };
