@@ -14,6 +14,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
 import { PostCard } from "@/components/all-platform/components/post-card";
+import { CallResultStatsWidget } from "@/components/all-platform/components/call-result-stats-widget";
 import { QuickReviewToolbar } from "@/components/all-platform/posts/QuickReviewToolbar";
 import { PendingKeywordsPanel } from "@/components/all-platform/crawl-keywords/PendingKeywordsPanel";
 import { toast } from "sonner";
@@ -643,6 +644,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [filters, setFilters] = useState<FilterState>(INITIAL_FILTERS);
   const filterDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Widget "Kết quả liên hệ": chọn 1 loại kết quả -> lọc server-side danh sách
+  // post bên dưới (bấm lại thì bỏ chọn). Sống ở component cha (không phải state
+  // cục bộ trong widget) vì fetchPosts() cần đọc giá trị này.
+  const [selectedCallResultCode, setSelectedCallResultCode] = useState<string | null>(null);
+
   // Fetch Taxonomy
   const fetchCategories = useCallback(async () => {
     try {
@@ -727,6 +733,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           content_type: filters.content_type || undefined,
           product_seeding: filters.product_seeding || undefined,
           search: filters.search || undefined,
+          call_result_code: selectedCallResultCode || undefined,
           sort: filters.sort,
           page: requestPage,
           page_size: requestPageSize,
@@ -797,7 +804,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } finally {
       setIsLoadingPosts(false);
     }
-  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page]);
+  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode]);
 
   
 
@@ -1652,6 +1659,13 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             productSeedings={productSeedings}
             onFilter={handleFilter}
             isLoading={isLoadingPosts}
+          />
+
+          <CallResultStatsWidget
+            selectedCode={selectedCallResultCode}
+            onSelectCode={setSelectedCallResultCode}
+            platform={feedPlatform}
+            userRole={user?.role}
           />
 
           {isLoadingPosts ? (
