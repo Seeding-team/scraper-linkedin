@@ -632,16 +632,30 @@ async def ingest_threads_4g_keyword_batch(
 
     if inserted_rows:
         group_label = f"Threads: {keyword}"
-        await asyncio.to_thread(
-            record_crawled_posts_audit_sync,
-            platform="threads",
-            crawl_source="public_4g",
-            run_id=run_id,
-            proxy_node=proxy_node,
-            group_name=group_label,
-            group_url=result.search_url,
-            posts=inserted_rows,
-        )
+        audit_entries = [
+            {
+                "platform": "threads",
+                "crawl_source": "public_4g",
+                "run_id": run_id,
+                "proxy_node": proxy_node,
+                "group_name": group_label,
+                "group_url": result.search_url,
+                "post_id": row.get("id"),
+                "post_url": str(row.get("post_url") or ""),
+                "author_name": row.get("author_name"),
+                "content": row.get("content") or "",
+                "post_time": row.get("post_time"),
+                "reactions": int(row.get("reactions") or 0),
+                "comments": int(row.get("comments") or 0),
+                "shares": int(row.get("shares") or 0),
+                "ai_status": "pending",
+            }
+            for row in inserted_rows
+            if row.get("post_url")
+        ]
+        if audit_entries:
+            await asyncio.to_thread(record_crawled_posts_audit_sync, audit_entries)
+
         score_res = await score_and_save_posts(
             "threads_posts",
             inserted_rows,
@@ -652,13 +666,17 @@ async def ingest_threads_4g_keyword_batch(
             run_id=run_id,
             group_url=result.search_url,
         )
-        result.high_score_count = int((score_res or {}).get("high_score") or 0)
-        result.ai_checked_count = int((score_res or {}).get("scored") or len(inserted_rows))
+        score_dict = score_res or {}
+        high_val = score_dict["high"] if "high" in score_dict else score_dict.get("high_score")
+        total_val = score_dict["total"] if "total" in score_dict else score_dict.get("scored")
+        result.high_score_count = int(high_val or 0)
+        result.ai_checked_count = int(total_val if total_val is not None else len(inserted_rows))
 
+    matched_fresh_count = max(0, int(result.saved_count) + int(result.skipped_existing))
     await asyncio.to_thread(
         record_keyword_result,
         keyword,
-        result.raw_extracted,
+        matched_fresh_count,
         result.high_score_count,
     )
     return result

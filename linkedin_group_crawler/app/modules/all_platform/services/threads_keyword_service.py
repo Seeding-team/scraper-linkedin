@@ -121,7 +121,8 @@ async def _generate_keywords(n: int, existing: list[str]) -> list[str]:
         out: list[str] = []
         for k in keywords:
             k = str(k).strip()
-            if k and k.lower() not in existing_lower and k not in out:
+            # Keep only concise 1-3 word queries compatible with strict contiguous phrase matching.
+            if k and len(k.split()) <= 3 and k.lower() not in existing_lower and k not in out:
                 out.append(k)
         return out
     except Exception as exc:
@@ -275,18 +276,30 @@ async def evolve_and_select_keywords(
     newly_added: list[str] = []
     ai_powered = False
 
-    # 1. Retire dead 0-result keywords immediately (>=1 try, 0 posts found) + weakest tried keywords
+    # 1. Retire legacy >=4-word phrases (excluding curated fallback whitelist) & 0-result / 0-lead terms
+    fallback_lower = {k.lower() for k in DEFAULT_THREADS_FALLBACK_KEYWORDS}
+    legacy_long_rows = [
+        r for r in active_rows
+        if len(str(r.get("keyword") or "").strip().split()) >= 4
+        and str(r.get("keyword") or "").strip().lower() not in fallback_lower
+    ]
     zero_post_tried = [
         r for r in active_rows
         if int(r.get("times_used") or 0) >= 1 and int(r.get("total_posts_found") or 0) == 0
     ]
     zero_post_tried.sort(key=lambda r: -int(r.get("times_used") or 0))
-    zero_post_kws = {str(r.get("keyword") or "") for r in zero_post_tried}
+    dead_first_map: dict[str, dict] = {}
+    for r in legacy_long_rows + zero_post_tried:
+        kw = str(r.get("keyword") or "")
+        if kw and kw not in dead_first_map:
+            dead_first_map[kw] = r
+    dead_first = list(dead_first_map.values())
+    dead_first_kws = set(dead_first_map.keys())
 
     tried_rows = [r for r in active_rows if int(r.get("times_used") or 0) >= 2]
     zero_lead_tried = [
         r for r in tried_rows
-        if int(r.get("high_score_posts") or 0) == 0 and str(r.get("keyword") or "") not in zero_post_kws
+        if int(r.get("high_score_posts") or 0) == 0 and str(r.get("keyword") or "") not in dead_first_kws
     ]
     zero_lead_tried.sort(
         key=lambda r: (
@@ -295,11 +308,13 @@ async def evolve_and_select_keywords(
         )
     )
     retire_candidates: list[dict] = []
-    if replace_quota > 0:
-        if len(zero_post_tried) > replace_quota and len(active_rows) >= min(15, bounded_target):
-            retire_candidates = zero_post_tried[: min(len(zero_post_tried), 15)]
-        elif (zero_post_tried or zero_lead_tried) and len(active_rows) >= min(15, bounded_target):
-            retire_candidates = (zero_post_tried + zero_lead_tried)[:replace_quota]
+    if replace_quota > 0 or legacy_long_rows:
+        if len(dead_first) > replace_quota and len(active_rows) >= min(15, bounded_target):
+            retire_candidates = dead_first[: max(len(legacy_long_rows), min(len(dead_first), 15))]
+        elif (dead_first or zero_lead_tried) and len(active_rows) >= min(15, bounded_target):
+            retire_candidates = (dead_first + zero_lead_tried)[: max(replace_quota, len(legacy_long_rows))]
+        elif legacy_long_rows:
+            retire_candidates = legacy_long_rows
         elif is_configured() and len(active_rows) >= bounded_target:
             mature_low = [
                 r for r in tried_rows

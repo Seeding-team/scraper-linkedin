@@ -1632,3 +1632,101 @@ def test_alternating_24h_facebook_then_threads_then_facebook_loop(monkeypatch) -
 
     asyncio.run(_run_alt())
 
+
+def test_ingest_threads_4g_keyword_batch_audit_and_lead_score(monkeypatch) -> None:
+    """Regression test for TypeError in record_crawled_posts_audit_sync & score_and_save_posts key mismatch."""
+    from app.modules.all_platform.services import crawled_post_audit_service as audit_svc
+    from app.modules.all_platform.services import lead_score_service as score_svc
+    from app.modules.all_platform.services import supabase_threads_extension_crawl_service as save_svc
+    from app.modules.all_platform.services import threads_keyword_service as kw_svc
+    from app.modules.all_platform.services import threads_no_acc_crawler_service as th_svc
+
+    captured: dict[str, Any] = {}
+
+    def _fake_save_batch(**kwargs):
+        captured["save_kwargs"] = kwargs
+        return {
+            "success": True,
+            "count": 2,
+            "skipped_invalid": 3,
+            "skipped_old": 1,
+            "skipped_existing": 1,
+            "_inserted_rows": [
+                {
+                    "id": 101,
+                    "content": "Can thue don vi lam CRM cho doanh nghiep",
+                    "post_url": "https://www.threads.com/@user1/post/ABC1",
+                    "author_name": "user1",
+                    "post_time": "2026-11-12T10:00:00+00:00",
+                    "reactions": 4,
+                    "comments": 2,
+                    "shares": 1,
+                },
+                {
+                    "id": 102,
+                    "content": "Tu van he thong CRM ban hang",
+                    "post_url": "https://www.threads.com/@user2/post/ABC2",
+                    "author_name": "user2",
+                    "post_time": "2026-11-12T11:00:00+00:00",
+                    "reactions": 1,
+                    "comments": 0,
+                    "shares": 0,
+                },
+            ],
+        }
+
+    def _fake_audit(entries):
+        # Strictly verify the real single-argument list[dict] signature expected by record_crawled_posts_audit_sync
+        assert isinstance(entries, list) and len(entries) == 2
+        assert entries[0]["platform"] == "threads"
+        assert entries[0]["crawl_source"] == "public_4g"
+        assert entries[0]["run_id"] == "run-123"
+        assert entries[0]["proxy_node"] == "proxy-01"
+        assert entries[0]["post_id"] == 101
+        assert entries[0]["post_url"] == "https://www.threads.com/@user1/post/ABC1"
+        captured["audit_entries"] = entries
+        return len(entries)
+
+    async def _fake_score(table, rows, **kwargs):
+        assert table == "threads_posts"
+        assert len(rows) == 2
+        captured["score_kwargs"] = kwargs
+        return {"total": 2, "high": 1, "deleted": 1}
+
+    def _fake_record_kw(kw: str, total_found: int, high_score_count: int):
+        captured["kw_metric"] = (kw, total_found, high_score_count)
+
+    monkeypatch.setattr(save_svc, "save_threads_crawl_batch", _fake_save_batch)
+    monkeypatch.setattr(audit_svc, "record_crawled_posts_audit_sync", _fake_audit)
+    monkeypatch.setattr(score_svc, "score_and_save_posts", _fake_score)
+    monkeypatch.setattr(kw_svc, "record_keyword_result", _fake_record_kw)
+
+    res = th_svc.ThreadsKeywordCrawlResult(
+        keyword="CRM",
+        search_url="https://www.threads.com/search?q=CRM&serp_type=default",
+        status="ok",
+        raw_extracted=7,
+        posts=[{"post_url": "https://www.threads.com/@user1/post/ABC1", "content": "CRM"}],
+    )
+
+    out = asyncio.run(
+        th_svc.ingest_threads_4g_keyword_batch(
+            res,
+            keyword="CRM",
+            post_limit=20,
+            max_age_days=7,
+            proxy_node="proxy-01",
+            run_id="run-123",
+        )
+    )
+
+    assert out.saved_count == 2
+    assert out.skipped_invalid == 3
+    assert out.skipped_old == 1
+    assert out.skipped_existing == 1
+    assert out.high_score_count == 1
+    assert out.ai_checked_count == 2
+    assert len(captured["audit_entries"]) == 2
+    assert captured["kw_metric"] == ("CRM", 3, 1)  # saved(2) + existing(1), NOT raw_extracted(7)
+
+
