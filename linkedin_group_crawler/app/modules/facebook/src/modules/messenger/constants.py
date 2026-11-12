@@ -15,21 +15,21 @@ FB_ERROR_SESSION_EXPIRED = 190          # Token/Cookie hết hạn hoặc bị �
 WARM_UP_TIERS: Dict[int, Dict[str, Any]] = {
     1: {
         "tier_name": "Tài khoản mới nạp (< 1 tuần)",
-        "daily_limit": 8,
-        "min_interval_seconds": 180,   # Tối thiểu 3 phút/tin
-        "max_interval_seconds": 360,   # Tối đa 6 phút/tin
+        "daily_limit": 30,
+        "min_interval_seconds": 60,    # Tối thiểu 1 phút/tin (chỉ áp khi nhắn người lạ)
+        "max_interval_seconds": 120,
     },
     2: {
         "tier_name": "Tài khoản ổn định (1 - 4 tuần)",
-        "daily_limit": 20,
-        "min_interval_seconds": 120,   # Tối thiểu 2 phút/tin
-        "max_interval_seconds": 240,   # Tối đa 4 phút/tin
+        "daily_limit": 40,
+        "min_interval_seconds": 45,
+        "max_interval_seconds": 90,
     },
     3: {
         "tier_name": "Tài khoản uy tín (> 1 tháng)",
-        "daily_limit": 45,
-        "min_interval_seconds": 60,    # Tối thiểu 1 phút/tin
-        "max_interval_seconds": 120,   # Tối đa 2 phút/tin
+        "daily_limit": 50,
+        "min_interval_seconds": 30,
+        "max_interval_seconds": 60,
     },
 }
 

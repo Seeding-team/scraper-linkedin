@@ -32,11 +32,7 @@ export function MessengerInboxShell() {
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [loadingThreads, setLoadingThreads] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
-  const [sending, setSending] = useState(false);
 
-  // Bộ theo dõi từng bước mô phỏng người thật theo thời gian thực (Live Simulation Step Tracker)
-  const [simulationStep, setSimulationStep] = useState<number>(0);
-  const [simulationText, setSimulationText] = useState<string>("");
 
   const [searchQuery, setSearchQuery] = useState("");
   const [inputText, setInputText] = useState("");
@@ -261,6 +257,40 @@ export function MessengerInboxShell() {
     return () => unsubscribe();
   }, [selectedThread]);
 
+  // 4b. Tự làm mới im lặng mỗi 4s (dự phòng khi SSE rớt) — không bật spinner, giữ tin đang gửi dở
+  useEffect(() => {
+    const tick = async () => {
+      if (document.hidden) return;
+      const accId = selectedAccountIdRef.current;
+      const thread = selectedThreadRef.current;
+      if (!accId) return;
+      try {
+        const tRes = await fbMessengerService.getThreads(accId);
+        if (tRes.success && tRes.data && accId === selectedAccountIdRef.current) {
+          const fetched = tRes.data;
+          setThreads((prev) => (prev.some((t) => t.id.startsWith("temp_")) ? prev : fetched));
+        }
+        if (!thread || thread.id.startsWith("temp_") || thread.account_id !== accId) return;
+        const mRes = await fbMessengerService.getThreadMessages(accId, thread.thread_id);
+        if (!mRes.success || !mRes.data) return;
+        if (accId !== selectedAccountIdRef.current || selectedThreadRef.current?.thread_id !== thread.thread_id) return;
+        const fetched = mRes.data;
+        setMessages((prev) => [
+          ...fetched,
+          ...prev.filter((m) => m.id.startsWith("opt_") && m.status === "sending"),
+        ]);
+      } catch {
+        // im lặng: lần sau thử lại
+      }
+    };
+    const id = setInterval(tick, 4000);
+    document.addEventListener("visibilitychange", tick); // quay lại tab là cập nhật ngay
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, []);
+
   // 5. Gửi tin nhắn với bộ đếm mô phỏng người thật trực quan & hỗ trợ đa phương tiện
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -275,7 +305,6 @@ export function MessengerInboxShell() {
     setPendingFiles([]);
     setShowTemplateMenu(false);
 
-    setSending(true);
 
     const isCurrentThread = () =>
       selectedAccountIdRef.current === sendAccountId &&
@@ -291,8 +320,6 @@ export function MessengerInboxShell() {
     }[] = [];
 
     if (filesToUpload.length > 0) {
-      setSimulationStep(1);
-      setSimulationText(`Đang tải lên ${filesToUpload.length} tệp đính kèm...`);
       for (const pf of filesToUpload) {
         try {
           const upRes = await fbMessengerService.uploadMedia(pf.file, sendAccountId);
@@ -326,25 +353,6 @@ export function MessengerInboxShell() {
       setMessages((prev) => [...prev, optimisticMsg]);
     }
 
-    // Kích hoạt chuỗi bước mô phỏng thị giác (Visual Simulation Stepper)
-    setSimulationStep(1);
-    setSimulationText("Bước 1/5: Đang đọc ngữ cảnh tin nhắn cũ (Độ trễ 1.8s)...");
-
-    const timer1 = setTimeout(() => {
-      setSimulationStep(2);
-      setSimulationText("Bước 2/5: Đang phát tín hiệu Typing lên Facebook (typ.php)...");
-    }, 1800);
-
-    const timer2 = setTimeout(() => {
-      setSimulationStep(3);
-      setSimulationText("Bước 3/5: Đang gõ phím mô phỏng WPM 42 từ/phút (trễ ngẫu nhiên dấu câu)...");
-    }, 3200);
-
-    const timer3 = setTimeout(() => {
-      setSimulationStep(4);
-      setSimulationText("Bước 4/5: Đang gửi gói tin Direct API an toàn (offline_threading_id)...");
-    }, 6000);
-
     try {
       const res = await fbMessengerService.sendMessage({
         account_id: sendAccountId,
@@ -355,9 +363,6 @@ export function MessengerInboxShell() {
         simulate_human: true,
       });
 
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
 
       if (!res.success) {
         toast.error(res.message || "Gửi tin nhắn thất bại.");
@@ -366,12 +371,8 @@ export function MessengerInboxShell() {
             prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
           );
         }
-        setSimulationStep(0);
         return;
       }
-
-      setSimulationStep(5);
-      setSimulationText("Bước 5/5: Đã gửi an toàn! Nán lại 1.5s & đồng bộ 2 chiều hoàn tất.");
 
       if (res.data?.message) {
         const saved = res.data.message;
@@ -381,11 +382,6 @@ export function MessengerInboxShell() {
           );
         }
       }
-
-      setTimeout(() => {
-        setSimulationStep(0);
-        setSimulationText("");
-      }, 2500);
 
       // Cập nhật lại số lượng tin đã gửi của tài khoản
       loadAccounts();
@@ -400,18 +396,12 @@ export function MessengerInboxShell() {
         }
       }
     } catch {
-      clearTimeout(timer1);
-      clearTimeout(timer2);
-      clearTimeout(timer3);
       toast.error("Lỗi mạng khi gửi tin nhắn.");
       if (isCurrentThread()) {
         setMessages((prev) =>
           prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
         );
       }
-      setSimulationStep(0);
-    } finally {
-      setSending(false);
     }
   };
 
@@ -882,37 +872,6 @@ export function MessengerInboxShell() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Banner theo dõi mô phỏng người thật theo thời gian thực (Step Tracker) */}
-            {simulationStep > 0 && (
-              <div className="px-4 py-2.5 bg-rose-50 border-t border-b border-primary/20 text-xs text-rose-950 font-medium flex items-center justify-between animate-pulse">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[18px] text-primary">
-                    {simulationStep === 1
-                      ? "visibility"
-                      : simulationStep === 2
-                      ? "edit"
-                      : simulationStep === 3
-                      ? "keyboard"
-                      : simulationStep === 4
-                      ? "send"
-                      : "verified"}
-                  </span>
-                  <span>{simulationText}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  {[1, 2, 3, 4, 5].map((step) => (
-                    <div
-                      key={step}
-                      className={cn(
-                        "w-2 h-2 rounded-full",
-                        step <= simulationStep ? "bg-primary" : "bg-rose-200"
-                      )}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Menu chọn Mẫu câu Facebook */}
             {showTemplateMenu && (
               <div className="p-3 bg-surface-container-low border-t border-outline-variant max-h-48 overflow-y-auto space-y-2">
@@ -1003,7 +962,6 @@ export function MessengerInboxShell() {
               <button
                 type="button"
                 onClick={() => imageInputRef.current?.click()}
-                disabled={sending}
                 className="p-2.5 rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface text-xs font-bold flex items-center justify-center cursor-pointer transition shrink-0"
                 title="Gửi hình ảnh"
               >
@@ -1014,7 +972,6 @@ export function MessengerInboxShell() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={sending}
                 className="p-2.5 rounded-xl border border-outline-variant bg-surface hover:bg-surface-container text-on-surface text-xs font-bold flex items-center justify-center cursor-pointer transition shrink-0"
                 title="Đính kèm tài liệu"
               >
@@ -1039,20 +996,19 @@ export function MessengerInboxShell() {
 
               <input
                 type="text"
-                placeholder="Nhập tin nhắn Messenger... (Hệ thống tự động kích hoạt nhịp sinh học con người 5 bước)"
+                placeholder="Nhập tin nhắn Messenger... (Enter để gửi)"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
-                disabled={sending}
                 className="flex-1 text-xs px-3.5 py-2.5 rounded-xl border border-outline-variant bg-surface text-on-surface placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-primary/20 font-sans"
               />
 
               <button
                 type="submit"
-                disabled={sending || (!inputText.trim() && pendingFiles.length === 0)}
+                disabled={!inputText.trim() && pendingFiles.length === 0}
                 className="px-5 py-2.5 bg-primary hover:bg-[#a01c3d] disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition shadow-xs shrink-0"
               >
                 <span className="material-symbols-outlined text-[16px]">send</span>
-                {sending ? "Đang xử lý..." : "Gửi tin"}
+                Gửi tin
               </button>
             </form>
           </>

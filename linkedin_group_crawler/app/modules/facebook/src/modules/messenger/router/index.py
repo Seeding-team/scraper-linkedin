@@ -18,6 +18,7 @@ from app.modules.facebook.src.modules.messenger.schemas.messenger_schema import 
     UnfreezeAccountRequest,
     MessengerBaseResponse,
 )
+from app.modules.facebook.src.modules.messenger.constants import WARM_UP_TIERS
 from app.modules.facebook.src.modules.messenger.services import bridge_client
 from app.modules.facebook.src.modules.messenger.services.fb_messenger_service import FbMessengerService
 from app.modules.facebook.src.modules.messenger.services.fb_realtime_listener import (
@@ -47,7 +48,12 @@ def get_messenger_accounts(
         ).eq("is_active", True)
 
         res = q.order("created_at", desc=True).execute()
-        return MessengerBaseResponse(success=True, data=res.data or [])
+        rows = res.data or []
+        for r in rows:  # hiển thị hạn mức thực tế (theo tier) khi nick không đặt riêng
+            if not r.get("daily_sent_limit"):
+                tier_cfg = WARM_UP_TIERS.get(r.get("warm_up_tier") or 1, WARM_UP_TIERS[1])
+                r["daily_sent_limit"] = tier_cfg["daily_limit"]
+        return MessengerBaseResponse(success=True, data=rows)
     except Exception as e:
         logger.exception(f"Error fetching fb_messenger_accounts: {e}")
         return MessengerBaseResponse(success=False, message=str(e), data=[])

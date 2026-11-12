@@ -20,6 +20,7 @@ from app.core.supabase_client import get_supabase_client
 from app.modules.facebook.src.modules.messenger.constants import (
     FB_ERROR_TEMPORARILY_BLOCKED,
     FB_ERROR_CHECKPOINT,
+    FB_ERROR_RATE_LIMIT,
     FB_ERROR_SESSION_EXPIRED,
     TYPING_CHAR_DELAY_MIN,
     TYPING_CHAR_DELAY_MAX,
@@ -52,6 +53,28 @@ CHROME_BROWSER_HEADERS = {
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
 }
+
+
+_BLOCK_PATTERNS = (
+    ("checkpoint", FB_ERROR_CHECKPOINT),
+    (r"1357004", FB_ERROR_TEMPORARILY_BLOCKED),
+    ("temporarily blocked", FB_ERROR_TEMPORARILY_BLOCKED),
+    ("tạm thời bị chặn", FB_ERROR_TEMPORARILY_BLOCKED),
+    (r"368", FB_ERROR_RATE_LIMIT),
+    ("too fast", FB_ERROR_RATE_LIMIT),
+    ("quá nhanh", FB_ERROR_RATE_LIMIT),
+    ("rate limit", FB_ERROR_RATE_LIMIT),
+    ("spam", FB_ERROR_RATE_LIMIT),
+)
+
+
+def classify_bridge_block(err_msg: str) -> Optional[int]:
+    """Lỗi từ bridge có phải Facebook đang chặn/cảnh báo nick không -> mã lỗi, hoặc None."""
+    low = err_msg.lower()
+    for pattern, code in _BLOCK_PATTERNS:
+        if re.search(pattern, low):
+            return code
+    return None
 
 
 class FbMessengerService:
@@ -283,6 +306,22 @@ class FbMessengerService:
         logger.info(f"Simulating human typing delay: {actual_delay:.2f}s for {len(text)} chars")
         await asyncio.sleep(actual_delay)
 
+    @staticmethod
+    def _peer_has_messaged(sb: Any, account_id: str, thread_id: str) -> bool:
+        try:
+            res = (
+                sb.table("fb_messenger_messages")
+                .select("id")
+                .eq("account_id", account_id)
+                .eq("thread_id", thread_id)
+                .eq("is_self", False)
+                .limit(1)
+                .execute()
+            )
+            return bool(res.data)
+        except Exception:
+            return False  # lỗi tra cứu -> coi như nhắn người lạ (giữ an toàn)
+
     @classmethod
     async def send_message_human_like(
         cls,
@@ -298,7 +337,10 @@ class FbMessengerService:
         sb = get_supabase_client()
 
         # ── BƯỚC 0: KIỂM TRA CẦU CHÌ AN TOÀN (CIRCUIT BREAKER) ───────────────────
-        can_send, reason, account = FbCircuitBreaker.can_send_message(sb, account_id)
+        # Trả lời người đã nhắn mình -> không tính hạn mức/giãn cách (chỉ áp cho nhắn người lạ)
+        is_reply = cls._peer_has_messaged(sb, account_id, str(recipient_id).strip())
+        can_send, reason, account = FbCircuitBreaker.can_send_message(sb, account_id, is_reply=is_reply)
+        simulate_human = simulate_human and not is_reply  # trả lời thì gửi ngay, không giả lập đọc/gõ
         if not can_send:
             return {"success": False, "message": reason, "is_circuit_breaker_block": True}
 
@@ -312,7 +354,7 @@ class FbMessengerService:
         fb_message_id: Optional[str] = None
 
         if bridge_client.is_enabled():
-            # shortcut: gửi qua bridge bỏ qua bước giả lập đọc/gõ và chưa nối lỗi rate-limit của bridge vào circuit breaker; nâng cấp khi có số liệu checkpoint thật.
+            # shortcut: gửi qua bridge bỏ qua bước giả lập đọc/gõ; lỗi chặn nhận diện theo từ khoá trong chuỗi lỗi, cần cập nhật khi gặp thông báo Facebook mới.
             bridge_res = await asyncio.to_thread(
                 bridge_client.send,
                 account_id=account_id,
@@ -321,8 +363,17 @@ class FbMessengerService:
                 client_msg_id=offline_threading_id,
             )
             if not bridge_res.get("ok"):
-                err_msg = bridge_res.get("error") or "Không thể gửi tin qua messenger-bridge"
-                return {"success": False, "message": str(err_msg)}
+                err_msg = str(bridge_res.get("error") or "Không thể gửi tin qua messenger-bridge")
+                block_code = classify_bridge_block(err_msg)
+                if block_code is not None:
+                    # Facebook báo chặn/quá nhanh/checkpoint -> đóng băng nick 24h, không gửi tiếp
+                    FbCircuitBreaker.trigger_circuit_breaker(sb, account_id, block_code, err_msg)
+                    return {
+                        "success": False,
+                        "message": f"Facebook cảnh báo, đã tạm dừng nick để an toàn: {err_msg}",
+                        "is_circuit_breaker_block": True,
+                    }
+                return {"success": False, "message": err_msg}
             fb_message_id = bridge_res.get("message_id")
         else:
             cookies = cls.parse_cookie_string(account.get("cookie", ""))
@@ -555,7 +606,8 @@ class FbMessengerService:
             logger.warning(f"Error broadcasting outgoing message via SSE: {sse_err}")
 
         # Ghi nhận hạn ngạch gửi thành công
-        FbCircuitBreaker.record_send_success(sb, account_id)
+        if not is_reply:
+            FbCircuitBreaker.record_send_success(sb, account_id)
 
         return {
             "success": True,
