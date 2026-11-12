@@ -1327,6 +1327,22 @@ def test_threads_no_acc_merge_timestamps_and_state_classification() -> None:
         body_snippet="Rate limit exceeded",
         extracted_count=0,
     )[:2] == ("rate_limited", True)
+    # Regression 1: Guest empty page ALWAYS contains sidebar "Đăng nhập hoặc đăng ký Threads / Tiếp tục bằng Instagram"
+    # -> must classify as ("empty", False), NEVER mislabel as ("login_wall", True)!
+    assert th_svc.classify_threads_page_state(
+        http_status=200,
+        final_url="https://www.threads.com/search?q=tu+khoa+khong+co&serp_type=default",
+        body_snippet='"tu khoa khong co"\nKhông có kết quả nào.\nĐăng nhập hoặc đăng ký Threads\nTiếp tục bằng Instagram',
+        extracted_count=0,
+    )[:2] == ("empty", False)
+    # Regression 2: If posts ARE extracted on HTTP 200 and post text contains "something went wrong",
+    # must classify as ("ok", False), NEVER mislabel as ("rate_limited", True)!
+    assert th_svc.classify_threads_page_state(
+        http_status=200,
+        final_url="https://www.threads.com/search?q=website&serp_type=default",
+        body_snippet='website\nuser1\nSomething went wrong when building my site, need help!',
+        extracted_count=22,
+    )[:2] == ("ok", False)
 
 
 def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> None:

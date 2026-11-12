@@ -1894,9 +1894,9 @@ class GuestPublicGroupWorker:
         raw_age = self.config.get("threads_max_age_days")
         max_age_days = 7 if raw_age is None else max(a_lo, min(a_hi, int(raw_age)))
 
-        s_lo, s_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["max_scrolls_per_group"]
-        raw_scrolls = self.config.get("max_scrolls_per_group")
-        scrolls = 1 if raw_scrolls is None else max(0, min(2, int(raw_scrolls) if int(raw_scrolls) > 0 else 0))
+        # Threads Guest locks page-2+ GraphQL pagination and opens an Instagram login modal on scroll,
+        # so scroll=0 avoids wasted latency & modal popups while getting all ~10-26 SSR/hydrated posts.
+        scrolls = 0
 
         result: ThreadsKeywordCrawlResult = ThreadsKeywordCrawlResult(
             keyword=kw,

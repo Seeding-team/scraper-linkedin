@@ -35,50 +35,56 @@ INITIAL_GENERATE_COUNT = 30
 DAILY_ADD_COUNT = 6
 
 DEFAULT_THREADS_FALLBACK_KEYWORDS: tuple[str, ...] = (
-    "thiết kế website",
-    "làm website",
+    # Empirically verified 16-26 posts/query on Threads Guest search
     "làm web",
-    "cần làm web",
-    "tìm người làm web",
-    "báo giá website",
+    "thiết kế web",
+    "thiết kế website",
     "landing page",
-    "làm landing page",
-    "thiết kế landing page",
-    "làm app",
-    "thiết kế app",
-    "cần làm app",
-    "lập trình app",
-    "outsource phần mềm",
-    "gia công phần mềm",
+    "website",
+    "phần mềm",
     "phần mềm quản lý",
-    "làm web bán hàng",
-    "web bán hàng",
-    "tìm dev freelance",
-    "tuyển freelance dev",
-    "code tool",
-    "viết phần mềm",
-    "nâng cấp website",
-    "sửa website",
-    "thiết kế ui ux",
-    "làm web doanh nghiệp",
-    "web giới thiệu",
-    "làm hệ thống crm",
-    "phần mềm bán hàng",
-    "thuê code web",
-    "công ty làm web",
-    "cần tìm dev",
+    "outsource",
+    "lập trình",
+    "bán hàng",
+    "freelancer",
+    "erp",
+    "crm",
+    "chatbot",
+    "tự động hóa",
+    "n8n",
+    "mini app",
+    "ui ux",
+    "wordpress",
+    "shopify",
+    "chạy ads",
+    # High-recall 1-2 word tech/business terms
+    "web design",
+    "mobile app",
+    "automation",
+    "saas",
+    "ai agent",
+    "ecommerce",
+    "khởi nghiệp",
+    "digital marketing",
+    "kinh doanh",
+    "marketing",
+    "bất động sản",
 )
 
 _KEYWORD_GEN_SYSTEM_PROMPT = (
     "Bạn là chuyên gia tìm kiếm khách hàng (sales/growth) cho 1 công ty thiết kế website, "
     "landing page, mobile app, phần mềm quản lý (CRM/ERP/POS) và outsource IT tại Việt Nam.\n"
-    "Hãy đề xuất ĐÚNG {n} từ khoá tìm kiếm NGẮN GỌN bằng tiếng Việt (ƯU TIÊN 2 ĐẾN 4 TỪ mỗi từ khoá) "
-    "để search trực tiếp trên Threads (threads.com/search).\n"
-    "LƯU Ý THỰC NGHIỆM: Threads search KHÔNG trả kết quả với cụm dài 5-7 từ; các cụm 2-4 từ tự nhiên "
-    "như \"thiết kế website\", \"cần làm app\", \"làm landing page\", \"thuê code web\", \"outsource phần mềm\", "
-    "\"làm web bán hàng\", \"cần tìm dev\", \"sửa website\" lại trả về rất nhiều bài thật.\n"
-    "Ưu tiên xen kẽ từ khoá ngách nhu cầu mới (AI chatbot, web bất động sản, web đặt lịch, mini app zalo, "
-    "tối ưu tốc độ web, tự động hoá n8n, web học trực tuyến, app ios android...) nhưng phải GIỮ NGẮN 2-4 TỪ.\n"
+    "Hãy đề xuất ĐÚNG {n} từ khoá tìm kiếm CỰC NGẮN (ƯU TIÊN 1 ĐẾN 2 TỪ, tối đa 3 từ đối với "
+    "cụm danh từ rất phổ thông) để search trực tiếp trên Threads Guest (threads.com/search).\n"
+    "LƯU Ý THỰC NGHIỆM QUAN TRỌNG: Threads Guest search TRẢ VỀ 0 KẾT QUẢ với các cụm ghép 3-4 từ "
+    "chi tiết hoặc câu hỏi như \"tìm người làm web\", \"làm web bán hàng\", \"làm landing page\", "
+    "\"thuê code web\", \"cần làm app\", \"viết app\", \"làm tool\", \"seo web\". Ngược lại, các từ "
+    "khóa 1-2 từ cốt lõi như \"làm web\", \"thiết kế web\", \"landing page\", \"phần mềm\", "
+    "\"phần mềm quản lý\", \"outsource\", \"lập trình\", \"freelancer\", \"crm\", \"erp\", "
+    "\"chatbot\", \"tự động hóa\", \"n8n\", \"mini app\", \"wordpress\", \"shopify\", \"ui ux\" "
+    "trả về đều đặn 16-26 bài thật mỗi lượt.\n"
+    "Ưu tiên các cụm 1-2 từ về nhu cầu công nghệ, kinh doanh, AI, automation, thương mại điện tử, "
+    "web/app/SaaS.\n"
     "TUYỆT ĐỐI KHÔNG đề xuất trùng hoặc gần giống các từ khoá đã có / vừa bị loại sau: {existing}.\n\n"
     'Chỉ trả về DUY NHẤT JSON: {{"keywords": ["...", ...]}} — đúng {n} phần tử, không giải thích, không markdown.'
 )
@@ -269,11 +275,18 @@ async def evolve_and_select_keywords(
     newly_added: list[str] = []
     ai_powered = False
 
-    # 1. Retire weakest tried keywords when we have enough tried history to rotate safely
+    # 1. Retire dead 0-result keywords immediately (>=1 try, 0 posts found) + weakest tried keywords
+    zero_post_tried = [
+        r for r in active_rows
+        if int(r.get("times_used") or 0) >= 1 and int(r.get("total_posts_found") or 0) == 0
+    ]
+    zero_post_tried.sort(key=lambda r: -int(r.get("times_used") or 0))
+    zero_post_kws = {str(r.get("keyword") or "") for r in zero_post_tried}
+
     tried_rows = [r for r in active_rows if int(r.get("times_used") or 0) >= 2]
     zero_lead_tried = [
         r for r in tried_rows
-        if int(r.get("high_score_posts") or 0) == 0
+        if int(r.get("high_score_posts") or 0) == 0 and str(r.get("keyword") or "") not in zero_post_kws
     ]
     zero_lead_tried.sort(
         key=lambda r: (
@@ -282,16 +295,19 @@ async def evolve_and_select_keywords(
         )
     )
     retire_candidates: list[dict] = []
-    if zero_lead_tried and replace_quota > 0 and len(active_rows) >= min(15, bounded_target):
-        retire_candidates = zero_lead_tried[:replace_quota]
-    elif replace_quota > 0 and is_configured() and len(active_rows) >= bounded_target:
-        mature_low = [
-            r for r in tried_rows
-            if int(r.get("times_used") or 0) >= 4 and int(r.get("high_score_posts") or 0) < 3
-        ]
-        if len(mature_low) >= 8:
-            mature_low.sort(key=_keyword_efficiency_key)
-            retire_candidates = mature_low[: min(2, replace_quota)]
+    if replace_quota > 0:
+        if len(zero_post_tried) > replace_quota and len(active_rows) >= min(15, bounded_target):
+            retire_candidates = zero_post_tried[: min(len(zero_post_tried), 15)]
+        elif (zero_post_tried or zero_lead_tried) and len(active_rows) >= min(15, bounded_target):
+            retire_candidates = (zero_post_tried + zero_lead_tried)[:replace_quota]
+        elif is_configured() and len(active_rows) >= bounded_target:
+            mature_low = [
+                r for r in tried_rows
+                if int(r.get("times_used") or 0) >= 4 and int(r.get("high_score_posts") or 0) < 3
+            ]
+            if len(mature_low) >= 8:
+                mature_low.sort(key=_keyword_efficiency_key)
+                retire_candidates = mature_low[: min(2, replace_quota)]
 
     if retire_candidates:
         retire_kws = [str(r["keyword"]) for r in retire_candidates if r.get("keyword")]

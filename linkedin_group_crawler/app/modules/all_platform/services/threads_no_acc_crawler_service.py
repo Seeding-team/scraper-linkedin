@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _THREADS_EMPTY_MARKERS = (
     "không có kết quả nào",
+    "không tìm thấy kết quả",
     "no results found",
     "try another search",
     "thử tìm kiếm khác",
@@ -440,21 +441,32 @@ def classify_threads_page_state(
     """Classify Threads Guest search outcome cleanly for rotation decisions.
 
     Returns `(status, should_rotate, detail)`.
+    Note: Threads Guest renders the sidebar CTA ("Đăng nhập hoặc đăng ký Threads /
+    Tiếp tục bằng Instagram") on EVERY page including valid empty search pages, and
+    extracted post text may legitimately contain phrases like "something went wrong".
+    Therefore we check: real `/login` redirect -> HTTP 429 -> extracted_count > 0
+    -> empty search markers -> rate-limit text -> login-wall text.
     """
     low = (body_snippet or "").lower()
     url_low = (final_url or "").lower()
 
-    if http_status == 429 or any(m in low for m in _THREADS_RATE_LIMIT_MARKERS):
-        return ("rate_limited", True, "Threads yêu cầu tạm chậm (429/rate-limit)")
+    if "/login" in url_low or "/accounts/login" in url_low or "instagram.com/accounts" in url_low:
+        return ("login_wall", True, "Threads điều hướng về trang đăng nhập (/login)")
+
+    if http_status == 429:
+        return ("rate_limited", True, "Threads yêu cầu tạm chậm (HTTP 429)")
 
     if extracted_count > 0:
         return ("ok", False, f"Trích xuất {extracted_count} bài Threads")
 
-    if "/login" in url_low or any(m in low for m in _THREADS_LOGIN_MARKERS):
-        return ("login_wall", True, "Threads yêu cầu đăng nhập / challenge")
-
     if any(m in low for m in _THREADS_EMPTY_MARKERS):
         return ("empty", False, "Không có bài Threads khớp từ khóa")
+
+    if any(m in low for m in _THREADS_RATE_LIMIT_MARKERS):
+        return ("rate_limited", True, "Threads yêu cầu tạm chậm (429/rate-limit)")
+
+    if any(m in low for m in _THREADS_LOGIN_MARKERS):
+        return ("login_wall", True, "Threads yêu cầu đăng nhập / challenge")
 
     if http_status and http_status >= 400:
         return ("http_error", True, f"HTTP {http_status} từ Threads")
@@ -485,7 +497,7 @@ async def crawl_threads_keyword_guest(
     keyword: str,
     *,
     max_posts: int = 20,
-    scrolls: int = 1,
+    scrolls: int = 0,
     hydrate_wait_sec: float = 5.0,
     is_proxy_expired_fn: Optional[Callable[[str], bool]] = None,
 ) -> ThreadsKeywordCrawlResult:
@@ -499,18 +511,21 @@ async def crawl_threads_keyword_guest(
         if response is not None:
             http_status = response.status
 
-        # Threads SSR embeds only 1 seed post; Relay client hydration renders ~15-20 cards within 2-4.5s
+        # Threads SSR embeds only 1 seed post; Relay client hydration renders ~15-26 cards within 2-4.5s
         deadline = time.monotonic() + max(2.0, min(8.0, hydrate_wait_sec))
         while time.monotonic() < deadline:
             probe = await page.evaluate(
                 """() => {
                     const count = document.querySelectorAll('a[href*="/post/"]').length;
                     const txt = ((document.body && document.body.innerText) || '').toLowerCase();
-                    return {
-                        count,
-                        empty: txt.includes('không có kết quả nào') || txt.includes('no results found'),
-                        blocked: txt.includes('log in to continue') || txt.includes('something went wrong')
-                    };
+                    const empty = txt.includes('không có kết quả nào') || txt.includes('không tìm thấy kết quả') || txt.includes('no results found');
+                    const blocked = count === 0 && !empty && (
+                        location.pathname.toLowerCase().includes('/login') ||
+                        txt.includes('log in to continue') ||
+                        txt.includes('đăng nhập để tiếp tục') ||
+                        txt.includes('something went wrong')
+                    );
+                    return { count, empty, blocked };
                 }"""
             )
             if probe.get("empty") or probe.get("blocked"):
@@ -520,10 +535,20 @@ async def crawl_threads_keyword_guest(
                 break
             await asyncio.sleep(0.3)
 
-        # Light scroll passes to uncover extra search results when hydrated
+        # Light scroll passes only if explicitly requested (Guest blocks page-2+ GraphQL pagination)
         for _ in range(max(0, min(2, scrolls))):
             await page.evaluate("() => window.scrollBy(0, 1200)")
             await asyncio.sleep(0.75)
+
+        # Dismiss/hide any Instagram login modal overlay so DOM text & cards remain clean
+        await page.evaluate(
+            """() => {
+                document.querySelectorAll('[role="dialog"], [aria-modal="true"]').forEach((el) => {
+                    el.style.setProperty('display', 'none', 'important');
+                    el.style.setProperty('pointer-events', 'none', 'important');
+                });
+            }"""
+        )
 
         embedded = await page.evaluate(_JS_EXTRACT_THREADS_EMBEDDED_JSON)
         dom_res = await page.evaluate(_JS_EXTRACT_THREADS_DOM, max(10, min(40, max_posts * 2)))
