@@ -8,7 +8,7 @@ Dịch vụ cầu nối Facebook Messenger cá nhân viết bằng Go, duy trì 
 
 | Biến | Bắt buộc | Mặc định | Mô tả |
 |---|---|---|---|
-| `BRIDGE_KEY` | **Có** | – | Khóa bí mật dùng chung với Backend (`MESSENGER_BRIDGE_KEY`). Dùng để xác thực 2 chiều qua header `X-Bridge-Key` (so sánh hằng thời gian). |
+| `BRIDGE_KEY` | **Có** | – | Khóa bí mật dùng chung với Backend (`MESSENGER_BRIDGE_KEY`; nếu `BRIDGE_KEY` trống thì bridge đọc `MESSENGER_BRIDGE_KEY` — cách compose production truyền khoá qua `linkedin_group_crawler/.env`). Dùng để xác thực 2 chiều qua header `X-Bridge-Key` (so sánh hằng thời gian). |
 | `BRIDGE_LISTEN` | Không | `:8090` | Địa chỉ và cổng lắng nghe HTTP của dịch vụ. |
 | `BACKEND_WEBHOOK_URL` | Khuyến nghị | `""` | URL webhook của Backend nhận sự kiện tin nhắn và trạng thái (`http://backend:8000/api/all-platform/messenger/webhook/bridge`). Nếu để trống, tin nhắn đến sẽ bị bỏ qua. |
 | `BRIDGE_DATA_DIR` | Không | `/data` | Thư mục lưu trữ cơ sở dữ liệu thiết bị E2EE (`e2ee.db`) và danh sách phiên tài khoản (`accounts.json` với quyền `0600`). |

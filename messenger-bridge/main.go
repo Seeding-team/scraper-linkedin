@@ -27,9 +27,9 @@ func env(key, def string) string {
 
 func main() {
 	log := zerolog.New(os.Stdout).With().Timestamp().Logger().Level(zerolog.InfoLevel)
-	key := strings.TrimSpace(os.Getenv("BRIDGE_KEY"))
+	key := env("BRIDGE_KEY", strings.TrimSpace(os.Getenv("MESSENGER_BRIDGE_KEY"))) // compose passes the backend .env
 	if key == "" {
-		log.Fatal().Msg("BRIDGE_KEY is required")
+		log.Fatal().Msg("BRIDGE_KEY (or MESSENGER_BRIDGE_KEY) is required")
 	}
 	listen := env("BRIDGE_LISTEN", ":8090")
 	dataDir := env("BRIDGE_DATA_DIR", "/data")

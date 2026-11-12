@@ -66,53 +66,15 @@ gửi thêm trường protobuf mới. Đã ghi chú trong `messenger-bridge/go.m
 6. **Gửi file/ảnh qua bridge**: chưa làm (hợp đồng chỉ có text).
 7. Dọn: `.agy-tasks/` (không commit); 2 cơ chế cũ chỉ bỏ sau khi bridge chạy ổn trên production.
 
-## 4. Hướng dẫn deploy (làm đúng thứ tự)
+## 4. Hướng dẫn deploy
 
-> Không ghi IP / mật khẩu host vào repo. Thông tin truy cập host lấy từ người dùng ở phiên làm việc.
-> Làm trên **dev** trước (`dev.seeding.markeeai.com`), chạy ổn 1–2 ngày rồi mới làm production.
-
-**Bước 0 — Commit + merge.** Commit nhánh `claude/messenger-feature-testing-b43be2` (KHÔNG commit `.agy-tasks/`,
-`messenger-bridge/cookies.txt`), merge vào `dev` (thử) rồi `main`. Chạy workflow "Deploy Dev"/"Deploy App" như mọi lần
-→ frontend + backend mới lên. Lúc này bridge chưa chạy và khoá chưa đặt → backend giữ hành vi cũ, an toàn.
-
-**Bước 1 — Áp migration 230** (idempotent) lên DB của môi trường đó, từ host:
-```bash
-docker run --rm -v "$PWD:/repo" postgres:alpine psql "$DB_URL" -v ON_ERROR_STOP=1   -f /repo/linkedin_group_crawler/supabase/migrations/230_fb_messenger_bridge.sql
-```
-(`$DB_URL` lấy giống chuỗi trong workflow). Kiểm tra: `GET {SUPABASE_URL}/rest/v1/fb_messenger_messages?select=fb_message_id&limit=1`
-(header service role) trả **200**. Nếu không 200 thì DỪNG — đừng làm bước 2.
-Lưu ý: các bước migration trong workflow có `|| true` (nuốt lỗi) nên đừng chỉ dựa vào workflow cho migration này.
-Workflow Deploy Dev còn đồng bộ DB Main → Dev, nên sau mỗi lần chạy nó phải áp lại 230 lên Dev (hoặc thêm `-f .../230_...sql`
-vào bước "Ap dung migration" của cả 2 workflow).
-
-**Bước 2 — Khoá bridge** (≥ 32 ký tự ngẫu nhiên, mỗi môi trường 1 khoá, tạo bằng `openssl rand -hex 32`), thêm vào `.env`
-cạnh file compose trên host (không commit): production `MESSENGER_BRIDGE_KEY=...`, dev `MESSENGER_BRIDGE_DEV_KEY=...`.
-
-**Bước 3 — Build + chạy bridge** (service có `profiles`, `docker compose up` thường không tự chạy nó):
-- production:
-  `docker compose --profile messenger-bridge build messenger-bridge && docker compose --profile messenger-bridge up -d messenger-bridge`
-- dev:
-  `docker compose -f docker-compose.dev.yml --profile messenger-bridge build messenger-bridge-dev && docker compose -f docker-compose.dev.yml --profile messenger-bridge up -d messenger-bridge-dev`
-
-Dev và production dùng service/volume/khoá **khác nhau** (cùng mạng `seeding-net`) — đừng gộp. Volume `/data` giữ
-`accounts.json` (cookie), `e2ee.db` (thiết bị E2EE) và `outbox/` (tin chưa giao) — **không xoá volume** khi redeploy.
-
-**Bước 4 — Recreate backend** để nạp khoá: `docker compose up -d --no-deps --force-recreate backend`
-(dev: `docker compose -f docker-compose.dev.yml up -d --no-deps --force-recreate backend-dev`).
-
-**Bước 5 — Kiểm tra:**
-- `docker logs seeding-messenger-bridge` có `messenger-bridge started`.
-- Từ host: `docker compose exec backend curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/all-platform/messenger/webhook/bridge` → **401** (không khoá).
-- Trên UI "Hộp thư Messenger": thêm nick **clone** (proxy dân cư VN cố định ở `proxy_url` — IP server là datacenter, dễ checkpoint)
-  → trạng thái `connected`, log bridge có `E2EE socket connected`.
-- Nhắn 2 chiều với nick chính; bảng `fb_messenger_messages` có `fb_message_id`, không dòng trùng.
-- Sau khi kết nối nick: **không mở Facebook bằng trình duyệt với nick đó** (cookie đổi → bridge `expired`).
-
-**Bước 6 — Đưa vào workflow (tuỳ chọn, sau khi chạy tay ổn):** thêm bước 3 vào `deploy-app.yml` / `deploy-dev.yml`
-sau bước "Ap dung container moi" / "Khoi chay stack dev".
-
-**Rollback:** `docker compose --profile messenger-bridge stop messenger-bridge` + xoá `MESSENGER_BRIDGE_KEY` khỏi `.env`
-+ recreate backend → hành vi cũ. Migration 230 chỉ thêm cột, không cần gỡ. Tin còn trong `outbox/` sẽ được giao khi bật lại bridge (trong 24h).
+**Làm theo `docs/MESSENGER_BRIDGE_DEPLOY_PROD.md`** (từng bước, từ SSH tới kiểm tra sau deploy). Điểm chính:
+- Merge vào `main` tự deploy production; migration 230 đã có trong bước migration của `deploy-app.yml`/`deploy-dev.yml`.
+- Khoá `MESSENGER_BRIDGE_KEY` đặt trong `linkedin_group_crawler/.env` trên host (backend đọc qua `env_file`, bridge cũng
+  đọc file này). KHÔNG đặt ở `.env` gốc: file đó được git theo dõi và bị `git checkout -- .env` mỗi lần deploy.
+- Bridge build/chạy tay bằng `--profile messenger-bridge`; workflow không đụng tới nó.
+- KHÔNG bật bridge trên host Dev: DB Dev chép đè từ production mỗi lần deploy → bridge Dev sẽ đăng nhập trùng nick thật.
+- Bật khoá = server đăng nhập 24/7 vào MỌI nick `is_active` → xem danh sách trước (Phần 4 của tài liệu deploy).
 
 ## 5. Chạy thử lại trên máy (để kiểm tra trước khi deploy)
 
