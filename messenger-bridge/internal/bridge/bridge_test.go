@@ -2,9 +2,14 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -124,22 +129,76 @@ func TestMapE2EEMessage(t *testing.T) {
 	}
 }
 
-func TestWebhookRetries(t *testing.T) {
+func TestWebhookOutbox(t *testing.T) {
+	dir := t.TempDir()
+	// Backend down: the event must stay on disk across a bridge restart.
+	down := &Webhook{URL: "http://127.0.0.1:1/hook", Key: "k", Dir: dir}
+	down.Enqueue(&StatusPayload{Type: "status", AccountID: "a", Status: StatusConnected})
+	down.CloseAndWait(time.Second)
+	if files, _ := filepath.Glob(filepath.Join(dir, "*.json")); len(files) != 1 {
+		t.Fatalf("expected 1 pending file, got %v", files)
+	}
+
+	var mu sync.Mutex
+	var got []string
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
 		if r.Header.Get("X-Bridge-Key") != "k" {
 			t.Errorf("missing key header")
 		}
-		if calls < 2 {
-			w.WriteHeader(500)
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if calls == 1 {
+			w.WriteHeader(502) // backend restarting
 			return
 		}
-		_, _ = w.Write([]byte(`{"success":true}`))
+		b, _ := io.ReadAll(r.Body)
+		got = append(got, string(b))
 	}))
 	defer srv.Close()
-	w := &Webhook{URL: srv.URL, Key: "k"}
-	if err := w.deliver(&StatusPayload{Type: "status", AccountID: "a", Status: StatusConnected}); err != nil || calls != 2 {
-		t.Fatalf("err=%v calls=%d", err, calls)
+	up := &Webhook{URL: srv.URL, Key: "k", Dir: dir}
+	up.Start()
+	up.Enqueue(&StatusPayload{Type: "status", AccountID: "b", Status: StatusConnected})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		n := len(got)
+		mu.Unlock()
+		if n == 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	up.CloseAndWait(time.Second)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 || !strings.Contains(got[0], `"account_id":"a"`) || !strings.Contains(got[1], `"account_id":"b"`) {
+		t.Fatalf("delivered out of order or missing: %v", got)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "*")); len(files) != 0 {
+		t.Fatalf("outbox not emptied: %v", files)
+	}
+}
+
+func TestWebhookDropsExpiredAndRejected(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, fmt.Sprintf("%020d-%09d.json", time.Now().Add(-25*time.Hour).UnixNano(), 1))
+	if err := os.WriteFile(old, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(422) }))
+	defer srv.Close()
+	w := &Webhook{URL: srv.URL, Key: "k", Dir: dir, MaxAge: 24 * time.Hour, Client: srv.Client()}
+	if !w.deliverFile(old) {
+		t.Fatal("expired event must be dropped")
+	}
+	fresh := filepath.Join(dir, fmt.Sprintf("%020d-%09d.json", time.Now().UnixNano(), 2))
+	_ = os.WriteFile(fresh, []byte(`{}`), 0o600)
+	if !w.deliverFile(fresh) {
+		t.Fatal("4xx must not be retried")
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "*")); len(files) != 0 {
+		t.Fatalf("files left: %v", files)
 	}
 }

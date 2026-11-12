@@ -100,6 +100,7 @@ type Session struct {
 	retrying          bool
 	e2eeRetry         bool
 	e2eeConnecting    bool
+	e2eeDisabled      bool // device locked/banned (403/406): stop registering new devices
 	lastFullReconnect time.Time
 }
 
@@ -322,7 +323,7 @@ func (s *Session) handleMetaEvent(ctx context.Context, rawEvt any) {
 				close(s.connected)
 			}
 		}
-		needE2EE := s.e2ee == nil && !s.e2eeConnecting && s.cli != nil
+		needE2EE := s.e2ee == nil && !s.e2eeConnecting && !s.e2eeDisabled && s.cli != nil
 		if needE2EE {
 			s.e2eeConnecting = true
 		}
@@ -540,11 +541,13 @@ func (s *Session) handleE2EEEvent(e2ee *whatsmeow.Client, rawEvt any) bool {
 		// 415: the device is gone server-side; register a fresh one once (same as the bridge).
 		if evt.Reason == events.ConnectFailureNotFound {
 			s.mu.Lock()
-			retry := !s.e2eeRetry && s.e2ee == e2ee
+			// Joins e2eeConnecting so a concurrent reconnect cannot register a second device.
+			retry := !s.e2eeRetry && s.e2ee == e2ee && !s.e2eeConnecting && s.cli != nil
 			s.e2eeRetry = true
 			cli, dev := s.cli, s.device
 			if retry {
 				s.e2ee, s.device, s.DeviceID = nil, nil, 0
+				s.e2eeConnecting = true
 			}
 			s.mu.Unlock()
 			if s.OnPersist != nil {
@@ -577,26 +580,22 @@ func (s *Session) handleE2EEEvent(e2ee *whatsmeow.Client, rawEvt any) bool {
 			return true
 		}
 		if evt.Reason == 400 || evt.Reason == events.ConnectFailureGeneric {
-			s.Log.Warn().Str("reason", evt.Reason.String()).Msg("E2EE connect failure 400, reconnecting")
 			e2ee.Disconnect()
-			s.mu.Lock()
-			if s.e2ee == e2ee {
-				s.e2ee = nil
+			if !s.dropCurrentE2EE(e2ee) {
+				return true // stale client already replaced: no full reconnect
 			}
-			s.mu.Unlock()
+			s.Log.Warn().Str("reason", evt.Reason.String()).Msg("E2EE connect failure 400, reconnecting")
 			s.setStatus(StatusDisconnected, evt.Reason.String(), true)
 			go s.retryLoop()
 			return true
 		}
 		s.Log.Warn().Str("reason", evt.Reason.String()).Msg("E2EE connect failure")
 	case *events.CATRefreshError:
-		s.Log.Warn().Msg("E2EE CAT refresh error, reconnecting")
 		e2ee.Disconnect()
-		s.mu.Lock()
-		if s.e2ee == e2ee {
-			s.e2ee = nil
+		if !s.dropCurrentE2EE(e2ee) {
+			return true
 		}
-		s.mu.Unlock()
+		s.Log.Warn().Msg("E2EE CAT refresh error, reconnecting")
 		s.setStatus(StatusDisconnected, "CAT refresh error", true)
 		go s.retryLoop()
 	case *events.LoggedOut:
@@ -622,12 +621,26 @@ func (s *Session) handleE2EEEvent(e2ee *whatsmeow.Client, rawEvt any) bool {
 		s.e2ee = nil
 		s.device = nil
 		s.DeviceID = 0
+		if evt.Reason == events.ConnectFailureMainDeviceGone || evt.Reason == events.ConnectFailureUnknownLogout {
+			s.e2eeDisabled = true
+		}
 		s.mu.Unlock()
 		if s.OnPersist != nil {
 			s.OnPersist()
 		}
 		s.Log.Warn().Str("account_id", s.AccountID).Int("reason", int(evt.Reason)).Msg("E2EE device logged out, not reconnecting")
 	}
+	return true
+}
+
+// dropCurrentE2EE clears s.e2ee if it is still e2ee; false means e2ee was already replaced.
+func (s *Session) dropCurrentE2EE(e2ee *whatsmeow.Client) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.e2ee != e2ee {
+		return false
+	}
+	s.e2ee = nil
 	return true
 }
 

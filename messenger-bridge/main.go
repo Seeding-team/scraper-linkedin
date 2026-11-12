@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -45,9 +46,10 @@ func main() {
 	mgr := &bridge.Manager{
 		DataDir: dataDir,
 		Devices: devices,
-		Hook:    &bridge.Webhook{URL: hookURL, Key: key, Log: log.With().Str("component", "webhook").Logger()},
+		Hook:    &bridge.Webhook{URL: hookURL, Key: key, Dir: filepath.Join(dataDir, "outbox"), Log: log.With().Str("component", "webhook").Logger()},
 		Log:     log,
 	}
+	mgr.Hook.Start() // resend events left in the outbox by the previous run
 	if err = mgr.Load(); err != nil {
 		log.Fatal().Err(err).Msg("Failed to load accounts")
 	}

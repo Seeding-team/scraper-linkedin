@@ -10,7 +10,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -215,93 +217,169 @@ func accountIDOf(payload any) string {
 	}
 }
 
-// Webhook delivers payloads to the backend in order, retrying failed deliveries.
+// Webhook delivers payloads to the backend in order. Every payload is written to Dir first
+// (one JSON file per event), so a backend outage or a bridge restart does not lose it. A file
+// is removed once the backend answers 2xx or 4xx (retrying a rejected request cannot help), or
+// when it is older than MaxAge. The backend dedupes on message_id.
 type Webhook struct {
 	URL    string
 	Key    string
+	Dir    string        // outbox directory, e.g. /data/outbox
+	MaxAge time.Duration // default 24h
 	Log    zerolog.Logger
 	Client *http.Client
 
-	queue   chan any
-	done    chan struct{}
-	once    sync.Once
+	mu      sync.Mutex
+	started bool
 	closed  bool
-	closeMu sync.Mutex
+	seq     uint64
+	wake    chan struct{}
+	stop    chan struct{}
+	done    chan struct{}
+}
+
+// Start begins delivering, including events left in the outbox by a previous run.
+func (w *Webhook) Start() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.started || w.closed || w.URL == "" {
+		return
+	}
+	if err := os.MkdirAll(w.Dir, 0o700); err != nil {
+		w.Log.Err(err).Msg("Cannot create webhook outbox")
+	}
+	if w.Client == nil {
+		w.Client = &http.Client{Timeout: 15 * time.Second}
+	}
+	if w.MaxAge == 0 {
+		w.MaxAge = 24 * time.Hour
+	}
+	w.wake, w.stop, w.done = make(chan struct{}, 1), make(chan struct{}), make(chan struct{})
+	w.started = true
+	go w.run()
 }
 
 func (w *Webhook) Enqueue(payload any) {
-	w.once.Do(func() {
-		w.queue = make(chan any, 1000)
-		w.done = make(chan struct{})
-		if w.Client == nil {
-			w.Client = &http.Client{Timeout: 15 * time.Second}
-		}
-		go func() {
-			defer close(w.done)
-			for p := range w.queue {
-				w.deliver(p)
-			}
-		}()
-	})
-	w.closeMu.Lock()
-	defer w.closeMu.Unlock()
+	if w.URL == "" {
+		return
+	}
+	w.Start()
+	body, err := json.Marshal(payload)
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.closed {
 		w.Log.Warn().Str("account_id", accountIDOf(payload)).Msg("Webhook closed, dropping event")
 		return
 	}
+	if err == nil {
+		w.seq++
+		// Zero-padded nanos sort lexically in arrival order; seq breaks ties.
+		name := fmt.Sprintf("%020d-%09d.json", time.Now().UnixNano(), w.seq%1e9)
+		err = writeFileSync(filepath.Join(w.Dir, name), body)
+	}
+	if err != nil {
+		w.Log.Err(err).Str("account_id", accountIDOf(payload)).Msg("Cannot write webhook outbox, dropping event")
+		return
+	}
 	select {
-	case w.queue <- payload:
+	case w.wake <- struct{}{}:
 	default:
-		w.Log.Warn().Str("account_id", accountIDOf(payload)).Msg("Webhook queue full, dropping event")
 	}
 }
 
-// CloseAndWait closes the webhook queue and waits up to timeout for pending deliveries.
+// CloseAndWait stops delivering and waits up to timeout for an in-flight request.
+// Undelivered events stay in the outbox for the next start.
 func (w *Webhook) CloseAndWait(timeout time.Duration) {
-	w.closeMu.Lock()
+	w.mu.Lock()
 	if w.closed {
-		w.closeMu.Unlock()
+		w.mu.Unlock()
 		return
 	}
 	w.closed = true
-	q := w.queue
-	done := w.done
-	if q != nil {
-		close(q)
+	started := w.started
+	w.mu.Unlock()
+	if !started {
+		return
 	}
-	w.closeMu.Unlock()
-
-	if done != nil {
-		select {
-		case <-done:
-		case <-time.After(timeout):
-			w.Log.Warn().Msg("Webhook drain timed out")
-		}
+	close(w.stop)
+	select {
+	case <-w.done:
+	case <-time.After(timeout):
+		w.Log.Warn().Msg("Webhook stop timed out")
 	}
 }
 
-// deliver sends once and retries 3 more times (1s, 2s, 4s) on network errors or 5xx.
-// The backend dedupes on message_id.
-func (w *Webhook) deliver(payload any) error {
-	if w.URL == "" {
-		return nil
+func (w *Webhook) run() {
+	defer close(w.done)
+	delay := time.Second
+	for {
+		names, err := filepath.Glob(filepath.Join(w.Dir, "*.json"))
+		if err != nil || len(names) == 0 {
+			select {
+			case <-w.wake:
+				continue
+			case <-w.stop:
+				return
+			}
+		}
+		sort.Strings(names)
+		if w.deliverFile(names[0]) {
+			delay = time.Second
+			continue
+		}
+		select { // keep the oldest event first: retry it until it goes through or expires
+		case <-time.After(delay):
+		case <-w.stop:
+			return
+		}
+		delay = min(delay*2, time.Minute)
 	}
-	body, err := json.Marshal(payload)
+}
+
+// deliverFile returns false when the event must be retried later.
+func (w *Webhook) deliverFile(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		w.Log.Err(err).Str("file", filepath.Base(path)).Msg("Unreadable outbox file, dropping")
+		_ = os.Remove(path)
+		return true
+	}
+	if nanos, perr := strconv.ParseInt(strings.SplitN(filepath.Base(path), "-", 2)[0], 10, 64); perr == nil &&
+		time.Since(time.Unix(0, nanos)) > w.MaxAge {
+		w.Log.Error().Str("file", filepath.Base(path)).Msg("Webhook event expired before backend accepted it, dropping")
+		_ = os.Remove(path)
+		return true
+	}
+	retryable, err := w.post(body)
+	if err != nil && retryable {
+		w.Log.Warn().Err(err).Str("file", filepath.Base(path)).Msg("Webhook delivery failed, will retry")
+		return false
+	}
+	if err != nil {
+		w.Log.Err(err).Str("file", filepath.Base(path)).Msg("Webhook rejected event, dropping")
+	}
+	_ = os.Remove(path)
+	return true
+}
+
+func writeFileSync(path string, data []byte) error {
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
-	delay := time.Second
-	for attempt := 0; ; attempt++ {
-		retryable, postErr := w.post(body)
-		err = postErr
-		if err == nil || !retryable || attempt == 3 {
-			break
-		}
-		time.Sleep(delay)
-		delay *= 2
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
 	}
 	if err != nil {
-		w.Log.Err(err).Str("account_id", accountIDOf(payload)).Msg("Webhook delivery failed after retries")
+		_ = os.Remove(tmp)
 	}
 	return err
 }

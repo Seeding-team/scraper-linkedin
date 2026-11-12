@@ -482,9 +482,9 @@ class FbMessengerService:
         if fb_message_id is not None:
             msg_payload["fb_message_id"] = fb_message_id
 
-        created_msg: Optional[Dict[str, Any]] = None
-        if fb_message_id:
-            existing_res = (
+        def _mark_sent_if_exists() -> Optional[Dict[str, Any]]:
+            """Tin echo từ bridge có thể đã lưu trước (cùng fb_message_id): cập nhật dòng đó thay vì chèn trùng."""
+            existing = (
                 sb.table("fb_messenger_messages")
                 .select("*")
                 .eq("account_id", account_id)
@@ -492,60 +492,27 @@ class FbMessengerService:
                 .limit(1)
                 .execute()
             )
-            if existing_res.data:
-                upd_fields = {
-                    "offline_threading_id": offline_threading_id,
-                    "is_echo": False,
-                    "status": "sent",
-                }
-                upd_res = (
-                    sb.table("fb_messenger_messages")
-                    .update(upd_fields)
-                    .eq("account_id", account_id)
-                    .eq("fb_message_id", fb_message_id)
-                    .execute()
-                )
-                created_msg = (
-                    upd_res.data[0]
-                    if upd_res.data
-                    else {**existing_res.data[0], **upd_fields}
-                )
+            if not existing.data:
+                return None
+            upd_fields = {"offline_threading_id": offline_threading_id, "is_echo": False, "status": "sent"}
+            upd_res = (
+                sb.table("fb_messenger_messages")
+                .update(upd_fields)
+                .eq("account_id", account_id)
+                .eq("fb_message_id", fb_message_id)
+                .execute()
+            )
+            return upd_res.data[0] if upd_res.data else {**existing.data[0], **upd_fields}
 
+        created_msg: Optional[Dict[str, Any]] = _mark_sent_if_exists() if fb_message_id else None
         if created_msg is None:
             try:
                 msg_res = sb.table("fb_messenger_messages").insert(msg_payload).execute()
                 created_msg = msg_res.data[0] if msg_res.data else msg_payload
             except Exception:
-                if fb_message_id:
-                    race_res = (
-                        sb.table("fb_messenger_messages")
-                        .select("*")
-                        .eq("account_id", account_id)
-                        .eq("fb_message_id", fb_message_id)
-                        .limit(1)
-                        .execute()
-                    )
-                    if race_res.data:
-                        upd_fields = {
-                            "offline_threading_id": offline_threading_id,
-                            "is_echo": False,
-                            "status": "sent",
-                        }
-                        upd_res = (
-                            sb.table("fb_messenger_messages")
-                            .update(upd_fields)
-                            .eq("account_id", account_id)
-                            .eq("fb_message_id", fb_message_id)
-                            .execute()
-                        )
-                        created_msg = (
-                            upd_res.data[0]
-                            if upd_res.data
-                            else {**race_res.data[0], **upd_fields}
-                        )
-                    else:
-                        raise
-                else:
+                # Echo chèn xen giữa lúc kiểm tra và lúc insert (unique index) -> cập nhật dòng đó.
+                created_msg = _mark_sent_if_exists() if fb_message_id else None
+                if created_msg is None:
                     raise
 
         # Cập nhật thông tin Thread

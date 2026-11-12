@@ -35,7 +35,7 @@ Mọi endpoint (trừ `GET /health`) đều yêu cầu header `X-Bridge-Key: <BR
 
 ### Chiều Bridge -> Backend (`POST $BACKEND_WEBHOOK_URL`)
 
-Bridge gửi kèm header `X-Bridge-Key: <BRIDGE_KEY>` và tự động thử lại tối đa 3 lần với exponential backoff (`1s`, `2s`, `4s`) nếu gặp lỗi mạng hoặc HTTP 5xx (không thử lại với các mã lỗi client 4xx):
+Bridge gửi kèm header `X-Bridge-Key: <BRIDGE_KEY>`. Mỗi sự kiện được ghi xuống đĩa trước (`$BRIDGE_DATA_DIR/outbox/*.json`) rồi gửi lần lượt theo thứ tự; gặp lỗi mạng hoặc HTTP 5xx thì thử lại mãi (backoff 1s → tối đa 60s), kể cả sau khi bridge khởi động lại, cho tới khi backend trả 2xx. Sự kiện bị backend trả 4xx hoặc quá 24 giờ thì bỏ (ghi log):
 
 - **Sự kiện `message`:**
   ```json

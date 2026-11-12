@@ -52,6 +52,9 @@ export function MessengerInboxShell() {
     selectedThreadRef.current = selectedThread;
   }, [selectedThread]);
 
+  const loadThreadsReqIdRef = useRef(0);
+  const loadMessagesReqIdRef = useRef(0);
+
   // Danh sách tệp đính kèm chờ gửi & lightbox phóng to ảnh
   const [pendingFiles, setPendingFiles] = useState<
     { file: File; previewUrl?: string; name: string; size: number; kind: "image" | "file" }[]
@@ -122,10 +125,11 @@ export function MessengerInboxShell() {
   // 2. Tải danh sách threads khi chọn account
   const loadThreads = useCallback(async (accId: string, preferredThreadId?: string) => {
     if (!accId) return;
+    const reqId = ++loadThreadsReqIdRef.current;
     setLoadingThreads(true);
     try {
       const res = await fbMessengerService.getThreads(accId);
-      if (accId !== selectedAccountIdRef.current) return;
+      if (reqId !== loadThreadsReqIdRef.current || accId !== selectedAccountIdRef.current) return;
       if (res.success && res.data) {
         const fetchedThreads = res.data;
         const currentSelected =
@@ -173,9 +177,11 @@ export function MessengerInboxShell() {
         }
       }
     } catch {
-      toast.error("Không tải được danh sách hội thoại.");
+      if (reqId === loadThreadsReqIdRef.current && accId === selectedAccountIdRef.current) {
+        toast.error("Không tải được danh sách hội thoại.");
+      }
     } finally {
-      if (accId === selectedAccountIdRef.current) {
+      if (reqId === loadThreadsReqIdRef.current && accId === selectedAccountIdRef.current) {
         setLoadingThreads(false);
       }
     }
@@ -190,25 +196,31 @@ export function MessengerInboxShell() {
   // 3. Tải tin nhắn khi chọn thread
   const loadMessages = useCallback(async (accId: string, threadId: string) => {
     if (!accId || !threadId) return;
+    const reqId = ++loadMessagesReqIdRef.current;
     setLoadingMessages(true);
     try {
       const res = await fbMessengerService.getThreadMessages(accId, threadId);
-      if (accId !== selectedAccountIdRef.current || threadId !== selectedThreadRef.current?.thread_id) return;
+      if (reqId !== loadMessagesReqIdRef.current || accId !== selectedAccountIdRef.current || threadId !== selectedThreadRef.current?.thread_id) return;
       if (res.success && res.data) {
         setMessages(res.data);
       }
     } catch {
-      toast.error("Không tải được tin nhắn hội thoại.");
+      if (reqId === loadMessagesReqIdRef.current && accId === selectedAccountIdRef.current && threadId === selectedThreadRef.current?.thread_id) {
+        toast.error("Không tải được tin nhắn hội thoại.");
+      }
     } finally {
-      if (accId === selectedAccountIdRef.current && threadId === selectedThreadRef.current?.thread_id) {
+      if (reqId === loadMessagesReqIdRef.current) {
         setLoadingMessages(false);
       }
     }
   }, []);
 
   useEffect(() => {
-    if (selectedAccountId && selectedThread) {
+    if (selectedAccountId && selectedThread && selectedThread.account_id === selectedAccountId) {
       loadMessages(selectedAccountId, selectedThread.thread_id);
+    } else {
+      loadMessagesReqIdRef.current++;
+      setLoadingMessages(false);
     }
   }, [selectedAccountId, selectedThread, loadMessages]);
 
@@ -256,6 +268,7 @@ export function MessengerInboxShell() {
 
     const sendAccountId = selectedAccountId;
     const sentThreadId = selectedThread.thread_id;
+    const sentRecipientName = selectedThread.recipient_name;
     const content = inputText.trim();
     const filesToUpload = [...pendingFiles];
     setInputText("");
@@ -263,6 +276,10 @@ export function MessengerInboxShell() {
     setShowTemplateMenu(false);
 
     setSending(true);
+
+    const isCurrentThread = () =>
+      selectedAccountIdRef.current === sendAccountId &&
+      selectedThreadRef.current?.thread_id === sentThreadId;
 
     // 1. Upload các file đính kèm (nếu có)
     const uploadedAttachments: {
@@ -294,9 +311,9 @@ export function MessengerInboxShell() {
     const optimisticMsg: FbMessengerMessage = {
       id: `opt_${Date.now()}`,
       account_id: sendAccountId,
-      thread_id: selectedThread.thread_id,
+      thread_id: sentThreadId,
       sender_id: sendAccountId,
-      recipient_id: selectedThread.thread_id,
+      recipient_id: sentThreadId,
       content,
       attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
       is_self: true,
@@ -305,7 +322,9 @@ export function MessengerInboxShell() {
       created_at: new Date().toISOString(),
     };
 
-    setMessages((prev) => [...prev, optimisticMsg]);
+    if (isCurrentThread()) {
+      setMessages((prev) => [...prev, optimisticMsg]);
+    }
 
     // Kích hoạt chuỗi bước mô phỏng thị giác (Visual Simulation Stepper)
     setSimulationStep(1);
@@ -329,8 +348,8 @@ export function MessengerInboxShell() {
     try {
       const res = await fbMessengerService.sendMessage({
         account_id: sendAccountId,
-        recipient_id: selectedThread.thread_id,
-        recipient_name: selectedThread.recipient_name,
+        recipient_id: sentThreadId,
+        recipient_name: sentRecipientName,
         content,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         simulate_human: true,
@@ -342,9 +361,11 @@ export function MessengerInboxShell() {
 
       if (!res.success) {
         toast.error(res.message || "Gửi tin nhắn thất bại.");
-        setMessages((prev) =>
-          prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
-        );
+        if (isCurrentThread()) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
+          );
+        }
         setSimulationStep(0);
         return;
       }
@@ -354,9 +375,11 @@ export function MessengerInboxShell() {
 
       if (res.data?.message) {
         const saved = res.data.message;
-        setMessages((prev) =>
-          prev.map((m) => (m.id === optimisticMsg.id ? saved : m))
-        );
+        if (isCurrentThread()) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === optimisticMsg.id ? saved : m))
+          );
+        }
       }
 
       setTimeout(() => {
@@ -381,9 +404,11 @@ export function MessengerInboxShell() {
       clearTimeout(timer2);
       clearTimeout(timer3);
       toast.error("Lỗi mạng khi gửi tin nhắn.");
-      setMessages((prev) =>
-        prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
-      );
+      if (isCurrentThread()) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimisticMsg.id ? { ...m, status: "failed" } : m))
+        );
+      }
       setSimulationStep(0);
     } finally {
       setSending(false);
@@ -415,6 +440,7 @@ export function MessengerInboxShell() {
     );
 
     if (existing) {
+      selectedThreadRef.current = existing;
       setSelectedThread(existing);
       setSearchQuery("");
       return;
@@ -437,6 +463,7 @@ export function MessengerInboxShell() {
       tempThread,
       ...prev.filter((t) => t.recipient_id !== uid && t.thread_id !== uid),
     ]);
+    selectedThreadRef.current = tempThread;
     setSelectedThread(tempThread);
     setMessages([]);
     setSearchQuery("");
@@ -516,10 +543,12 @@ export function MessengerInboxShell() {
           <select
             value={selectedAccountId}
             onChange={(e) => {
-              selectedAccountIdRef.current = e.target.value;
+              const val = e.target.value;
+              selectedAccountIdRef.current = val;
+              selectedThreadRef.current = null;
               setSelectedThread(null);
               setMessages([]);
-              setSelectedAccountId(e.target.value);
+              setSelectedAccountId(val);
             }}
             className="w-full text-xs font-semibold p-2.5 bg-surface border border-outline-variant rounded-xl cursor-pointer focus:ring-2 focus:ring-primary/20 text-on-surface"
           >
@@ -640,7 +669,10 @@ export function MessengerInboxShell() {
               return (
                 <div
                   key={t.id}
-                  onClick={() => setSelectedThread(t)}
+                  onClick={() => {
+                    selectedThreadRef.current = t;
+                    setSelectedThread(t);
+                  }}
                   className={cn(
                     "p-3.5 flex items-start gap-3 cursor-pointer transition",
                     isSelected
