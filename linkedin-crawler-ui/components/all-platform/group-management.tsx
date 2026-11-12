@@ -1972,6 +1972,23 @@ export function GroupManagementContent() {
                             <span className="material-symbols-outlined text-[10px]">bolt</span> 24h Tự động
                           </span>
                         )}
+                        {platform === "facebook" && (
+                          (g as FacebookGroup).visibility === "private" ? (
+                            <span
+                              className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-md text-[10px] font-bold flex items-center gap-0.5"
+                              title="Nhóm riêng tư — cào bằng Extension / Tài khoản tham gia nhóm"
+                            >
+                              <span className="material-symbols-outlined text-[10px]">lock</span> Private
+                            </span>
+                          ) : (g as FacebookGroup).public_crawl_enabled !== false ? (
+                            <span
+                              className="px-2 py-0.5 bg-sky-50 text-sky-700 border border-sky-200 rounded-md text-[10px] font-bold flex items-center gap-0.5"
+                              title="Hỗ trợ cào nhanh không acc qua Proxy 4G"
+                            >
+                              <span className="material-symbols-outlined text-[10px]">public</span> Public 4G
+                            </span>
+                          ) : null
+                        )}
                         {g.intent_name && <span className="px-2 py-0.5 bg-primary/10 text-primary rounded-md text-[10px] font-bold" title="Lĩnh vực">{g.intent_name}</span>}
                         {(g as any).id_team && getTeamName((g as any).id_team) !== "—" && <span className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-md text-[10px] font-bold" title="Team">{getTeamName((g as any).id_team)}</span>}
                         {g.industry_name && <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-md text-[10px] font-bold" title="Industry">{g.industry_name}</span>}

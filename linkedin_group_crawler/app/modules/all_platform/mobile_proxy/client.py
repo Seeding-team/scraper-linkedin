@@ -13,6 +13,7 @@ import httpx
 from fastapi import HTTPException
 
 from app.modules.all_platform.mobile_proxy.config import node_console_targets
+from app.modules.all_platform.services.socks5_http_bridge import rewrite_proxy_url_for_runtime
 
 
 def _headers(api_key: str | None) -> dict[str, str]:
@@ -33,7 +34,7 @@ async def console_request(
     api_key: str | None = None,
     timeout: float = 90.0,
 ) -> Any:
-    base = base_url.rstrip("/")
+    base = (rewrite_proxy_url_for_runtime(base_url) or base_url).rstrip("/")
     if not base:
         raise HTTPException(status_code=503, detail="Console URL is not configured for this node.")
     url = f"{base}{path}"

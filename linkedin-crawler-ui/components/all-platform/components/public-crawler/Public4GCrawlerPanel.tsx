@@ -1,0 +1,1117 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  CheckCircle2,
+  Globe,
+  Lock,
+  Play,
+  RefreshCw,
+  RotateCw,
+  Save,
+  ShieldCheck,
+  Smartphone,
+  Square,
+  Terminal,
+  Zap,
+} from "lucide-react";
+
+import { useAppAuth } from "@/contexts/AppAuthContext";
+import { cn } from "@/lib/utils";
+import { publicCrawlerService } from "@/services/public-crawler.service";
+import type {
+  ProxyTestResponse,
+  PublicCrawlConfig,
+  PublicCrawlGroupItem,
+  PublicCrawlStatusResponse,
+} from "@/types/public-crawler";
+
+const DEFAULT_CONFIG: PublicCrawlConfig = {
+  id: "default",
+  enabled: false,
+  cycle_interval_min: 15,
+  groups_per_ip_rotate: 6,
+  max_posts_per_group: 25,
+  max_scrolls_per_group: 2,
+  concurrent_sims: 2,
+  auto_skip_private: true,
+  headless: true,
+};
+
+const LOG_TEXT_COLOR: Record<string, string> = {
+  success: "text-emerald-300",
+  error: "text-rose-300",
+  warn: "text-amber-300",
+  info: "text-slate-200",
+};
+
+function formatDateTime(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    day: "2-digit",
+    month: "2-digit",
+  });
+}
+
+function statusChipMeta(status?: string | null): { label: string; cls: string } {
+  switch (status) {
+    case "ok":
+      return { label: "OK", cls: "bg-emerald-50 text-emerald-700 border-emerald-200" };
+    case "rotated_retry":
+      return { label: "Đã xoay IP & OK", cls: "bg-sky-50 text-sky-700 border-sky-200" };
+    case "private_skipped":
+      return { label: "Nhóm kín", cls: "bg-amber-50 text-amber-700 border-amber-200" };
+    case "blocked":
+      return { label: "Bị chặn / Wall", cls: "bg-rose-50 text-rose-700 border-rose-200" };
+    case "error":
+      return { label: "Lỗi", cls: "bg-rose-50 text-rose-700 border-rose-200" };
+    default:
+      return { label: "Chưa chạy", cls: "bg-slate-50 text-slate-500 border-slate-200" };
+  }
+}
+
+export function Public4GCrawlerPanel() {
+  const { user } = useAppAuth();
+  const canControl = user?.role === "admin" || user?.role === "leader";
+
+  const [statusData, setStatusData] = useState<PublicCrawlStatusResponse | null>(null);
+  const [configDraft, setConfigDraft] = useState<PublicCrawlConfig>(DEFAULT_CONFIG);
+  const [configDirty, setConfigDirty] = useState(false);
+
+  const [groups, setGroups] = useState<PublicCrawlGroupItem[]>([]);
+  const [visibilityFilter, setVisibilityFilter] = useState<"all" | "public" | "private">("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [keywordsInput, setKeywordsInput] = useState("");
+
+  const [loading, setLoading] = useState(true);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [triggeringRun, setTriggeringRun] = useState(false);
+  const [testingProxyNode, setTestingProxyNode] = useState<string | null>(null);
+  const [lastProxyTest, setLastProxyTest] = useState<ProxyTestResponse | null>(null);
+  const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; text: string } | null>(
+    null,
+  );
+
+  const loadAll = useCallback(async (syncDraft = false) => {
+    try {
+      const [statusRes, groupsRes] = await Promise.all([
+        publicCrawlerService.getStatus(),
+        publicCrawlerService.listGroups(),
+      ]);
+      setStatusData(statusRes);
+      if (syncDraft) {
+        setConfigDraft(statusRes.config);
+        setConfigDirty(false);
+      }
+      setGroups(groupsRes.groups || []);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Không tải được trạng thái Public 4G Crawler",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      publicCrawlerService.getStatus(),
+      publicCrawlerService.listGroups(),
+    ])
+      .then(([statusRes, groupsRes]) => {
+        if (cancelled) return;
+        setStatusData(statusRes);
+        setConfigDraft(statusRes.config);
+        setConfigDirty(false);
+        setGroups(groupsRes.groups || []);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setFeedback({
+          type: "error",
+          text:
+            err instanceof Error
+              ? err.message
+              : "Không tải được trạng thái Public 4G Crawler",
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Adaptive polling: fast when running (2.5s), light when idle (15s)
+  const isRunning = Boolean(statusData?.runtime.is_running);
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => {
+        void loadAll(false);
+      },
+      isRunning ? 2500 : 15000,
+    );
+    return () => window.clearInterval(timer);
+  }, [isRunning, loadAll]);
+
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return groups.filter((g) => {
+      if (visibilityFilter !== "all" && g.visibility !== visibilityFilter) return false;
+      if (!q) return true;
+      return (
+        (g.group_name || "").toLowerCase().includes(q) ||
+        (g.group_url || "").toLowerCase().includes(q)
+      );
+    });
+  }, [groups, visibilityFilter, searchQuery]);
+
+  const publicEnabledCount = useMemo(
+    () => groups.filter((g) => g.visibility === "public" && g.public_crawl_enabled).length,
+    [groups],
+  );
+  const privateCount = useMemo(
+    () => groups.filter((g) => g.visibility === "private").length,
+    [groups],
+  );
+
+  const parsedKeywords = useMemo(
+    () =>
+      keywordsInput
+        .split(/[,\n]/g)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    [keywordsInput],
+  );
+
+  const handleSaveConfig = async () => {
+    if (!canControl) return;
+    setSavingConfig(true);
+    setFeedback(null);
+    try {
+      const res = await publicCrawlerService.updateConfig({
+        enabled: configDraft.enabled,
+        cycle_interval_min: configDraft.cycle_interval_min,
+        groups_per_ip_rotate: configDraft.groups_per_ip_rotate,
+        max_posts_per_group: configDraft.max_posts_per_group,
+        max_scrolls_per_group: configDraft.max_scrolls_per_group,
+        concurrent_sims: configDraft.concurrent_sims,
+        auto_skip_private: configDraft.auto_skip_private,
+      });
+      setConfigDraft(res.config);
+      setConfigDirty(false);
+      setFeedback({ type: "success", text: "Đã lưu cấu hình Cào Public 4G." });
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lưu cấu hình thất bại",
+      });
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleRunNow = async (onlySelected = false, limitGroups?: number) => {
+    if (!canControl) return;
+    setTriggeringRun(true);
+    setFeedback(null);
+    try {
+      const group_ids = onlySelected && selectedIds.size > 0 ? Array.from(selectedIds) : undefined;
+      const res = await publicCrawlerService.runNow({
+        group_ids,
+        keywords: parsedKeywords.length > 0 ? parsedKeywords : undefined,
+        limit_groups: limitGroups,
+      });
+      if (res.started) {
+        setFeedback({
+          type: "success",
+          text: limitGroups
+            ? `Đang Test Cào Nhanh ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`
+            : `Đã khởi chạy cào ${res.total_groups ?? 0} nhóm Public bằng ${(res.sim_nodes || []).join(", ")} (0% Cookie).`,
+        });
+      } else {
+        setFeedback({
+          type: "info",
+          text: res.message || `Không thể khởi chạy (${res.reason || "unknown"}).`,
+        });
+      }
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi khởi chạy Public 4G Crawler",
+      });
+    } finally {
+      setTriggeringRun(false);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!canControl) return;
+    try {
+      const res = await publicCrawlerService.stop();
+      setFeedback({
+        type: res.stopped ? "info" : "error",
+        text: res.stopped
+          ? "Đã gửi lệnh dừng an toàn — phiên sẽ dừng ngay sau nhóm hiện tại."
+          : res.message || "Không có phiên nào đang chạy.",
+      });
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi khi gửi lệnh dừng",
+      });
+    }
+  };
+
+  const handleTestProxy = async (nodeId?: string, doRotate = false) => {
+    if (!canControl) return;
+    setTestingProxyNode(`${nodeId || "all"}:${doRotate ? "rot" : "probe"}`);
+    setFeedback(null);
+    try {
+      const res = await publicCrawlerService.testProxy({ node_id: nodeId, do_rotate: doRotate });
+      setLastProxyTest(res);
+      const first = res.results?.[0];
+      if (res.ok && first) {
+        const ipNote = doRotate
+          ? `IP trước ${first.egressIpBefore || "?"} -> sau ${first.egressIpAfter || "?"} (${first.ipChanged ? "ĐÃ ĐỔI IP" : "Kiểm tra lại IP"})`
+          : `IP hiện tại ${first.egressIpBefore || "?"} (${first.latencyMs ?? "?"}ms)`;
+        setFeedback({
+          type: "success",
+          text: `SIM ${first.id}: SOCKS5 ${first.socksOk ? "OK" : "Lỗi"} | ${ipNote}`,
+        });
+      } else {
+        setFeedback({
+          type: "error",
+          text: res.error || first?.error || "Test kết nối SIM 4G thất bại.",
+        });
+      }
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi kiểm tra SIM 4G",
+      });
+    } finally {
+      setTestingProxyNode(null);
+    }
+  };
+
+  const handleToggleGroup = async (
+    group: PublicCrawlGroupItem,
+    patch: { visibility?: "public" | "private"; public_crawl_enabled?: boolean },
+  ) => {
+    if (!canControl) return;
+    try {
+      const res = await publicCrawlerService.updateGroup(group.id, patch);
+      setGroups((prev) =>
+        prev.map((item) => (item.id === group.id ? { ...item, ...res.group } : item)),
+      );
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Cập nhật nhóm thất bại",
+      });
+    }
+  };
+
+  const handleBulkToggle = async (enabled: boolean) => {
+    if (!canControl || selectedIds.size === 0) return;
+    try {
+      await publicCrawlerService.bulkToggleGroups({
+        group_ids: Array.from(selectedIds),
+        public_crawl_enabled: enabled,
+      });
+      setSelectedIds(new Set());
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Cập nhật hàng loạt thất bại",
+      });
+    }
+  };
+
+  const sims = statusData?.sims || [];
+  const runtime = statusData?.runtime;
+  const logs = statusData?.logs || [];
+  const recentRuns = statusData?.recent_runs || [];
+
+  const allVisibleSelected =
+    filteredGroups.length > 0 && filteredGroups.every((g) => selectedIds.has(g.id));
+
+  return (
+    <div className="space-y-6">
+      {/* Banner Zero-Account & Minh bạch phạm vi */}
+      <div className="rounded-2xl border border-emerald-200 bg-gradient-to-r from-emerald-50/90 via-teal-50/70 to-sky-50/80 p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-600 text-white">
+              <ShieldCheck className="size-3.5" /> 0% BAN ACC — CHẾ ĐỘ KHÁCH KHÔNG COOKIE
+            </span>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
+              <Zap className="size-3" /> GraphQL Stream + SSR + Xoay SIM 4G
+            </span>
+          </div>
+          <h2 className="text-base font-black text-slate-900">
+            Cào Nhóm Facebook Public Tốc Độ Cao Qua Cụm SIM 4G
+          </h2>
+          <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
+            Playwright chạy 100% chế độ Khách (không gắn bất kỳ cookie nhân viên hay acc seeding nào), chặn ảnh/video/font thừa để tiết kiệm băng thông SIM 4G, đọc thẳng GraphQL/SSR theo thứ tự mới nhất và dừng ngay khi chạm bài đã có trong DB.{" "}
+            <span className="font-semibold text-slate-800">
+              Nhóm kín (Private) &amp; LinkedIn Authwall
+            </span>{" "}
+            được tự động tách riêng để tiếp tục dùng Extension an toàn.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <button
+            type="button"
+            disabled={!canControl || sims.length === 0 || testingProxyNode !== null}
+            onClick={() => void handleTestProxy(undefined, true)}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold border border-sky-300 bg-white hover:bg-sky-50 disabled:opacity-50 text-sky-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <RotateCw className={cn("size-3.5", testingProxyNode === "all:rot" && "animate-spin")} />
+            {testingProxyNode === "all:rot" ? "Đang xoay IP 4G..." : "Test Xoay Proxy 4G (1 Bấm)"}
+          </button>
+          {!isRunning ? (
+            <>
+              <button
+                type="button"
+                disabled={!canControl || triggeringRun || publicEnabledCount === 0}
+                onClick={() => void handleRunNow(false, 3)}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold border border-emerald-300 bg-white hover:bg-emerald-50 disabled:opacity-50 text-emerald-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <Zap className="size-3.5" />
+                {triggeringRun ? "Đang khởi chạy..." : "Test Cào Nhanh 3 Nhóm"}
+              </button>
+              <button
+                type="button"
+                disabled={!canControl || triggeringRun}
+                onClick={() => void handleRunNow(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+              >
+                <Play className="size-3.5" />
+                {triggeringRun ? "Đang khởi chạy..." : `Chạy ngay (${publicEnabledCount} nhóm Public)`}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={!canControl}
+              onClick={() => void handleStop()}
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white shadow-xs flex items-center gap-1.5 cursor-pointer transition"
+            >
+              <Square className="size-3.5" />
+              {runtime?.stop_requested ? "Đang dừng..." : "Dừng an toàn"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void loadAll(false)}
+            className="px-3 py-2 rounded-xl text-xs font-bold border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 flex items-center gap-1.5 cursor-pointer transition"
+          >
+            <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+            Làm mới
+          </button>
+        </div>
+      </div>
+
+      {!canControl && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs font-medium text-amber-800">
+          Bạn đang xem ở chế độ chỉ đọc. Chỉ tài khoản <strong>Admin</strong> hoặc{" "}
+          <strong>Leader</strong> mới có quyền bấm Chạy/Dừng, cấu hình xoay IP SIM 4G hoặc đổi trạng thái Public/Private.
+        </div>
+      )}
+
+      {feedback && (
+        <div
+          className={cn(
+            "rounded-xl border px-4 py-2.5 text-xs font-semibold flex items-center justify-between gap-2",
+            feedback.type === "success" && "bg-emerald-50 border-emerald-200 text-emerald-800",
+            feedback.type === "error" && "bg-rose-50 border-rose-200 text-rose-800",
+            feedback.type === "info" && "bg-sky-50 border-sky-200 text-sky-800",
+          )}
+        >
+          <span>{feedback.text}</span>
+          <button
+            type="button"
+            onClick={() => setFeedback(null)}
+            className="text-[11px] opacity-70 hover:opacity-100 cursor-pointer"
+          >
+            Đóng
+          </button>
+        </div>
+      )}
+
+      {lastProxyTest && (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4 space-y-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+              <Smartphone className="size-4 text-sky-600" />
+              Kết quả Kiểm tra &amp; Xoay Proxy 4G
+            </div>
+            <button
+              type="button"
+              onClick={() => setLastProxyTest(null)}
+              className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+            >
+              Đóng
+            </button>
+          </div>
+          {lastProxyTest.results.length === 0 ? (
+            <div className="text-xs text-rose-700 font-semibold">
+              {lastProxyTest.error || "Không tìm thấy node SIM 4G nào."}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {lastProxyTest.results.map((r) => (
+                <div
+                  key={r.id}
+                  className="rounded-xl border border-slate-200 bg-white p-3 text-xs space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-black text-slate-900">
+                      {r.label} <span className="font-mono text-[10px] text-slate-500">({r.id})</span>
+                    </span>
+                    {r.rotated ? (
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                          r.ipChanged
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-amber-50 text-amber-700 border-amber-200",
+                        )}
+                      >
+                        {r.ipChanged ? "Đã đổi IP 4G mới" : "Xoay xong (IP trùng/chưa rõ)"}
+                      </span>
+                    ) : (
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                          r.socksOk
+                            ? "bg-sky-50 text-sky-700 border-sky-200"
+                            : "bg-rose-50 text-rose-700 border-rose-200",
+                        )}
+                      >
+                        {r.socksOk ? "SOCKS5 OK" : "Lỗi kết nối"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-700">
+                    <span>
+                      IP trước:{" "}
+                      <strong className="font-mono text-slate-900">
+                        {r.egressIpBefore || "—"}
+                      </strong>
+                    </span>
+                    {r.rotated && (
+                      <span>
+                        → IP sau:{" "}
+                        <strong className="font-mono text-emerald-700">
+                          {r.egressIpAfter || "—"}
+                        </strong>
+                      </span>
+                    )}
+                    {r.latencyMs != null && (
+                      <span className="text-slate-500">· {r.latencyMs}ms</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span
+                      className={cn(
+                        "px-1.5 py-0.5 rounded font-bold",
+                        r.consoleOk
+                          ? "bg-emerald-50 text-emerald-700"
+                          : "bg-rose-50 text-rose-700",
+                      )}
+                    >
+                      Console API: {r.consoleOk ? "OK" : "Lỗi"}
+                    </span>
+                    <span
+                      className={cn(
+                        "px-1.5 py-0.5 rounded font-bold",
+                        r.socksOk ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700",
+                      )}
+                    >
+                      SOCKS5 Tunnel: {r.socksOk ? "OK" : "Lỗi"}
+                    </span>
+                  </div>
+                  {r.error && <div className="text-[11px] text-rose-600 font-medium">{r.error}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Telemetry KPI Strip */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="text-[11px] font-bold text-slate-500 uppercase">Trạng thái</div>
+          <div className="mt-1 flex items-center gap-2 text-sm font-black text-slate-900">
+            <span
+              className={cn(
+                "size-2.5 rounded-full",
+                isRunning ? "bg-emerald-500 animate-pulse" : "bg-slate-300",
+              )}
+            />
+            {isRunning
+              ? `Đang chạy (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
+              : "Sẵn sàng"}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="text-[11px] font-bold text-slate-500 uppercase">Nhóm Public / Private</div>
+          <div className="mt-1 text-sm font-black text-slate-900">
+            <span className="text-sky-700">{publicEnabledCount} Public</span>{" "}
+            <span className="text-slate-400 font-semibold">/ {privateCount} Private</span>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="text-[11px] font-bold text-slate-500 uppercase">Bài mới phiên này</div>
+          <div className="mt-1 text-sm font-black text-emerald-700">
+            +{runtime?.posts_saved ?? 0} bài
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="text-[11px] font-bold text-slate-500 uppercase">Tốc độ trung bình</div>
+          <div className="mt-1 text-sm font-black text-slate-900">
+            {runtime?.avg_ms_per_group
+              ? `${(runtime.avg_ms_per_group / 1000).toFixed(1)} giây/nhóm`
+              : "—"}
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-3.5">
+          <div className="text-[11px] font-bold text-slate-500 uppercase">Số lần xoay IP 4G</div>
+          <div className="mt-1 text-sm font-black text-indigo-700">
+            {runtime?.ip_rotations ?? 0} lần
+          </div>
+        </div>
+      </div>
+
+      {/* Cụm SIM 4G + Cấu hình xoay IP */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+        {/* Cụm SIM 4G */}
+        <div className="xl:col-span-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+              <Smartphone className="size-4 text-sky-600" /> Cụm Proxy SIM 4G ({sims.length} node)
+            </h3>
+            <button
+              type="button"
+              disabled={!canControl || sims.length === 0 || testingProxyNode !== null}
+              onClick={() => void handleTestProxy(undefined, false)}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-700 cursor-pointer"
+            >
+              {testingProxyNode === "all:probe" ? "Đang test..." : "Kiểm tra kết nối SIM"}
+            </button>
+          </div>
+
+          {sims.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/70 p-4 text-xs text-amber-800 space-y-1">
+              <div className="font-bold">Chưa phát hiện biến môi trường MOBILE_PROXY_NODES.</div>
+              <p>
+                Backend cần cấu hình cụm SIM 4G (`MOBILE_PROXY_CONSOLE_URL`, `MOBILE_PROXY_SOCKS_URL_VPS`...) để mở đường hầm SOCKS5 và tự xoay IP khi cào.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2.5">
+              {sims.map((sim) => (
+                <div
+                  key={sim.id}
+                  className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                        {sim.label}
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                          {sim.id}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        Epoch #{sim.epoch} · {sim.groups_in_epoch}/{configDraft.groups_per_ip_rotate} nhóm ·{" "}
+                        IP:{" "}
+                        <span className="font-mono font-bold text-slate-800">
+                          {sim.last_egress_ip || "Chưa probe"}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canControl || testingProxyNode !== null}
+                      onClick={() => void handleTestProxy(sim.id, true)}
+                      className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
+                    >
+                      <RotateCw
+                        className={cn(
+                          "size-3",
+                          testingProxyNode === `${sim.id}:rot` && "animate-spin",
+                        )}
+                      />
+                      Test Xoay IP
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded font-bold border",
+                        sim.hasSocks
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-rose-50 text-rose-700 border-rose-200",
+                      )}
+                    >
+                      SOCKS5: {sim.hasSocks ? "Sẵn sàng" : "Thiếu URL"}
+                    </span>
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded font-bold border",
+                        sim.hasConsole
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200",
+                      )}
+                    >
+                      API Xoay IP: {sim.hasConsole ? "Sẵn sàng" : "Thiếu Console"}
+                    </span>
+                    <span className="px-2 py-0.5 rounded font-bold bg-slate-100 text-slate-700">
+                      Trạng thái: {sim.status}
+                    </span>
+                  </div>
+                  {sim.last_error && (
+                    <div className="text-[11px] text-rose-600 font-medium">{sim.last_error}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Form Cấu hình & Auto Liên Tục */}
+        <div className="xl:col-span-7 rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+              <Activity className="size-4 text-emerald-600" /> Cấu hình Chạy Liên Tục &amp; Xoay IP 4G
+            </h3>
+            <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-800">
+              <input
+                type="checkbox"
+                disabled={!canControl}
+                checked={configDraft.enabled}
+                onChange={(e) => {
+                  setConfigDraft((prev) => ({ ...prev, enabled: e.target.checked }));
+                  setConfigDirty(true);
+                }}
+                className="size-4 accent-emerald-600 rounded"
+              />
+              Bật Auto Cào Liên Tục 24/24
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <label className="space-y-1 text-xs">
+              <span className="font-bold text-slate-600 block">Xoay IP sau mỗi (nhóm)</span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                disabled={!canControl}
+                value={configDraft.groups_per_ip_rotate}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({
+                    ...p,
+                    groups_per_ip_rotate: Math.max(1, Number(e.target.value) || 6),
+                  }));
+                  setConfigDirty(true);
+                }}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="font-bold text-slate-600 block">Chu kỳ quét lại (phút)</span>
+              <input
+                type="number"
+                min={5}
+                max={1440}
+                disabled={!canControl}
+                value={configDraft.cycle_interval_min}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({
+                    ...p,
+                    cycle_interval_min: Math.max(5, Number(e.target.value) || 15),
+                  }));
+                  setConfigDirty(true);
+                }}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="font-bold text-slate-600 block">Số SIM chạy song song</span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                disabled={!canControl}
+                value={configDraft.concurrent_sims}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({
+                    ...p,
+                    concurrent_sims: Math.max(1, Number(e.target.value) || 2),
+                  }));
+                  setConfigDirty(true);
+                }}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="font-bold text-slate-600 block">Số bài tối đa / nhóm</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                disabled={!canControl}
+                value={configDraft.max_posts_per_group}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({
+                    ...p,
+                    max_posts_per_group: Math.max(1, Number(e.target.value) || 25),
+                  }));
+                  setConfigDirty(true);
+                }}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label className="space-y-1 text-xs">
+              <span className="font-bold text-slate-600 block">Số lần cuộn tối đa</span>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                disabled={!canControl}
+                value={configDraft.max_scrolls_per_group}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({
+                    ...p,
+                    max_scrolls_per_group: Math.max(0, Number(e.target.value) || 2),
+                  }));
+                  setConfigDirty(true);
+                }}
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
+              />
+            </label>
+            <label className="flex items-center gap-2 pt-5 text-xs font-semibold text-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                disabled={!canControl}
+                checked={configDraft.auto_skip_private}
+                onChange={(e) => {
+                  setConfigDraft((p) => ({ ...p, auto_skip_private: e.target.checked }));
+                  setConfigDirty(true);
+                }}
+                className="size-4 accent-amber-600 rounded"
+              />
+              Tự gắn cờ Private nếu nhóm kín
+            </label>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-100">
+            <input
+              type="text"
+              value={keywordsInput}
+              onChange={(e) => setKeywordsInput(e.target.value)}
+              placeholder="Từ khóa lọc tùy chọn khi chạy tay (phân cách dấu phẩy, để trống = lấy bài mới nhất hôm nay)"
+              className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs"
+            />
+            <button
+              type="button"
+              disabled={!canControl || savingConfig}
+              onClick={() => void handleSaveConfig()}
+              className={cn(
+                "px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shrink-0 transition",
+                configDirty
+                  ? "bg-slate-900 hover:bg-slate-800 text-white"
+                  : "bg-slate-100 hover:bg-slate-200 text-slate-800",
+                "disabled:opacity-50",
+              )}
+            >
+              <Save className="size-3.5" />
+              {savingConfig ? "Đang lưu..." : configDirty ? "Lưu cấu hình *" : "Lưu cấu hình"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Bảng Nhóm Public / Private */}
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-black text-slate-900">
+              Danh sách Nhóm Facebook ({filteredGroups.length})
+            </h3>
+            <div className="inline-flex rounded-lg bg-slate-100 p-0.5 text-[11px] font-bold">
+              {(["all", "public", "private"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setVisibilityFilter(tab)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md cursor-pointer transition",
+                    visibilityFilter === tab ? "bg-white text-slate-900 shadow-xs" : "text-slate-500",
+                  )}
+                >
+                  {tab === "all" ? "Tất cả" : tab === "public" ? "Public 4G" : "Private (Kín)"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Tìm tên nhóm hoặc URL..."
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs w-56"
+            />
+            {selectedIds.size > 0 && canControl && (
+              <>
+                <button
+                  type="button"
+                  disabled={isRunning || triggeringRun}
+                  onClick={() => void handleRunNow(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  Chạy {selectedIds.size} nhóm đã chọn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleBulkToggle(true)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-sky-50 text-sky-700 border border-sky-200 cursor-pointer"
+                >
+                  Bật Public 4G
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleBulkToggle(false)}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 cursor-pointer"
+                >
+                  Tắt Public 4G
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="max-h-[400px] overflow-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase">
+              <tr>
+                <th className="p-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedIds(new Set(filteredGroups.map((g) => g.id)));
+                      } else {
+                        setSelectedIds(new Set());
+                      }
+                    }}
+                  />
+                </th>
+                <th className="p-3">Nhóm Facebook</th>
+                <th className="p-3">Phân loại</th>
+                <th className="p-3">Bật Cào Public</th>
+                <th className="p-3">Lần cào 4G gần nhất</th>
+                <th className="p-3 text-right">Bài mới</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredGroups.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-6 text-center text-slate-400">
+                    Không có nhóm nào khớp bộ lọc hiện tại.
+                  </td>
+                </tr>
+              ) : (
+                filteredGroups.map((g) => {
+                  const chip = statusChipMeta(g.last_public_crawl_status);
+                  const isPublic = g.visibility !== "private";
+                  return (
+                    <tr key={g.id} className="hover:bg-slate-50/70">
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(g.id)}
+                          onChange={(e) => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(g.id);
+                              else next.delete(g.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </td>
+                      <td className="p-3 max-w-[320px]">
+                        <div className="font-bold text-slate-900 truncate">
+                          {g.group_name || "Nhóm chưa đặt tên"}
+                        </div>
+                        <a
+                          href={g.group_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-sky-700 hover:underline truncate block"
+                        >
+                          {g.group_url}
+                        </a>
+                      </td>
+                      <td className="p-3">
+                        <button
+                          type="button"
+                          disabled={!canControl}
+                          onClick={() =>
+                            void handleToggleGroup(g, {
+                              visibility: isPublic ? "private" : "public",
+                            })
+                          }
+                          title="Nhấn để chuyển đổi Public / Private"
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border cursor-pointer disabled:cursor-default",
+                            isPublic
+                              ? "bg-sky-50 text-sky-700 border-sky-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200",
+                          )}
+                        >
+                          {isPublic ? <Globe className="size-3" /> : <Lock className="size-3" />}
+                          {isPublic ? "Public" : "Private"}
+                        </button>
+                      </td>
+                      <td className="p-3">
+                        <input
+                          type="checkbox"
+                          disabled={!canControl || !isPublic}
+                          checked={Boolean(g.public_crawl_enabled && isPublic)}
+                          onChange={(e) =>
+                            void handleToggleGroup(g, { public_crawl_enabled: e.target.checked })
+                          }
+                          className="size-4 accent-emerald-600 cursor-pointer"
+                        />
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={cn(
+                              "px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                              chip.cls,
+                            )}
+                            title={g.last_public_crawl_error || ""}
+                          >
+                            {chip.label}
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            {formatDateTime(g.last_public_crawled_at)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="p-3 text-right font-bold text-slate-800">
+                        {g.last_public_posts_count ?? 0}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Live Terminal & Run History */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
+        <div className="xl:col-span-7 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-slate-100 space-y-2.5">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+            <span className="flex items-center gap-1.5">
+              <Terminal className="size-4 text-emerald-400" /> Console Hoạt Động (Realtime)
+            </span>
+            <span className="text-[11px] text-slate-400">{logs.length} dòng gần nhất</span>
+          </div>
+          <div className="h-56 overflow-y-auto font-mono text-[11px] space-y-1 pr-1">
+            {logs.length === 0 ? (
+              <div className="text-slate-500 italic">
+                Chưa có log trong phiên hiện tại. Bấm &ldquo;Chạy ngay&rdquo; hoặc &ldquo;Kiểm tra kết nối SIM&rdquo;.
+              </div>
+            ) : (
+              logs.map((entry, idx) => (
+                <div key={`${entry.ts}-${idx}`} className="leading-relaxed">
+                  <span className="text-slate-500 mr-2">
+                    {formatDateTime(entry.ts)}
+                  </span>
+                  <span className="text-sky-400 mr-2">[{entry.sim_id}]</span>
+                  <span className={LOG_TEXT_COLOR[entry.level] || "text-slate-200"}>
+                    {entry.message}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="xl:col-span-5 rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+          <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+            <CheckCircle2 className="size-4 text-emerald-600" /> Lịch sử vòng chạy gần đây
+          </h3>
+          <div className="space-y-2 max-h-56 overflow-y-auto">
+            {recentRuns.length === 0 ? (
+              <p className="text-xs text-slate-400">Chưa có lịch sử vòng chạy nào.</p>
+            ) : (
+              recentRuns.map((run) => (
+                <div
+                  key={run.id}
+                  className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 text-xs space-y-1"
+                >
+                  <div className="flex items-center justify-between font-bold">
+                    <span className="text-slate-900">
+                      {run.trigger_source === "scheduler" ? "Tự động" : "Chạy tay"} ·{" "}
+                      {formatDateTime(run.started_at)}
+                    </span>
+                    <span
+                      className={cn(
+                        "px-2 py-0.5 rounded-full text-[10px]",
+                        run.status === "completed"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : run.status === "running"
+                            ? "bg-sky-100 text-sky-700"
+                            : "bg-amber-100 text-amber-700",
+                      )}
+                    >
+                      {run.status}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>OK: {run.groups_ok}/{run.total_groups}</span>
+                    <span>+{run.posts_saved} bài</span>
+                    <span>Xoay IP: {run.ip_rotations}</span>
+                    <span>TB: {run.avg_ms_per_group ? `${(run.avg_ms_per_group / 1000).toFixed(1)}s` : "—"}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

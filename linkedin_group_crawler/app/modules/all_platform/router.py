@@ -592,3 +592,12 @@ all_platform_router.include_router(
     prefix="/crawl-keywords",
     tags=["All-Platform Crawl Keywords"],
 )
+
+# ── Zero-Account Fast Public Group Crawler (4G Mobile Proxy) ───────────────────
+from app.modules.all_platform.routers.public_crawler import router as public_crawler_router
+
+all_platform_router.include_router(
+    public_crawler_router,
+    prefix="/public-crawler",
+    tags=["All-Platform Public 4G Crawler"],
+)

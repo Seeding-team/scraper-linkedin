@@ -157,7 +157,16 @@ def get_facebook_groups(
 def _clean_group_payload(payload: dict) -> dict:
     """Clean group payload by converting empty/whitespace strings to None/proper types."""
     cleaned = {}
-    numeric_fields = {"tier", "members", "posts_per_week", "health_score", "start_time_in_day", "end_time_in_day", "time_crawl"}
+    numeric_fields = {
+        "tier",
+        "members",
+        "posts_per_week",
+        "health_score",
+        "start_time_in_day",
+        "end_time_in_day",
+        "time_crawl",
+        "public_crawl_interval_min",
+    }
 
     for k, v in payload.items():
         if k in numeric_fields:
@@ -228,6 +237,13 @@ def add_facebook_group(payload: dict) -> dict:
         "assignee_name_hint": cleaned.get("assignee_name_hint"),
         "co_assignee_name_hint": cleaned.get("co_assignee_name_hint"),
         "id_member_name_hint": cleaned.get("id_member_name_hint"),
+        "visibility": cleaned.get("visibility") or "public",
+        "public_crawl_enabled": (
+            True
+            if cleaned.get("public_crawl_enabled") is None
+            else bool(cleaned.get("public_crawl_enabled"))
+        ),
+        "public_crawl_interval_min": cleaned.get("public_crawl_interval_min") or 30,
     }
 
     result = (
@@ -273,9 +289,15 @@ def update_facebook_group(group_id: str, payload: dict) -> dict:
         "assignee_name_hint",
         "co_assignee_name_hint",
         "id_member_name_hint",
+        "visibility",
+        "public_crawl_enabled",
+        "public_crawl_interval_min",
     }
 
     update_data = {k: v for k, v in cleaned.items() if k in allowed_fields}
+    for non_null_col in ("visibility", "public_crawl_enabled", "public_crawl_interval_min"):
+        if non_null_col in update_data and update_data[non_null_col] is None:
+            update_data.pop(non_null_col)
     update_data["updated_at"] = "now()"
 
     # Note: we need to allow `None` to unset a crawl_time or frequency

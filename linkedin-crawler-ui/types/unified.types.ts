@@ -532,6 +532,13 @@ export interface FacebookGroup {
   /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
    * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
   lead_stats_error?: boolean;
+  /** Cờ Public 4G Zero-Account Crawler (migration 224) */
+  visibility?: "public" | "private";
+  public_crawl_enabled?: boolean;
+  public_crawl_interval_min?: number;
+  last_public_crawled_at?: string | null;
+  last_public_crawl_status?: string | null;
+  last_public_posts_count?: number;
 }
 
 export interface LinkedInGroup {

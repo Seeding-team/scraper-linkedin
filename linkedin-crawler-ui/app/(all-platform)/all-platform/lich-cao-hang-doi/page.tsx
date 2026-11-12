@@ -1,13 +1,26 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { RotationCrawlPanel } from "@/components/all-platform/components/seeding-extension/rotation-crawl-panel";
 import { CrawlScheduleHistoryPanel } from "@/components/all-platform/crawl-schedule-history-panel";
 import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
+import { Public4GCrawlerPanel } from "@/components/all-platform/components/public-crawler/Public4GCrawlerPanel";
 import { cn } from "@/lib/utils";
 
-export default function LichCaoHangDoiPage() {
-  const [activeTab, setActiveTab] = useState<"schedule" | "history" | "queue">("schedule");
+type TabKey = "schedule" | "public-4g" | "history" | "queue";
+
+function parseTabParam(raw: string | null): TabKey {
+  if (raw === "public-4g" || raw === "history" || raw === "queue" || raw === "schedule") {
+    return raw;
+  }
+  return "schedule";
+}
+
+function LichCaoHangDoiInner() {
+  const searchParams = useSearchParams();
+  const [selectedTab, setSelectedTab] = useState<TabKey | null>(null);
+  const activeTab = selectedTab ?? parseTabParam(searchParams.get("tab"));
 
   return (
     <div className="min-h-screen bg-slate-50/50 p-6 md:p-8 space-y-6">
@@ -19,13 +32,13 @@ export default function LichCaoHangDoiPage() {
             Lịch cào xoay vòng &amp; Hàng đợi
           </h1>
           <p className="text-xs text-gray-500 mt-1 font-medium">
-            Thiết lập lịch cào tự động đa nền tảng (Facebook - LinkedIn - Threads), theo dõi lịch sử vòng cào và giám sát hàng đợi hệ thống.
+            Thiết lập lịch cào tự động đa nền tảng (Facebook - LinkedIn - Threads), cào nhanh nhóm Public 4G không cần acc và giám sát hàng đợi.
           </p>
         </div>
-        <div className="flex items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
+        <div className="flex flex-wrap items-center gap-1.5 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
           <button
             type="button"
-            onClick={() => setActiveTab("schedule")}
+            onClick={() => setSelectedTab("schedule")}
             className={cn(
               "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
               activeTab === "schedule"
@@ -38,7 +51,20 @@ export default function LichCaoHangDoiPage() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("history")}
+            onClick={() => setSelectedTab("public-4g")}
+            className={cn(
+              "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
+              activeTab === "public-4g"
+                ? "bg-white text-emerald-700 shadow-xs"
+                : "text-gray-500 hover:text-gray-900"
+            )}
+          >
+            <span className="material-symbols-outlined text-[16px]">public</span>
+            Cào Public 4G (Không Acc)
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedTab("history")}
             className={cn(
               "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
               activeTab === "history"
@@ -51,7 +77,7 @@ export default function LichCaoHangDoiPage() {
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab("queue")}
+            onClick={() => setSelectedTab("queue")}
             className={cn(
               "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
               activeTab === "queue"
@@ -69,6 +95,8 @@ export default function LichCaoHangDoiPage() {
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
         {activeTab === "schedule" ? (
           <RotationCrawlPanel />
+        ) : activeTab === "public-4g" ? (
+          <Public4GCrawlerPanel />
         ) : activeTab === "history" ? (
           <CrawlScheduleHistoryPanel />
         ) : (
@@ -76,5 +104,13 @@ export default function LichCaoHangDoiPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function LichCaoHangDoiPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-xs text-slate-500">Đang tải lịch cào...</div>}>
+      <LichCaoHangDoiInner />
+    </Suspense>
   );
 }

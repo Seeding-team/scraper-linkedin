@@ -152,6 +152,17 @@ async def execute_release_stale_fb_accounts():
         logger.error(f"❌ Lỗi khi kiểm tra acc FB pool bị kẹt: {e}", exc_info=True)
 
 
+async def execute_public_4g_crawl_tick():
+    """Kích hoạt vòng cào nhóm Public không acc qua SIM 4G nếu auto-mode đang bật."""
+    try:
+        from app.modules.all_platform.services.public_4g_crawler_service import (
+            public_crawl_orchestrator,
+        )
+        await public_crawl_orchestrator.maybe_trigger_scheduled_run()
+    except Exception as e:
+        logger.error(f"❌ Lỗi khi kiểm tra lịch Public 4G Crawler: {e}", exc_info=True)
+
+
 def setup_all_platform_jobs():
     """
     Khởi tạo scheduler cho All-Platform.
@@ -176,6 +187,15 @@ def setup_all_platform_jobs():
             id='all_platform_daily_facebook_crawl',
             replace_existing=True,
             max_instances=1  # Chống 2 lượt tick chạy chồng nhau (APScheduler tự đảm bảo)
+        )
+        # Thêm tác vụ cào nhóm Public 4G không cần tài khoản
+        scheduler.add_job(
+            func=execute_public_4g_crawl_tick,
+            trigger='cron',
+            minute='*',
+            id='all_platform_public_4g_crawl',
+            replace_existing=True,
+            max_instances=1
         )
 
     # Kiểm tra worker VPS mất heartbeat mỗi phút, thả job treo về hàng đợi
