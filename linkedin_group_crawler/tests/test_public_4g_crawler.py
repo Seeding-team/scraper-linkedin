@@ -594,3 +594,143 @@ def test_rotating_proxy_pool_formats_masking_fast_ssr_and_limit_groups(monkeypat
     # Unconfigured DB + env must yield empty list (no phantom node)
     monkeypatch.delenv("PUBLIC_CRAWL_PROXIES", raising=False)
     assert pool.sync_nodes([]) == []
+
+
+def test_httpx_graphql_cursor_pagination_collects_22_posts_with_reconnect_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify SSR metadata extraction + HTTPX GraphQL cursor chain yielding 20+ posts + transport retry."""
+    from datetime import datetime, timezone
+    from app.modules.all_platform.services import fb_story_parser as parser
+    from app.modules.all_platform.services import public_4g_crawler_service as svc
+
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    ssr_html = (
+        '<script>"LSD",[],{"token":"TEST_LSD_TOKEN_123"},"server_revision":1054229999,'
+        '"hsi":"70001","haste_session":"19999.HYP","__spin_r":1054229999,"__spin_b":"trunk","__spin_t":1700000000</script>'
+        '<script type="application/json">'
+        + json.dumps(
+            {
+                "node": {
+                    "__typename": "Story",
+                    "post_id": "1000000",
+                    "creation_time": now_ts - 30,
+                    "message": {"text": "Post SSR 00"},
+                }
+            }
+        )
+        + "</script>"
+        '<script type="application/json">'
+        + json.dumps(
+            {
+                "group_feed": {
+                    "page_info": {
+                        "end_cursor": "Cg8T_CURSOR_PAGE_01_ABCDEF",
+                        "has_next_page": True,
+                    }
+                }
+            }
+        )
+        + "</script>"
+    )
+
+    meta = parser.extract_ssr_feed_metadata(ssr_html, group_url="https://www.facebook.com/groups/9988776655/")
+    assert meta["group_id"] == "9988776655"
+    assert meta["lsd"] == "TEST_LSD_TOKEN_123"
+    assert meta["end_cursor"] == "Cg8T_CURSOR_PAGE_01_ABCDEF"
+    assert meta["has_next_page"] is True
+
+    class _MockResp:
+        def __init__(self, status_code: int, text: str = "", headers: dict[str, str] | None = None):
+            self.status_code = status_code
+            self.text = text
+            self.headers = headers or {}
+
+    def _make_gql_page(page_idx: int, has_next: bool) -> str:
+        stories = [
+            {
+                "data": {
+                    "node": {
+                        "__typename": "Story",
+                        "post_id": f"{page_idx}{slot}",
+                        "creation_time": now_ts - (page_idx * 100 + slot * 10),
+                        "message": {"text": f"GQL post page {page_idx} slot {slot}"},
+                    }
+                }
+            }
+            for slot in range(1, 4)
+        ]
+        page_info = {
+            "data": {
+                "page_info": {
+                    "end_cursor": f"Cg8T_CURSOR_PAGE_{page_idx + 1:02d}_XYZ",
+                    "has_next_page": has_next,
+                }
+            }
+        }
+        return "for (;;);\n" + "\n".join(json.dumps(chunk) for chunk in [*stories, page_info])
+
+    post_call_count = 0
+
+    class _MockGqlClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str):
+            return _MockResp(200, text=ssr_html)
+
+        async def post(self, url: str, data: str = "", headers: dict[str, str] | None = None):
+            nonlocal post_call_count
+            post_call_count += 1
+            # Simulate transient 60s proxy rotation disconnect on first GraphQL POST attempt
+            if post_call_count == 1:
+                raise svc.httpx.RemoteProtocolError("Server disconnected without sending a response.")
+            page_num = post_call_count - 1
+            if page_num == 1:
+                assert headers and headers.get("X-FB-LSD") == "TEST_LSD_TOKEN_123"
+            return _MockResp(200, text=_make_gql_page(page_num, has_next=(page_num < 8)))
+
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _MockGqlClient)
+
+    sim = svc.SimNodeRuntime(
+        id="proxy-01",
+        label="Proxy Xoay #1",
+        socks_url="socks5://u:p@203.0.113.10:1080",
+    )
+    pool = svc.RotatingProxyPool()
+    worker = svc.GuestPublicGroupWorker(
+        sim=sim,
+        rotator=pool,
+        config={"max_posts_per_group": 22, "max_scrolls_per_group": 2},
+        log_cb=lambda *_: None,
+        stop_check=lambda: False,
+        progress_cb=lambda *_: None,
+    )
+
+    res = asyncio.run(
+        worker._fetch_group_ssr_fast(
+            "https://www.facebook.com/groups/9988776655/",
+            "https://www.facebook.com/groups/9988776655/?sorting_setting=CHRONOLOGICAL",
+            known_urls=set(),
+            known_ids=set(),
+            max_posts=22,
+            max_scrolls=2,
+        )
+    )
+    assert res["state"] == "ok"
+    assert res["need_playwright"] is False
+    assert res["method"] == "httpx_gql"
+    # 1 SSR + 7 pages x 3 posts = 22 posts collected without Playwright!
+    assert len(res["posts"]) >= 20
+    assert post_call_count == 8  # 1 failed keep-alive + 7 successful GraphQL pages
+
+    # Calling sync_nodes(None) preserves active pool states; sync_nodes([]) explicitly clears
+    pool.sync_nodes(["203.0.113.10:1080:u:p"])
+    assert len(pool.sync_nodes(None)) == 1
+    assert pool.sync_nodes([]) == []

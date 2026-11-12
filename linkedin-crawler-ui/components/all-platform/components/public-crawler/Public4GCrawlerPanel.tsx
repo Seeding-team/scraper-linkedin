@@ -891,8 +891,13 @@ export function Public4GCrawlerPanel() {
                 className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-semibold"
               />
             </label>
-            <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Số lần cuộn tối đa</span>
+            <label
+              className="space-y-1 text-xs"
+              title=">= 1: tự động nối trang HTTPX GraphQL lấy 20–25 bài mới nhất/nhóm (~10–15s); 0: chỉ đọc nhanh 1 bài đầu SSR (~1.3s)"
+            >
+              <span className="font-bold text-slate-600 block">
+                Độ sâu phân trang (0 = 1 bài)
+              </span>
               <input
                 type="number"
                 min={0}

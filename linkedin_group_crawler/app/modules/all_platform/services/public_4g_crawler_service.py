@@ -11,6 +11,7 @@ proactively (every K groups) and reactively (on HTTP 429 / checkpoint / login wa
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -20,15 +21,17 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.services.fb_story_parser import (
     classify_guest_page_state,
     extract_post_id_from_url,
+    extract_ssr_feed_metadata,
     normalize_group_crawl_url,
     parse_fb_graphql_text,
     parse_fb_html_embedded_stories,
+    parse_graphql_pagination_meta,
 )
 from app.modules.all_platform.services.post_ingest_service import (
     ExtensionCrawlRequest,
@@ -68,6 +71,42 @@ CHROME_DOC_HEADERS: dict[str, str] = {
     "Sec-Fetch-Site": "none",
     "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
+}
+
+_ACTIVE_GQL_PAGINATION_DOC_ID: str = os.getenv(
+    "FB_GQL_GROUP_FEED_DOC_ID",
+    "28899178166419503",
+).strip() or "28899178166419503"
+
+_GQL_RELAY_INTERNAL_DEFAULTS: dict[str, Any] = {
+    "__relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider": False,
+    "__relay_internal__pv__GHLShouldChangeSponsoredDataFieldNamerelayprovider": False,
+    "__relay_internal__pv__CometFeedStory_enable_reactor_facepilerelayprovider": False,
+    "__relay_internal__pv__CometFeedStory_enable_social_bubblesrelayprovider": False,
+    "__relay_internal__pv__CometFeedStory_enable_post_permalink_white_space_clickrelayprovider": False,
+    "__relay_internal__pv__CometUFICommentActionLinksRewriteEnabledrelayprovider": False,
+    "__relay_internal__pv__IsWorkUserrelayprovider": False,
+    "__relay_internal__pv__CometUFICommentAvatarStickerAnimatedImagerelayprovider": False,
+    "__relay_internal__pv__TestPilotShouldIncludeDemoAdUseCaserelayprovider": False,
+    "__relay_internal__pv__FBReels_deprecate_short_form_video_context_gkrelayprovider": False,
+    "__relay_internal__pv__CometUFI_dedicated_comment_routable_dialog_gkrelayprovider": True,
+    "__relay_internal__pv__FBReels_enable_view_dubbed_audio_type_gkrelayprovider": False,
+    "__relay_internal__pv__CometFeedShareMedia_shouldPrefetchShareImagerelayprovider": True,
+    "__relay_internal__pv__CometImmersivePhotoCanUserDisable3DMotionrelayprovider": False,
+    "__relay_internal__pv__WorkCometIsEmployeeGKProviderrelayprovider": False,
+    "__relay_internal__pv__IsMergQAPollsrelayprovider": False,
+    "__relay_internal__pv__FBReelsMediaFooter_comet_enable_reels_ads_gkrelayprovider": True,
+    "__relay_internal__pv__CometUFIReactionsEnableShortNamerelayprovider": False,
+    "__relay_internal__pv__CometUFICommentAutoTranslationTyperelayprovider": "AUTO_TRANSLATE",
+    "__relay_internal__pv__GeminiUFISaveToKnowledgeHubGKrelayprovider": False,
+    "__relay_internal__pv__CometUFIShareActionMigrationrelayprovider": True,
+    "__relay_internal__pv__CometUFISingleLineUFIrelayprovider": True,
+    "__relay_internal__pv__relay_provider_comet_ufi_ssr_seo_deferrelayprovider": True,
+    "__relay_internal__pv__FBReelsIFUTileContent_reelsIFUPlayOnHoverrelayprovider": False,
+    "__relay_internal__pv__GroupsCometGYSJFeedItemHeightrelayprovider": 150,
+    "__relay_internal__pv__StoriesShouldEnablePhotosensitiveContentWarningrelayprovider": False,
+    "__relay_internal__pv__ShouldEnableBakedInTextStoriesrelayprovider": False,
+    "__relay_internal__pv__StoriesShouldIncludeFbNotesrelayprovider": False,
 }
 
 DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
@@ -305,6 +344,11 @@ class RotatingProxyPool:
                     entries = normalize_proxy_list(env_raw)
                 except ValueError as exc:
                     logger.warning("[PUBLIC-PROXY] Invalid PUBLIC_CRAWL_PROXIES env entry: %s", exc)
+
+        # Preserve in-memory node states when callers omit `proxy_urls` (`proxy_urls=None`)
+        # during internal rotation/refresh calls, while still honoring explicit `[]` clear.
+        if not entries and proxy_urls is None and self._states:
+            return list(self._states.values())
 
         runtimes: list[SimNodeRuntime] = []
         active_ids: set[str] = set()
@@ -789,6 +833,67 @@ class GuestPublicGroupWorker:
             return self.sim.socks_url
         return None
 
+    def _build_http_client(self, proxy_http: str | None) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            proxy=proxy_http,
+            timeout=20.0,
+            follow_redirects=False,
+            headers=CHROME_DOC_HEADERS,
+        )
+
+    async def _resilient_http_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        client: Any,
+        ephemeral: bool,
+        proxy_http: str | None,
+        **kwargs: Any,
+    ) -> tuple[Any, Any]:
+        """Execute GET/POST with 1 transparent reconnect retry if 60s proxy rotation drops TCP socket."""
+        retry_excs = (
+            httpx.RemoteProtocolError,
+            httpx.ReadTimeout,
+            httpx.ConnectError,
+            httpx.ProxyError,
+        )
+        cur_client = client
+        for retry_idx in range(2):
+            try:
+                fn = getattr(cur_client, method.lower())
+                resp = await (fn(url) if (method.lower() == "get" and not kwargs) else fn(url, **kwargs))
+                return resp, cur_client
+            except retry_excs as exc:
+                if retry_idx == 0:
+                    logger.debug(
+                        "[PUBLIC-PROXY] %s reconnect retry after transient transport error (%s)",
+                        self.sim.id,
+                        exc,
+                    )
+                    if not ephemeral:
+                        cookie_backup: dict[str, str] = {}
+                        try:
+                            if hasattr(cur_client, "cookies"):
+                                cookie_backup = dict(cur_client.cookies.items())
+                        except Exception:
+                            cookie_backup = {}
+                        try:
+                            if hasattr(cur_client, "aclose"):
+                                await cur_client.aclose()
+                        except Exception:
+                            pass
+                        cur_client = self._build_http_client(proxy_http)
+                        self._http_client = cur_client
+                        try:
+                            if cookie_backup and hasattr(cur_client, "cookies"):
+                                cur_client.cookies.update(cookie_backup)
+                        except Exception:
+                            pass
+                    continue
+                raise
+        raise RuntimeError("Unreachable HTTP retry loop")
+
     async def _fetch_group_ssr_fast(
         self,
         raw_url: str,
@@ -799,11 +904,13 @@ class GuestPublicGroupWorker:
         max_posts: int,
         max_scrolls: int,
     ) -> dict[str, Any]:
-        """Ultra-fast (~1s) HTTPX SSR document fetch over proxy with Chrome Sec-Fetch headers.
+        """Hybrid HTTPX fast-path: SSR fetch (~1s) + direct `/api/graphql` cursor pagination for 20-25 posts.
 
-        Catches `302 /login/` walls in ~270ms without spawning Chromium, parses initial
-        SSR `<script type="application/json">` stories, and short-circuits when `max_scrolls == 0`
-        or watermark early-stop is already reached.
+        - Catches `302 /login/` walls in ~300ms without booting Chromium.
+        - Parses initial SSR `<script type="application/json">` stories.
+        - Short-circuits when `max_scrolls == 0` or DB watermark / today-limit is already reached.
+        - Otherwise chains `GroupsCometFeedRegularStoriesPaginationQuery` via HTTPX (`~1s` per 3 posts)
+          to collect up to `max_posts` (`20-25`) chronological posts without launching Playwright.
         """
         collected: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
@@ -812,115 +919,53 @@ class GuestPublicGroupWorker:
         final_status: int | None = None
         html_text = ""
 
-        # Reset cookie jar on fresh call if real AsyncClient reused, keeping TCP+TLS keep-alive warm
         client: Any
         ephemeral = False
         if self._attempt_fetcher is None and hasattr(httpx.AsyncClient, "aclose"):
             if self._http_client is None:
-                self._http_client = httpx.AsyncClient(
-                    proxy=proxy_http,
-                    timeout=16.0,
-                    follow_redirects=False,
-                    headers=CHROME_DOC_HEADERS,
-                )
+                self._http_client = self._build_http_client(proxy_http)
             client = self._http_client
         else:
             ephemeral = True
-            client = httpx.AsyncClient(
-                proxy=proxy_http,
-                timeout=16.0,
-                follow_redirects=False,
-                headers=CHROME_DOC_HEADERS,
-            )
+            client = self._build_http_client(proxy_http)
 
-        try:
-            ctx_mgr = client if ephemeral and hasattr(client, "__aenter__") else None
-            if ctx_mgr is not None:
-                async with ctx_mgr as c:
-                    for _hop in range(3):
-                        if _hop == 0 and hasattr(c, "cookies"):
-                            c.cookies.clear()
-                        resp = await c.get(cur_url)
-                        final_status = resp.status_code
-                        if final_status in {301, 302, 303, 307, 308}:
-                            loc = (resp.headers.get("location") or "").strip()
-                            loc_lower = loc.lower()
-                            if "/login" in loc_lower or "/checkpoint" in loc_lower:
-                                return {
-                                    "state": "login_wall",
-                                    "posts": [],
-                                    "seen_ids": seen_ids,
-                                    "early_stop_reason": "",
-                                    "scrolls": 0,
-                                    "need_playwright": False,
-                                    "method": "httpx_fast",
-                                }
-                            if loc.startswith("http"):
-                                cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
-                                continue
-                        html_text = resp.text or ""
-                        break
-            else:
-                for _hop in range(3):
-                    if _hop == 0 and hasattr(client, "cookies"):
-                        client.cookies.clear()
-                    resp = await client.get(cur_url)
-                    final_status = resp.status_code
-                    if final_status in {301, 302, 303, 307, 308}:
-                        loc = (resp.headers.get("location") or "").strip()
-                        loc_lower = loc.lower()
-                        if "/login" in loc_lower or "/checkpoint" in loc_lower:
-                            return {
-                                "state": "login_wall",
-                                "posts": [],
-                                "seen_ids": seen_ids,
-                                "early_stop_reason": "",
-                                "scrolls": 0,
-                                "need_playwright": False,
-                                "method": "httpx_fast",
-                            }
-                        if loc.startswith("http"):
-                            cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
-                            continue
-                    html_text = resp.text or ""
-                    break
-        finally:
-            if ephemeral and not hasattr(client, "__aenter__") and hasattr(client, "aclose"):
-                await client.aclose()
+        if hasattr(client, "cookies"):
+            client.cookies.clear()
 
-        if final_status == 429:
-            return {
-                "state": "rate_limit",
-                "posts": [],
-                "seen_ids": seen_ids,
-                "early_stop_reason": "",
-                "scrolls": 0,
-                "need_playwright": False,
-                "method": "httpx_fast",
-            }
+        async def _run_on_client(c: Any) -> dict[str, Any] | None:
+            nonlocal cur_url, final_status, html_text
+            for _hop in range(3):
+                resp, c = await self._resilient_http_request(
+                    "get",
+                    cur_url,
+                    client=c,
+                    ephemeral=ephemeral,
+                    proxy_http=proxy_http,
+                )
+                final_status = resp.status_code
+                if final_status in {301, 302, 303, 307, 308}:
+                    loc = (resp.headers.get("location") or "").strip()
+                    loc_lower = loc.lower()
+                    if "/login" in loc_lower or "/checkpoint" in loc_lower:
+                        return {
+                            "state": "login_wall",
+                            "posts": [],
+                            "seen_ids": seen_ids,
+                            "early_stop_reason": "",
+                            "scrolls": 0,
+                            "need_playwright": False,
+                            "method": "httpx_fast",
+                        }
+                    if loc.startswith("http"):
+                        cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
+                        continue
+                html_text = resp.text or ""
+                break
 
-        if final_status == 200 and html_text:
-            ssr_posts = parse_fb_html_embedded_stories(
-                html_text,
-                group_url=raw_url,
-                seen_ids=seen_ids,
-            )
-            collected.extend(ssr_posts)
-
-            # Strip markup roughly only if zero posts parsed to classify private group quickly
-            body_hint = ""
-            if not collected:
-                body_hint = re.sub(r"<[^>]+>", " ", html_text[:80000])
-            state = classify_guest_page_state(
-                current_url=cur_url,
-                body_text=body_hint,
-                extracted_posts_count=len(collected),
-                http_status=final_status,
-            )
-            if state in {"rate_limit", "login_wall", "private_group"}:
+            if final_status == 429:
                 return {
-                    "state": state,
-                    "posts": collected,
+                    "state": "rate_limit",
+                    "posts": [],
                     "seen_ids": seen_ids,
                     "early_stop_reason": "",
                     "scrolls": 0,
@@ -928,32 +973,232 @@ class GuestPublicGroupWorker:
                     "method": "httpx_fast",
                 }
 
-            should_stop, stop_reason = evaluate_watermark_early_stop(
-                collected,
-                known_urls=known_urls,
-                known_post_ids=known_ids,
-                max_posts=max_posts,
-            )
-            if (max_scrolls <= 0 and len(collected) > 0) or (should_stop and len(collected) > 0) or (len(collected) >= max_posts):
+            if final_status == 200 and html_text:
+                ssr_posts = parse_fb_html_embedded_stories(
+                    html_text,
+                    group_url=raw_url,
+                    seen_ids=seen_ids,
+                )
+                collected.extend(ssr_posts)
+
+                body_hint = ""
+                if not collected:
+                    body_hint = re.sub(r"<[^>]+>", " ", html_text[:80000])
+                state = classify_guest_page_state(
+                    current_url=cur_url,
+                    body_text=body_hint,
+                    extracted_posts_count=len(collected),
+                    http_status=final_status,
+                )
+                if state in {"rate_limit", "login_wall", "private_group"}:
+                    return {
+                        "state": state,
+                        "posts": collected,
+                        "seen_ids": seen_ids,
+                        "early_stop_reason": "",
+                        "scrolls": 0,
+                        "need_playwright": False,
+                        "method": "httpx_fast",
+                    }
+
+                should_stop, stop_reason = evaluate_watermark_early_stop(
+                    collected,
+                    known_urls=known_urls,
+                    known_post_ids=known_ids,
+                    max_posts=max_posts,
+                )
+                if (max_scrolls <= 0 and len(collected) > 0) or (should_stop and len(collected) > 0) or (len(collected) >= max_posts):
+                    return {
+                        "state": "ok",
+                        "posts": collected,
+                        "seen_ids": seen_ids,
+                        "early_stop_reason": stop_reason or ("httpx_fast_no_scroll" if max_scrolls <= 0 else ""),
+                        "scrolls": 0,
+                        "need_playwright": False,
+                        "method": "httpx_fast",
+                    }
+
+                # HTTPX GraphQL Cursor Pagination when cursor + LSD + group_id exist in SSR HTML
+                meta = extract_ssr_feed_metadata(html_text, group_url=cur_url)
+                cursor = meta.get("end_cursor")
+                has_next = bool(meta.get("has_next_page"))
+                gid = meta.get("group_id") or ""
+                lsd = meta.get("lsd") or ""
+                initial_count = len(collected)
+                gql_pages_done = 0
+
+                if max_scrolls > 0 and cursor and has_next and gid and lsd and hasattr(c, "post"):
+                    max_gql_pages = min(16, max(max_scrolls * 4, (max_posts + 2) // 3 + 2))
+                    for page_no in range(1, max_gql_pages + 1):
+                        if self.stop_check() or len(collected) >= max_posts or not cursor or not has_next:
+                            break
+                        vp = {
+                            "count": 10,
+                            "cursor": cursor,
+                            "feedLocation": "GROUP",
+                            "feedType": "DISCUSSION",
+                            "feedbackSource": 0,
+                            "filterTopicId": None,
+                            "focusCommentID": None,
+                            "privacySelectorRenderLocation": "COMET_STREAM",
+                            "referringStoryRenderLocation": None,
+                            "renderLocation": "group",
+                            "scale": 1,
+                            "sortingSetting": "CHRONOLOGICAL",
+                            "stream_initial_count": 1,
+                            "useDefaultActor": False,
+                            "youthIntegrityHostID": gid,
+                            "id": gid,
+                            **_GQL_RELAY_INTERNAL_DEFAULTS,
+                        }
+                        form = {
+                            "av": "0",
+                            "__user": "0",
+                            "__a": "1",
+                            "__req": format(page_no + 2, "x"),
+                            "__hs": meta.get("hs") or "",
+                            "dpr": "1",
+                            "__ccg": "EXCELLENT",
+                            "__rev": meta.get("rev") or "1054229411",
+                            "__hsi": meta.get("hsi") or "",
+                            "__comet_req": "15",
+                            "lsd": lsd,
+                            "__spin_r": meta.get("spin_r") or meta.get("rev") or "1054229411",
+                            "__spin_b": meta.get("spin_b") or "trunk",
+                            "__spin_t": meta.get("spin_t") or str(int(time.time())),
+                            "fb_api_caller_class": "RelayModern",
+                            "fb_api_req_friendly_name": "GroupsCometFeedRegularStoriesPaginationQuery",
+                            "variables": json.dumps(vp, separators=(",", ":")),
+                            "server_timestamps": "true",
+                            "doc_id": _ACTIVE_GQL_PAGINATION_DOC_ID,
+                        }
+                        gql_headers = {
+                            "User-Agent": CHROME_DOC_HEADERS["User-Agent"],
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "Accept": "*/*",
+                            "Accept-Language": CHROME_DOC_HEADERS["Accept-Language"],
+                            "Origin": "https://www.facebook.com",
+                            "Referer": cur_url,
+                            "X-FB-Friendly-Name": "GroupsCometFeedRegularStoriesPaginationQuery",
+                            "X-FB-LSD": lsd,
+                            "Sec-Fetch-Dest": "empty",
+                            "Sec-Fetch-Mode": "cors",
+                            "Sec-Fetch-Site": "same-origin",
+                        }
+                        try:
+                            gr, c = await self._resilient_http_request(
+                                "post",
+                                "https://www.facebook.com/api/graphql/",
+                                client=c,
+                                ephemeral=ephemeral,
+                                proxy_http=proxy_http,
+                                data=urlencode(form),
+                                headers=gql_headers,
+                            )
+                        except Exception as gql_exc:
+                            logger.debug("[PUBLIC-PROXY] GQL page %s transient stop: %s", page_no, gql_exc)
+                            if len(collected) > initial_count:
+                                stop_reason = stop_reason or "httpx_gql_partial"
+                            break
+
+                        gql_pages_done += 1
+                        if gr.status_code == 429:
+                            if len(collected) <= initial_count:
+                                return {
+                                    "state": "rate_limit",
+                                    "posts": collected,
+                                    "seen_ids": seen_ids,
+                                    "early_stop_reason": "",
+                                    "scrolls": gql_pages_done,
+                                    "need_playwright": False,
+                                    "method": "httpx_gql",
+                                }
+                            stop_reason = stop_reason or "gql_rate_limit_partial"
+                            break
+
+                        if gr.status_code != 200 or not getattr(gr, "text", ""):
+                            break
+
+                        gql_txt = gr.text or ""
+                        new_posts = parse_fb_graphql_text(
+                            gql_txt,
+                            group_url=raw_url,
+                            seen_ids=seen_ids,
+                        )
+                        gql_meta = parse_graphql_pagination_meta(gql_txt)
+                        if new_posts:
+                            collected.extend(new_posts)
+
+                        should_stop, stop_reason = evaluate_watermark_early_stop(
+                            collected,
+                            known_urls=known_urls,
+                            known_post_ids=known_ids,
+                            max_posts=max_posts,
+                        )
+                        if should_stop or len(collected) >= max_posts:
+                            stop_reason = stop_reason or "max_posts_reached"
+                            break
+
+                        if gql_meta.get("login_required") or gql_meta.get("rate_limited"):
+                            if len(collected) <= initial_count:
+                                return {
+                                    "state": "rate_limit" if gql_meta.get("rate_limited") else "login_wall",
+                                    "posts": collected,
+                                    "seen_ids": seen_ids,
+                                    "early_stop_reason": "",
+                                    "scrolls": gql_pages_done,
+                                    "need_playwright": False,
+                                    "method": "httpx_gql",
+                                }
+                            stop_reason = stop_reason or "gql_partial"
+                            break
+
+                        if not new_posts:
+                            break
+
+                        next_cursor = gql_meta.get("end_cursor")
+                        has_next = bool(gql_meta.get("has_next_page"))
+                        if not next_cursor or next_cursor == cursor:
+                            break
+                        cursor = next_cursor
+
+                    if len(collected) > initial_count or should_stop or not has_next:
+                        return {
+                            "state": "ok",
+                            "posts": collected,
+                            "seen_ids": seen_ids,
+                            "early_stop_reason": stop_reason or f"httpx_gql_{gql_pages_done}p",
+                            "scrolls": gql_pages_done,
+                            "need_playwright": False,
+                            "method": "httpx_gql",
+                        }
+
                 return {
                     "state": "ok",
                     "posts": collected,
                     "seen_ids": seen_ids,
-                    "early_stop_reason": stop_reason or ("httpx_fast_no_scroll" if max_scrolls <= 0 else ""),
-                    "scrolls": 0,
-                    "need_playwright": False,
-                    "method": "httpx_fast",
+                    "early_stop_reason": stop_reason,
+                    "scrolls": gql_pages_done,
+                    "need_playwright": True,
+                    "method": "httpx_partial",
                 }
 
-            return {
-                "state": "ok",
-                "posts": collected,
-                "seen_ids": seen_ids,
-                "early_stop_reason": stop_reason,
-                "scrolls": 0,
-                "need_playwright": True,
-                "method": "httpx_partial",
-            }
+            return None
+
+        try:
+            ctx_mgr = client if ephemeral and hasattr(client, "__aenter__") else None
+            if ctx_mgr is not None:
+                async with ctx_mgr as c:
+                    res = await _run_on_client(c)
+                    if res is not None:
+                        return res
+            else:
+                res = await _run_on_client(client)
+                if res is not None:
+                    return res
+        finally:
+            if ephemeral and not hasattr(client, "__aenter__") and hasattr(client, "aclose"):
+                await client.aclose()
 
         return {
             "state": "unknown",
@@ -1018,10 +1263,21 @@ class GuestPublicGroupWorker:
         page = await self._context.new_page()
 
         async def _consume_graphql_response(resp: Any) -> None:
+            global _ACTIVE_GQL_PAGINATION_DOC_ID
             try:
                 r_url = resp.url or ""
                 if "/api/graphql" not in r_url or resp.status != 200:
                     return
+                try:
+                    post_data = getattr(resp.request, "post_data", "") or ""
+                    if "GroupsCometFeedRegularStoriesPaginationQuery" in post_data:
+                        qs = parse_qs(post_data)
+                        new_doc_id = (qs.get("doc_id") or [""])[0].strip()
+                        if new_doc_id and new_doc_id.isdigit() and new_doc_id != _ACTIVE_GQL_PAGINATION_DOC_ID:
+                            _ACTIVE_GQL_PAGINATION_DOC_ID = new_doc_id
+                            logger.info("[PUBLIC-PROXY] Auto-updated GQL Pagination doc_id=%s", new_doc_id)
+                except Exception:
+                    pass
                 raw_text = await resp.text()
                 new_posts = parse_fb_graphql_text(
                     raw_text,
@@ -1051,7 +1307,10 @@ class GuestPublicGroupWorker:
             try:
                 await page.keyboard.press("Escape")
                 await page.evaluate(
-                    "document.querySelectorAll('[role=dialog], [data-nosnippet]').forEach(el => el.remove());"
+                    "document.querySelectorAll('[role=dialog], [aria-modal=true]').forEach(el => {"
+                    "el.style.setProperty('display','none','important');"
+                    "el.style.setProperty('pointer-events','none','important');"
+                    "});"
                     "if(document.body) document.body.style.overflow='auto';"
                     "if(document.documentElement) document.documentElement.style.overflow='auto';"
                 )
@@ -1100,7 +1359,10 @@ class GuestPublicGroupWorker:
             while not should_stop and scrolls_done < max_scrolls and not self.stop_check():
                 scrolls_done += 1
                 await page.evaluate(
-                    "document.querySelectorAll('[role=dialog]').forEach(el => el.remove());"
+                    "document.querySelectorAll('[role=dialog], [aria-modal=true]').forEach(el => {"
+                    "el.style.setProperty('display','none','important');"
+                    "el.style.setProperty('pointer-events','none','important');"
+                    "});"
                     "window.scrollTo(0, document.body.scrollHeight);"
                 )
                 await page.wait_for_timeout(1500)
@@ -1182,11 +1444,12 @@ class GuestPublicGroupWorker:
                 break
 
             state = outcome.get("state") or "ok"
-            if state in {"rate_limit", "login_wall"} and attempt == 0 and (self.sim.socks_url or self.config.get("proxy_urls")):
+            fallback_proxies = self.config.get("proxy_urls") or ([self.sim.socks_url] if self.sim.socks_url else None)
+            if state in {"rate_limit", "login_wall"} and attempt == 0 and fallback_proxies:
                 rot = await self.rotator.wait_for_ip_rotation(
                     self.sim.id,
                     reason=f"reactive_{state}",
-                    proxy_urls=self.config.get("proxy_urls"),
+                    proxy_urls=fallback_proxies,
                     stop_check=self.stop_check,
                     log_cb=self.log_cb,
                 )
@@ -1313,7 +1576,7 @@ class GuestPublicGroupWorker:
         ):
             probe_res = await self.rotator.refresh_egress_ip(
                 self.sim.id,
-                proxy_urls=self.config.get("proxy_urls"),
+                proxy_urls=self.config.get("proxy_urls") or [self.sim.socks_url],
                 log_cb=self.log_cb,
             )
             if probe_res.get("ip_changed"):

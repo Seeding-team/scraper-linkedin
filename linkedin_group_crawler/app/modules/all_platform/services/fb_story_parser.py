@@ -414,3 +414,131 @@ def classify_guest_page_state(
             return "login_wall"
 
     return "ok"
+
+
+_LSD_TOKEN_RE = re.compile(r'"LSD"\s*,\s*\[\s*\]\s*,\s*\{"token"\s*:\s*"([^"]+)"')
+_REV_RE = re.compile(r'"server_revision"\s*:\s*(\d+)')
+_HSI_RE = re.compile(r'"hsi"\s*:\s*"([^"]+)"')
+_HS_RE = re.compile(r'"haste_session"\s*:\s*"([^"]+)"')
+_SPIN_R_RE = re.compile(r'"__spin_r"\s*:\s*(\d+)')
+_SPIN_B_RE = re.compile(r'"__spin_b"\s*:\s*"([^"]+)"')
+_SPIN_T_RE = re.compile(r'"__spin_t"\s*:\s*(\d+)')
+
+
+def _find_page_info(payload: Any, *, min_cursor_len: int = 1) -> tuple[str | None, bool]:
+    """Iteratively locate Relay `page_info` containing `end_cursor` inside parsed JSON."""
+    stack: list[Any] = [payload]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, dict):
+            pi = cur.get("page_info")
+            if isinstance(pi, dict):
+                cursor = pi.get("end_cursor")
+                if isinstance(cursor, str) and len(cursor) >= min_cursor_len:
+                    return cursor, bool(pi.get("has_next_page"))
+            for val in cur.values():
+                if isinstance(val, (dict, list)):
+                    stack.append(val)
+        elif isinstance(cur, list):
+            for item in cur:
+                if isinstance(item, (dict, list)):
+                    stack.append(item)
+    return None, False
+
+
+def extract_ssr_feed_metadata(html_text: str, group_url: str = "") -> dict[str, Any]:
+    """Extract GraphQL pagination cursor and Relay session tokens from initial SSR HTML."""
+    meta: dict[str, Any] = {
+        "group_id": extract_group_id_hint(group_url, html_text),
+        "lsd": "",
+        "rev": "1054229411",
+        "hsi": "",
+        "hs": "",
+        "spin_r": "",
+        "spin_b": "trunk",
+        "spin_t": "",
+        "end_cursor": None,
+        "has_next_page": False,
+    }
+    if not html_text:
+        return meta
+
+    if m := _LSD_TOKEN_RE.search(html_text):
+        meta["lsd"] = m.group(1)
+    if m := _REV_RE.search(html_text):
+        meta["rev"] = m.group(1)
+    if m := _HSI_RE.search(html_text):
+        meta["hsi"] = m.group(1)
+    if m := _HS_RE.search(html_text):
+        meta["hs"] = m.group(1)
+    if m := _SPIN_R_RE.search(html_text):
+        meta["spin_r"] = m.group(1)
+    else:
+        meta["spin_r"] = meta["rev"]
+    if m := _SPIN_B_RE.search(html_text):
+        meta["spin_b"] = m.group(1)
+    if m := _SPIN_T_RE.search(html_text):
+        meta["spin_t"] = m.group(1)
+
+    for match in _SCRIPT_JSON_RE.finditer(html_text):
+        raw_json = (match.group(1) or "").strip()
+        if "end_cursor" not in raw_json:
+            continue
+        if "group_feed" not in raw_json and "GroupsCometFeedRegularStories" not in raw_json:
+            continue
+        try:
+            payload = json.loads(raw_json)
+        except ValueError:
+            continue
+        cursor, has_next = _find_page_info(payload, min_cursor_len=16)
+        if cursor:
+            meta["end_cursor"] = cursor
+            meta["has_next_page"] = has_next
+            break
+
+    return meta
+
+
+def parse_graphql_pagination_meta(raw_text: str) -> dict[str, Any]:
+    """Extract next `end_cursor`, `has_next_page`, and login/error flags from `/api/graphql` NDJSON."""
+    result: dict[str, Any] = {
+        "end_cursor": None,
+        "has_next_page": False,
+        "login_required": False,
+        "rate_limited": False,
+        "error_code": None,
+    }
+    if not raw_text:
+        return result
+
+    clean = re.sub(r"^for\s*\(\s*;\s*;\s*\)\s*;?", "", raw_text).strip()
+    if not clean:
+        return result
+
+    for line in clean.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict):
+            err_code = obj.get("error")
+            if err_code is not None:
+                result["error_code"] = err_code
+            errs = obj.get("errors")
+            if isinstance(errs, list) and errs:
+                first_err = errs[0] if isinstance(errs[0], dict) else {}
+                if result["error_code"] is None:
+                    result["error_code"] = first_err.get("code")
+                msg_low = json.dumps(errs, ensure_ascii=False).lower()
+                if "log in" in msg_low or "đăng nhập" in msg_low or str(first_err.get("code")) == "1675004":
+                    result["login_required"] = True
+                if "rate limit" in msg_low or "blocked" in msg_low:
+                    result["rate_limited"] = True
+            cursor, has_next = _find_page_info(obj, min_cursor_len=10)
+            if cursor and not result["end_cursor"]:
+                result["end_cursor"] = cursor
+                result["has_next_page"] = has_next
+    return result
