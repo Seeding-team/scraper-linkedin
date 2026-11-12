@@ -24,8 +24,13 @@ class FbCircuitBreaker:
     """Cầu chì an toàn bảo vệ tài khoản Facebook Messenger."""
 
     @staticmethod
-    def can_send_message(sb: Any, account_id: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    def can_send_message(
+        sb: Any, account_id: str, is_reply: bool = False
+    ) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """Kiểm tra điều kiện an toàn trước khi cho phép gửi tin nhắn.
+
+        is_reply=True (người kia đã nhắn trong hội thoại): bỏ hạn mức ngày + giãn cách,
+        chỉ giữ chặn khi nick bị đóng băng/checkpoint. Hạn mức chỉ dành cho nhắn người lạ.
 
         Returns:
             (is_allowed, reason_if_blocked, account_data)
@@ -82,6 +87,9 @@ class FbCircuitBreaker:
             )
         if status == "expired":
             return False, "Cookie tài khoản đã hết hạn. Vui lòng cập nhật Cookie mới.", account
+
+        if is_reply:
+            return True, "", account
 
         # 4. Kiểm tra Hạn mức gửi tin trong ngày (Daily Quota)
         tier = account.get("warm_up_tier", 1)
