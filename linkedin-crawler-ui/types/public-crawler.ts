@@ -9,6 +9,9 @@ export interface PublicCrawlConfig {
   auto_skip_private: boolean;
   headless: boolean;
   updated_at?: string | null;
+  proxies_configured?: number;
+  proxies_masked?: string[];
+  proxy_urls?: string[] | string;
 }
 
 export interface PublicCrawlRuntime {
@@ -30,7 +33,13 @@ export interface PublicSimNodeRuntime {
   id: string;
   label: string;
   hasSocks: boolean;
-  hasConsole: boolean;
+  hasConsole?: boolean;
+  autoRotating?: boolean;
+  proxyMode?: string;
+  maskedUrl?: string;
+  socksHost?: string | null;
+  socksPort?: number | null;
+  scheme?: string;
   status: "idle" | "crawling" | "rotating" | "error";
   epoch: number;
   groups_in_epoch: number;
@@ -39,6 +48,8 @@ export interface PublicSimNodeRuntime {
   last_egress_ip: string | null;
   last_rotated_at: string | null;
   last_error: string | null;
+  last_latency_ms?: number | null;
+  last_fb_status?: number | null;
 }
 
 export interface PublicCrawlLogEntry {
@@ -106,10 +117,14 @@ export interface PublicCrawlActionResponse {
 export interface ProxyTestResultItem {
   id: string;
   label: string;
-  consoleUrl: string | null;
-  socksUrl: string | null;
-  consoleOk: boolean;
+  maskedUrl?: string | null;
+  consoleUrl?: string | null;
+  socksUrl?: string | null;
+  consoleOk?: boolean;
   socksOk: boolean;
+  fbOk?: boolean;
+  fbStatus?: number | null;
+  autoRotating?: boolean;
   egressIpBefore: string | null;
   egressIpAfter: string | null;
   ipChanged?: boolean;

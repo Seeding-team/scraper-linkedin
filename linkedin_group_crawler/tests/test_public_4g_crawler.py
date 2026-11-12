@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.modules.all_platform import auth_deps
-from app.modules.all_platform.mobile_proxy import client as mobile_proxy_client
 from app.modules.all_platform.routers import extension_crawl, public_crawler
 from app.modules.all_platform.services import (
     fb_story_parser,
@@ -254,24 +253,19 @@ def test_watermark_early_stop_ignores_pinned_and_stops_on_known_or_old():
 
 
 def test_worker_reactive_rotate_proactive_rotate_and_private_isolation(monkeypatch):
-    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_SETTLE_SEC", "0")
-    monkeypatch.setenv("MOBILE_PROXY_NODES", "sim-01")
-    monkeypatch.setenv("MOBILE_PROXY_CONSOLE_URL", "http://10.0.0.2:8080")
-    monkeypatch.setenv("MOBILE_PROXY_SOCKS_URL_VPS", "socks5://u:p@10.0.0.2:4101")
-    monkeypatch.setenv("MOBILE_PROXY_SIM_01_CONSOLE_URL", "http://10.0.0.2:8080")
-    monkeypatch.setenv("MOBILE_PROXY_SIM_01_SOCKS_URL_VPS", "socks5://u:p@10.0.0.2:4101")
-    monkeypatch.setenv("MOBILE_PROXY_CONSOLE_API_KEY", "test-key")
+    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_WAIT_SEC", "5")
+    monkeypatch.setenv("PUBLIC_CRAWL_PROXIES", "203.0.113.10:1080:simuser:secretpass")
 
-    rotate_calls: list[str] = []
     meta_updates: list[dict[str, Any]] = []
     saved_batches: list[int] = []
+    probe_seq = ["14.251.210.10", "14.251.210.10", "171.246.187.203", "42.117.16.99"]
 
-    async def fake_console(method: str, path: str, base_url: str, api_key: str | None = None, timeout: float = 90.0):
-        rotate_calls.append(f"{method} {path} {base_url}")
-        return {"ok": True, "egressIp": f"171.244.1.{len(rotate_calls) + 10}"}
+    async def fake_probe(proxy_url: str, timeout: float = 12.0):
+        ip = probe_seq.pop(0) if probe_seq else "42.117.16.99"
+        return {"ok": True, "egressIp": ip, "latencyMs": 42}
 
-    async def fake_probe(proxy_url: str, timeout: float = 8.0):
-        return {"ok": True, "egressIp": "171.244.1.99", "latencyMs": 42}
+    async def fake_fb_probe(proxy_url: str, timeout: float = 12.0):
+        return {"fbOk": True, "fbStatus": 200, "fbLatencyMs": 120}
 
     async def fake_ingest(req, **_kwargs):
         saved_batches.append(len(req.posts))
@@ -310,16 +304,32 @@ def test_worker_reactive_rotate_proactive_rotate_and_private_isolation(monkeypat
         return {"state": "ok", "posts": [sample_post], "early_stop_reason": ""}
 
     async def _run() -> None:
-        rotator = svc.MobileProxyRotator(console_fn=fake_console, probe_fn=fake_probe)
-        sims = rotator.sync_nodes()
+        pool = svc.RotatingProxyPool(probe_fn=fake_probe, fb_probe_fn=fake_fb_probe)
+        sims = pool.sync_nodes()
         assert len(sims) == 1
         sim = sims[0]
+        assert sim.id == "proxy-01"
+        assert sim.console_url is None  # Strictly decoupled from Mobile Phone Bridge
+        assert sim.socks_url == "socks5://simuser:secretpass@203.0.113.10:1080"
+        pub = sim.to_public_dict()
+        assert "secretpass" not in json.dumps(pub)
+        sim.last_egress_ip = "14.251.210.10"
+
+        # Verify wait_for_ip_rotation polls quickly in unit test
+        orig_wait = pool.wait_for_ip_rotation
+
+        async def fast_wait(node_id, **kw):
+            kw.setdefault("poll_interval", 0.01)
+            return await orig_wait(node_id, **kw)
+
+        pool.wait_for_ip_rotation = fast_wait  # type: ignore[method-assign]
+
         logs: list[tuple[str, str, str]] = []
         bumps: list[dict[str, int]] = []
 
         async with svc.GuestPublicGroupWorker(
             sim=sim,
-            rotator=rotator,
+            rotator=pool,
             config={
                 "groups_per_ip_rotate": 2,
                 "max_posts_per_group": 25,
@@ -332,24 +342,24 @@ def test_worker_reactive_rotate_proactive_rotate_and_private_isolation(monkeypat
             progress_cb=lambda d: bumps.append(d),
             attempt_fetcher=fake_fetcher,
         ) as worker:
-            # 1. Login wall triggers reactive rotate & succeeds on retry
+            # 1. Login wall triggers wait_for_ip_rotation -> IP changes 14.251.210.10 -> 171.246.187.203
             res1 = await worker.process_group({"id": "g-wall", "group_name": "Wall Group", "group_url": "https://www.facebook.com/groups/gwall"})
             assert res1["status"] == "rotated_retry"
             assert res1["posts_saved"] == 1
-            assert len(rotate_calls) == 1  # reactive rotate fired
+            assert sim.last_egress_ip == "171.246.187.203"
             assert sim.groups_in_epoch == 1
 
-            # 2. Private group marks visibility='private' and does NOT consume proactive rotate needlessly
+            # 2. Private group marks visibility='private' and skips extra checks
             res2 = await worker.process_group({"id": "g-priv", "group_name": "Priv Group", "group_url": "https://www.facebook.com/groups/gpriv"})
             assert res2["status"] == "private_skipped"
             assert any(m["group_id"] == "g-priv" and m["mark_private"] is True for m in meta_updates)
-            assert len(rotate_calls) == 1
 
-            # 3. Second public group reaches groups_per_ip_rotate=2 -> proactive rotate triggers!
+            # 3. Second public group reaches groups_per_ip_rotate=2 -> passive probe records rollover to 42.117.16.99
             res3 = await worker.process_group({"id": "g-ok2", "group_name": "OK Group 2", "group_url": "https://www.facebook.com/groups/gok2"})
             assert res3["status"] == "ok"
-            assert len(rotate_calls) == 2
+            assert sim.last_egress_ip == "42.117.16.99"
             assert sim.groups_in_epoch == 0
+            assert sum(b.get("ip_rotations", 0) for b in bumps) >= 2
 
     asyncio.run(_run())
     assert sum(saved_batches) == 2
@@ -420,29 +430,68 @@ def test_public_crawler_router_rbac_and_extension_compat(monkeypatch):
     assert ok_res.json()["count"] == 1
 
 
-def test_mobile_proxy_rotator_docker_loopback_retry_and_limit_groups(monkeypatch):
-    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_SETTLE_SEC", "0")
-    monkeypatch.setenv("MOBILE_PROXY_NODES", "sim-01")
-    monkeypatch.setenv("MOBILE_PROXY_CONSOLE_URL", "http://127.0.0.1:4320")
-    monkeypatch.setenv("MOBILE_PROXY_SOCKS_URL_VPS", "socks5://u:p@127.0.0.1:41081")
-    monkeypatch.delenv("MOBILE_PROXY_SIM_01_CONSOLE_URL", raising=False)
-    monkeypatch.delenv("MOBILE_PROXY_SIM_01_SOCKS_URL_VPS", raising=False)
+def test_rotating_proxy_pool_formats_masking_fast_ssr_and_limit_groups(monkeypatch):
+    # 1. Verify host:port:user:pass parsing & masking
+    assert (
+        bridge_mod.parse_proxy_entry("203.0.113.10:1080:myuser:mysecret!")
+        == "socks5://myuser:mysecret%21@203.0.113.10:1080"
+    )
+    assert bridge_mod.parse_proxy_entry("http://u:p@1.2.3.4:8080") == "http://u:p@1.2.3.4:8080"
+    masked = bridge_mod.mask_proxy_url("203.0.113.10:1080:proxyuser01:supersecret")
+    assert "supersecret" not in masked
+    assert "203.0.113.10:1080" in masked
 
+    # 2. Ensure Public Crawler module has ZERO mobile_proxy phone bridge imports
+    import inspect
+    src = inspect.getsource(svc)
+    assert "mobile_proxy" not in src
+
+    monkeypatch.setenv("PUBLIC_CRAWL_ROTATE_WAIT_SEC", "5")
     monkeypatch.setattr(bridge_mod, "_is_running_in_docker", lambda: True)
-    seen_urls: list[str] = []
 
-    # Verify console_request itself rewrites 127.0.0.1 -> host.docker.internal inside Docker
-    captured_http_urls: list[str] = []
+    probe_ips = ["14.160.1.10", "14.160.1.10", "14.231.9.88"]
 
-    class _DummyResp:
-        status_code = 200
-        content = b'{"ok": true}'
+    async def fake_probe(proxy_url: str, timeout: float = 12.0):
+        ip = probe_ips.pop(0) if probe_ips else "14.231.9.88"
+        return {"ok": True, "egressIp": ip, "latencyMs": 35}
 
-        @staticmethod
-        def json():
-            return {"ok": True}
+    async def fake_fb_probe(proxy_url: str, timeout: float = 12.0):
+        return {"fbOk": True, "fbStatus": 200, "fbLatencyMs": 850}
 
-    class _DummyAsyncClient:
+    pool = svc.RotatingProxyPool(probe_fn=fake_probe, fb_probe_fn=fake_fb_probe)
+    sims = pool.sync_nodes(["127.0.0.1:41081:u:p"])
+    assert sims[0].console_url is None
+    assert sims[0].socks_url == "socks5://u:p@host.docker.internal:41081"
+
+    orig_wait = pool.wait_for_ip_rotation
+
+    async def fast_wait(node_id, **kw):
+        kw.setdefault("poll_interval", 0.01)
+        return await orig_wait(node_id, **kw)
+
+    pool.wait_for_ip_rotation = fast_wait  # type: ignore[method-assign]
+
+    test_res = asyncio.run(pool.test_proxy(do_rotate=True, proxy_urls=["127.0.0.1:41081:u:p"]))
+    assert test_res["ok"] is True
+    node_res = test_res["results"][0]
+    assert node_res["socksOk"] is True
+    assert node_res["fbOk"] is True
+    assert node_res["fbStatus"] == 200
+    assert node_res["rotated"] is True
+    assert node_res["egressIpBefore"] == "14.160.1.10"
+    assert node_res["egressIpAfter"] == "14.231.9.88"
+    assert node_res["ipChanged"] is True
+
+    # 3. Verify HTTPX SSR Fast-Path catches 302 /login in 1 request & short-circuits 200 OK without scroll
+    class _MockResp:
+        def __init__(self, status_code: int, text: str = "", headers: dict[str, str] | None = None):
+            self.status_code = status_code
+            self.text = text
+            self.headers = headers or {}
+
+    mock_responses: list[_MockResp] = []
+
+    class _MockAsyncClient:
         def __init__(self, *args, **kwargs):
             pass
 
@@ -452,53 +501,67 @@ def test_mobile_proxy_rotator_docker_loopback_retry_and_limit_groups(monkeypatch
         async def __aexit__(self, *args):
             return None
 
-        async def request(self, _method: str, url: str, headers=None):
-            captured_http_urls.append(url)
-            return _DummyResp()
+        async def get(self, url: str):
+            return mock_responses.pop(0)
 
-    monkeypatch.setattr(mobile_proxy_client.httpx, "AsyncClient", _DummyAsyncClient)
-    asyncio.run(mobile_proxy_client.console_request("POST", "/api/rotate", "http://127.0.0.1:4320"))
-    assert captured_http_urls == ["http://host.docker.internal:4320/api/rotate"]
-    rotate_attempt = 0
+    monkeypatch.setattr(svc.httpx, "AsyncClient", _MockAsyncClient)
+    worker_fast = svc.GuestPublicGroupWorker(
+        sim=sims[0],
+        rotator=pool,
+        config={"max_posts_per_group": 25, "max_scrolls_per_group": 0},
+        log_cb=lambda *_: None,
+        stop_check=lambda: False,
+        progress_cb=lambda *_: None,
+    )
+    mock_responses.append(_MockResp(302, headers={"location": "https://www.facebook.com/login/?next=abc"}))
+    r_wall = asyncio.run(
+        worker_fast._fetch_group_ssr_fast(
+            "https://www.facebook.com/groups/g1",
+            "https://www.facebook.com/groups/g1/?sorting_setting=CHRONOLOGICAL",
+            known_urls=set(),
+            known_ids=set(),
+            max_posts=25,
+            max_scrolls=0,
+        )
+    )
+    assert r_wall["state"] == "login_wall"
+    assert r_wall["need_playwright"] is False
 
-    async def fake_console(method: str, path: str, base_url: str, api_key: str | None = None, timeout: float = 90.0):
-        nonlocal rotate_attempt
-        seen_urls.append(base_url)
-        if path == "/api/status":
-            return {"ok": True, "directMobileIp": "14.160.1.10"}
-        if path == "/api/rotate":
-            rotate_attempt += 1
-            if rotate_attempt == 1:
-                return {"ok": False, "error": "ADB transient reconnect"}
-            return {"ok": True, "directMobileIp": "14.231.9.88"}
-        return {"ok": True}
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    ssr_html = '<script type="application/json">' + json.dumps(
+        {
+            "node": {
+                "__typename": "Story",
+                "post_id": "5566778899",
+                "creation_time": now_ts - 45,
+                "message": {"text": "Can tim don vi chay quang cao Web"},
+            }
+        }
+    ) + "</script>"
+    mock_responses.append(_MockResp(200, text=ssr_html))
+    r_ok = asyncio.run(
+        worker_fast._fetch_group_ssr_fast(
+            "https://www.facebook.com/groups/g1",
+            "https://www.facebook.com/groups/g1/?sorting_setting=CHRONOLOGICAL",
+            known_urls=set(),
+            known_ids=set(),
+            max_posts=25,
+            max_scrolls=0,
+        )
+    )
+    assert r_ok["state"] == "ok"
+    assert len(r_ok["posts"]) == 1
+    assert r_ok["need_playwright"] is False
 
-    probe_ips = ["14.160.1.10", "14.231.9.88"]
-
-    async def fake_probe(proxy_url: str, timeout: float = 8.0):
-        ip = probe_ips.pop(0) if probe_ips else "14.231.9.88"
-        return {"ok": True, "egressIp": ip, "latencyMs": 35}
-
-    rotator = svc.MobileProxyRotator(console_fn=fake_console, probe_fn=fake_probe)
-    sims = rotator.sync_nodes()
-    assert sims[0].console_url == "http://host.docker.internal:4320"
-    assert sims[0].socks_url == "socks5://u:p@host.docker.internal:41081"
-
-    test_res = asyncio.run(rotator.test_proxy(do_rotate=True))
-    assert test_res["ok"] is True
-    assert rotate_attempt == 2  # auto-retried after ok=false
-    node_res = test_res["results"][0]
-    assert node_res["rotated"] is True
-    assert node_res["egressIpBefore"] == "14.160.1.10"
-    assert node_res["egressIpAfter"] == "14.231.9.88"
-    assert node_res["ipChanged"] is True
-    assert all(u == "http://host.docker.internal:4320" for u in seen_urls)
-
-    # Verify start_run limit_groups=3 picks oldest 3 public groups deterministically
+    # 4. Verify start_run limit_groups=3 picks oldest 3 public groups deterministically
     orch = svc.PublicCrawlOrchestrator()
     captured: list[str] = []
+    cfg_with_proxy = {**svc.DEFAULT_PUBLIC_CRAWL_CONFIG, "proxy_urls": ["203.0.113.10:1080:u:pass99"]}
+    masked_cfg = orch.mask_config_for_api(cfg_with_proxy)
+    assert "pass99" not in json.dumps(masked_cfg)
+    assert masked_cfg["proxies_configured"] == 1
 
-    monkeypatch.setattr(orch, "get_config_sync", lambda: dict(svc.DEFAULT_PUBLIC_CRAWL_CONFIG))
+    monkeypatch.setattr(orch, "get_config_sync", lambda: dict(cfg_with_proxy))
     monkeypatch.setattr(
         orch,
         "_select_due_groups_sync",
@@ -511,7 +574,6 @@ def test_mobile_proxy_rotator_docker_loopback_retry_and_limit_groups(monkeypatch
     )
     monkeypatch.setattr(orch, "_create_run_record_sync", lambda **_kw: "run-quick-3")
     monkeypatch.setattr(orch, "_finish_run_record_sync", lambda **_kw: None)
-    monkeypatch.setattr(orch.rotator, "sync_nodes", lambda: [svc.SimNodeRuntime(id="sim-01", label="SIM 1", socks_url="socks5://u:p@host.docker.internal:41081", console_url="http://host.docker.internal:4320")])
 
     async def fake_execute(*, groups, **_kw):
         captured.extend(g["id"] for g in groups)
@@ -529,18 +591,6 @@ def test_mobile_proxy_rotator_docker_loopback_retry_and_limit_groups(monkeypatch
     assert res["total_groups"] == 3
     assert captured == ["g1", "g2", "g3"]
 
-    # Unconfigured env must NOT yield a phantom unconfigured sim-01 node
-    for env_key in list(
-        (
-            "MOBILE_PROXY_NODES",
-            "MOBILE_PROXY_CONSOLE_URL",
-            "MOBILE_PROXY_SOCKS_URL_VPS",
-            "MOBILE_PROXY_SOCKS_URL_OFFICE",
-            "MOBILE_PROXY_SOCKS_URL_LOCAL_PC",
-            "MOBILE_PROXY_VPS_HOST",
-            "MOBILE_PROXY_OFFICE_HOST",
-            "MOBILE_PROXY_SOCKS_PORT",
-        )
-    ):
-        monkeypatch.delenv(env_key, raising=False)
-    assert rotator.sync_nodes() == []
+    # Unconfigured DB + env must yield empty list (no phantom node)
+    monkeypatch.delenv("PUBLIC_CRAWL_PROXIES", raising=False)
+    assert pool.sync_nodes([]) == []

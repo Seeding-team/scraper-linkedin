@@ -401,3 +401,158 @@ async def probe_proxy_egress(proxy_url: str, timeout: float = 8.0) -> dict[str, 
             "latencyMs": int((time.perf_counter() - t0) * 1000),
             "error": str(exc),
         }
+
+
+def parse_proxy_entry(raw: str, default_scheme: str = "socks5") -> str:
+    """Normalize proxy formats (`host:port:user:pass`, `host:port`, `socks5://...`, `http://...`).
+
+    Raises ValueError on malformed entries so UI/API input stays clean.
+    """
+    from urllib.parse import quote
+
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("Proxy trống")
+
+    if "://" in text:
+        parsed = urlparse(text)
+        scheme = (parsed.scheme or default_scheme).lower()
+        if scheme not in {"socks5", "socks5h", "socks4", "http", "https"}:
+            raise ValueError(f"Giao thức proxy không hỗ trợ: {scheme}")
+        if not parsed.hostname or not parsed.port:
+            raise ValueError(f"Thiếu host hoặc port trong proxy: {text}")
+        return text
+
+    parts = text.split(":", 3)
+    if len(parts) == 2:
+        host, port_str = parts[0].strip(), parts[1].strip()
+        user = ""
+        password = ""
+    elif len(parts) == 4:
+        host, port_str, user, password = (
+            parts[0].strip(),
+            parts[1].strip(),
+            parts[2].strip(),
+            parts[3].strip(),
+        )
+    else:
+        raise ValueError(
+            "Định dạng proxy không hợp lệ. Dùng host:port:user:pass, host:port hoặc socks5://user:pass@host:port"
+        )
+
+    if not host:
+        raise ValueError("Thiếu host trong proxy")
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise ValueError(f"Port proxy không hợp lệ: {port_str}") from exc
+    if not (1 <= port <= 65535):
+        raise ValueError(f"Port proxy ngoài phạm vi 1..65535: {port}")
+
+    if user:
+        auth = f"{quote(user, safe='')}:{quote(password, safe='')}@"
+    else:
+        auth = ""
+    return f"{default_scheme}://{auth}{host}:{port}"
+
+
+def normalize_proxy_list(entries: list[str] | str | None, default_scheme: str = "socks5") -> list[str]:
+    """Parse newline/comma separated or list proxy entries into deduplicated canonical URLs."""
+    raw_items: list[str]
+    if entries is None:
+        raw_items = []
+    elif isinstance(entries, str):
+        raw_items = [seg.strip() for line in entries.splitlines() for seg in line.split(",")]
+    else:
+        raw_items = [str(item).strip() for item in entries]
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        if not item:
+            continue
+        url = parse_proxy_entry(item, default_scheme=default_scheme)
+        if url not in seen:
+            seen.add(url)
+            normalized.append(url)
+    return normalized
+
+
+def mask_proxy_url(proxy_url: str) -> str:
+    """Return UI/log-safe proxy label without exposing raw credentials."""
+    from urllib.parse import unquote
+
+    try:
+        canon = parse_proxy_entry(proxy_url)
+    except ValueError:
+        return "***"
+    parsed = urlparse(canon)
+    host = parsed.hostname or "?"
+    port = parsed.port or 1080
+    scheme = (parsed.scheme or "socks5").lower()
+    if parsed.username:
+        user = unquote(parsed.username)
+        u_mask = f"{user[:4]}***" if len(user) > 4 else f"{user[:1]}***"
+        return f"{scheme}://{u_mask}:****@{host}:{port}"
+    return f"{scheme}://{host}:{port}"
+
+
+async def probe_any_proxy_egress(proxy_url: str, timeout: float = 12.0) -> dict[str, Any]:
+    """Probe public egress IP & latency for either SOCKS5 or HTTP/HTTPS proxy."""
+    t0 = time.perf_counter()
+    try:
+        canon = parse_proxy_entry(proxy_url)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "proxyUrl": "***",
+            "egressIp": None,
+            "latencyMs": int((time.perf_counter() - t0) * 1000),
+            "error": str(exc),
+        }
+
+    masked = mask_proxy_url(canon)
+    scheme = urlparse(canon).scheme.lower()
+    if scheme.startswith("socks"):
+        res = await probe_proxy_egress(canon, timeout=timeout)
+        res["proxyUrl"] = masked
+        return res
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(proxy=canon, timeout=timeout, follow_redirects=True) as client:
+            for endpoint in ("https://api.ipify.org?format=json", "https://ifconfig.me/ip"):
+                try:
+                    resp = await client.get(endpoint)
+                    if resp.status_code == 200:
+                        text = resp.text.strip()
+                        ip = text
+                        if text.startswith("{"):
+                            import json as _json
+                            ip = str(_json.loads(text).get("ip") or "").strip()
+                        if ip:
+                            return {
+                                "ok": True,
+                                "proxyUrl": masked,
+                                "egressIp": ip,
+                                "latencyMs": int((time.perf_counter() - t0) * 1000),
+                                "error": None,
+                            }
+                except Exception:
+                    continue
+        return {
+            "ok": False,
+            "proxyUrl": masked,
+            "egressIp": None,
+            "latencyMs": int((time.perf_counter() - t0) * 1000),
+            "error": "HTTP proxy không truy cập được dịch vụ kiểm tra IP",
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "proxyUrl": masked,
+            "egressIp": None,
+            "latencyMs": int((time.perf_counter() - t0) * 1000),
+            "error": str(exc),
+        }

@@ -13,19 +13,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import unquote, urlparse
 
 from app.core.supabase_client import get_supabase_client
-from app.modules.all_platform.mobile_proxy.client import console_request
-from app.modules.all_platform.mobile_proxy.config import (
-    build_node_config,
-    node_console_targets,
-)
 from app.modules.all_platform.services.fb_story_parser import (
     classify_guest_page_state,
     extract_post_id_from_url,
@@ -42,14 +39,36 @@ from app.modules.all_platform.services.post_ingest_service import (
 from app.modules.all_platform.services.socks5_http_bridge import (
     Socks5HttpBridge,
     probe_proxy_egress,
-    resolve_socks_url_for_node,
     rewrite_proxy_url_for_runtime,
+    parse_proxy_entry,
+    normalize_proxy_list,
+    mask_proxy_url,
+    probe_any_proxy_egress,
 )
 from app.modules.all_platform.websocket import manager
+import httpx
 
 logger = logging.getLogger(__name__)
 
 _VIETNAM_TZ = timezone(timedelta(hours=7))
+
+CHROME_DOC_HEADERS: dict[str, str] = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "max-age=0",
+    "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
+}
 
 DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "id": "default",
@@ -61,6 +80,7 @@ DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "concurrent_sims": 2,
     "auto_skip_private": True,
     "headless": True,
+    "proxy_urls": [],
 }
 
 _TRACKER_URL_SUBSTRINGS = (
@@ -154,14 +174,14 @@ def evaluate_watermark_early_stop(
     return False, ""
 
 
-def _extract_ip_from_console_payload(data: Any) -> str | None:
-    if not isinstance(data, dict):
-        return None
-    for key in ("egressIp", "directMobileIp", "publicIp", "public_ip", "ip"):
-        val = data.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-    return None
+def _parse_host_port(proxy_url: str | None) -> tuple[str | None, int | None, str]:
+    if not proxy_url:
+        return None, None, "direct"
+    try:
+        parsed = urlparse(proxy_url)
+        return parsed.hostname, parsed.port, (parsed.scheme or "socks5").lower()
+    except Exception:
+        return None, None, "unknown"
 
 
 @dataclass
@@ -169,7 +189,7 @@ class SimNodeRuntime:
     id: str
     label: str
     socks_url: str | None = None
-    console_url: str | None = None
+    console_url: str | None = None  # Deprecated: intentionally always None (no mobile phone bridge)
     api_key: str | None = None
     status: str = "idle"  # idle | crawling | rotating | error
     epoch: int = 0
@@ -179,14 +199,24 @@ class SimNodeRuntime:
     last_egress_ip: str | None = None
     last_rotated_at: str | None = None
     last_error: str | None = None
+    last_latency_ms: int | None = None
+    last_fb_status: int | None = None
     raw_node: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
+        host, port, scheme = _parse_host_port(self.socks_url)
+        masked = mask_proxy_url(self.socks_url) if self.socks_url else "direct"
         return {
             "id": self.id,
             "label": self.label,
             "hasSocks": bool(self.socks_url),
-            "hasConsole": bool(self.console_url),
+            "hasConsole": False,
+            "autoRotating": bool(self.socks_url),
+            "proxyMode": "auto_60s" if self.socks_url else "direct",
+            "maskedUrl": masked,
+            "socksHost": host,
+            "socksPort": port,
+            "scheme": scheme,
             "status": self.status,
             "epoch": self.epoch,
             "groups_in_epoch": self.groups_in_epoch,
@@ -195,20 +225,63 @@ class SimNodeRuntime:
             "last_egress_ip": self.last_egress_ip,
             "last_rotated_at": self.last_rotated_at,
             "last_error": self.last_error,
+            "last_latency_ms": self.last_latency_ms,
+            "last_fb_status": self.last_fb_status,
         }
 
 
-class MobileProxyRotator:
-    """Thread/async-safe controller around `mobile_proxy` SIM nodes."""
+async def _default_fb_guest_probe(proxy_url: str, timeout: float = 12.0) -> dict[str, Any]:
+    """Quickly test whether the current egress IP gets HTTP 200 OK or 302 /login on public FB."""
+    test_url = "https://www.facebook.com/groups/thietkewebvietnam/?sorting_setting=CHRONOLOGICAL"
+    t0 = time.perf_counter()
+    canon = parse_proxy_entry(proxy_url)
+    bridge: Socks5HttpBridge | None = None
+    httpx_proxy: str | None = None
+    try:
+        if canon.lower().startswith("socks"):
+            bridge = Socks5HttpBridge(canon)
+            httpx_proxy = await bridge.start()
+        else:
+            httpx_proxy = canon
+
+        async with httpx.AsyncClient(
+            proxy=httpx_proxy,
+            timeout=timeout,
+            follow_redirects=False,
+            headers=CHROME_DOC_HEADERS,
+        ) as client:
+            resp = await client.get(test_url)
+            loc = (resp.headers.get("location") or "").strip()
+            fb_ok = resp.status_code == 200
+            return {
+                "fbOk": fb_ok,
+                "fbStatus": resp.status_code,
+                "fbLatencyMs": int((time.perf_counter() - t0) * 1000),
+                "fbLocation": loc[:120] if loc else None,
+            }
+    except Exception as exc:
+        return {
+            "fbOk": False,
+            "fbStatus": None,
+            "fbLatencyMs": int((time.perf_counter() - t0) * 1000),
+            "fbError": str(exc),
+        }
+    finally:
+        if bridge is not None:
+            await bridge.stop()
+
+
+class RotatingProxyPool:
+    """Thread/async-safe pool managing auto-rotating residential/4G proxies (no phone bridge)."""
 
     def __init__(
         self,
         *,
-        console_fn: Callable[..., Awaitable[Any]] = console_request,
-        probe_fn: Callable[..., Awaitable[dict[str, Any]]] = probe_proxy_egress,
+        probe_fn: Callable[..., Awaitable[dict[str, Any]]] = probe_any_proxy_egress,
+        fb_probe_fn: Callable[..., Awaitable[dict[str, Any]]] = _default_fb_guest_probe,
     ) -> None:
-        self._console_fn = console_fn
         self._probe_fn = probe_fn
+        self._fb_probe_fn = fb_probe_fn
         self._locks: dict[str, asyncio.Lock] = {}
         self._states: dict[str, SimNodeRuntime] = {}
 
@@ -217,56 +290,51 @@ class MobileProxyRotator:
             self._locks[node_id] = asyncio.Lock()
         return self._locks[node_id]
 
-    def sync_nodes(self) -> list[SimNodeRuntime]:
-        """Load active node definitions dynamically from `mobile_proxy.config`."""
-        cfg = build_node_config()
-        targets_by_id = {t["id"]: t for t in node_console_targets()}
+    def sync_nodes(self, proxy_urls: list[str] | str | None = None) -> list[SimNodeRuntime]:
+        """Load rotating proxies from DB config (`proxy_urls`) or `PUBLIC_CRAWL_PROXIES` env."""
+        entries: list[str] = []
+        if proxy_urls:
+            try:
+                entries = normalize_proxy_list(proxy_urls)
+            except ValueError as exc:
+                logger.warning("[PUBLIC-PROXY] Invalid DB proxy_urls entry ignored: %s", exc)
+        if not entries:
+            env_raw = os.getenv("PUBLIC_CRAWL_PROXIES", "").strip()
+            if env_raw:
+                try:
+                    entries = normalize_proxy_list(env_raw)
+                except ValueError as exc:
+                    logger.warning("[PUBLIC-PROXY] Invalid PUBLIC_CRAWL_PROXIES env entry: %s", exc)
+
         runtimes: list[SimNodeRuntime] = []
         active_ids: set[str] = set()
 
-        for raw in cfg.get("nodes") or []:
-            node_id = str(raw.get("id") or "").strip()
-            if not node_id:
+        for idx, raw_url in enumerate(entries, start=1):
+            runtime_url = rewrite_proxy_url_for_runtime(raw_url)
+            if not runtime_url:
                 continue
-            target = targets_by_id.get(node_id) or {}
-            env_prefix = "MOBILE_PROXY_" + node_id.upper().replace("-", "_") + "_"
-            has_explicit_local = bool(
-                os.getenv("MOBILE_PROXY_SOCKS_URL_LOCAL_PC", "").strip()
-                or os.getenv(f"{env_prefix}SOCKS_URL_LOCAL_PC", "").strip()
-            )
-            has_real_config = bool(
-                raw.get("socksUrlVps")
-                or raw.get("socksUrlOffice")
-                or raw.get("consoleUrl")
-                or target.get("consoleUrl")
-                or has_explicit_local
-            )
-            if not has_real_config:
-                continue
-            socks_url = resolve_socks_url_for_node(raw)
-            raw_console_url = (raw.get("consoleUrl") or target.get("consoleUrl") or "").strip() or None
-            console_url = rewrite_proxy_url_for_runtime(raw_console_url)
-            if not socks_url and not console_url:
-                continue
+            node_id = f"proxy-{idx:02d}"
+            host, port, scheme = _parse_host_port(runtime_url)
+            label = f"Proxy Xoay #{idx} · {host}:{port}" if host and port else f"Proxy Xoay #{idx}"
             active_ids.add(node_id)
-            api_key = target.get("apiKey")
+
             existing = self._states.get(node_id)
             if existing is None:
                 existing = SimNodeRuntime(
                     id=node_id,
-                    label=str(raw.get("label") or node_id),
-                    socks_url=socks_url,
-                    console_url=console_url,
-                    api_key=api_key,
-                    raw_node=raw,
+                    label=label,
+                    socks_url=runtime_url,
+                    console_url=None,
+                    raw_node={"scheme": scheme, "host": host, "port": port},
                 )
                 self._states[node_id] = existing
             else:
-                existing.label = str(raw.get("label") or node_id)
-                existing.socks_url = socks_url
-                existing.console_url = console_url
-                existing.api_key = api_key
-                existing.raw_node = raw
+                if existing.socks_url != runtime_url:
+                    existing.last_egress_ip = None
+                existing.label = label
+                existing.socks_url = runtime_url
+                existing.console_url = None
+                existing.raw_node = {"scheme": scheme, "host": host, "port": port}
             runtimes.append(existing)
 
         for stale_id in list(self._states):
@@ -275,8 +343,193 @@ class MobileProxyRotator:
 
         return runtimes
 
-    def snapshot_nodes(self) -> list[dict[str, Any]]:
-        return [s.to_public_dict() for s in self.sync_nodes()]
+    def snapshot_nodes(self, proxy_urls: list[str] | str | None = None) -> list[dict[str, Any]]:
+        return [s.to_public_dict() for s in self.sync_nodes(proxy_urls)]
+
+    async def refresh_egress_ip(
+        self,
+        node_id: str,
+        *,
+        proxy_urls: list[str] | str | None = None,
+        log_cb: Callable[[str, str, str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Non-blocking probe to detect if the 60s auto-rotating proxy already switched IP."""
+        self.sync_nodes(proxy_urls)
+        state = self._states.get(node_id)
+        if state is None or not state.socks_url:
+            return {"ok": False, "ip_changed": False, "egress_ip": None}
+
+        prev_ip = state.last_egress_ip
+        probe = await self._probe_fn(state.socks_url, timeout=10.0)
+        new_ip = probe.get("egressIp")
+        if probe.get("latencyMs") is not None:
+            state.last_latency_ms = int(probe["latencyMs"])
+        ip_changed = bool(new_ip and prev_ip and new_ip != prev_ip)
+        if ip_changed:
+            state.epoch += 1
+            state.groups_in_epoch = 0
+            state.total_rotations += 1
+            state.last_rotated_at = _utc_now_iso()
+            if log_cb:
+                log_cb("info", node_id, f"[{node_id}] Proxy tự xoay sang IP mới: {prev_ip} -> {new_ip}")
+        if new_ip:
+            state.last_egress_ip = new_ip
+        return {
+            "ok": bool(probe.get("ok")),
+            "egress_ip": new_ip,
+            "previous_ip": prev_ip,
+            "ip_changed": ip_changed,
+            "latency_ms": probe.get("latencyMs"),
+        }
+
+    async def wait_for_ip_rotation(
+        self,
+        node_id: str,
+        *,
+        reason: str = "scheduled",
+        proxy_urls: list[str] | str | None = None,
+        timeout_sec: float | None = None,
+        poll_interval: float = 6.0,
+        stop_check: Callable[[], bool] | None = None,
+        log_cb: Callable[[str, str, str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Wait for the provider's 60s auto-rotating proxy to expose a fresh egress IP."""
+        self.sync_nodes(proxy_urls)
+        state = self._states.get(node_id)
+        if state is None:
+            return {"ok": False, "node_id": node_id, "error": f"Unknown proxy node '{node_id}'"}
+        if not state.socks_url:
+            return {"ok": False, "node_id": node_id, "error": f"Proxy '{node_id}' chưa có URL kết nối"}
+
+        max_wait = (
+            float(timeout_sec)
+            if timeout_sec is not None
+            else float(os.getenv("PUBLIC_CRAWL_ROTATE_WAIT_SEC", "68") or "0")
+        )
+
+        async with self._lock_for(node_id):
+            prev_status = state.status
+            state.status = "rotating"
+            state.last_error = None
+            before_ip = state.last_egress_ip
+
+            try:
+                first_probe = await self._probe_fn(state.socks_url, timeout=10.0)
+                cur_ip = first_probe.get("egressIp")
+                if first_probe.get("latencyMs") is not None:
+                    state.last_latency_ms = int(first_probe["latencyMs"])
+
+                # If IP already rolled over since we started the previous crawl, return immediately!
+                if before_ip and cur_ip and cur_ip != before_ip:
+                    state.epoch += 1
+                    state.groups_in_epoch = 0
+                    state.total_rotations += 1
+                    state.last_egress_ip = cur_ip
+                    state.last_rotated_at = _utc_now_iso()
+                    state.status = "idle"
+                    if log_cb:
+                        log_cb(
+                            "success",
+                            node_id,
+                            f"[{node_id}] Proxy đã tự xoay IP ({reason}): {before_ip} -> {cur_ip}",
+                        )
+                    return {
+                        "ok": True,
+                        "node_id": node_id,
+                        "egress_ip": cur_ip,
+                        "previous_ip": before_ip,
+                        "ip_changed": True,
+                        "epoch": state.epoch,
+                    }
+
+                baseline_ip = before_ip or cur_ip
+                if cur_ip:
+                    state.last_egress_ip = cur_ip
+
+                if max_wait <= 0:
+                    state.status = "idle"
+                    return {
+                        "ok": bool(first_probe.get("ok")),
+                        "node_id": node_id,
+                        "egress_ip": cur_ip,
+                        "previous_ip": baseline_ip,
+                        "ip_changed": False,
+                        "epoch": state.epoch,
+                    }
+
+                if log_cb:
+                    log_cb(
+                        "warn",
+                        node_id,
+                        f"[{node_id}] IP {baseline_ip or '?'} gặp {reason} — chờ proxy tự xoay IP mới (chu kỳ 60s, tối đa {int(max_wait)}s)...",
+                    )
+
+                deadline = time.monotonic() + max_wait
+                new_ip = cur_ip
+                ip_changed = False
+
+                while time.monotonic() < deadline:
+                    if stop_check and stop_check():
+                        break
+                    # Sleep in 1s slices so Dừng button cancels immediately
+                    remaining = max(0.0, deadline - time.monotonic())
+                    slice_sec = min(poll_interval, remaining)
+                    slept = 0.0
+                    while slept < slice_sec:
+                        if stop_check and stop_check():
+                            break
+                        step = min(1.0, slice_sec - slept)
+                        await asyncio.sleep(step)
+                        slept += step
+                    if stop_check and stop_check():
+                        break
+
+                    probe = await self._probe_fn(state.socks_url, timeout=10.0)
+                    cand_ip = probe.get("egressIp")
+                    if probe.get("latencyMs") is not None:
+                        state.last_latency_ms = int(probe["latencyMs"])
+                    if cand_ip and baseline_ip and cand_ip != baseline_ip:
+                        new_ip = cand_ip
+                        ip_changed = True
+                        break
+                    if cand_ip:
+                        new_ip = cand_ip
+
+                if ip_changed:
+                    state.epoch += 1
+                    state.groups_in_epoch = 0
+                    state.total_rotations += 1
+                    state.last_egress_ip = new_ip
+                    state.last_rotated_at = _utc_now_iso()
+                    if log_cb:
+                        log_cb(
+                            "success",
+                            node_id,
+                            f"[{node_id}] Đã nhận IP mới sau tự xoay: {baseline_ip} -> {new_ip}",
+                        )
+                elif log_cb:
+                    log_cb(
+                        "info",
+                        node_id,
+                        f"[{node_id}] Hết thời gian chờ đổi IP (vẫn giữ {new_ip or 'N/A'}) — thử lại lượt tiếp theo.",
+                    )
+
+                state.status = "idle"
+                return {
+                    "ok": True,
+                    "node_id": node_id,
+                    "egress_ip": new_ip,
+                    "previous_ip": baseline_ip,
+                    "ip_changed": ip_changed,
+                    "epoch": state.epoch,
+                }
+            except Exception as exc:
+                err_msg = str(getattr(exc, "detail", exc))
+                state.last_error = err_msg
+                state.status = prev_status if prev_status != "rotating" else "error"
+                if log_cb:
+                    log_cb("error", node_id, f"[{node_id}] Lỗi kiểm tra xoay IP: {err_msg}")
+                return {"ok": False, "node_id": node_id, "error": err_msg}
 
     async def rotate_node(
         self,
@@ -285,184 +538,97 @@ class MobileProxyRotator:
         reason: str = "scheduled",
         log_cb: Callable[[str, str, str], None] | None = None,
     ) -> dict[str, Any]:
-        """Serialize rotation per SIM via lock, rotate 4G IP via console API, verify egress."""
-        self.sync_nodes()
-        state = self._states.get(node_id)
-        if state is None:
-            return {"ok": False, "node_id": node_id, "error": f"Unknown SIM node '{node_id}'"}
-
-        async with self._lock_for(node_id):
-            prev_status = state.status
-            state.status = "rotating"
-            state.last_error = None
-            if log_cb:
-                log_cb("info", node_id, f"[SIM {node_id}] Đang xoay IP 4G ({reason})...")
-            try:
-                if not state.console_url:
-                    raise RuntimeError(f"SIM '{node_id}' chưa cấu hình MOBILE_PROXY_CONSOLE_URL")
-
-                settle_sec = float(os.getenv("PUBLIC_CRAWL_ROTATE_SETTLE_SEC", "1.5") or "0")
-                rotate_res: Any = None
-                for attempt in range(2):
-                    try:
-                        rotate_res = await self._console_fn(
-                            "POST",
-                            "/api/rotate",
-                            state.console_url,
-                            state.api_key,
-                            timeout=90.0,
-                        )
-                        if isinstance(rotate_res, dict) and rotate_res.get("ok") is False:
-                            err_detail = (
-                                rotate_res.get("error")
-                                or rotate_res.get("message")
-                                or "Console API trả về ok=false"
-                            )
-                            raise RuntimeError(str(err_detail))
-                        break
-                    except Exception:
-                        if attempt == 0:
-                            if settle_sec > 0:
-                                await asyncio.sleep(min(2.0, settle_sec + 0.5))
-                            continue
-                        raise
-
-                new_ip = _extract_ip_from_console_payload(rotate_res)
-                if settle_sec > 0:
-                    await asyncio.sleep(settle_sec)
-
-                # If console rotate payload didn't return egress IP, probe through SOCKS5
-                if not new_ip and state.socks_url:
-                    for probe_idx in range(2):
-                        probe = await self._probe_fn(state.socks_url, timeout=8.0)
-                        new_ip = probe.get("egressIp")
-                        if new_ip or probe_idx == 1:
-                            break
-                        if settle_sec > 0:
-                            await asyncio.sleep(1.5)
-
-                state.epoch += 1
-                state.groups_in_epoch = 0
-                state.total_rotations += 1
-                state.last_egress_ip = new_ip or state.last_egress_ip
-                state.last_rotated_at = _utc_now_iso()
-                state.status = "idle"
-
-                if log_cb:
-                    log_cb(
-                        "success",
-                        node_id,
-                        f"[SIM {node_id}] Xoay IP xong (epoch #{state.epoch}) -> IP: {new_ip or 'N/A'}",
-                    )
-                return {
-                    "ok": True,
-                    "node_id": node_id,
-                    "egress_ip": new_ip,
-                    "epoch": state.epoch,
-                    "raw": rotate_res,
-                }
-            except Exception as exc:
-                err_msg = str(getattr(exc, "detail", exc))
-                state.last_error = err_msg
-                state.status = prev_status if prev_status != "rotating" else "error"
-                if log_cb:
-                    log_cb("error", node_id, f"[SIM {node_id}] Lỗi xoay IP: {err_msg}")
-                return {"ok": False, "node_id": node_id, "error": err_msg}
+        return await self.wait_for_ip_rotation(node_id, reason=reason, log_cb=log_cb)
 
     async def test_proxy(
         self,
         node_id: str | None = None,
         *,
         do_rotate: bool = False,
+        proxy_urls: list[str] | str | None = None,
     ) -> dict[str, Any]:
-        """Diagnose console reachability + SOCKS5 tunnel egress (+ optional live rotation)."""
-        nodes = self.sync_nodes()
+        """Probe configured auto-rotating proxies (IP + latency + FB Guest 200/302 check)."""
+        nodes = self.sync_nodes(proxy_urls)
         selected = [n for n in nodes if (not node_id or n.id == node_id)]
         if not selected:
             return {
                 "ok": False,
                 "results": [],
-                "error": "Chưa cấu hình node SIM 4G nào trong MOBILE_PROXY_NODES.",
+                "error": (
+                    "Chưa cấu hình proxy xoay nào. Dán proxy dạng host:port:user:pass hoặc "
+                    "socks5://user:pass@host:port vào khung Pool Proxy Xoay rồi bấm Lưu."
+                ),
             }
 
         results: list[dict[str, Any]] = []
         for sim in selected:
+            prev_cached_ip = sim.last_egress_ip
             entry: dict[str, Any] = {
                 "id": sim.id,
                 "label": sim.label,
-                "consoleUrl": sim.console_url,
-                "socksUrl": sim.socks_url,
-                "consoleOk": False,
+                "maskedUrl": mask_proxy_url(sim.socks_url) if sim.socks_url else None,
                 "socksOk": False,
-                "egressIpBefore": None,
+                "fbOk": False,
+                "fbStatus": None,
+                "egressIpBefore": prev_cached_ip,
                 "egressIpAfter": None,
                 "ipChanged": False,
                 "latencyMs": None,
                 "rotated": False,
+                "autoRotating": True,
                 "error": None,
             }
-            # 1. Check console /api/status
-            if sim.console_url:
-                try:
-                    status_data = await self._console_fn(
-                        "GET", "/api/status", sim.console_url, sim.api_key, timeout=15.0
-                    )
-                    entry["consoleOk"] = True
-                    entry["egressIpBefore"] = _extract_ip_from_console_payload(status_data)
-                    if not sim.socks_url and isinstance(status_data, dict):
-                        proxy_url = (status_data.get("proxy") or {}).get("url")
-                        sim.socks_url = rewrite_proxy_url_for_runtime(proxy_url)
-                        entry["socksUrl"] = sim.socks_url
-                except Exception as exc:
-                    entry["error"] = f"Console error: {getattr(exc, 'detail', exc)}"
 
-            # 2. Probe SOCKS5 egress directly
             if sim.socks_url:
-                probe_before = await self._probe_fn(sim.socks_url, timeout=8.0)
-                entry["socksOk"] = bool(probe_before.get("ok"))
-                entry["latencyMs"] = probe_before.get("latencyMs")
-                if probe_before.get("egressIp"):
-                    entry["egressIpBefore"] = probe_before["egressIp"]
-                    sim.last_egress_ip = probe_before["egressIp"]
-                elif not entry["error"] and probe_before.get("error"):
-                    entry["error"] = f"SOCKS5 probe error: {probe_before['error']}"
+                probe_now = await self._probe_fn(sim.socks_url, timeout=12.0)
+                entry["socksOk"] = bool(probe_now.get("ok"))
+                entry["latencyMs"] = probe_now.get("latencyMs")
+                if probe_now.get("latencyMs") is not None:
+                    sim.last_latency_ms = int(probe_now["latencyMs"])
 
-            # 3. Optional rotate + re-probe
-            if do_rotate and sim.console_url:
-                rot = await self.rotate_node(sim.id, reason="manual_test")
-                entry["rotated"] = bool(rot.get("ok"))
-                entry["egressIpAfter"] = rot.get("egress_ip")
-                if not rot.get("ok"):
-                    entry["error"] = rot.get("error") or entry["error"]
-                elif sim.socks_url:
-                    probe_after = await self._probe_fn(sim.socks_url, timeout=8.0)
-                    if probe_after.get("ok"):
-                        entry["socksOk"] = True
-                        if probe_after.get("latencyMs") is not None:
-                            entry["latencyMs"] = probe_after["latencyMs"]
-                    elif not entry["error"] and probe_after.get("error"):
-                        entry["error"] = f"SOCKS5 after rotate error: {probe_after['error']}"
-                    probe_after_ip = probe_after.get("egressIp")
-                    if probe_after_ip and (
-                        not entry["egressIpAfter"] or probe_after_ip != entry["egressIpBefore"]
-                    ):
-                        entry["egressIpAfter"] = probe_after_ip
-                    if entry["egressIpAfter"]:
-                        sim.last_egress_ip = entry["egressIpAfter"]
+                cur_ip = probe_now.get("egressIp")
+                if cur_ip:
+                    if not prev_cached_ip:
+                        entry["egressIpBefore"] = cur_ip
+                    entry["egressIpAfter"] = cur_ip
+                    sim.last_egress_ip = cur_ip
+                    sim.last_error = None
+                    if prev_cached_ip and cur_ip != prev_cached_ip:
+                        entry["rotated"] = True
+                        sim.total_rotations += 1
+                        sim.last_rotated_at = _utc_now_iso()
+                elif probe_now.get("error"):
+                    entry["error"] = f"Lỗi kết nối proxy: {probe_now['error']}"
+                    sim.last_error = entry["error"]
+
+                if do_rotate and entry["socksOk"]:
+                    wait_res = await self.wait_for_ip_rotation(
+                        sim.id,
+                        reason="manual_rotation_verify",
+                        proxy_urls=proxy_urls,
+                    )
+                    if wait_res.get("egress_ip"):
+                        entry["egressIpAfter"] = wait_res["egress_ip"]
+                    entry["rotated"] = bool(wait_res.get("ip_changed"))
+
+                # Lightweight Facebook Guest HTTP probe to verify IP isn't on a login wall
+                if entry["socksOk"]:
+                    fb_res = await self._fb_probe_fn(sim.socks_url, timeout=10.0)
+                    entry["fbOk"] = bool(fb_res.get("fbOk"))
+                    entry["fbStatus"] = fb_res.get("fbStatus")
+                    sim.last_fb_status = fb_res.get("fbStatus")
 
             ip_before = entry.get("egressIpBefore")
             ip_after = entry.get("egressIpAfter")
             entry["ipChanged"] = bool(ip_before and ip_after and ip_before != ip_after)
-
             results.append(entry)
 
-        if do_rotate:
-            all_ok = bool(results) and any(
-                r["rotated"] and (r["socksOk"] or r["consoleOk"]) for r in results
-            )
-        else:
-            all_ok = any(r["socksOk"] or r["consoleOk"] for r in results)
+        all_ok = any(r["socksOk"] for r in results)
         return {"ok": all_ok, "results": results}
+
+
+# Backward-compat alias for internal imports/tests during transition
+MobileProxyRotator = RotatingProxyPool
 
 
 class GuestPublicGroupWorker:
@@ -490,6 +656,7 @@ class GuestPublicGroupWorker:
         self._attempt_fetcher = attempt_fetcher
 
         self._bridge: Socks5HttpBridge | None = None
+        self._http_client: httpx.AsyncClient | None = None
         self._playwright: Any = None
         self._browser: Any = None
         self._context: Any = None
@@ -505,14 +672,28 @@ class GuestPublicGroupWorker:
         if self._attempt_fetcher is not None:
             return  # Unit test mode with injected fetcher (no Chromium spawn needed)
 
+        if self.sim.socks_url and self.sim.socks_url.lower().startswith("socks"):
+            self._bridge = Socks5HttpBridge(self.sim.socks_url)
+            await self._bridge.start()
+
+    async def _ensure_playwright_browser(self) -> None:
+        """Lazily boot headless Chromium only when deep scroll / JS fallback is actually needed."""
+        if self._browser is not None and self._context is not None:
+            return
+        if self._attempt_fetcher is not None:
+            return
+
         proxy_arg: dict[str, str] | None = None
-        if self.sim.socks_url:
-            if self.sim.socks_url.lower().startswith("socks"):
-                self._bridge = Socks5HttpBridge(self.sim.socks_url)
-                local_http_url = await self._bridge.start()
-                proxy_arg = {"server": local_http_url}
-            else:
-                proxy_arg = {"server": self.sim.socks_url}
+        if self._bridge is not None:
+            proxy_arg = {"server": self._bridge.local_http_url}
+        elif self.sim.socks_url:
+            from urllib.parse import urlparse as _urlparse, unquote as _unquote
+            parsed = _urlparse(self.sim.socks_url)
+            server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+            proxy_arg = {"server": server}
+            if parsed.username:
+                proxy_arg["username"] = _unquote(parsed.username)
+                proxy_arg["password"] = _unquote(parsed.password or "")
 
         from playwright.async_api import async_playwright
 
@@ -570,6 +751,12 @@ class GuestPublicGroupWorker:
         await self._context.route("**/*", _route_filter)
 
     async def close(self) -> None:
+        if self._http_client is not None:
+            try:
+                await self._http_client.aclose()
+            except Exception:
+                pass
+            self._http_client = None
         if self._context is not None:
             try:
                 await self._context.close()
@@ -595,26 +782,236 @@ class GuestPublicGroupWorker:
                 pass
             self._bridge = None
 
+    def _httpx_proxy_url(self) -> str | None:
+        if self._bridge is not None:
+            return self._bridge.local_http_url
+        if self.sim.socks_url and self.sim.socks_url.lower().startswith("http"):
+            return self.sim.socks_url
+        return None
+
+    async def _fetch_group_ssr_fast(
+        self,
+        raw_url: str,
+        target_url: str,
+        *,
+        known_urls: set[str],
+        known_ids: set[str],
+        max_posts: int,
+        max_scrolls: int,
+    ) -> dict[str, Any]:
+        """Ultra-fast (~1s) HTTPX SSR document fetch over proxy with Chrome Sec-Fetch headers.
+
+        Catches `302 /login/` walls in ~270ms without spawning Chromium, parses initial
+        SSR `<script type="application/json">` stories, and short-circuits when `max_scrolls == 0`
+        or watermark early-stop is already reached.
+        """
+        collected: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        proxy_http = self._httpx_proxy_url()
+        cur_url = target_url
+        final_status: int | None = None
+        html_text = ""
+
+        # Reset cookie jar on fresh call if real AsyncClient reused, keeping TCP+TLS keep-alive warm
+        client: Any
+        ephemeral = False
+        if self._attempt_fetcher is None and hasattr(httpx.AsyncClient, "aclose"):
+            if self._http_client is None:
+                self._http_client = httpx.AsyncClient(
+                    proxy=proxy_http,
+                    timeout=16.0,
+                    follow_redirects=False,
+                    headers=CHROME_DOC_HEADERS,
+                )
+            client = self._http_client
+        else:
+            ephemeral = True
+            client = httpx.AsyncClient(
+                proxy=proxy_http,
+                timeout=16.0,
+                follow_redirects=False,
+                headers=CHROME_DOC_HEADERS,
+            )
+
+        try:
+            ctx_mgr = client if ephemeral and hasattr(client, "__aenter__") else None
+            if ctx_mgr is not None:
+                async with ctx_mgr as c:
+                    for _hop in range(3):
+                        if _hop == 0 and hasattr(c, "cookies"):
+                            c.cookies.clear()
+                        resp = await c.get(cur_url)
+                        final_status = resp.status_code
+                        if final_status in {301, 302, 303, 307, 308}:
+                            loc = (resp.headers.get("location") or "").strip()
+                            loc_lower = loc.lower()
+                            if "/login" in loc_lower or "/checkpoint" in loc_lower:
+                                return {
+                                    "state": "login_wall",
+                                    "posts": [],
+                                    "seen_ids": seen_ids,
+                                    "early_stop_reason": "",
+                                    "scrolls": 0,
+                                    "need_playwright": False,
+                                    "method": "httpx_fast",
+                                }
+                            if loc.startswith("http"):
+                                cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
+                                continue
+                        html_text = resp.text or ""
+                        break
+            else:
+                for _hop in range(3):
+                    if _hop == 0 and hasattr(client, "cookies"):
+                        client.cookies.clear()
+                    resp = await client.get(cur_url)
+                    final_status = resp.status_code
+                    if final_status in {301, 302, 303, 307, 308}:
+                        loc = (resp.headers.get("location") or "").strip()
+                        loc_lower = loc.lower()
+                        if "/login" in loc_lower or "/checkpoint" in loc_lower:
+                            return {
+                                "state": "login_wall",
+                                "posts": [],
+                                "seen_ids": seen_ids,
+                                "early_stop_reason": "",
+                                "scrolls": 0,
+                                "need_playwright": False,
+                                "method": "httpx_fast",
+                            }
+                        if loc.startswith("http"):
+                            cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
+                            continue
+                    html_text = resp.text or ""
+                    break
+        finally:
+            if ephemeral and not hasattr(client, "__aenter__") and hasattr(client, "aclose"):
+                await client.aclose()
+
+        if final_status == 429:
+            return {
+                "state": "rate_limit",
+                "posts": [],
+                "seen_ids": seen_ids,
+                "early_stop_reason": "",
+                "scrolls": 0,
+                "need_playwright": False,
+                "method": "httpx_fast",
+            }
+
+        if final_status == 200 and html_text:
+            ssr_posts = parse_fb_html_embedded_stories(
+                html_text,
+                group_url=raw_url,
+                seen_ids=seen_ids,
+            )
+            collected.extend(ssr_posts)
+
+            # Strip markup roughly only if zero posts parsed to classify private group quickly
+            body_hint = ""
+            if not collected:
+                body_hint = re.sub(r"<[^>]+>", " ", html_text[:80000])
+            state = classify_guest_page_state(
+                current_url=cur_url,
+                body_text=body_hint,
+                extracted_posts_count=len(collected),
+                http_status=final_status,
+            )
+            if state in {"rate_limit", "login_wall", "private_group"}:
+                return {
+                    "state": state,
+                    "posts": collected,
+                    "seen_ids": seen_ids,
+                    "early_stop_reason": "",
+                    "scrolls": 0,
+                    "need_playwright": False,
+                    "method": "httpx_fast",
+                }
+
+            should_stop, stop_reason = evaluate_watermark_early_stop(
+                collected,
+                known_urls=known_urls,
+                known_post_ids=known_ids,
+                max_posts=max_posts,
+            )
+            if (max_scrolls <= 0 and len(collected) > 0) or (should_stop and len(collected) > 0) or (len(collected) >= max_posts):
+                return {
+                    "state": "ok",
+                    "posts": collected,
+                    "seen_ids": seen_ids,
+                    "early_stop_reason": stop_reason or ("httpx_fast_no_scroll" if max_scrolls <= 0 else ""),
+                    "scrolls": 0,
+                    "need_playwright": False,
+                    "method": "httpx_fast",
+                }
+
+            return {
+                "state": "ok",
+                "posts": collected,
+                "seen_ids": seen_ids,
+                "early_stop_reason": stop_reason,
+                "scrolls": 0,
+                "need_playwright": True,
+                "method": "httpx_partial",
+            }
+
+        return {
+            "state": "unknown",
+            "posts": collected,
+            "seen_ids": seen_ids,
+            "early_stop_reason": "",
+            "scrolls": 0,
+            "need_playwright": True,
+            "method": "httpx_fallback",
+        }
+
     async def _fetch_group_with_playwright(
         self,
         group: dict[str, Any],
         watermarks: dict[str, set[str]],
     ) -> dict[str, Any]:
-        """Load target Facebook public group in unauthenticated Guest mode."""
-        if self._context is None:
-            await self.reset_guest_context()
-        if self._context is None:
-            raise RuntimeError("Playwright Guest context could not be initialized")
-
+        """Hybrid public group loader: HTTPX SSR Fast-Path first (~1s), Playwright scroll when needed."""
         raw_url = (group.get("group_url") or "").strip()
         target_url = normalize_group_crawl_url(raw_url)
-        max_posts = int(self.config.get("max_posts_per_group") or 25)
-        max_scrolls = int(self.config.get("max_scrolls_per_group") or 2)
+        raw_max_posts = self.config.get("max_posts_per_group")
+        max_posts = 25 if raw_max_posts is None else max(1, int(raw_max_posts))
+        raw_max_scrolls = self.config.get("max_scrolls_per_group")
+        max_scrolls = 2 if raw_max_scrolls is None else max(0, int(raw_max_scrolls))
         known_urls = watermarks.get("urls") or set()
         known_ids = watermarks.get("post_ids") or set()
 
         collected: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
+
+        # Step 1: Fast HTTPX SSR path
+        try:
+            fast_res = await self._fetch_group_ssr_fast(
+                raw_url,
+                target_url,
+                known_urls=known_urls,
+                known_ids=known_ids,
+                max_posts=max_posts,
+                max_scrolls=max_scrolls,
+            )
+            collected.extend(fast_res.get("posts") or [])
+            seen_ids.update(fast_res.get("seen_ids") or set())
+            if not fast_res.get("need_playwright"):
+                return {
+                    "state": fast_res.get("state") or "ok",
+                    "posts": collected,
+                    "early_stop_reason": fast_res.get("early_stop_reason") or "",
+                    "scrolls": 0,
+                }
+        except Exception as fast_exc:
+            logger.debug("[PUBLIC-PROXY] HTTPX fast-path fallback for %s (%s)", raw_url, fast_exc)
+
+        # Step 2: Lazy Playwright Guest mode with modal dialog dismissal + GraphQL intercept
+        await self._ensure_playwright_browser()
+        if self._context is None:
+            await self.reset_guest_context()
+        if self._context is None:
+            raise RuntimeError("Playwright Guest context could not be initialized")
+
         graphql_tasks: set[asyncio.Task[Any]] = set()
         http_status: int | None = None
 
@@ -653,6 +1050,11 @@ class GuestPublicGroupWorker:
             await page.wait_for_timeout(1200)
             try:
                 await page.keyboard.press("Escape")
+                await page.evaluate(
+                    "document.querySelectorAll('[role=dialog], [data-nosnippet]').forEach(el => el.remove());"
+                    "if(document.body) document.body.style.overflow='auto';"
+                    "if(document.documentElement) document.documentElement.style.overflow='auto';"
+                )
             except Exception:
                 pass
 
@@ -697,7 +1099,10 @@ class GuestPublicGroupWorker:
             scrolls_done = 0
             while not should_stop and scrolls_done < max_scrolls and not self.stop_check():
                 scrolls_done += 1
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                await page.evaluate(
+                    "document.querySelectorAll('[role=dialog]').forEach(el => el.remove());"
+                    "window.scrollTo(0, document.body.scrollHeight);"
+                )
                 await page.wait_for_timeout(1500)
                 if graphql_tasks:
                     await asyncio.gather(*list(graphql_tasks), return_exceptions=True)
@@ -754,40 +1159,41 @@ class GuestPublicGroupWorker:
                     outcome = await self._fetch_group_with_playwright(group, watermarks)
             except Exception as exc:
                 error_msg = str(exc)
-                if attempt == 0 and self.sim.console_url and self._attempt_fetcher is None:
+                if attempt == 0 and self.sim.socks_url and self._attempt_fetcher is None:
                     self.log_cb(
                         "warn",
                         self.sim.id,
-                        f"[{group_name}] Lỗi kết nối/proxy ({error_msg}) — xoay IP SIM {self.sim.id} & thử lại...",
+                        f"[{group_name}] Lỗi kết nối/proxy ({error_msg}) — đợi proxy {self.sim.id} xoay IP & thử lại...",
                     )
-                    rot = await self.rotator.rotate_node(
+                    rot = await self.rotator.wait_for_ip_rotation(
                         self.sim.id,
                         reason="reactive_proxy_error",
+                        proxy_urls=[self.sim.socks_url],
+                        stop_check=self.stop_check,
                         log_cb=self.log_cb,
                     )
                     if rot.get("ok"):
-                        rotated_on_retry = True
-                        self.progress_cb({"ip_rotations": 1})
+                        rotated_on_retry = bool(rot.get("ip_changed") or rot.get("ok"))
+                        if rot.get("ip_changed"):
+                            self.progress_cb({"ip_rotations": 1})
                         await self.reset_guest_context()
                         continue
                 outcome = {"state": "error", "posts": [], "early_stop_reason": ""}
                 break
 
             state = outcome.get("state") or "ok"
-            if state in {"rate_limit", "login_wall"} and attempt == 0 and self.sim.console_url:
-                self.log_cb(
-                    "warn",
-                    self.sim.id,
-                    f"[{group_name}] Gặp {state} — xoay IP SIM {self.sim.id} & tạo Guest session sạch rồi thử lại...",
-                )
-                rot = await self.rotator.rotate_node(
+            if state in {"rate_limit", "login_wall"} and attempt == 0 and (self.sim.socks_url or self.config.get("proxy_urls")):
+                rot = await self.rotator.wait_for_ip_rotation(
                     self.sim.id,
                     reason=f"reactive_{state}",
+                    proxy_urls=self.config.get("proxy_urls"),
+                    stop_check=self.stop_check,
                     log_cb=self.log_cb,
                 )
                 if rot.get("ok"):
                     rotated_on_retry = True
-                    self.progress_cb({"ip_rotations": 1})
+                    if rot.get("ip_changed"):
+                        self.progress_cb({"ip_rotations": 1})
                     await self.reset_guest_context()
                     continue
                 error_msg = rot.get("error") or state
@@ -896,23 +1302,24 @@ class GuestPublicGroupWorker:
             f"[{group_name}] Đọc {len(raw_posts)} bài -> lưu mới {saved_count} bài ({elapsed_ms}ms{stop_note})",
         )
 
-        # Track epoch count & trigger proactive SIM IP rotation every K groups
+        # Track epoch count & probe passively every K groups to detect 60s auto-rotated IP + clean Guest context
         self.sim.total_groups += 1
         self.sim.groups_in_epoch += 1
         k_rotate = max(1, int(self.config.get("groups_per_ip_rotate") or 6))
         if (
-            self.sim.console_url
+            self.sim.socks_url
             and self.sim.groups_in_epoch >= k_rotate
             and not self.stop_check()
         ):
-            rot = await self.rotator.rotate_node(
+            probe_res = await self.rotator.refresh_egress_ip(
                 self.sim.id,
-                reason=f"proactive_every_{k_rotate}_groups",
+                proxy_urls=self.config.get("proxy_urls"),
                 log_cb=self.log_cb,
             )
-            if rot.get("ok"):
+            if probe_res.get("ip_changed"):
                 self.progress_cb({"ip_rotations": 1})
-                await self.reset_guest_context()
+            self.sim.groups_in_epoch = 0
+            await self.reset_guest_context()
 
         self.sim.status = "idle"
         return {
@@ -1016,6 +1423,7 @@ class PublicCrawlOrchestrator:
             "concurrent_sims",
             "auto_skip_private",
             "headless",
+            "proxy_urls",
         }
         clean_patch: dict[str, Any] = {}
         for k, v in patch.items():
@@ -1034,6 +1442,13 @@ class PublicCrawlOrchestrator:
             clean_patch["max_scrolls_per_group"] = max(0, min(10, int(clean_patch["max_scrolls_per_group"])))
         if "concurrent_sims" in clean_patch:
             clean_patch["concurrent_sims"] = max(1, min(10, int(clean_patch["concurrent_sims"])))
+        if "proxy_urls" in clean_patch:
+            # Guard against accidental UI re-submit of masked placeholders
+            raw_list = clean_patch["proxy_urls"]
+            if isinstance(raw_list, list) and any("****" in str(item) for item in raw_list):
+                clean_patch.pop("proxy_urls", None)
+            else:
+                clean_patch["proxy_urls"] = normalize_proxy_list(raw_list)
 
         merged = {**current, **clean_patch, "id": "default", "updated_at": _utc_now_iso()}
         if updated_by:
@@ -1217,12 +1632,35 @@ class PublicCrawlOrchestrator:
         except Exception as exc:
             logger.warning("[PUBLIC-4G] Could not update public_crawl_runs row %s: %s", run_id, exc)
 
+    @staticmethod
+    def mask_config_for_api(cfg: dict[str, Any]) -> dict[str, Any]:
+        """Return safe config copy for UI/API without exposing plaintext proxy passwords."""
+        masked_list: list[str] = []
+        raw_proxies = cfg.get("proxy_urls") or []
+        if isinstance(raw_proxies, list):
+            for entry in raw_proxies:
+                s = str(entry or "").strip()
+                if s:
+                    masked_list.append(mask_proxy_url(s))
+        if not masked_list:
+            env_raw = os.getenv("PUBLIC_CRAWL_PROXIES", "").strip()
+            if env_raw:
+                try:
+                    masked_list = [mask_proxy_url(u) for u in normalize_proxy_list(env_raw)]
+                except ValueError:
+                    pass
+        safe = dict(cfg)
+        safe["proxy_urls"] = masked_list
+        safe["proxies_masked"] = masked_list
+        safe["proxies_configured"] = len(masked_list)
+        return safe
+
     async def get_status(self) -> dict[str, Any]:
         cfg = await asyncio.to_thread(self.get_config_sync)
         recent_runs = await asyncio.to_thread(self.get_recent_runs_sync, 12)
-        sims = self.rotator.snapshot_nodes()
+        sims = self.rotator.snapshot_nodes(cfg.get("proxy_urls"))
         return {
-            "config": cfg,
+            "config": self.mask_config_for_api(cfg),
             "runtime": {
                 "is_running": self.is_running,
                 "stop_requested": self.stop_requested,
@@ -1269,7 +1707,7 @@ class PublicCrawlOrchestrator:
                 "message": "Không có nhóm Public nào cần cào lúc này.",
             }
 
-        sims = self.rotator.sync_nodes()
+        sims = self.rotator.sync_nodes(cfg.get("proxy_urls"))
         allow_direct = os.getenv("PUBLIC_CRAWL_ALLOW_DIRECT_NO_PROXY", "").strip().lower() in {
             "1",
             "true",
@@ -1279,10 +1717,10 @@ class PublicCrawlOrchestrator:
             if not allow_direct and attempt_fetcher is None:
                 return {
                     "started": False,
-                    "reason": "no_mobile_proxy_configured",
+                    "reason": "no_rotating_proxy_configured",
                     "message": (
-                        "Chưa cấu hình cụm SIM 4G (MOBILE_PROXY_NODES). Vui lòng cấu hình proxy 4G "
-                        "hoặc bật PUBLIC_CRAWL_ALLOW_DIRECT_NO_PROXY=1 để chạy thử nghiệm."
+                        "Chưa cấu hình proxy xoay nào trong DB (`proxy_urls`) hoặc `PUBLIC_CRAWL_PROXIES`. "
+                        "Vui lòng dán proxy dạng `host:port:user:pass` vào ô Pool Proxy Xoay rồi bấm Lưu."
                     ),
                 }
             sims = [SimNodeRuntime(id="direct-local", label="Direct Guest (Dev)", status="idle")]
@@ -1314,7 +1752,7 @@ class PublicCrawlOrchestrator:
         self.append_log(
             "info",
             "orchestrator",
-            f"Bắt đầu cào {len(groups)} nhóm Public bằng {len(active_sims)} SIM 4G ({', '.join(s.id for s in active_sims)}) — 0 Cookie",
+            f"Bắt đầu cào {len(groups)} nhóm Public qua {len(active_sims)} luồng Proxy Xoay ({', '.join(s.id for s in active_sims)}) — 0 Cookie",
         )
 
         self._active_task = asyncio.create_task(

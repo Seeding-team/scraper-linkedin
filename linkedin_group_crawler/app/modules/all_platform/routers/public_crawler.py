@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -32,6 +32,7 @@ class ConfigUpdateBody(BaseModel):
     concurrent_sims: Optional[int] = Field(None, ge=1, le=10)
     auto_skip_private: Optional[bool] = None
     headless: Optional[bool] = None
+    proxy_urls: Optional[Union[List[str], str]] = None
 
 
 class GroupPublicSettingsBody(BaseModel):
@@ -87,20 +88,25 @@ async def update_public_crawl_config(
     body: ConfigUpdateBody,
     user: dict[str, Any] = Depends(require_admin_or_leader),
 ) -> dict[str, Any]:
-    updated = await asyncio.to_thread(
-        public_crawl_orchestrator.update_config_sync,
-        body.model_dump(exclude_none=True),
-        user.get("id"),
-    )
+    try:
+        updated = await asyncio.to_thread(
+            public_crawl_orchestrator.update_config_sync,
+            body.model_dump(exclude_none=True),
+            user.get("id"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    safe_cfg = public_crawl_orchestrator.mask_config_for_api(updated)
+    sims = public_crawl_orchestrator.rotator.snapshot_nodes(updated.get("proxy_urls"))
     public_crawl_orchestrator.append_log(
         "info",
         "config",
         (
             f"Cập nhật cấu hình: auto={'BẬT' if updated.get('enabled') else 'TẮT'}, "
-            f"xoay mỗi {updated.get('groups_per_ip_rotate')} nhóm, chu kỳ {updated.get('cycle_interval_min')}p"
+            f"proxy={len(sims)}, cuộn={updated.get('max_scrolls_per_group')}, chu kỳ {updated.get('cycle_interval_min')}p"
         ),
     )
-    return {"success": True, "config": updated}
+    return {"success": True, "config": safe_cfg, "sims": sims}
 
 
 @router.get("/groups")
@@ -153,25 +159,32 @@ async def test_mobile_proxy_nodes(
     _user: dict[str, Any] = Depends(require_admin_or_leader),
 ) -> dict[str, Any]:
     req = body or ProxyTestBody()
+    cfg = await asyncio.to_thread(public_crawl_orchestrator.get_config_sync)
     res = await public_crawl_orchestrator.rotator.test_proxy(
         node_id=req.node_id,
         do_rotate=req.do_rotate,
+        proxy_urls=cfg.get("proxy_urls"),
     )
     for item in res.get("results") or []:
         if item.get("error"):
             public_crawl_orchestrator.append_log(
                 "error",
                 str(item.get("id") or "proxy"),
-                f"[Test SIM {item.get('id')}] Lỗi: {item.get('error')}",
+                f"[Test {item.get('id')}] Lỗi: {item.get('error')}",
             )
         else:
+            fb_tag = (
+                f"FB Guest={item.get('fbStatus')} OK"
+                if item.get("fbOk")
+                else f"FB Guest={item.get('fbStatus') or 'ERR'}"
+            )
             public_crawl_orchestrator.append_log(
-                "success",
+                "success" if item.get("fbOk") else "warn",
                 str(item.get("id") or "proxy"),
                 (
-                    f"[Test SIM {item.get('id')}] SOCKS5={'OK' if item.get('socksOk') else 'FAIL'} | "
-                    f"IP trước={item.get('egressIpBefore') or 'N/A'}"
-                    + (f" -> IP sau={item.get('egressIpAfter')}" if req.do_rotate else "")
+                    f"[Test {item.get('id')}] Tunnel={'OK' if item.get('socksOk') else 'FAIL'} "
+                    f"({item.get('latencyMs') or '?'}ms) | IP={item.get('egressIpAfter') or item.get('egressIpBefore') or 'N/A'} | {fb_tag}"
+                    + (f" (Đổi IP: {item.get('egressIpBefore')} -> {item.get('egressIpAfter')})" if item.get("ipChanged") else "")
                 ),
             )
     return {"success": bool(res.get("ok")), **res}

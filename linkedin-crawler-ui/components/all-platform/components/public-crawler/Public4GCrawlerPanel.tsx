@@ -11,7 +11,6 @@ import {
   RotateCw,
   Save,
   ShieldCheck,
-  Smartphone,
   Square,
   Terminal,
   Zap,
@@ -92,6 +91,9 @@ export function Public4GCrawlerPanel() {
 
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [savingProxies, setSavingProxies] = useState(false);
+  const [proxyPoolInput, setProxyPoolInput] = useState("");
+  const [showProxyEditor, setShowProxyEditor] = useState(false);
   const [triggeringRun, setTriggeringRun] = useState(false);
   const [testingProxyNode, setTestingProxyNode] = useState<string | null>(null);
   const [lastProxyTest, setLastProxyTest] = useState<ProxyTestResponse | null>(null);
@@ -210,7 +212,7 @@ export function Public4GCrawlerPanel() {
       });
       setConfigDraft(res.config);
       setConfigDirty(false);
-      setFeedback({ type: "success", text: "Đã lưu cấu hình Cào Public 4G." });
+      setFeedback({ type: "success", text: "Đã lưu cấu hình Cào Public Proxy Xoay." });
       await loadAll(false);
     } catch (err) {
       setFeedback({
@@ -219,6 +221,37 @@ export function Public4GCrawlerPanel() {
       });
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  const handleSaveProxies = async () => {
+    if (!canControl) return;
+    setSavingProxies(true);
+    setFeedback(null);
+    try {
+      const lines = proxyPoolInput
+        .split(/[\r\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const res = await publicCrawlerService.updateConfig({ proxy_urls: lines });
+      setConfigDraft(res.config);
+      setProxyPoolInput("");
+      setShowProxyEditor(false);
+      setFeedback({
+        type: "success",
+        text:
+          lines.length > 0
+            ? `Đã lưu ${lines.length} Proxy Xoay Tự Động vào hệ thống.`
+            : "Đã xóa danh sách Proxy cấu hình trong DB.",
+      });
+      await loadAll(false);
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lưu danh sách Proxy thất bại",
+      });
+    } finally {
+      setSavingProxies(false);
     }
   };
 
@@ -285,24 +318,28 @@ export function Public4GCrawlerPanel() {
       setLastProxyTest(res);
       const first = res.results?.[0];
       if (res.ok && first) {
+        const curIp = first.egressIpAfter || first.egressIpBefore || "?";
+        const fbTag = first.fbStatus
+          ? ` | FB Guest: HTTP ${first.fbStatus}${first.fbOk ? " OK" : " (đang 302, chờ chu kỳ 60s)"}`
+          : "";
         const ipNote = doRotate
-          ? `IP trước ${first.egressIpBefore || "?"} -> sau ${first.egressIpAfter || "?"} (${first.ipChanged ? "ĐÃ ĐỔI IP" : "Kiểm tra lại IP"})`
-          : `IP hiện tại ${first.egressIpBefore || "?"} (${first.latencyMs ?? "?"}ms)`;
+          ? `IP trước ${first.egressIpBefore || "?"} -> sau ${first.egressIpAfter || "?"} (${first.ipChanged ? "ĐÃ ĐỔI IP MỚI" : "Chưa qua chu kỳ 60s"})`
+          : `IP hiện tại ${curIp} (${first.latencyMs ?? "?"}ms)${fbTag}`;
         setFeedback({
           type: "success",
-          text: `SIM ${first.id}: SOCKS5 ${first.socksOk ? "OK" : "Lỗi"} | ${ipNote}`,
+          text: `${first.label}: Proxy ${first.socksOk ? "OK" : "Lỗi"} | ${ipNote}`,
         });
       } else {
         setFeedback({
           type: "error",
-          text: res.error || first?.error || "Test kết nối SIM 4G thất bại.",
+          text: res.error || first?.error || "Test kết nối Proxy Xoay thất bại.",
         });
       }
       await loadAll(false);
     } catch (err) {
       setFeedback({
         type: "error",
-        text: err instanceof Error ? err.message : "Lỗi kiểm tra SIM 4G",
+        text: err instanceof Error ? err.message : "Lỗi kiểm tra Proxy Xoay",
       });
     } finally {
       setTestingProxyNode(null);
@@ -362,18 +399,18 @@ export function Public4GCrawlerPanel() {
               <ShieldCheck className="size-3.5" /> 0% BAN ACC — CHẾ ĐỘ KHÁCH KHÔNG COOKIE
             </span>
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
-              <Zap className="size-3" /> GraphQL Stream + SSR + Xoay SIM 4G
+              <Zap className="size-3" /> HTTPX SSR (~1s) + Playwright Fallback · Proxy Tự Xoay 60s
             </span>
           </div>
           <h2 className="text-base font-black text-slate-900">
-            Cào Nhóm Facebook Public Tốc Độ Cao Qua Cụm SIM 4G
+            Cào Nhóm Facebook Public Siêu Tốc Qua Proxy Xoay Tự Động
           </h2>
           <p className="text-xs text-slate-600 max-w-3xl leading-relaxed">
-            Playwright chạy 100% chế độ Khách (không gắn bất kỳ cookie nhân viên hay acc seeding nào), chặn ảnh/video/font thừa để tiết kiệm băng thông SIM 4G, đọc thẳng GraphQL/SSR theo thứ tự mới nhất và dừng ngay khi chạm bài đã có trong DB.{" "}
-            <span className="font-semibold text-slate-800">
-              Nhóm kín (Private) &amp; LinkedIn Authwall
-            </span>{" "}
-            được tự động tách riêng để tiếp tục dùng Extension an toàn.
+            Hoạt động 100% ở chế độ Khách không cookie, kết hợp{" "}
+            <span className="font-semibold text-slate-800">HTTPX SSR Fast-Path (~1s/nhóm)</span>{" "}
+            và <span className="font-semibold text-slate-800">Playwright Guest Fallback</span>{" "}
+            qua Proxy dân cư/4G tự xoay mỗi 60s (tách biệt hoàn toàn khỏi Mobile Phone Bridge).{" "}
+            <span className="font-semibold text-slate-800">Nhóm kín (Private)</span> tự động bỏ qua để dùng Extension.
           </p>
         </div>
 
@@ -381,11 +418,11 @@ export function Public4GCrawlerPanel() {
           <button
             type="button"
             disabled={!canControl || sims.length === 0 || testingProxyNode !== null}
-            onClick={() => void handleTestProxy(undefined, true)}
+            onClick={() => void handleTestProxy(undefined, false)}
             className="px-3.5 py-2 rounded-xl text-xs font-bold border border-sky-300 bg-white hover:bg-sky-50 disabled:opacity-50 text-sky-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition"
           >
-            <RotateCw className={cn("size-3.5", testingProxyNode === "all:rot" && "animate-spin")} />
-            {testingProxyNode === "all:rot" ? "Đang xoay IP 4G..." : "Test Xoay Proxy 4G (1 Bấm)"}
+            <RotateCw className={cn("size-3.5", testingProxyNode !== null && "animate-spin")} />
+            {testingProxyNode === "all:probe" ? "Đang kiểm tra..." : "Kiểm tra Proxy Xoay (1 Bấm)"}
           </button>
           {!isRunning ? (
             <>
@@ -461,8 +498,8 @@ export function Public4GCrawlerPanel() {
         <div className="rounded-2xl border border-sky-200 bg-sky-50/60 p-4 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
-              <Smartphone className="size-4 text-sky-600" />
-              Kết quả Kiểm tra &amp; Xoay Proxy 4G
+              <Globe className="size-4 text-sky-600" />
+              Kết quả Kiểm tra Proxy Xoay Tự Động
             </div>
             <button
               type="button"
@@ -474,7 +511,7 @@ export function Public4GCrawlerPanel() {
           </div>
           {lastProxyTest.results.length === 0 ? (
             <div className="text-xs text-rose-700 font-semibold">
-              {lastProxyTest.error || "Không tìm thấy node SIM 4G nào."}
+              {lastProxyTest.error || "Chưa cấu hình proxy xoay nào."}
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
@@ -496,7 +533,7 @@ export function Public4GCrawlerPanel() {
                             : "bg-amber-50 text-amber-700 border-amber-200",
                         )}
                       >
-                        {r.ipChanged ? "Đã đổi IP 4G mới" : "Xoay xong (IP trùng/chưa rõ)"}
+                        {r.ipChanged ? "Đã tự đổi IP mới" : "Chưa qua chu kỳ 60s"}
                       </span>
                     ) : (
                       <span
@@ -507,22 +544,22 @@ export function Public4GCrawlerPanel() {
                             : "bg-rose-50 text-rose-700 border-rose-200",
                         )}
                       >
-                        {r.socksOk ? "SOCKS5 OK" : "Lỗi kết nối"}
+                        {r.socksOk ? "Tunnel OK" : "Lỗi kết nối"}
                       </span>
                     )}
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-700">
                     <span>
-                      IP trước:{" "}
+                      IP:{" "}
                       <strong className="font-mono text-slate-900">
                         {r.egressIpBefore || "—"}
                       </strong>
                     </span>
-                    {r.rotated && (
+                    {r.egressIpAfter && r.egressIpAfter !== r.egressIpBefore && (
                       <span>
-                        → IP sau:{" "}
+                        → IP mới:{" "}
                         <strong className="font-mono text-emerald-700">
-                          {r.egressIpAfter || "—"}
+                          {r.egressIpAfter}
                         </strong>
                       </span>
                     )}
@@ -534,20 +571,25 @@ export function Public4GCrawlerPanel() {
                     <span
                       className={cn(
                         "px-1.5 py-0.5 rounded font-bold",
-                        r.consoleOk
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-rose-50 text-rose-700",
+                        r.socksOk ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700",
                       )}
                     >
-                      Console API: {r.consoleOk ? "OK" : "Lỗi"}
+                      Proxy Tunnel: {r.socksOk ? "OK" : "Lỗi"}
                     </span>
                     <span
                       className={cn(
                         "px-1.5 py-0.5 rounded font-bold",
-                        r.socksOk ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700",
+                        r.fbOk
+                          ? "bg-emerald-50 text-emerald-700"
+                          : r.fbStatus === 302
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-slate-100 text-slate-600",
                       )}
                     >
-                      SOCKS5 Tunnel: {r.socksOk ? "OK" : "Lỗi"}
+                      FB Guest: {r.fbOk ? `HTTP ${r.fbStatus} OK` : r.fbStatus ? `HTTP ${r.fbStatus} (Chờ xoay 60s)` : "N/A"}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded font-bold bg-sky-50 text-sky-700">
+                      Tự xoay mỗi 60s
                     </span>
                   </div>
                   {r.error && <div className="text-[11px] text-rose-600 font-medium">{r.error}</div>}
@@ -603,29 +645,71 @@ export function Public4GCrawlerPanel() {
         </div>
       </div>
 
-      {/* Cụm SIM 4G + Cấu hình xoay IP */}
+      {/* Pool Proxy Xoay Tự Động + Cấu hình */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-        {/* Cụm SIM 4G */}
+        {/* Pool Proxy Xoay */}
         <div className="xl:col-span-5 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
-              <Smartphone className="size-4 text-sky-600" /> Cụm Proxy SIM 4G ({sims.length} node)
+              <Globe className="size-4 text-sky-600" /> Pool Proxy Xoay Tự Động ({sims.length} proxy)
             </h3>
-            <button
-              type="button"
-              disabled={!canControl || sims.length === 0 || testingProxyNode !== null}
-              onClick={() => void handleTestProxy(undefined, false)}
-              className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-700 cursor-pointer"
-            >
-              {testingProxyNode === "all:probe" ? "Đang test..." : "Kiểm tra kết nối SIM"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              {canControl && (
+                <button
+                  type="button"
+                  onClick={() => setShowProxyEditor((prev) => !prev)}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-sky-50 border border-sky-200 hover:bg-sky-100 text-sky-700 cursor-pointer"
+                >
+                  {showProxyEditor ? "Đóng ô nhập" : sims.length === 0 ? "+ Gắn Proxy Xoay" : "Đổi / Thêm Proxy"}
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={!canControl || sims.length === 0 || testingProxyNode !== null}
+                onClick={() => void handleTestProxy(undefined, false)}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white border border-slate-200 hover:bg-slate-100 disabled:opacity-50 text-slate-700 cursor-pointer"
+              >
+                {testingProxyNode === "all:probe" ? "Đang test..." : "Kiểm tra nhanh"}
+              </button>
+            </div>
           </div>
+
+          {(showProxyEditor || sims.length === 0) && canControl && (
+            <div className="rounded-xl border border-sky-200 bg-white p-3 space-y-2">
+              <div className="text-[11px] font-bold text-slate-700">
+                Dán Proxy Xoay (mỗi dòng 1 proxy — hỗ trợ <code className="bg-slate-100 px-1 rounded">host:port:user:pass</code>,{" "}
+                <code className="bg-slate-100 px-1 rounded">socks5://user:pass@host:port</code> hoặc{" "}
+                <code className="bg-slate-100 px-1 rounded">http://...</code>)
+              </div>
+              <textarea
+                rows={3}
+                value={proxyPoolInput}
+                onChange={(e) => setProxyPoolInput(e.target.value)}
+                placeholder={"203.0.113.10:1080:username:password\n(để trống rồi bấm Lưu nếu muốn xóa pool)"}
+                className="w-full rounded-lg border border-slate-200 p-2 font-mono text-[11px] focus:outline-none focus:ring-2 focus:ring-sky-500"
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-slate-500">
+                  Mật khẩu được mã hóa/che an toàn trên UI sau khi lưu.
+                </span>
+                <button
+                  type="button"
+                  disabled={savingProxies}
+                  onClick={() => void handleSaveProxies()}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-sky-600 hover:bg-sky-700 text-white disabled:opacity-50 flex items-center gap-1 cursor-pointer"
+                >
+                  <Save className="size-3" />
+                  {savingProxies ? "Đang lưu..." : "Lưu danh sách Proxy"}
+                </button>
+              </div>
+            </div>
+          )}
 
           {sims.length === 0 ? (
             <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/70 p-4 text-xs text-amber-800 space-y-1">
-              <div className="font-bold">Chưa phát hiện biến môi trường MOBILE_PROXY_NODES.</div>
+              <div className="font-bold">Chưa có Proxy Xoay nào trong cấu hình DB.</div>
               <p>
-                Backend cần cấu hình cụm SIM 4G (`MOBILE_PROXY_CONSOLE_URL`, `MOBILE_PROXY_SOCKS_URL_VPS`...) để mở đường hầm SOCKS5 và tự xoay IP khi cào.
+                Dán dòng <code className="bg-amber-100 px-1 rounded">host:port:user:pass</code> vào ô phía trên và bấm <strong>Lưu danh sách Proxy</strong> để chạy ngay (không dùng Mobile Phone Bridge).
               </p>
             </div>
           ) : (
@@ -636,25 +720,33 @@ export function Public4GCrawlerPanel() {
                   className="rounded-xl border border-slate-200 bg-white p-3 space-y-2"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <div className="text-xs font-black text-slate-900 flex items-center gap-1.5">
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-slate-900 flex items-center gap-1.5 truncate">
                         {sim.label}
                         <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
                           {sim.id}
                         </span>
                       </div>
+                      {sim.maskedUrl && (
+                        <div className="font-mono text-[10px] text-slate-400 truncate mt-0.5">
+                          {sim.maskedUrl}
+                        </div>
+                      )}
                       <div className="text-[11px] text-slate-500 mt-0.5">
-                        Epoch #{sim.epoch} · {sim.groups_in_epoch}/{configDraft.groups_per_ip_rotate} nhóm ·{" "}
-                        IP:{" "}
+                        IP hiện tại:{" "}
                         <span className="font-mono font-bold text-slate-800">
                           {sim.last_egress_ip || "Chưa probe"}
                         </span>
+                        {sim.last_latency_ms != null && (
+                          <span className="text-slate-400"> · {sim.last_latency_ms}ms</span>
+                        )}
                       </div>
                     </div>
                     <button
                       type="button"
                       disabled={!canControl || testingProxyNode !== null}
                       onClick={() => void handleTestProxy(sim.id, true)}
+                      title="Chờ và kiểm chứng chu kỳ tự đổi IP (tối đa 65s)"
                       className="px-2.5 py-1.5 rounded-lg text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 disabled:opacity-50 flex items-center gap-1 cursor-pointer shrink-0"
                     >
                       <RotateCw
@@ -663,7 +755,7 @@ export function Public4GCrawlerPanel() {
                           testingProxyNode === `${sim.id}:rot` && "animate-spin",
                         )}
                       />
-                      Test Xoay IP
+                      {testingProxyNode === `${sim.id}:rot` ? "Đang đo 60s..." : "Đo đổi IP (60s)"}
                     </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
@@ -675,18 +767,23 @@ export function Public4GCrawlerPanel() {
                           : "bg-rose-50 text-rose-700 border-rose-200",
                       )}
                     >
-                      SOCKS5: {sim.hasSocks ? "Sẵn sàng" : "Thiếu URL"}
+                      Tunnel {(sim.scheme || "socks5").toUpperCase()}: {sim.hasSocks ? "Sẵn sàng" : "Thiếu URL"}
                     </span>
-                    <span
-                      className={cn(
-                        "px-2 py-0.5 rounded font-bold border",
-                        sim.hasConsole
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                          : "bg-amber-50 text-amber-700 border-amber-200",
-                      )}
-                    >
-                      API Xoay IP: {sim.hasConsole ? "Sẵn sàng" : "Thiếu Console"}
+                    <span className="px-2 py-0.5 rounded font-bold border bg-sky-50 text-sky-700 border-sky-200">
+                      Tự xoay: 60s/lần
                     </span>
+                    {sim.last_fb_status != null && (
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded font-bold border",
+                          sim.last_fb_status === 200
+                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            : "bg-amber-50 text-amber-700 border-amber-200",
+                        )}
+                      >
+                        FB Guest: HTTP {sim.last_fb_status}
+                      </span>
+                    )}
                     <span className="px-2 py-0.5 rounded font-bold bg-slate-100 text-slate-700">
                       Trạng thái: {sim.status}
                     </span>
@@ -759,7 +856,7 @@ export function Public4GCrawlerPanel() {
               />
             </label>
             <label className="space-y-1 text-xs">
-              <span className="font-bold text-slate-600 block">Số SIM chạy song song</span>
+              <span className="font-bold text-slate-600 block">Số luồng Proxy song song</span>
               <input
                 type="number"
                 min={1}
@@ -803,9 +900,10 @@ export function Public4GCrawlerPanel() {
                 disabled={!canControl}
                 value={configDraft.max_scrolls_per_group}
                 onChange={(e) => {
+                  const parsed = Number(e.target.value);
                   setConfigDraft((p) => ({
                     ...p,
-                    max_scrolls_per_group: Math.max(0, Number(e.target.value) || 2),
+                    max_scrolls_per_group: Number.isNaN(parsed) ? 2 : Math.max(0, parsed),
                   }));
                   setConfigDirty(true);
                 }}
@@ -1051,7 +1149,7 @@ export function Public4GCrawlerPanel() {
           <div className="h-56 overflow-y-auto font-mono text-[11px] space-y-1 pr-1">
             {logs.length === 0 ? (
               <div className="text-slate-500 italic">
-                Chưa có log trong phiên hiện tại. Bấm &ldquo;Chạy ngay&rdquo; hoặc &ldquo;Kiểm tra kết nối SIM&rdquo;.
+                Chưa có log trong phiên hiện tại. Bấm &ldquo;Chạy ngay&rdquo; hoặc &ldquo;Kiểm tra Proxy Xoay&rdquo;.
               </div>
             ) : (
               logs.map((entry, idx) => (
