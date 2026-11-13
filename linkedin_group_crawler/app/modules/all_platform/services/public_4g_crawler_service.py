@@ -375,6 +375,7 @@ class SimNodeRuntime:
     last_error: str | None = None
     last_latency_ms: int | None = None
     last_fb_status: int | None = None
+    platform: str | None = None  # None (shared) | "facebook" | "threads"
     raw_node: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -383,6 +384,7 @@ class SimNodeRuntime:
         return {
             "id": self.id,
             "label": self.label,
+            "platform": self.platform,
             "hasSocks": bool(self.socks_url),
             "hasConsole": False,
             "autoRotating": bool(self.socks_url),
@@ -488,6 +490,7 @@ class RotatingProxyPool:
 
         runtimes: list[SimNodeRuntime] = []
         active_ids: set[str] = set()
+        total_entries = len(entries)
 
         for idx, raw_url in enumerate(entries, start=1):
             runtime_url = rewrite_proxy_url_for_runtime(raw_url)
@@ -495,7 +498,27 @@ class RotatingProxyPool:
                 continue
             node_id = f"proxy-{idx:02d}"
             host, port, scheme = _parse_host_port(runtime_url)
-            label = f"Proxy Xoay #{idx} · {host}:{port}" if host and port else f"Proxy Xoay #{idx}"
+
+            # Determine platform assignment:
+            # 1. Explicit tag in raw entry (#facebook / #threads or ?platform=...)
+            # 2. Port matching (4434 -> facebook, 4554 -> threads)
+            # 3. Position convention when 2 proxies configured (idx 1 -> facebook, idx 2 -> threads)
+            assigned_platform: str | None = None
+            lower_raw = str(raw_url).lower()
+            if "#facebook" in lower_raw or "platform=facebook" in lower_raw or port == 4434:
+                assigned_platform = "facebook"
+            elif "#threads" in lower_raw or "platform=threads" in lower_raw or port == 4554:
+                assigned_platform = "threads"
+            elif total_entries == 2:
+                assigned_platform = "facebook" if idx == 1 else "threads"
+
+            if assigned_platform == "facebook":
+                label = f"Proxy FB #{idx:02d} · {host}:{port}" if host and port else f"Proxy FB #{idx:02d}"
+            elif assigned_platform == "threads":
+                label = f"Proxy Threads #{idx:02d} · {host}:{port}" if host and port else f"Proxy Threads #{idx:02d}"
+            else:
+                label = f"Proxy Xoay #{idx:02d} · {host}:{port}" if host and port else f"Proxy Xoay #{idx:02d}"
+
             active_ids.add(node_id)
 
             existing = self._states.get(node_id)
@@ -505,6 +528,7 @@ class RotatingProxyPool:
                     label=label,
                     socks_url=runtime_url,
                     console_url=None,
+                    platform=assigned_platform,
                     raw_node={"scheme": scheme, "host": host, "port": port},
                 )
                 self._states[node_id] = existing
@@ -518,6 +542,7 @@ class RotatingProxyPool:
                 existing.label = label
                 existing.socks_url = runtime_url
                 existing.console_url = None
+                existing.platform = assigned_platform
                 existing.raw_node = {"scheme": scheme, "host": host, "port": port}
             runtimes.append(existing)
 
@@ -2834,9 +2859,14 @@ class PublicCrawlOrchestrator:
         else:
             is_continuous = bool(continuous and not group_ids)
 
+        # Select active proxy nodes dedicated to target_platform (or fallback to shared/all)
+        platform_sims = [s for s in sims if getattr(s, "platform", None) == target_platform]
+        if not platform_sims:
+            platform_sims = [s for s in sims if not getattr(s, "platform", None)] or sims
+
         _, max_sims_bound = PUBLIC_CRAWL_CONFIG_BOUNDS["concurrent_sims"]
-        max_lanes = max(1, min(len(sims), max_sims_bound, int(cfg.get("concurrent_sims") or len(sims))))
-        active_sims = sims[:max_lanes]
+        max_lanes = max(1, min(len(platform_sims), max_sims_bound, int(cfg.get("concurrent_sims") or len(platform_sims))))
+        active_sims = platform_sims[:max_lanes]
         for s in active_sims:
             s.groups_in_epoch = 0
 

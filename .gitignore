@@ -321,3 +321,7 @@ local_mock.sql
 prototype-studio/
 
 nhantin.json
+
+call_json.json
+zalo_call.json
+zalo_desktop_call.json
