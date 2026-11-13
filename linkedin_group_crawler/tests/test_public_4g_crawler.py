@@ -1730,3 +1730,27 @@ def test_ingest_threads_4g_keyword_batch_audit_and_lead_score(monkeypatch) -> No
     assert captured["kw_metric"] == ("CRM", 3, 1)  # saved(2) + existing(1), NOT raw_extracted(7)
 
 
+def test_dedicated_platform_proxy_routing_facebook_and_threads(monkeypatch):
+    """Verify that when 2 proxies are configured, proxy-01 is bound to Facebook and proxy-02 to Threads."""
+    from app.modules.all_platform.services.public_4g_crawler_service import PublicCrawlOrchestrator
+
+    orch = PublicCrawlOrchestrator()
+    proxies = [
+        "http://stanford8630:Markeeai@123!@103.216.74.218:4434",
+        "http://clarabreiten180:Markeeai@123!@103.216.74.218:4554",
+    ]
+    sims = orch.rotator.sync_nodes(proxies)
+    assert len(sims) == 2
+    assert sims[0].id == "proxy-01"
+    assert sims[0].platform == "facebook"
+    assert "Proxy FB #01" in sims[0].label
+    assert sims[1].id == "proxy-02"
+    assert sims[1].platform == "threads"
+    assert "Proxy Threads #02" in sims[1].label
+
+    # Snapshot check
+    snap = orch.rotator.snapshot_nodes(proxies)
+    assert snap[0]["platform"] == "facebook"
+    assert snap[1]["platform"] == "threads"
+
+
