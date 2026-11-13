@@ -762,15 +762,43 @@ const COMMANDS = {
   "group-related-ids": cmdGroupRelatedIds,
   "send-message": cmdSendMessage,
   "send-images": async (api, args, payload) => {
-    // send-images vẫn cần file_paths từ payload
+    // send-images: đọc file buffer và gửi qua api.sendMessage (đúng shape zca-js)
     const { "thread-id": threadId, type = "1" } = args;
     if (!threadId) throw new Error("Missing --thread-id");
     const filePaths = (payload || {}).file_paths || [];
     const text = (payload || {}).text || "";
     const { ThreadType } = require("zca-js");
+    const fs = require("fs");
+    const path = require("path");
+    let imageSize;
+    try {
+      imageSize = require("image-size").imageSize;
+    } catch (_) {}
+
     const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
-    const response = await api.sendAttachment({ filePaths, msg: text }, String(threadId), threadType);
-    // Cung bug + fix nhu cmdSendMessage phia tren - xem comment o do.
+    const attachments = filePaths.map((filePath) => {
+      const buffer = fs.readFileSync(filePath);
+      const baseName = path.basename(filePath);
+      let width = 0;
+      let height = 0;
+      try {
+        if (typeof imageSize === "function") {
+          const dim = imageSize(buffer);
+          width = dim.width || 0;
+          height = dim.height || 0;
+        }
+      } catch (_error) {}
+      return {
+        data: buffer,
+        filename: path.extname(baseName) ? baseName : `${baseName}.jpg`,
+        metadata: {
+          totalSize: buffer.length,
+          width,
+          height,
+        },
+      };
+    });
+    const response = await api.sendMessage({ msg: text, attachments }, String(threadId), threadType);
     return { ok: true, response };
   },
   "remove-unread": cmdRemoveUnread,

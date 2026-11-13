@@ -95,7 +95,7 @@ _PERM_CACHE: Dict[Tuple[str, str, str], Tuple[float, Optional[set[str]]]] = {}
 _MESSAGE_CACHE: Dict[Tuple[str, str, int, int], Tuple[float, Dict[str, Any]]] = {}
 
 AUTH_CACHE_TTL = 60.0  # 60s cache cho app_user và zalo_account metadata
-MESSAGE_CACHE_TTL = 3.0  # 3s cache cho danh sách tin nhắn đang xem/click liên tục
+MESSAGE_CACHE_TTL = 30.0  # 30s RAM accelerator cache cho tin nhắn hội thoại Zalo (tự động invalidate khi có tin mới/gửi/thu hồi)
 
 def invalidate_conversation_message_cache(user_id: str, conversation_id: Optional[str] = None) -> None:
     """Xoá cache tin nhắn khi có tin nhắn mới hoặc thao tác gửi/thu hồi."""

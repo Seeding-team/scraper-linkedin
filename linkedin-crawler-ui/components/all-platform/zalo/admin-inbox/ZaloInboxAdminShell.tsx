@@ -581,9 +581,11 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
   const hasText = Boolean(message.content?.trim());
   const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
-    "rounded-2xl px-4 py-2.5 text-[13.5px] font-medium leading-relaxed break-words transition-all duration-200 shadow-xs",
-    isSent ? "bg-[#0068ff] text-white rounded-br-md shadow-xs" : "bg-[#f1f4f8] text-[#1f2a3a] rounded-bl-md border border-slate-200/50",
-    isSelected && (isSent ? "ring-2 ring-[#0068ff] ring-offset-2" : "ring-2 ring-[#0068ff]/60 bg-blue-50/50"),
+    "rounded-[19px] px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-xs",
+    isSent
+      ? "bg-gradient-to-br from-[#0084ff] to-[#0066ee] text-white rounded-br-[4px] shadow-xs"
+      : "bg-[#f0f2f5] text-slate-900 rounded-bl-[4px] border border-slate-200/50 shadow-2xs",
+    isSelected && (isSent ? "ring-2 ring-blue-300 ring-offset-2" : "ring-2 ring-blue-400/50 bg-blue-50/60"),
   );
 
   return (
@@ -1089,7 +1091,27 @@ export function ZaloInboxAdminShell() {
   const [showStickerPicker, setShowStickerPicker] = useState(false);
   const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
   const [messageMenuFor, setMessageMenuFor] = useState<string | null>(null);
+  const [menuPlacement, setMenuPlacement] = useState<"up" | "down">("up");
   const [showSearchPanel, setShowSearchPanel] = useState(false);
+
+  // Click outside để tự động đóng menu thao tác 3 chấm và picker cảm xúc
+  useEffect(() => {
+    if (!messageMenuFor && !reactionPickerFor) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (!target.closest("[data-msg-menu]") && !target.closest("[data-msg-menu-btn]")) {
+        setMessageMenuFor(null);
+      }
+      if (!target.closest("[data-zalo-reaction-ui]") && !target.closest("[data-zalo-reaction-btn]")) {
+        setReactionPickerFor(null);
+      }
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [messageMenuFor, reactionPickerFor]);
 
   // Overlay xem ảnh (lightbox) — chỉ lưu INDEX trong chatImageUrls, không lưu URL
   // trực tiếp, để nút trượt qua lại tính next/prev đơn giản bằng index +-1.
@@ -2882,32 +2904,47 @@ export function ZaloInboxAdminShell() {
                                       <button
                                         type="button"
                                         data-zalo-reaction-ui
+                                        data-zalo-reaction-btn
                                         onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
                                         title="Thả cảm xúc"
-                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-brand"
+                                        className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-amber-500 cursor-pointer"
                                       >
-                                        <MaterialIcon name="mood" className="text-[11px]" />
+                                        <MaterialIcon name="mood" className="text-[12px]" />
                                       </button>
                                     )}
                                     {canActOnMessage && (
                                       <div className="relative">
                                         <button
                                           type="button"
-                                          onClick={() => setMessageMenuFor((prev) => (prev === msgKey ? null : msgKey))}
+                                          data-msg-menu-btn
+                                          onClick={(e) => {
+                                            const btnRect = e.currentTarget.getBoundingClientRect();
+                                            // Tự động nhận diện nếu tin nhắn ở vùng trên cao (< 240px) thì bung menu XUỐNG DƯỚI để không bị che khuất
+                                            const openDown = btnRect.top < 240;
+                                            setMenuPlacement(openDown ? "down" : "up");
+                                            setMessageMenuFor((prev) => (prev === msgKey ? null : msgKey));
+                                          }}
                                           title="Thao tác tin nhắn"
-                                          className="flex h-5 w-5 items-center justify-center rounded-full text-[#A0A0A0] opacity-70 transition hover:bg-slate-100 hover:text-[#E3000F] group-hover:opacity-100"
+                                          className="flex h-5 w-5 items-center justify-center rounded-full text-[#A0A0A0] opacity-70 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 cursor-pointer"
                                         >
                                           <MoreVertical size={13} />
                                         </button>
                                         {messageMenuFor === msgKey && (
-                                          <div className={cn("absolute bottom-full z-40 mb-1 w-36 rounded-xl border border-slate-200 bg-white p-1 shadow-xl", isSent ? "right-0" : "left-0")}>
+                                          <div
+                                            data-msg-menu
+                                            className={cn(
+                                              "absolute z-50 w-36 rounded-xl border border-slate-200/90 bg-white p-1 shadow-xl transition-all",
+                                              menuPlacement === "down" ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
+                                              isSent ? "right-0" : "left-0"
+                                            )}
+                                          >
                                             <button
                                               type="button"
                                               onClick={() => {
                                                 inbox.setReplyingTo(msg);
                                                 setMessageMenuFor(null);
                                               }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F]"
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] cursor-pointer"
                                             >
                                               <MaterialIcon name="reply" className="text-[13px]" /> Trả lời
                                             </button>
@@ -2919,7 +2956,7 @@ export function ZaloInboxAdminShell() {
                                                 setForwardingMessage(msg);
                                                 setMessageMenuFor(null);
                                               }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F] disabled:cursor-not-allowed disabled:opacity-40"
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
                                             >
                                               <MaterialIcon name="forward" className="text-[13px]" /> Chuyển tiếp
                                             </button>
@@ -2931,7 +2968,7 @@ export function ZaloInboxAdminShell() {
                                                 handleCopyMessage(msg);
                                                 setMessageMenuFor(null);
                                               }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#E3000F] disabled:cursor-not-allowed disabled:opacity-40"
+                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
                                             >
                                               <MaterialIcon name="content_copy" className="text-[13px]" /> Copy
                                             </button>
@@ -2951,7 +2988,14 @@ export function ZaloInboxAdminShell() {
                                     )}
                                     {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>}
                                     {reactionPickerFor === msgKey && (
-                                      <div data-zalo-reaction-ui className={`absolute bottom-full z-30 mb-1 ${isSent ? "right-0" : "left-0"}`}>
+                                      <div
+                                        data-zalo-reaction-ui
+                                        className={cn(
+                                          "absolute z-40 transition-all",
+                                          menuPlacement === "down" ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
+                                          isSent ? "right-0" : "left-0"
+                                        )}
+                                      >
                                         <ZaloReactionQuickPicker
                                           activeIcon={msg.reactions?.[inbox.myZaloUid || "__me__"] || null}
                                           onPick={(icon) => {
@@ -2974,7 +3018,6 @@ export function ZaloInboxAdminShell() {
                                 </div>
                               )}
                             </div>
-                            {isSent && <Avatar src={null} name={displayAvatarName} className="mt-0.5 h-8 w-8 text-[10px] shrink-0 shadow-sm ring-2 ring-white" />}
                             {isSent && checkboxEl}
                           </div>
                         </ZaloSwipeableMessageItem>

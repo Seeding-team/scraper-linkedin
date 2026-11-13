@@ -196,6 +196,8 @@ export function useZaloAdminInbox() {
   const messageSignatureRef = useRef("");
   const selectedAccountIdRef = useRef(selectedAccountId);
   const selectedConvIdRef = useRef(selectedConvId);
+  // Bộ đệm client-side in-memory để chuyển đổi hội thoại 0ms tức thì, không bị trắng trơn 5-10s
+  const convMessagesCacheRef = useRef<Map<string, ZaloLibraryMessage[]>>(new Map());
 
   useEffect(() => { selectedAccountIdRef.current = selectedAccountId; }, [selectedAccountId]);
   useEffect(() => { selectedConvIdRef.current = selectedConvId; }, [selectedConvId]);
@@ -515,22 +517,38 @@ export function useZaloAdminInbox() {
   }, [selectedAccountId, loadConversations]);
 
   // ─────────────────────────────────────────────────────────────────────────────
-  // Select conversation → load messages
+  // Select conversation → load messages (Tối ưu 0ms tức thì qua Client Cache)
   // ─────────────────────────────────────────────────────────────────────────────
   const onSelectConv = useCallback((convId: string) => {
     setSelectedConvId(convId);
-    setMessages([]);
     messageSignatureRef.current = "";
     setGroupMembers(null);
     setPendingMentions([]);
     setReplyingTo(null);
     setSendError(null);
+
+    // Nếu đã có tin nhắn trong bộ đệm: hiển thị NGAY trong 0ms, không xóa trắng màn hình
+    if (convMessagesCacheRef.current.has(convId)) {
+      const cached = convMessagesCacheRef.current.get(convId) || [];
+      setMessages(cached);
+      setLoadingMessages(false);
+      // Nạp ngầm dữ liệu mới nhất từ server
+      const currentAccId = selectedAccountIdRef.current;
+      if (currentAccId) {
+        void loadMessages(currentAccId, convId, true);
+      }
+    } else {
+      setMessages([]);
+      setLoadingMessages(true);
+    }
   }, []);
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
     if (!accountId || !convId) return;
     const requestSeq = ++messageLoadSeqRef.current;
-    if (!append) setLoadingMessages(true);
+    if (!append && !convMessagesCacheRef.current.has(convId)) {
+      setLoadingMessages(true);
+    }
     try {
       // 200 tin mới nhất — đủ rộng để lightbox ảnh trượt qua lại có nhiều ảnh
       // để xem, nhưng vẫn chặn trên để tránh tải/ render cả nghìn tin 1 lúc.
@@ -538,12 +556,21 @@ export function useZaloAdminInbox() {
       if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
       if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
+        // Lưu vào bộ đệm cache client-side để lần mở sau hiển thị 0ms
+        convMessagesCacheRef.current.set(convId, res.messages);
+
         const signature = res.messages
           .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}`)
           .join("|");
         if (signature !== messageSignatureRef.current) {
           messageSignatureRef.current = signature;
-          setMessages(res.messages);
+          setMessages((prev) => {
+            // Giữ lại các tin nhắn lạc quan (optimistic) đang gửi chưa kịp đồng bộ vào DB
+            const pendingOptimistic = prev.filter(
+              (m) => String(m.id).startsWith("optimistic_") && !res.messages.some((rm) => rm.content === m.content)
+            );
+            return pendingOptimistic.length > 0 ? [...res.messages, ...pendingOptimistic] : res.messages;
+          });
         }
         setMessageTotal(res.total ?? res.messages.length);
       }
@@ -945,8 +972,14 @@ export function useZaloAdminInbox() {
     }
   }, [conversations, selectedAccountId, selectedOwnerId, ownerEmails, user?.email, verifiedConvIds, suggestedConvIds, suggestKpi, showToast]);
 
+  // UID Zalo thật của account đang xem — suy từ sender_id của tin CHÍNH MÌNH đã gửi
+  const myZaloUid = useMemo(
+    () => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null,
+    [messages],
+  );
+
   // ─────────────────────────────────────────────────────────────────────────────
-  // Send reply message
+  // Send reply message (Tối ưu 0ms Optimistic UI)
   // ─────────────────────────────────────────────────────────────────────────────
   const sendReply = useCallback(async () => {
     const text = reply.trim();
@@ -956,6 +989,40 @@ export function useZaloAdminInbox() {
     setSendError(null);
     const accId = selectedAccountIdRef.current;
     const convId = selectedConvIdRef.current;
+    if (!accId || !convId) {
+      setIsSending(false);
+      return;
+    }
+
+    const tempId = `optimistic_${Date.now()}`;
+    const now = new Date();
+    const timeText = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const optimisticMsg: ZaloLibraryMessage = {
+      id: tempId,
+      user_id: accId,
+      source_message_id: tempId,
+      sender_id: myZaloUid || "me",
+      sender_name: "Bạn",
+      is_sent: true,
+      is_deleted: false,
+      type: "chat",
+      content: text,
+      timestamp_text: "Vừa xong",
+      time_text: timeText,
+      ts: now.getTime(),
+      assets: [],
+    };
+
+    // 0ms Optimistic UI: Hiển thị ngay trên màn hình chat và preview hội thoại
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.conversation_id === convId
+          ? { ...c, preview: text, time: timeText, unread: false }
+          : c
+      )
+    );
+
     try {
       await sendZaloMessage(accId, convId, { text });
       await loadMessages(accId, convId, true);
@@ -964,6 +1031,8 @@ export function useZaloAdminInbox() {
         window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
       }
     } catch (e) {
+      // Nếu gửi lỗi, rút lại tin nhắn lạc quan
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
       let userFriendlyMsg = rawMsg;
       if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
@@ -971,14 +1040,16 @@ export function useZaloAdminInbox() {
       } else if (rawMsg.includes("502") || rawMsg.includes("504") || rawMsg.includes("Bad Gateway") || rawMsg.includes("tạm ngắt")) {
         userFriendlyMsg = "Máy chủ hoặc tiến trình Zalo tạm ngắt kết nối. Đang thử kích hoạt lại...";
         if (accId) void restartZaloAccountListener(accId).catch(() => {});
+      } else if (rawMsg.includes("Unexpected token") || rawMsg.includes("is not valid JSON") || rawMsg.includes("<html") || rawMsg.includes("413")) {
+        userFriendlyMsg = "Không thể gửi: Tệp/ảnh quá lớn hoặc máy chủ phản hồi lỗi HTML. Vui lòng kiểm tra lại!";
       }
       setSendError(userFriendlyMsg);
       showToast(userFriendlyMsg, false);
-      setReply(text); // restore
+      setReply(text); // restore text để người dùng không bị mất nội dung
     } finally {
       setIsSending(false);
     }
-  }, [reply, loadMessages, loadConversations]);
+  }, [reply, myZaloUid, loadMessages, loadConversations, showToast]);
 
   // "Trả lời tin nhắn" — áp dụng cho CẢ tin của mình lẫn của đối phương (khác
   // recall, chỉ cho tin mình gửi). Preview hiện phía trên ô nhập (do shell tự
@@ -1006,6 +1077,45 @@ export function useZaloAdminInbox() {
           }
         : undefined;
     setReplyingTo(null);
+
+    // 0ms Optimistic UI: Tạo ngay tin nhắn hiển thị tức thì trên giao diện
+    const tempId = `optimistic_${Date.now()}`;
+    const now = new Date();
+    const timeText = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const contentPreview = text || (files?.length ? `[${files.length} tệp đính kèm]` : "");
+    const optimisticMsg: ZaloLibraryMessage = {
+      id: tempId,
+      user_id: accId,
+      source_message_id: tempId,
+      sender_id: myZaloUid || "me",
+      sender_name: "Bạn",
+      is_sent: true,
+      is_deleted: false,
+      type: "chat",
+      content: text,
+      timestamp_text: "Vừa xong",
+      time_text: timeText,
+      ts: now.getTime(),
+      reply_to_id: replyTo?.message_id,
+      assets: (files?.map((f) => ({
+        url: URL.createObjectURL(f),
+        storage_url: URL.createObjectURL(f),
+        filename: f.name,
+        filesize: f.size,
+        mime_type: f.type,
+        status: "ready" as const,
+      })) || []) as any,
+    };
+
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.conversation_id === convId
+          ? { ...c, preview: contentPreview, time: timeText, unread: false }
+          : c
+      )
+    );
+
     try {
       if (files && files.length > 0) {
         await sendZaloMessageWithFiles(accId, convId, text, files);
@@ -1022,6 +1132,8 @@ export function useZaloAdminInbox() {
         window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
       }
     } catch (e) {
+      // Rút lại tin nhắn lạc quan khi có lỗi
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
       let userFriendlyMsg = rawMsg;
       if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
@@ -1029,6 +1141,8 @@ export function useZaloAdminInbox() {
       } else if (rawMsg.includes("502") || rawMsg.includes("504") || rawMsg.includes("Bad Gateway") || rawMsg.includes("tạm ngắt")) {
         userFriendlyMsg = "Máy chủ hoặc tiến trình Zalo tạm ngắt kết nối. Đang thử kích hoạt lại...";
         if (accId) void restartZaloAccountListener(accId).catch(() => {});
+      } else if (rawMsg.includes("Unexpected token") || rawMsg.includes("is not valid JSON") || rawMsg.includes("<html") || rawMsg.includes("413")) {
+        userFriendlyMsg = "Không thể gửi: Tệp/ảnh quá lớn hoặc máy chủ phản hồi lỗi HTML. Vui lòng kiểm tra lại!";
       }
       setSendError(userFriendlyMsg);
       showToast(userFriendlyMsg, false);
@@ -1036,7 +1150,7 @@ export function useZaloAdminInbox() {
     } finally {
       setIsSending(false);
     }
-  }, [loadMessages, loadConversations, pendingMentions, replyingTo, showToast]);
+  }, [loadMessages, loadConversations, pendingMentions, replyingTo, myZaloUid, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Thu hồi tin nhắn thật (api.undo) — chỉ khả dụng cho tin do chính mình gửi,
@@ -1059,14 +1173,6 @@ export function useZaloAdminInbox() {
       showToast(e instanceof Error ? e.message : "Thu hồi tin nhắn thất bại", false);
     }
   }, [showToast]);
-
-  // UID Zalo thật của account đang xem — suy từ sender_id của tin CHÍNH MÌNH
-  // đã gửi (không có API riêng trả "own id" qua REST). Dùng để tô sáng
-  // reaction của mình trong ZaloReactionBadges.
-  const myZaloUid = useMemo(
-    () => messages.find((m) => m.is_sent && m.sender_id)?.sender_id || null,
-    [messages],
-  );
 
   // Thả cảm xúc — CHỈ gửi lên Zalo thật, KHÔNG tự ghi DB (listener xử lý khi
   // nhận event "reaction" echo lại, xem comment route POST /react phía
