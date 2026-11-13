@@ -26,8 +26,18 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { ZaloConversationListSkeleton } from "../chat/ZaloChatSkeleton";
 import type { ZaloConversationSummary } from "@/types/zalo-api";
 import { MaterialIcon } from "@/components/ui";
+import { Trash2 } from "lucide-react";
 import { InboxShareToggle } from "../InboxShareToggle";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   conversations: ZaloConversationSummary[];
@@ -47,6 +57,8 @@ interface Props {
   onToggleHide?: (id: string) => void;
   pinnedConversations?: Record<string, boolean>;
   hiddenConversations?: Record<string, boolean>;
+  /** Xóa cuộc trò chuyện khỏi sidebar và database */
+  onDeleteConversation?: (convId: string) => void;
 }
 
 const ROW_HEIGHT_DEFAULT = 72; // px — match với padding + content của conversation item
@@ -68,12 +80,14 @@ export function ZaloConversationListVirtualized({
   onToggleHide,
   pinnedConversations,
   hiddenConversations,
+  onDeleteConversation,
 }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [parentHeight, setParentHeight] = useState(0);
   const [dropdownOpenId, setDropdownOpenId] = useState<string | null>(null);
   const [dropdownPos, setDropdownPos] = useState({ x: 0, y: 0 });
   const [mounted, setMounted] = useState(false);
+  const [confirmDeleteConv, setConfirmDeleteConv] = useState<ZaloConversationSummary | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -371,12 +385,28 @@ export function ZaloConversationListVirtualized({
                       })()}
                       {conv.latest_content || "Tin nhắn mới"}
                     </div>
-                    {conv.unread_count !== undefined &&
-                      conv.unread_count > 0 && (
-                        <span className={`flex h-4.5 min-w-4.5 text-[9px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 font-bold text-white shadow-sm`}>
-                          {conv.unread_count}
-                        </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {conv.unread_count !== undefined &&
+                        conv.unread_count > 0 && (
+                          <span className={`flex h-4.5 min-w-4.5 text-[9px] shrink-0 items-center justify-center rounded-full bg-red-500 px-1 font-bold text-white shadow-sm`}>
+                            {conv.unread_count}
+                          </span>
+                        )}
+                      {onDeleteConversation && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setConfirmDeleteConv(conv);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-red-50 text-on-surface-variant hover:text-red-600"
+                          title="Xóa cuộc trò chuyện"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -410,6 +440,41 @@ export function ZaloConversationListVirtualized({
           </div>,
           document.body
         )}
+
+      {/* Confirmation Dialog khi xóa cuộc trò chuyện */}
+      {confirmDeleteConv && (
+        <Dialog open={!!confirmDeleteConv} onOpenChange={(open) => !open && setConfirmDeleteConv(null)}>
+          <DialogContent className="sm:max-w-md bg-surface text-on-surface border border-outline-variant shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-red-600 text-base font-semibold">
+                <Trash2 className="w-5 h-5" />
+                Xóa cuộc trò chuyện
+              </DialogTitle>
+              <DialogDescription className="text-sm text-on-surface-variant leading-relaxed mt-2">
+                Bạn có chắc chắn muốn xóa cuộc trò chuyện với{" "}
+                <strong className="text-on-surface font-semibold">{confirmDeleteConv.conversation_name || "khách hàng này"}</strong>?
+                Tất cả tin nhắn trong cuộc trò chuyện sẽ bị xóa khỏi hệ thống.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0 mt-4">
+              <Button variant="outline" onClick={() => setConfirmDeleteConv(null)}>
+                Hủy bỏ
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (confirmDeleteConv && onDeleteConversation) {
+                    onDeleteConversation(confirmDeleteConv.conversation_id);
+                    setConfirmDeleteConv(null);
+                  }
+                }}
+              >
+                Xác nhận xóa
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

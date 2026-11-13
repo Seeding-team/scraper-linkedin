@@ -1538,7 +1538,140 @@ async def recall_conversation_message(
         logger.warning(f"Recalled on Zalo but could not mark is_deleted in DB: {exc}")
 
     invalidate_conversation_message_cache(user_id, conversation_id.strip())
+
+    try:
+        from app.modules.all_platform.zalo.services.message_events import publish_zalo_message_event
+        await publish_zalo_message_event(
+            user_id,
+            {
+                "type": "message_recalled",
+                "account_id": user_id,
+                "group_id": conversation_id.strip(),
+                "source_message_id": body.source_message_id.strip(),
+            },
+        )
+    except Exception as ev_exc:
+        logger.warning(f"Could not publish recall event: {ev_exc}")
+
     return RecallMessageResponse(ok=True, conversation_id=conversation_id, source_message_id=body.source_message_id)
+
+
+@router.delete("/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Xóa cuộc trò chuyện khỏi sidebar và dọn dẹp tin nhắn trong DB."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    cid = conversation_id.strip()
+
+    try:
+        await _rest(
+            "DELETE",
+            "zalo_groups",
+            params={
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{cid}",
+            },
+        )
+        await _rest(
+            "DELETE",
+            "zalo_messages",
+            params={
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{cid}",
+            },
+        )
+    except Exception as exc:
+        logger.warning(f"Error deleting conversation {cid} for user={user_id}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Không thể xóa cuộc trò chuyện: {exc}")
+
+    invalidate_conversation_message_cache(user_id, cid)
+
+    try:
+        from app.modules.all_platform.zalo.services.message_events import publish_zalo_message_event
+        await publish_zalo_message_event(
+            user_id,
+            {
+                "type": "conversation_deleted",
+                "account_id": user_id,
+                "group_id": cid,
+            },
+        )
+    except Exception as ev_exc:
+        logger.warning(f"Could not publish conversation_deleted event: {ev_exc}")
+
+    return {"ok": True, "conversation_id": cid}
+
+
+@router.delete("/{conversation_id}/messages/{message_id}")
+async def delete_conversation_message(
+    conversation_id: str,
+    message_id: str,
+    recall: bool = Query(False, description="True = thu hồi cả hai phía, False = xóa ở phía tôi"),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Xóa tin nhắn: Xóa ở phía tôi (local DB delete) hoặc Thu hồi (api.undo hai phía)."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    cid = conversation_id.strip()
+    mid = message_id.strip()
+
+    if recall:
+        req = RecallMessageRequest(source_message_id=mid)
+        return await recall_conversation_message(
+            cid,
+            req,
+            account_id=user_id,
+            x_user_id=x_user_id,
+            x_caller_email=x_caller_email,
+        )
+
+    try:
+        # Thử xóa theo source_message_id trước
+        deleted = await _rest(
+            "DELETE",
+            "zalo_messages",
+            params={
+                "user_id": f"eq.{user_id}",
+                "group_id": f"eq.{cid}",
+                "source_message_id": f"eq.{mid}",
+            },
+        )
+        if not deleted:
+            await _rest(
+                "DELETE",
+                "zalo_messages",
+                params={
+                    "user_id": f"eq.{user_id}",
+                    "group_id": f"eq.{cid}",
+                    "id": f"eq.{mid}",
+                },
+            )
+    except Exception as exc:
+        logger.warning(f"Error deleting message {mid} for user={user_id}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Không thể xóa tin nhắn: {exc}")
+
+    invalidate_conversation_message_cache(user_id, cid)
+
+    try:
+        from app.modules.all_platform.zalo.services.message_events import publish_zalo_message_event
+        await publish_zalo_message_event(
+            user_id,
+            {
+                "type": "message_deleted",
+                "account_id": user_id,
+                "group_id": cid,
+                "source_message_id": mid,
+            },
+        )
+    except Exception as ev_exc:
+        logger.warning(f"Could not publish message_deleted event: {ev_exc}")
+
+    return {"ok": True, "conversation_id": cid, "message_id": mid, "mode": "deleted_for_me"}
 
 
 # 6 cảm xúc nhanh — đúng bộ Zalo thật hiện khi bấm giữ 1 tin nhắn (❤️👍😆😮😢😠).
@@ -1846,6 +1979,34 @@ async def _persist_outgoing_message(
                 f"Could not persist outgoing message assets for user={user_id} conv={conversation_id}: {exc}"
             )
     invalidate_conversation_message_cache(user_id, conversation_id)
+
+    try:
+        from app.modules.all_platform.zalo.services.message_events import (
+            publish_zalo_message_event,
+            register_account_owner,
+        )
+        from app.modules.all_platform.zalo.services.supabase_service import (
+            list_shared_conversation_ids,
+        )
+
+        register_account_owner(user_id, user_id)
+        shared_ids = await list_shared_conversation_ids(user_id)
+        event = {
+            "type": "new_messages",
+            "account_id": user_id,
+            "group_id": conversation_id,
+            "group_name": group_name,
+            "messages": [message.model_dump()],
+        }
+        await publish_zalo_message_event(
+            user_id,
+            event,
+            shared_conversation_ids=shared_ids,
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Realtime publish failed for outgoing message user={user_id} group={conversation_id}: {exc}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────

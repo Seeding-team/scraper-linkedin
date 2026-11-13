@@ -268,6 +268,8 @@ export interface ZaloLibraryMessage {
   // hẳn (undefined) nếu backend chưa deploy migration này — luôn dùng
   // `message.reactions ?? {}` khi đọc, không giả định luôn tồn tại.
   reactions?: Record<string, string> | null;
+  // Optimistic UI state
+  sending_status?: "sending" | "sent" | "failed";
 }
 
 export type ZaloLibraryContentKind = "all" | "text" | "image";

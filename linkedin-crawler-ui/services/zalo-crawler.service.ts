@@ -991,6 +991,33 @@ export function recallZaloMessage(
   });
 }
 
+/** Xóa toàn bộ cuộc trò chuyện khỏi danh sách và database. */
+export function deleteZaloConversation(
+  accountId: string,
+  conversationId: string,
+): Promise<{ ok: boolean; conversation_id: string }> {
+  return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}?account_id=${encodeURIComponent(accountId)}`, {
+    method: "DELETE",
+    headers: buildHeaders({ "X-User-ID": accountId }),
+  });
+}
+
+/** Xóa tin nhắn (Xóa ở phía tôi hoặc Thu hồi). */
+export function deleteZaloMessage(
+  accountId: string,
+  conversationId: string,
+  messageId: string,
+  recall = false,
+): Promise<{ ok: boolean; message_id: string; mode?: string }> {
+  return requestJson(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}?account_id=${encodeURIComponent(accountId)}&recall=${recall ? "true" : "false"}`,
+    {
+      method: "DELETE",
+      headers: buildHeaders({ "X-User-ID": accountId }),
+    },
+  );
+}
+
 export function getZaloFriendStatus(accountId: string, uid: string): Promise<ZaloFriendStatusResponse> {
   return requestJson(`/api/all-platform/zalo/conversations/users/${encodeURIComponent(uid)}/friend-status`, {
     method: "GET",

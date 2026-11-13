@@ -18,6 +18,8 @@ import {
   getZaloConversationShareStatus,
   setZaloConversationShare,
   recallZaloMessage,
+  deleteZaloConversation,
+  deleteZaloMessage,
   sendZaloMessageWithMentions,
   getZaloFriendStatus,
   sendZaloFriendRequest,
@@ -33,6 +35,33 @@ import {
   type ZaloQuickReply,
   type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import {
+  Trash2,
+  RefreshCw,
+  Loader2,
+  AlertCircle,
+  Copy,
+  Reply,
+  Forward,
+  Undo2,
+  MoreVertical,
+} from "lucide-react";
 import type {
   ZaloConversationSummary,
   ZaloLibraryMessage,
@@ -53,7 +82,7 @@ import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shar
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
 
-const REFRESH_INTERVAL_MS = 2000;
+const REFRESH_INTERVAL_MS = 4000;
 const MESSAGE_PAGE_SIZE = 50;
 const BOTTOM_THRESHOLD_PX = 96;
 
@@ -724,7 +753,14 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       if (requestId !== messagesRequestIdRef.current) return;
       lastLoadedConversationIdRef.current = conversationId;
       pendingScrollRef.current = "bottom";
-      setMessages(response.messages ?? []);
+      setMessages((prev) => {
+        const serverMessages = response.messages ?? [];
+        const serverIds = new Set(serverMessages.map((m) => m.source_message_id || m.id));
+        const pendingOptimistic = prev.filter(
+          (m) => m.id?.startsWith("optimistic_") && !serverIds.has(m.source_message_id || m.id)
+        );
+        return [...serverMessages, ...pendingOptimistic];
+      });
       setMessageTotal(response.total ?? 0);
       setHasOlderMessages(Boolean(response.has_more));
       setNewMessageCount(0);
@@ -902,7 +938,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   useEffect(() => {
     // Đọc interval động mỗi lần fire — không cần restart timer khi sseConnected đổi.
     // Cách này tránh warning "useEffect deps changed size" và tránh re-mount interval.
-    const intervalMs = sseConnected ? 5000 : REFRESH_INTERVAL_MS;
+    const intervalMs = sseConnected ? 15000 : REFRESH_INTERVAL_MS;
     const timer = window.setInterval(() => {
       void loadConversations({ silent: true });
       void pollLatestMessages(selectedConversationId);
@@ -997,6 +1033,33 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
         try {
           const payload = JSON.parse(e.data);
           // Payload format: { type, account_id, group_id, group_name, messages: [] }
+          if (payload.type === "message_recalled") {
+            const mid = payload.source_message_id;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.source_message_id === mid || m.id === mid
+                  ? { ...m, is_deleted: true, content: null }
+                  : m
+              )
+            );
+            return;
+          }
+
+          if (payload.type === "message_deleted") {
+            const mid = payload.source_message_id || payload.message_id;
+            setMessages((prev) =>
+              prev.filter((m) => (m.source_message_id || m.id) !== mid)
+            );
+            return;
+          }
+
+          if (payload.type === "conversation_deleted") {
+            const gid = String(payload.group_id || "").trim();
+            setConversations((prev) => prev.filter((c) => c.conversation_id !== gid));
+            setSelectedConversationId((cur) => (cur === gid ? null : cur));
+            return;
+          }
+
           if (payload.type !== "new_messages") return;
 
           const groupId = String(payload.group_id || "").trim();
@@ -1383,16 +1446,14 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     const mentionsToSend = pendingMentions;
     if (!textToSend && selectedMedia.length === 0) return;
 
+    // 1. Dọn sạch input tức thời trong 0ms (mượt mà, không chờ API)
     setInputText("");
     setPendingMentions([]);
     const mediaToSend = [...selectedMedia];
     setSelectedMedia([]);
     setDirectSendError(null);
-    setIsSendingDirect(true);
 
-    // "Trả lời tin nhắn" — chỉ áp dụng cho tin text đi qua /send (media dùng
-    // /send-media, chưa hỗ trợ quote ở BE). message_id là bắt buộc; các field
-    // còn lại bỏ qua nếu thiếu thay vì gửi null/undefined tường minh.
+    // 2. Chuẩn bị payload reply nếu có
     const replyToSend: ZaloReplyToPayload | undefined =
       replyingTo?.source_message_id && mediaToSend.length === 0
         ? {
@@ -1404,6 +1465,61 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           }
         : undefined;
     setReplyingTo(null);
+
+    // 3. Khởi tạo tin nhắn lạc quan (Optimistic UI 0ms)
+    const tempId = `optimistic_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowTimeText = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+
+    const optimisticAssets = mediaToSend.map((m) => ({
+      message_id: tempId,
+      source_url: m.previewUrl || "",
+      storage_path: "",
+      storage_url: m.previewUrl || "",
+      status: "uploaded",
+    }));
+
+    const optimisticMsg: ZaloLibraryMessage = {
+      id: tempId,
+      source_message_id: tempId,
+      user_id: flow.userId,
+      group_id: conversationIdToSend,
+      sender_id: selectedAccount?.account_id || flow.userId,
+      sender_name: "Bạn",
+      timestamp_text: nowTimeText,
+      time_text: nowIso,
+      type: mediaToSend.length > 0 ? (mediaToSend[0].file.type.startsWith("image/") ? "image" : "file") : "text",
+      content: textToSend || null,
+      is_sent: true,
+      is_deleted: false,
+      assets: optimisticAssets,
+      reply_to_id: replyToSend?.message_id || null,
+      sending_status: "sending",
+    };
+
+    // Đẩy ngay vào danh sách tin nhắn và cuộn xuống đáy
+    setMessages((prev) => [...prev, optimisticMsg]);
+    pendingScrollRef.current = "bottom";
+
+    // Cập nhật ngay preview bên sidebar
+    setConversations((prev) =>
+      sortConversationsLikeZalo(
+        prev.map((c) =>
+          c.conversation_id === conversationIdToSend
+            ? {
+                ...c,
+                latest_message_at: nowIso,
+                latest_content: textToSend || (mediaToSend.length > 0 ? "[Hình ảnh/Tệp]" : "Tin nhắn mới"),
+                latest_sender_name: "Bạn",
+                has_messages: true,
+              }
+            : c
+        )
+      )
+    );
+
+    setIsSendingDirect(true);
 
     try {
       if (mediaToSend.length > 0) {
@@ -1425,25 +1541,48 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       mediaToSend.forEach((m) => {
         if (m.previewUrl) URL.revokeObjectURL(m.previewUrl);
       });
-      // Only refresh the chat if the user is still viewing the same conversation.
-      if (selectedConversationId === conversationIdToSend) {
-        await loadLatestMessages(conversationIdToSend, { silent: true });
-      }
+
+      // Xác nhận tin nhắn gửi thành công
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...m, sending_status: "sent" } : m))
+      );
     } catch (err) {
+      // Đánh dấu thất bại để user có thể thử lại
+      setMessages((prev) =>
+        prev.map((m) => (m.id === tempId ? { ...m, sending_status: "failed" } : m))
+      );
       if (isSessionExpiredError(err)) {
         setDirectSendError("Phiên đăng nhập Zalo đã hết hạn. Vui lòng đăng nhập lại để tiếp tục gửi tin.");
         void flow.refreshLoginStatus();
       } else {
         setDirectSendError(err instanceof Error ? err.message : "Không thể gửi tin nhắn.");
       }
-      setInputText(textToSend);
-      setPendingMentions(mentionsToSend);
-      setSelectedMedia(mediaToSend);
-      if (replyToSend) setReplyingTo(replyingTo);
     } finally {
       setIsSendingDirect(false);
     }
   };
+
+  const [confirmMessageAction, setConfirmMessageAction] = useState<{
+    type: "delete_for_me" | "recall";
+    message: ZaloLibraryMessage;
+  } | null>(null);
+
+  const handleDeleteConversation = useCallback(
+    async (conversationId: string) => {
+      if (!flow.userId || flow.userId === "default") return;
+      try {
+        await deleteZaloConversation(flow.userId, conversationId);
+        setConversations((prev) => prev.filter((c) => c.conversation_id !== conversationId));
+        if (selectedConversationId === conversationId) {
+          setSelectedConversationId(null);
+          setMessages([]);
+        }
+      } catch (err) {
+        setDirectSendError(err instanceof Error ? err.message : "Không thể xóa cuộc trò chuyện.");
+      }
+    },
+    [flow.userId, selectedConversationId]
+  );
 
   // ── Zalo tập trung: recall / friend-status / sticker / group-scan ────────────
 
@@ -1460,6 +1599,23 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       setDirectSendError(err instanceof Error ? err.message : "Không thể thu hồi tin nhắn.");
     }
   }, [flow.userId, selectedConversationId]);
+
+  const handleExecuteMessageAction = useCallback(async () => {
+    if (!confirmMessageAction || !selectedConversationId || !flow.userId) return;
+    const { type, message } = confirmMessageAction;
+    const mid = message.source_message_id || message.id;
+    setConfirmMessageAction(null);
+    try {
+      if (type === "recall") {
+        await handleRecallMessage(message);
+      } else {
+        await deleteZaloMessage(flow.userId, selectedConversationId, mid, false);
+        setMessages((prev) => prev.filter((m) => (m.source_message_id || m.id) !== mid));
+      }
+    } catch (err) {
+      setDirectSendError(err instanceof Error ? err.message : "Thao tác xóa tin nhắn thất bại.");
+    }
+  }, [confirmMessageAction, flow.userId, handleRecallMessage, selectedConversationId]);
 
   // UID Zalo thật của chính tài khoản đang dùng — suy từ sender_id của bất kỳ
   // tin CHÍNH MÌNH đã gửi trong hội thoại (không có API riêng trả "own id"
@@ -1978,6 +2134,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             onToggleHide={handleToggleHide}
             pinnedConversations={pinnedConversations}
             hiddenConversations={hiddenConversations}
+            onDeleteConversation={handleDeleteConversation}
           />
 
           {conversationError && (
@@ -2237,9 +2394,13 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               isSentByMe
                                 ? 'bg-[#0068FF] text-white rounded-tr-none shadow-sm shadow-blue-500/10'
                                 : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
-                            } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''}`}>
+                            } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${
+                              message.sending_status === "sending" ? "opacity-75" : ""
+                            } ${
+                              message.sending_status === "failed" ? "ring-2 ring-rose-400" : ""
+                            }`}>
 
-                              {/* Zalo tập trung: toolbar hover */}
+                              {/* Zalo tập trung: toolbar hover hiện đại */}
                               {!message.is_deleted && (message.source_message_id || message.id) && (
                               <div
                                 data-zalo-reaction-ui
@@ -2281,16 +2442,62 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                                     <MaterialIcon name="forward" className="text-[13px]" />
                                   </button>
                                 )}
-                                {isSentByMe && message.cli_msg_id && (
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleRecallMessage(message)}
-                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-red-600 shadow-sm"
-                                    title="Thu hồi tin nhắn"
-                                  >
-                                    <MaterialIcon name="delete" className="text-[13px]" />
-                                  </button>
-                                )}
+
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                      title="Thao tác khác"
+                                    >
+                                      <MoreVertical className="w-3.5 h-3.5" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align={isSentByMe ? "end" : "start"} className="w-48 bg-surface text-on-surface border border-outline-variant shadow-xl">
+                                    <DropdownMenuItem
+                                      onClick={() => setReplyingTo(message)}
+                                      className="gap-2 cursor-pointer text-xs"
+                                    >
+                                      <Reply className="w-3.5 h-3.5 text-slate-500" />
+                                      <span>Trả lời</span>
+                                    </DropdownMenuItem>
+                                    {message.content?.trim() && (
+                                      <DropdownMenuItem
+                                        onClick={() => handleCopyMessage(message)}
+                                        className="gap-2 cursor-pointer text-xs"
+                                      >
+                                        <Copy className="w-3.5 h-3.5 text-slate-500" />
+                                        <span>Sao chép</span>
+                                      </DropdownMenuItem>
+                                    )}
+                                    {(message.content?.trim() || assets.length > 0) && (
+                                      <DropdownMenuItem
+                                        onClick={() => setForwardingMessage(message)}
+                                        className="gap-2 cursor-pointer text-xs"
+                                      >
+                                        <Forward className="w-3.5 h-3.5 text-slate-500" />
+                                        <span>Chuyển tiếp</span>
+                                      </DropdownMenuItem>
+                                    )}
+                                    <DropdownMenuSeparator className="bg-outline-variant" />
+                                    <DropdownMenuItem
+                                      onClick={() => setConfirmMessageAction({ type: "delete_for_me", message })}
+                                      className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer text-xs"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <span>Xóa ở phía tôi</span>
+                                    </DropdownMenuItem>
+                                    {isSentByMe && message.cli_msg_id && !message.is_deleted && (
+                                      <DropdownMenuItem
+                                        onClick={() => setConfirmMessageAction({ type: "recall", message })}
+                                        className="gap-2 text-rose-600 focus:text-rose-600 focus:bg-rose-50 cursor-pointer text-xs"
+                                      >
+                                        <Undo2 className="w-3.5 h-3.5" />
+                                        <span>Thu hồi tin nhắn</span>
+                                      </DropdownMenuItem>
+                                    )}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               </div>
                             )}
                             {reactionPickerFor === msgId && (
@@ -2400,8 +2607,17 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               </div>
                             )}
 
-                            <div className={`text-[10px] mt-0.5 text-right font-medium ${isSentByMe ? 'text-blue-100' : 'text-on-surface-variant'}`}>
-                              {formatTime(message.timestamp_text || message.time_text)}
+                            <div className={`text-[10px] mt-0.5 flex items-center justify-end gap-1 font-medium ${isSentByMe ? 'text-blue-100' : 'text-on-surface-variant'}`}>
+                              {message.sending_status === "sending" && (
+                                <Loader2 className="w-2.5 h-2.5 animate-spin opacity-80" />
+                              )}
+                              {message.sending_status === "failed" && (
+                                <span className="inline-flex items-center gap-0.5 text-rose-300 font-semibold" title="Gửi thất bại">
+                                  <AlertCircle className="w-2.5 h-2.5 text-rose-300" />
+                                  Lỗi
+                                </span>
+                              )}
+                              <span>{formatTime(message.timestamp_text || message.time_text)}</span>
                             </div>
                           </div>
 
@@ -3262,6 +3478,48 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             <span>{newChatToast}</span>
           </div>
         </div>
+      )}
+
+      {/* Modal xác nhận Xóa ở phía tôi / Thu hồi tin nhắn */}
+      {confirmMessageAction && (
+        <Dialog
+          open={!!confirmMessageAction}
+          onOpenChange={(open) => !open && setConfirmMessageAction(null)}
+        >
+          <DialogContent className="sm:max-w-md bg-surface text-on-surface border border-outline-variant shadow-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base font-semibold">
+                {confirmMessageAction.type === "recall" ? (
+                  <>
+                    <Undo2 className="w-5 h-5 text-rose-600" />
+                    <span className="text-rose-600">Thu hồi tin nhắn</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-5 h-5 text-red-600" />
+                    <span className="text-red-600">Xóa ở phía tôi</span>
+                  </>
+                )}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-on-surface-variant leading-relaxed mt-2">
+                {confirmMessageAction.type === "recall"
+                  ? "Tin nhắn này sẽ bị thu hồi và xóa khỏi hộp thoại của cả hai phía trên Zalo. Bạn có chắc chắn muốn thu hồi không?"
+                  : "Tin nhắn này sẽ bị xóa khỏi giao diện và dữ liệu của bạn. Những người khác trong cuộc trò chuyện vẫn nhìn thấy tin nhắn này."}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:gap-0 mt-4">
+              <Button variant="outline" onClick={() => setConfirmMessageAction(null)}>
+                Hủy bỏ
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleExecuteMessageAction}
+              >
+                {confirmMessageAction.type === "recall" ? "Thu hồi" : "Xác nhận xóa"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
 
     </div>
