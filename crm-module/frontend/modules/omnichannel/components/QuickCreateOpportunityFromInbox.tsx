@@ -225,6 +225,16 @@ export function QuickCreateOpportunityFromInbox({
   const [resolvedDeal, setResolvedDeal] = useState<CustomerLeadRow | null>(null);
   const [resumeNote, setResumeNote] = useState('');
   const [createdDeal, setCreatedDeal] = useState<Deal | null>(null);
+  // Fix (2026-11-13, "xác minh lead là tạo cơ hội rồi k cần thêm bước tạo cơ
+  // hội nữa"): RPC crm_convert_lead() (chay luc "Chuyen thanh khach hang" -
+  // Buoc 3, gop chung man hinh voi Buoc 2 "Xac minh Lead") LUON tao san 1
+  // dong Deal that trong customer_leads (xem migration 188/153/078) - tra ve
+  // qua result.dealId/lead.convertedDealId. Truoc day gia tri nay bi BO QUA,
+  // Buoc 4 "Tao co hoi" (mode='deal') luon mo DealFormModal tao THEM 1 Deal
+  // MOI - trung lap voi Deal da co san tu luc convert (xac nhan that qua UI:
+  // dropdown "Cơ hội CRM" hien ca 2 Deal cho CUNG 1 Lead). Luu lai id de Buoc
+  // 4 mo thang Deal da co thay vi tao moi khi mode='deal'.
+  const [convertedDealId, setConvertedDealId] = useState<string | null>(null);
   const [resolvingLabel, setResolvingLabel] = useState('Đang kiểm tra Khách hàng/Lead đã có…');
   const seqRef = useRef(0);
   const finalPhase: Phase = mode === 'quote' ? 'quote-form' : mode === 'contract' ? 'contract-deal-check' : mode === 'find-customer' ? 'customer-linked' : 'deal-form';
@@ -239,6 +249,7 @@ export function QuickCreateOpportunityFromInbox({
     setResolveError('');
     setResumeNote('');
     setCreatedDeal(null);
+    setConvertedDealId(null);
 
     if (prefill.customerId) {
       setResolvedCustomer({
@@ -276,6 +287,14 @@ export function QuickCreateOpportunityFromInbox({
         setResolvedCustomer(customers[0]);
         setPhase(finalPhase);
       } else if (customers.length === 0 && leads.length === 1) {
+        routeLeadMatch(leads[0]);
+      } else if (customers.length === 1 && leads.length === 1 && leads[0].convertedCustomerId === customers[0].id) {
+        // Fix (2026-11-13, "2 này như nhau cho auto đi, 1 khách có 1 lead chứ mấy"):
+        // Lead nay CHINH LA Lead da convert ra dung Khach hang nay (FK that
+        // leads[0].convertedCustomerId === customers[0].id, khong phai doan theo
+        // SDT/ten) - khong phai 2 ho so khac nhau, chi la 2 lan xuat hien cua CUNG 1
+        // thuc the. Truoc day luon roi vao 'picker' bat nguoi dung tu chon du chi co
+        // dung 1 lua chon y nghia.
         routeLeadMatch(leads[0]);
       } else if (customers.length === 0 && leads.length === 0) {
         setPhase('lead-form');
@@ -386,13 +405,39 @@ export function QuickCreateOpportunityFromInbox({
     }
   }
 
+  /** Dieu huong vao Buoc 4 "Tao co hoi": neu mode='deal' VA da biet convertedDealId (Deal
+   * THAT da duoc crm_convert_lead() tao san luc convert Lead - xem comment o khai bao
+   * convertedDealId), mo thang Deal do (qua getDeal()) thay vi mo DealFormModal tao Deal
+   * MOI trung lap. Cac mode khac (quote/contract/find-customer) khong bi anh huong - giu
+   * nguyen finalPhase nhu truoc. */
+  async function proceedToDealStep(dealId: string | null) {
+    if (mode === 'deal' && dealId) {
+      setResolvingLabel('Đang mở Cơ hội đã tạo…');
+      setPhase('resolving');
+      try {
+        const deal = await seedingCrmRepository.getDeal(dealId);
+        setCreatedDeal(deal);
+        setPhase('deal-created');
+      } catch {
+        // Fallback an toan: fetch loi thi van cho tao Deal moi nhu luong cu.
+        setPhase(finalPhase);
+      }
+      return;
+    }
+    setPhase(finalPhase);
+  }
+
   /** Quyet dinh buoc tiep theo tu 1 Lead tim thay (resolve/picker) hoac vua tao (Buoc 1) -
    * trung tam cua logic "resume" + "khong tao Lead trung". */
   function routeLeadMatch(lead: CrmLeadRow, opts?: { justCreated?: boolean }) {
     setResolvedLead(lead);
     if (lead.convertedCustomerId) {
-      // Lead nay DA convert tu truoc (vd phien truoc dong popup sau Buoc 3, truoc khi
-      // tao Deal) - khong bat xac minh lai, vao thang Buoc 4.
+      // Lead nay DA convert tu truoc - khong bat xac minh lai, vao thang Buoc 4.
+      // Fix (2026-11-13): lead.convertedDealId (crm_convert_lead() LUON tao
+      // Deal luc convert) phai duoc luu lai de proceedToDealStep() mo thang
+      // Deal co san (mode='deal') thay vi tao Deal MOI trung lap - xem comment
+      // day du o khai bao convertedDealId.
+      setConvertedDealId(lead.convertedDealId || null);
       setResolvedCustomer({
         id: lead.convertedCustomerId,
         customerName: lead.companyName || lead.leadName || '',
@@ -401,7 +446,7 @@ export function QuickCreateOpportunityFromInbox({
         email: lead.email,
       });
       setResumeNote(mode === 'quote' ? 'Đã nhận diện Lead/Khách hàng có sẵn — tiếp tục tạo báo giá.' : 'Đã nhận diện Lead/Khách hàng có sẵn — tiếp tục tạo cơ hội.');
-      setPhase(finalPhase);
+      void proceedToDealStep(lead.convertedDealId || null);
       return;
     }
     if (opts?.justCreated) {
@@ -444,6 +489,10 @@ export function QuickCreateOpportunityFromInbox({
       phone: resolvedLead?.phone || prefill.phone,
       email: resolvedLead?.email || prefill.email,
     });
+    // Fix (2026-11-13): luu lai Deal THAT ma crm_convert_lead() da tao san luc convert -
+    // man hinh "customer-linked" duoi day se dung gia tri nay qua proceedToDealStep() de
+    // mo thang Deal nay thay vi tao Deal MOI trung lap khi bam "Tiep tuc".
+    setConvertedDealId(result.dealId || null);
     notifyDealsChanged();
     setPhase('customer-linked');
   }
@@ -616,9 +665,15 @@ export function QuickCreateOpportunityFromInbox({
 
   if (phase === 'customer-linked') {
     const isTerminal = mode === 'find-customer';
+    // Fix (2026-11-13): mode='deal' + da co convertedDealId (Deal THAT da duoc tao san luc
+    // convert Lead) -> buoc tiep theo la MO Deal do, khong phai "tao co hoi" nua.
+    const willOpenExistingDeal = mode === 'deal' && !!convertedDealId;
     const primaryLabel = isTerminal
       ? 'Hoàn tất'
-      : mode === 'quote' ? 'Tiếp tục tạo báo giá' : mode === 'contract' ? 'Tiếp tục tạo hợp đồng' : 'Tiếp tục tạo cơ hội';
+      : mode === 'quote' ? 'Tiếp tục tạo báo giá'
+      : mode === 'contract' ? 'Tiếp tục tạo hợp đồng'
+      : willOpenExistingDeal ? 'Tiếp tục xem Cơ hội'
+      : 'Tiếp tục tạo cơ hội';
     return (
       <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={handleClose}>
         <div className="crm-modal" style={{ maxWidth: 600, margin: '14vh auto', padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
@@ -627,7 +682,7 @@ export function QuickCreateOpportunityFromInbox({
             title="Đã tạo/liên kết khách hàng thành công."
             message={resolvedCustomer?.customerName ? `Khách hàng: ${resolvedCustomer.customerName}` : undefined}
             primaryLabel={primaryLabel}
-            onPrimary={isTerminal ? handleFindCustomerFinish : () => setPhase(finalPhase)}
+            onPrimary={isTerminal ? handleFindCustomerFinish : () => void proceedToDealStep(convertedDealId)}
             secondaryLabel={isTerminal ? (resolvedCustomer?.id ? 'Xem hồ sơ khách hàng' : undefined) : 'Đóng'}
             onSecondary={isTerminal
               ? (resolvedCustomer?.id ? () => {
@@ -643,12 +698,15 @@ export function QuickCreateOpportunityFromInbox({
   }
 
   if (phase === 'deal-created') {
+    // Fix (2026-11-13): khi den day qua proceedToDealStep() mo Deal DA CO SAN (khong tao
+    // moi), doi lai tieu de cho dung ban chat - tranh hieu lam la vua tao them 1 Deal.
+    const reusedExisting = mode === 'deal' && !!convertedDealId;
     return (
       <div className="crm-drawer-backdrop crm-lead-verify-backdrop" onClick={handleFinish}>
         <div className="crm-modal" style={{ maxWidth: 600, margin: '14vh auto', padding: 0, overflow: 'hidden' }} onClick={e => e.stopPropagation()}>
           <WizardStepper phase={phase} mode={mode} />
           <InterstitialScreen
-            title="Đã tạo cơ hội thành công."
+            title={reusedExisting ? 'Cơ hội đã có sẵn.' : 'Đã tạo cơ hội thành công.'}
             message={createdDeal?.customerName ? `Khách hàng: ${createdDeal.customerName}` : undefined}
             primaryLabel="Hoàn tất"
             onPrimary={handleFinish}
@@ -687,6 +745,14 @@ export function QuickCreateOpportunityFromInbox({
           defaultFormId={defaultQuoteFormId}
           quoteForms={quoteForms}
           initialCustomerId={resolvedCustomer?.id}
+          // Fix (2026-11-13, "báo giá crm chọn thẳng tt đã có sẵn thay vì dropdown tay
+          // chọn"): Lead/Khach hang vua resolve o cac buoc truoc co the da co san Deal
+          // (convertedDealId) - truyen thang vao de QuoteWorkspaceModal tu dien san Cơ hội
+          // nay, khong bat nguoi dung tu mo dropdown chon lai (nhat la khi khach hang do
+          // dang co >1 Deal do du lieu trung tu TRUOC khi fix bug #64, auto-chon-theo-so-
+          // luong=1 co san trong QuoteWorkspaceModal se khong tu chon duoc). Nguoi dung
+          // van co the doi lai qua dropdown neu muon, chi la khong con bi bat buoc.
+          initialDealId={convertedDealId || undefined}
           lockCustomer
           onClose={handleClose}
           onChanged={() => { onQuoteChanged?.(); }}
