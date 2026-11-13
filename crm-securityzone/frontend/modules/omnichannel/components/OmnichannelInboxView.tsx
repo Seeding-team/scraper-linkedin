@@ -42,6 +42,51 @@ import {
   QuickRepliesMockModal,
 } from "./OmnichannelMockModals";
 
+// Fix (2026-11-13, "vẫn chưa fill dc sđt... bên đa kênh chỗ omni á"): man
+// hinh Omnichannel hop nhat truoc day CHI lay prefill.phone tu
+// activeConversation.crmData?.phone (CHI co khi hoi thoai DA match san 1
+// Customer/Lead CRM) - khac han ZaloInboxAdminShell (man Zalo rieng) da co
+// activeConvPhone voi 2 fallback them (quet tin nhan tim so, tra cuu backend
+// getConversationPhone) tu fix truoc do (muc 61, thao/CRM_KNOWN_BUGS_FIXED.md).
+// 2 ham duoi day COPY y het tu ZaloInboxAdminShell.tsx (khong import cheo
+// giua 2 component o 2 module khac nhau, giu nguyen pattern duplicate nho co
+// san trong repo) de dung lai dung logic quet SDT trong text tin nhan.
+/** Chuẩn hóa và format số điện thoại dạng đẹp mắt: 0245 123 456 hoặc 0902 355 083 */
+function formatZaloPhoneDisplay(rawPhone?: string | null): string {
+  if (!rawPhone) return "";
+  let digits = rawPhone.replace(/\D/g, "");
+  if (digits.startsWith("84") && digits.length >= 10) {
+    digits = "0" + digits.slice(2);
+  }
+  if (!digits.startsWith("0")) return rawPhone.trim();
+  if (digits.length === 10) {
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  if (digits.length === 11) {
+    return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  }
+  return digits;
+}
+
+/** Trích xuất SĐT từ nội dung văn bản (tin nhắn dạng text) */
+function extractPhoneFromTextOrCard(text?: string | null): string | null {
+  if (!text) return null;
+  const pattern = /(?:(?:\+?84|0)[235789](?:[.\s-]?\d){8,9})/g;
+  const matches = text.match(pattern);
+  if (!matches) return null;
+  for (const m of matches) {
+    const digits = m.replace(/\D/g, "");
+    let clean = digits;
+    if (clean.startsWith("84") && clean.length >= 10) {
+      clean = "0" + clean.slice(2);
+    }
+    if ((clean.length === 10 || clean.length === 11) && clean.startsWith("0")) {
+      return clean;
+    }
+  }
+  return null;
+}
+
 export function OmnichannelInboxView() {
   const { user } = useAppAuth();
   const router = useRouter();
@@ -312,6 +357,59 @@ export function OmnichannelInboxView() {
       messages: !isPreviewMode && messages.length > 0 ? messages : found.messages,
     };
   }, [currentConversations, selectedConvId, filteredConversations, messages, isPreviewMode]);
+
+  // Fix (2026-11-13, "vẫn chưa fill dc sđt... bên đa kênh chỗ omni á") - dung
+  // y het thu tu uu tien cua ZaloInboxAdminShell.tsx: (1) crmData.phone da
+  // match san, (2) quet noi dung tin nhan dang text tim SDT, (3) tra cuu
+  // backend getConversationPhone (chi ap dung kenh Zalo, dung conversation id
+  // THAT - ConversationItem.id = c.conversation_id, xem mapZaloConversation
+  // trong OmnichannelRepository.ts). KHONG doi hanh vi cac kenh khac
+  // (email/facebook/telegram) - cac kenh do khong co endpoint tra cuu nay,
+  // activeConvPhone se rong, cac noi goi van fallback ve crmData?.phone nhu cu.
+  const [detectedPhoneMap, setDetectedPhoneMap] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (isPreviewMode) return;
+    const conv = activeConversation;
+    if (!conv || conv.channel !== "zalo") return;
+    if (conv.crmData?.phone) return; // (1) da co san, khong can quet/tra cuu them.
+    if (detectedPhoneMap[conv.id]) return; // da tra cuu/quet xong cho hoi thoai nay roi.
+
+    // (2) Quet tin nhan dang text truoc (dong bo, khong goi API).
+    for (const m of conv.messages || []) {
+      const extracted = extractPhoneFromTextOrCard(m.text);
+      if (extracted) {
+        const formatted = formatZaloPhoneDisplay(extracted);
+        if (formatted) {
+          setDetectedPhoneMap((prev) => ({ ...prev, [conv.id]: formatted }));
+          return;
+        }
+      }
+    }
+
+    // (3) Khong tim thay trong tin nhan da tai - tra cuu backend.
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await omnichannelRepository.getZaloConversationPhone(conv.id, conv.customerName);
+        if (!cancelled && data?.success && data?.phone) {
+          const formatted = formatZaloPhoneDisplay(data.phone);
+          if (formatted) setDetectedPhoneMap((prev) => ({ ...prev, [conv.id]: formatted }));
+        }
+      } catch {
+        // ignore network error - giu nguyen fallback crmData?.phone (co the rong).
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversation, isPreviewMode, detectedPhoneMap]);
+
+  const activeConvPhone = useMemo(() => {
+    const conv = activeConversation;
+    if (!conv) return "";
+    if (conv.crmData?.phone) return formatZaloPhoneDisplay(conv.crmData.phone);
+    return detectedPhoneMap[conv.id] || "";
+  }, [activeConversation, detectedPhoneMap]);
 
   // Prefill customer initial values extracted from active conversation context
   const initialCustomerValues = useMemo(() => {
@@ -1076,7 +1174,7 @@ export function OmnichannelInboxView() {
           onClose={() => setIsCreateDealOpen(false)}
           prefill={{
             name: activeConversation?.customerName,
-            phone: activeConversation?.crmData?.phone,
+            phone: activeConvPhone || activeConversation?.crmData?.phone,
             email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
             companyName: activeConversation?.crmData?.companyName,
             customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
@@ -1098,7 +1196,7 @@ export function OmnichannelInboxView() {
           onClose={() => setIsFindOrCreateCustomerOpen(false)}
           prefill={{
             name: activeConversation?.customerName,
-            phone: activeConversation?.crmData?.phone,
+            phone: activeConvPhone || activeConversation?.crmData?.phone,
             email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
             companyName: activeConversation?.crmData?.companyName,
             customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
@@ -1120,7 +1218,7 @@ export function OmnichannelInboxView() {
           onClose={() => setIsCreateContractOpen(false)}
           prefill={{
             name: activeConversation?.customerName,
-            phone: activeConversation?.crmData?.phone,
+            phone: activeConvPhone || activeConversation?.crmData?.phone,
             email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
             companyName: activeConversation?.crmData?.companyName,
             customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,
@@ -1281,7 +1379,7 @@ export function OmnichannelInboxView() {
           onClose={() => setIsCreateQuoteOpen(false)}
           prefill={{
             name: activeConversation?.customerName,
-            phone: activeConversation?.crmData?.phone,
+            phone: activeConvPhone || activeConversation?.crmData?.phone,
             email: activeConversation?.crmData?.email || activeConversation?.customerEmail,
             companyName: activeConversation?.crmData?.companyName,
             customerId: activeConversation?.crmData?.matched ? activeConversation.crmData.customerId : undefined,

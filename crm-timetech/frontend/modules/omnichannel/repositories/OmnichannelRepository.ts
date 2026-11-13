@@ -679,6 +679,25 @@ export class OmnichannelRepository {
     }
     return [];
   }
+
+  /** Fix (2026-11-13, "vẫn chưa fill dc sđt... bên đa kênh chỗ omni á") - tra
+   * cuu SDT 1 hoi thoai Zalo qua endpoint dung CHUNG voi ZaloInboxAdminShell.tsx
+   * (man Zalo rieng, da fix truoc do - muc 61 thao/CRM_KNOWN_BUGS_FIXED.md).
+   * Dat o day (khong phai 1 service rieng) vi OmnichannelInboxView.tsx chi
+   * goi API qua omnichannelRepository, giu dong nhat pattern voi cac method
+   * khac trong file nay. */
+  async getZaloConversationPhone(convId: string, name?: string): Promise<{ success: boolean; phone: string | null }> {
+    try {
+      const url = `${API_BASE_URL}/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone${name ? `?name=${encodeURIComponent(name)}` : ""}`;
+      const res = await fetch(url, { credentials: "include", headers: commonHeaders });
+      if (!res.ok) return { success: false, phone: null };
+      const data = await res.json();
+      return { success: Boolean(data?.success), phone: data?.phone || null };
+    } catch (e) {
+      console.warn("Failed to fetch Zalo conversation phone:", e);
+      return { success: false, phone: null };
+    }
+  }
 }
 
 export const omnichannelRepository = new OmnichannelRepository();
