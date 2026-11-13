@@ -2322,23 +2322,60 @@ export function ZaloInboxAdminShell() {
             inbox.openConv ? "flex" : "hidden lg:flex"
           )}
         >
-          {/* Session Banner Warning */}
-          {inbox.selectedAccountId && (accountStatus === "expired" || accountStatus === "offline") && (
-            <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-xs text-amber-800 flex-shrink-0">
+          {/* Session Banner States: expired vs offline vs connecting */}
+          {inbox.selectedAccountId && accountStatus === "expired" && (
+            <div className="bg-rose-50 border-b border-rose-200 px-4 py-2 flex items-center justify-between text-xs text-rose-800 flex-shrink-0">
               <span className="flex items-center gap-1.5 font-semibold">
-                <MaterialIcon name="warning" className="text-amber-500 text-base" />
+                <MaterialIcon name="error" className="text-rose-600 text-base" />
                 {canManageAccountAuth
-                  ? "Tài khoản này chưa đăng nhập hoặc đã hết phiên. Vui lòng đăng nhập lại."
-                  : "Tài khoản của nhân viên đang offline / hết phiên."}
+                  ? "Phiên đăng nhập Zalo của tài khoản này đã hết hạn hoặc bị đăng xuất. Vui lòng đăng nhập lại."
+                  : "Tài khoản của nhân viên đã hết phiên đăng nhập."}
               </span>
               {canManageAccountAuth && (
                 <button
                   onClick={() => setShowAuthModal(true)}
-                  className="bg-amber-600 hover:bg-amber-700 text-white font-bold px-3 py-1 rounded-xl text-xs transition shadow-xs"
+                  className="bg-rose-600 hover:bg-rose-700 text-white font-bold px-3 py-1 rounded-xl text-xs transition shadow-xs flex items-center gap-1"
                 >
+                  <MaterialIcon name="login" className="text-sm" />
                   Đăng nhập lại
                 </button>
               )}
+            </div>
+          )}
+
+          {inbox.selectedAccountId && accountStatus === "offline" && (
+            <div className="bg-amber-50/80 border-b border-amber-200/80 px-4 py-2 flex items-center justify-between text-xs text-amber-800 flex-shrink-0">
+              <span className="flex items-center gap-1.5 font-medium">
+                <MaterialIcon name="warning_amber" className="text-amber-500 text-base" />
+                <span>Tài khoản đang tạm ngắt kết nối nền (tin nhắn mới có thể cập nhật chậm hơn bình thường).</span>
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void inbox.reconnectAccount(inbox.selectedAccountId)}
+                  disabled={inbox.isReconnecting}
+                  className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold px-3 py-1 rounded-xl text-xs transition shadow-xs flex items-center gap-1"
+                >
+                  <MaterialIcon name="refresh" className={cn("text-sm", inbox.isReconnecting && "animate-spin")} />
+                  {inbox.isReconnecting ? "Đang kết nối..." : "Kết nối lại"}
+                </button>
+                {canManageAccountAuth && (
+                  <button
+                    onClick={() => setShowAuthModal(true)}
+                    className="text-amber-700 hover:text-amber-900 underline text-xs px-1"
+                  >
+                    Quét QR mới
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {inbox.selectedAccountId && accountStatus === "connecting" && (
+            <div className="bg-sky-50 border-b border-sky-200 px-4 py-1.5 flex items-center justify-between text-xs text-sky-800 flex-shrink-0">
+              <span className="flex items-center gap-1.5 font-medium">
+                <MaterialIcon name="sync" className="text-sky-500 text-base animate-spin" />
+                <span>Đang kết nối tài khoản Zalo với máy chủ...</span>
+              </span>
             </div>
           )}
 

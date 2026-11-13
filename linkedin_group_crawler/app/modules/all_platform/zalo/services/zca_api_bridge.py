@@ -21,12 +21,22 @@ _AUTH_EXPIRED_MARKERS = (
     "đăng nhập thất bại",
     "logincookie",
     "login failed",
+    "login_failed",
     "not logged in",
     "session expired",
+    "session_expired",
     "zpw_enk",
     "invalid cookie",
     "cookie expired",
-    "401",
+    "improperly submitted",
+    "phiên đăng nhập hết hạn",
+    "hết hạn đăng nhập",
+    "vui lòng đăng nhập lại",
+    "unauthorized",
+    "status: 401",
+    "status 401",
+    "code: 401",
+    "http 401",
 )
 
 # Các lệnh phức tạp cần listener riêng — không dùng được qua persistent server

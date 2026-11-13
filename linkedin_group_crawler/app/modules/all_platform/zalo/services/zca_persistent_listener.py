@@ -257,23 +257,33 @@ async def _enrich_image_urls(message: "Message", auth: Dict[str, Any]) -> "Messa
         logger.debug(f"CDN image enrichment failed for message {message.message_id}: {exc}")
     return message
 
-# Marker cho biết cookie/session Zalo đã hết hạn — không cố restart vô ích nữa.
+# Marker cho biết cookie/session Zalo thật sự đã hết hạn — không cố restart vô ích nữa.
 _AUTH_EXPIRED_MARKERS = (
     "đăng nhập thất bại",
     "logincookie",
     "login failed",
     "login_failed",
     "session expired",
+    "session_expired",
     "not logged in",
     "invalid cookie",
     "cookie expired",
-    "error_code",
+    "zpw_enk",
     "improperly submitted",
+    "phiên đăng nhập hết hạn",
+    "hết hạn đăng nhập",
+    "vui lòng đăng nhập lại",
+    "unauthorized",
+    "status: 401",
+    "status 401",
+    "code: 401",
 )
 
 
 def _looks_like_auth_expired(text: Optional[str]) -> bool:
-    lowered = (text or "").lower()
+    if not text:
+        return False
+    lowered = text.lower()
     return any(marker in lowered for marker in _AUTH_EXPIRED_MARKERS)
 
 
@@ -398,6 +408,7 @@ class ZcaPersistentListenerManager:
         self._states: Dict[str, ListenerState] = {}
         self._lock = asyncio.Lock()
         self._cache: Dict[Tuple[str, str], Dict[str, Message]] = {}
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     async def start_listener(
         self,
@@ -456,7 +467,33 @@ class ZcaPersistentListenerManager:
             except Exception as exc:
                 logger.warning(f"Could not start persisted ZCA listener for user={user_id}: {exc}")
 
+        # Khởi chạy watchdog chạy ngầm định kỳ để tự động phục hồi listener khi bị rớt mạng / ngắt tạm
+        if self._watchdog_task is None or self._watchdog_task.done():
+            self._watchdog_task = asyncio.create_task(self._run_watchdog())
+
+    async def _run_watchdog(self) -> None:
+        """Periodic watchdog để tự động kết nối lại các listener bị ngắt tạm thời."""
+        while True:
+            try:
+                await asyncio.sleep(60.0)
+                for user_id in await list_zca_auth_users():
+                    st = self.status(user_id)
+                    if not st.get("running") and not st.get("auth_expired"):
+                        auth = await load_zca_auth(user_id)
+                        if auth:
+                            logger.info(f"ZCA Watchdog: auto-restarting disconnected listener for user={user_id}")
+                            try:
+                                await self.start_listener(user_id, auth)
+                            except Exception as exc:
+                                logger.debug(f"ZCA Watchdog restart failed for user={user_id}: {exc}")
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning(f"ZCA Watchdog error: {exc}")
+
     async def shutdown(self) -> None:
+        if self._watchdog_task and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
         async with self._lock:
             states = list(self._states.values())
         for state in states:

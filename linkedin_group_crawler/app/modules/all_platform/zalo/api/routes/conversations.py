@@ -60,6 +60,10 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     add_zca_reaction,
     search_zca_stickers,
 )
+from app.modules.all_platform.zalo.services.zca_persistent_listener import (
+    get_listener_status,
+    restart_listener,
+)
 from app.core.phone import vn_phone_to_e164
 
 router = APIRouter(
@@ -1083,6 +1087,14 @@ async def send_message_to_conversation(
     # Tự động lưu vết người gửi để tính KPI Inbox Zalo chuẩn xác
     await _auto_track_zalo_conversation_sender(user_id, conversation_id.strip(), x_caller_email)
 
+    # Tự động kiểm tra và đánh thức listener nền nếu chưa chạy để nhận ngay tin nhắn trả lời
+    try:
+        listener_info = get_listener_status(user_id)
+        if not listener_info.get("running") and not listener_info.get("auth_expired"):
+            asyncio.create_task(restart_listener(user_id))
+    except Exception:
+        pass
+
     return SendMessageResponse(
         ok=True,
         conversation_id=conversation_id,
@@ -1226,6 +1238,14 @@ async def send_media_to_conversation(
         )
         await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
         await _auto_track_zalo_conversation_sender(user_id, conversation_id.strip(), x_caller_email)
+
+        # Tự động kiểm tra và đánh thức listener nền nếu chưa chạy để nhận ngay tin nhắn trả lời
+        try:
+            listener_info = get_listener_status(user_id)
+            if not listener_info.get("running") and not listener_info.get("auth_expired"):
+                asyncio.create_task(restart_listener(user_id))
+        except Exception:
+            pass
 
         return SendMessageResponse(
             ok=True,

@@ -20,6 +20,7 @@ import {
   getZaloGroupMembers,
   sendZaloSticker,
   reactToZaloMessage,
+  restartZaloAccountListener,
   type BuildZaloRealtimeStreamOptions,
   type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
@@ -439,6 +440,26 @@ export function useZaloAdminInbox() {
   // ─────────────────────────────────────────────────────────────────────────────
   // Select account → load conversations
   // ─────────────────────────────────────────────────────────────────────────────
+  const [isReconnecting, setIsReconnecting] = useState(false);
+
+  const reconnectAccount = useCallback(async (accountId?: string) => {
+    const targetId = accountId || selectedAccountIdRef.current;
+    if (!targetId) return;
+    setIsReconnecting(true);
+    try {
+      await restartZaloAccountListener(targetId);
+      showToast("Đang kết nối lại tài khoản Zalo...", true);
+      // Đợi ngắn để tiến trình nền Node khởi động và kết nối WebSocket
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await loadMemberAccounts();
+      showToast("Đã gửi tín hiệu kết nối lại tài khoản Zalo thành công!", true);
+    } catch (err: any) {
+      showToast(`Không thể kết nối lại: ${err?.message || "Lỗi máy chủ"}`, false);
+    } finally {
+      setIsReconnecting(false);
+    }
+  }, [showToast, loadMemberAccounts]);
+
   const onSelectAccount = useCallback((accountId: string) => {
     let ownerId = "";
     for (const group of memberAccounts) {
@@ -452,7 +473,16 @@ export function useZaloAdminInbox() {
     setSelectedConvId("");
     setMessages([]);
     setConversations([]);
-  }, [memberAccounts]);
+
+    // Tự động đánh thức / kết nối lại listener nền nếu tài khoản đang offline và chưa hết hạn
+    if (accountId && !onlineAccounts.has(accountId) && !expiredAccounts.has(accountId)) {
+      restartZaloAccountListener(accountId)
+        .then(() => {
+          setTimeout(() => { void loadMemberAccounts(); }, 1500);
+        })
+        .catch(() => {});
+    }
+  }, [memberAccounts, onlineAccounts, expiredAccounts, loadMemberAccounts]);
 
   const loadConversations = useCallback(async (accountId: string) => {
     if (!accountId) return;
@@ -934,7 +964,16 @@ export function useZaloAdminInbox() {
         window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
       }
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : "Gửi tin nhắn thất bại");
+      const rawMsg = e instanceof Error ? e.message : "Gửi tin nhắn thất bại";
+      let userFriendlyMsg = rawMsg;
+      if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
+        userFriendlyMsg = "Phiên đăng nhập Zalo của tài khoản này đã hết hạn hoặc bị đăng xuất. Vui lòng mở Chrome Extension để đăng nhập lại!";
+      } else if (rawMsg.includes("502") || rawMsg.includes("504") || rawMsg.includes("Bad Gateway") || rawMsg.includes("tạm ngắt")) {
+        userFriendlyMsg = "Máy chủ hoặc tiến trình Zalo tạm ngắt kết nối. Đang thử kích hoạt lại...";
+        if (accId) void restartZaloAccountListener(accId).catch(() => {});
+      }
+      setSendError(userFriendlyMsg);
+      showToast(userFriendlyMsg, false);
       setReply(text); // restore
     } finally {
       setIsSending(false);
@@ -987,6 +1026,9 @@ export function useZaloAdminInbox() {
       let userFriendlyMsg = rawMsg;
       if (rawMsg.includes("zca_session_expired") || rawMsg.includes("hết hạn") || rawMsg.includes("đăng xuất")) {
         userFriendlyMsg = "Phiên đăng nhập Zalo của tài khoản này đã hết hạn hoặc bị đăng xuất. Vui lòng mở Chrome Extension để đăng nhập lại!";
+      } else if (rawMsg.includes("502") || rawMsg.includes("504") || rawMsg.includes("Bad Gateway") || rawMsg.includes("tạm ngắt")) {
+        userFriendlyMsg = "Máy chủ hoặc tiến trình Zalo tạm ngắt kết nối. Đang thử kích hoạt lại...";
+        if (accId) void restartZaloAccountListener(accId).catch(() => {});
       }
       setSendError(userFriendlyMsg);
       showToast(userFriendlyMsg, false);
@@ -1365,6 +1407,8 @@ export function useZaloAdminInbox() {
     setTargetDate,
     isBulkVerifying,
     isBulkSuggesting,
+    isReconnecting,
+    reconnectAccount,
 
     // Toast
     toast,

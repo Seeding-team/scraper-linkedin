@@ -306,21 +306,35 @@ async function requestJson<TResponse>(
     if (timeoutId) globalThis.clearTimeout(timeoutId);
   }
 
-  const payload = (await response.json()) as TResponse;
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  const rawText = await response.text();
+  let payload: any = null;
+
+  if (rawText) {
+    if (contentType.includes("application/json") || rawText.trim().startsWith("{") || rawText.trim().startsWith("[")) {
+      try {
+        payload = JSON.parse(rawText);
+      } catch {
+        payload = null;
+      }
+    }
+  }
 
   if (!response.ok) {
     const errorPayload = payload as
-      | { message?: unknown; detail?: unknown }
+      | { message?: unknown; detail?: unknown; error?: unknown }
       | undefined;
     const normalizeErrorValue = (value: unknown): string => {
       if (typeof value === "string") return value.trim();
       if (!value) return "";
       if (typeof value === "object") {
-        const objectValue = value as { message?: unknown; detail?: unknown };
+        const objectValue = value as { message?: unknown; detail?: unknown; error?: unknown };
         const nestedMessage = normalizeErrorValue(objectValue.message);
         if (nestedMessage) return nestedMessage;
         const nestedDetail = normalizeErrorValue(objectValue.detail);
         if (nestedDetail) return nestedDetail;
+        const nestedErr = normalizeErrorValue(objectValue.error);
+        if (nestedErr) return nestedErr;
         try {
           return JSON.stringify(value);
         } catch {
@@ -329,17 +343,42 @@ async function requestJson<TResponse>(
       }
       return String(value).trim();
     };
-    const backendMessage =
-      normalizeErrorValue(errorPayload?.message) || normalizeErrorValue(errorPayload?.detail);
+
+    let backendMessage =
+      normalizeErrorValue(errorPayload?.message) ||
+      normalizeErrorValue(errorPayload?.detail) ||
+      normalizeErrorValue(errorPayload?.error);
+
+    // If server returned an HTML error page (e.g. Nginx 502/504 or 500)
+    if (!backendMessage && rawText) {
+      const match = rawText.match(/<title>([^<]+)<\/title>/i);
+      if (match && match[1]) {
+        backendMessage = match[1].trim();
+      } else if (response.status === 502) {
+        backendMessage = "502 Bad Gateway - Máy chủ hoặc tiến trình Zalo tạm ngắt kết nối";
+      } else if (response.status === 504) {
+        backendMessage = "504 Gateway Timeout - Quá thời gian phản hồi từ máy chủ";
+      } else if (response.status === 500) {
+        backendMessage = "500 Internal Server Error - Lỗi nội bộ máy chủ";
+      }
+    }
 
     throw new Error(
       backendMessage
-        ? `API ${response.status}: ${backendMessage}`
-        : `API ${response.status}: ${response.statusText}`,
+        ? (backendMessage.startsWith("API ") ? backendMessage : `API ${response.status}: ${backendMessage}`)
+        : `API ${response.status}: ${response.statusText || "Máy chủ phản hồi lỗi"}`,
     );
   }
 
-  return payload;
+  // If response.ok was true but the response body was unexpectedly not JSON
+  if (payload === null && rawText && !contentType.includes("application/json")) {
+    if (rawText.trim().startsWith("<")) {
+      const match = rawText.match(/<title>([^<]+)<\/title>/i);
+      throw new Error(`Máy chủ trả về HTML thay vì JSON (${match ? match[1] : `HTTP ${response.status}`})`);
+    }
+  }
+
+  return (payload ?? (rawText ? (rawText as unknown as TResponse) : ({} as TResponse))) as TResponse;
 }
 
 export function initZaloAuthSession(
