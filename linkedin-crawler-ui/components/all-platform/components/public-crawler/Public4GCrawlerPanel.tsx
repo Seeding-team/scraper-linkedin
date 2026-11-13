@@ -949,12 +949,18 @@ export function Public4GCrawlerPanel() {
               <span
                 className={cn(
                   "px-1.5 py-0.5 rounded text-[10px] font-black",
-                  runtime.current_platform === "threads"
-                    ? "bg-purple-100 text-purple-800"
-                    : "bg-sky-100 text-sky-800",
+                  runtime.current_platform === "both"
+                    ? "bg-gradient-to-r from-sky-100 to-purple-100 text-purple-900 border border-purple-200"
+                    : runtime.current_platform === "threads"
+                      ? "bg-purple-100 text-purple-800"
+                      : "bg-sky-100 text-sky-800",
                 )}
               >
-                {runtime.current_platform === "threads" ? "THREADS" : "FACEBOOK"}
+                {runtime.current_platform === "both"
+                  ? "⚡ SONG SONG: FB + THREADS"
+                  : runtime.current_platform === "threads"
+                    ? "THREADS"
+                    : "FACEBOOK"}
               </span>
             )}
           </div>
@@ -970,7 +976,9 @@ export function Public4GCrawlerPanel() {
               )}
             />
             {isRunning
-              ? `${runtime?.current_platform === "threads" ? "Threads" : "FB"} (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
+              ? runtime?.current_platform === "both"
+                ? `⚡ Song Song (FB + Threads) · (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
+                : `${runtime?.current_platform === "threads" ? "Threads" : "FB"} (${runtime?.completed_groups ?? 0}/${runtime?.total_groups ?? 0})`
               : runtime?.continuous_waiting
                 ? `Chuyển pha → ${runtime?.next_platform === "threads" ? "Threads AI" : "Facebook"}...`
                 : runtime?.auto_pause_reason === "proxy_expired"
@@ -1123,6 +1131,18 @@ export function Public4GCrawlerPanel() {
                     </button>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                    {sim.platform && (
+                      <span
+                        className={cn(
+                          "px-2 py-0.5 rounded font-black border uppercase tracking-wider",
+                          sim.platform === "facebook"
+                            ? "bg-sky-100 text-sky-800 border-sky-300"
+                            : "bg-purple-100 text-purple-800 border-purple-300",
+                        )}
+                      >
+                        {sim.platform === "facebook" ? "🎯 CHUYÊN FB (:4434)" : "🎯 CHUYÊN THREADS (:4554)"}
+                      </span>
+                    )}
                     <span
                       className={cn(
                         "px-2 py-0.5 rounded font-bold border",

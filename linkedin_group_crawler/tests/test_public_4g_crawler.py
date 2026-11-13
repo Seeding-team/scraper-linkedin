@@ -1754,3 +1754,76 @@ def test_dedicated_platform_proxy_routing_facebook_and_threads(monkeypatch):
     assert snap[1]["platform"] == "threads"
 
 
+def test_parallel_24h_concurrent_facebook_and_threads_execution(monkeypatch):
+    """Verify that when 2 dedicated proxies are configured (FB on :4434, Threads on :4554),
+    start_run(platform='auto') launches both Facebook and Threads loops in PARALLEL simultaneously."""
+    import asyncio
+    from app.modules.all_platform.services.public_4g_crawler_service import PublicCrawlOrchestrator
+
+    orch = PublicCrawlOrchestrator()
+    proxies = [
+        "http://stanford8630:Markeeai@123!@103.216.74.218:4434",
+        "http://clarabreiten180:Markeeai@123!@103.216.74.218:4554",
+    ]
+
+    cfg = {
+        "id": "default",
+        "enabled": True,
+        "cycle_interval_min": 0,
+        "proxy_urls": proxies,
+        "groups_per_ip_rotate": 6,
+        "threads_keyword_target": 2,
+    }
+    monkeypatch.setattr(orch, "get_config_sync", lambda: cfg)
+    monkeypatch.setattr(orch, "_create_run_record_sync", lambda **kw: f"run-{kw.get('platform')}")
+    monkeypatch.setattr(orch, "_finish_run_record_sync", lambda **kw: None)
+
+    fb_groups = [
+        {"id": "g1", "group_name": "Group 1", "group_url": "https://facebook.com/groups/g1", "visibility": "public"}
+    ]
+    monkeypatch.setattr(orch, "_select_due_groups_sync", lambda **kw: fb_groups)
+
+    async def _mock_evolve(**kw):
+        return {"keywords": ["thiet ke web", "landing page"], "meta": {"items": []}}
+
+    monkeypatch.setattr("app.modules.all_platform.services.threads_keyword_service.evolve_and_select_keywords", _mock_evolve)
+
+    fb_processed = []
+    threads_processed = []
+
+    async def _mock_fb_fetcher(*args, **kwargs):
+        fb_processed.append(kwargs)
+        return {"status": "ok", "posts_saved": 5, "elapsed_ms": 100}
+
+    async def _mock_threads_fetcher(*args, **kwargs):
+        threads_processed.append(kwargs)
+        return {"status": "ok", "posts_saved": 3, "elapsed_ms": 120}
+
+    async def _test():
+        res = await orch.start_run(
+            platform="auto",
+            continuous=False,
+            attempt_fetcher=_mock_fb_fetcher,
+            threads_attempt_fetcher=_mock_threads_fetcher,
+            limit_groups=2,
+        )
+        assert res["started"] is True
+        assert res["mode"] == "parallel"
+        assert res["platforms"] == ["facebook", "threads"]
+        assert res["current_platform"] == "both"
+
+        # Wait for both lane tasks to complete
+        assert orch._task_fb is not None
+        assert orch._task_threads is not None
+        await asyncio.gather(orch._task_fb, orch._task_threads)
+
+        status = await orch.get_status()
+        runtime = status["runtime"]
+        assert runtime["parallel_mode"] is False
+        assert len(fb_processed) >= 1
+        assert len(threads_processed) >= 1
+
+    asyncio.run(_test())
+
+
+

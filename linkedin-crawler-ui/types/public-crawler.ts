@@ -40,9 +40,29 @@ export interface PublicCrawlRuntime {
   auto_pause_reason?: string | null;
   proxy_expired_error?: string | null;
   continuous_waiting?: boolean;
-  current_platform?: "facebook" | "threads";
+  current_platform?: "facebook" | "threads" | "both";
   next_platform?: "facebook" | "threads";
   last_completed_platform?: "facebook" | "threads" | null;
+  parallel_mode?: boolean;
+  facebook?: {
+    is_running: boolean;
+    active_run_id?: string | null;
+    loop_round?: number;
+    waiting?: boolean;
+    total_groups?: number;
+    completed_groups?: number;
+    posts_saved?: number;
+  };
+  threads?: {
+    is_running: boolean;
+    active_run_id?: string | null;
+    loop_round?: number;
+    waiting?: boolean;
+    total_groups?: number;
+    completed_groups?: number;
+    posts_saved?: number;
+    active_threads_keywords?: ThreadsKeywordStatItem[];
+  };
   active_threads_keywords?: ThreadsKeywordStatItem[];
   threads_keyword_meta?: {
     total_active?: number;
@@ -64,6 +84,7 @@ export interface PublicCrawlRuntime {
 export interface PublicSimNodeRuntime {
   id: string;
   label: string;
+  platform?: "facebook" | "threads" | string | null;
   hasSocks: boolean;
   hasConsole?: boolean;
   autoRotating?: boolean;

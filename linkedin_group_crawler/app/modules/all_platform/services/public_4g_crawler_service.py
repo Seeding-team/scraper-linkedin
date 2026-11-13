@@ -2180,6 +2180,34 @@ class PublicCrawlOrchestrator:
         self.started_at: str | None = None
         self._active_task: asyncio.Task[Any] | None = None
         self._next_round_task: asyncio.Task[Any] | None = None
+        self._task_fb: asyncio.Task[Any] | None = None
+        self._task_threads: asyncio.Task[Any] | None = None
+        self._waiting_fb: bool = False
+        self._waiting_threads: bool = False
+        self.loop_round_fb: int = 0
+        self.loop_round_threads: int = 0
+        self.active_run_id_fb: str | None = None
+        self.active_run_id_threads: str | None = None
+        self._stats_fb: dict[str, Any] = {
+            "total_groups": 0,
+            "completed_groups": 0,
+            "groups_ok": 0,
+            "groups_failed": 0,
+            "groups_private": 0,
+            "posts_saved": 0,
+            "ip_rotations": 0,
+            "avg_ms_per_group": 0,
+        }
+        self._stats_threads: dict[str, Any] = {
+            "total_groups": 0,
+            "completed_groups": 0,
+            "groups_ok": 0,
+            "groups_failed": 0,
+            "groups_private": 0,
+            "posts_saved": 0,
+            "ip_rotations": 0,
+            "avg_ms_per_group": 0,
+        }
         self._continuous_waiting: bool = False
         self._continuous_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None
         self._continuous_threads_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None
@@ -2618,25 +2646,75 @@ class PublicCrawlOrchestrator:
         cfg = await asyncio.to_thread(self.get_config_sync)
         recent_runs = await asyncio.to_thread(self.get_recent_runs_sync, 12)
         sims = self.rotator.snapshot_nodes(cfg.get("proxy_urls"))
+
+        is_fb_active = bool(self._task_fb and not self._task_fb.done())
+        is_th_active = bool(self._task_threads and not self._task_threads.done())
+        effective_running = is_fb_active or is_th_active or self.is_running
+        effective_waiting = self._continuous_waiting or self._waiting_fb or self._waiting_threads
+
+        if is_fb_active and is_th_active:
+            cur_platform = "both"
+        elif is_th_active:
+            cur_platform = "threads"
+        elif is_fb_active:
+            cur_platform = "facebook"
+        else:
+            cur_platform = self.current_platform or "facebook"
+
+        if is_fb_active or is_th_active:
+            merged_stats = {
+                "total_groups": self._stats_fb["total_groups"] + self._stats_threads["total_groups"],
+                "completed_groups": self._stats_fb["completed_groups"] + self._stats_threads["completed_groups"],
+                "groups_ok": self._stats_fb["groups_ok"] + self._stats_threads["groups_ok"],
+                "groups_failed": self._stats_fb["groups_failed"] + self._stats_threads["groups_failed"],
+                "groups_private": self._stats_fb["groups_private"] + self._stats_threads["groups_private"],
+                "posts_saved": self._stats_fb["posts_saved"] + self._stats_threads["posts_saved"],
+                "ip_rotations": self._stats_fb["ip_rotations"] + self._stats_threads["ip_rotations"],
+                "avg_ms_per_group": self._stats["avg_ms_per_group"],
+            }
+        else:
+            merged_stats = dict(self._stats)
+
         return {
             "config": self.mask_config_for_api(cfg),
             "runtime": {
-                "is_running": self.is_running,
+                "is_running": effective_running,
                 "stop_requested": self.stop_requested,
-                "active_run_id": self.active_run_id,
+                "active_run_id": self.active_run_id_fb or self.active_run_id_threads or self.active_run_id,
+                "active_run_id_fb": self.active_run_id_fb,
+                "active_run_id_threads": self.active_run_id_threads,
                 "started_at": self.started_at,
-                "loop_round": self.loop_round,
+                "loop_round": max(self.loop_round_fb, self.loop_round_threads, self.loop_round),
+                "loop_round_fb": self.loop_round_fb,
+                "loop_round_threads": self.loop_round_threads,
                 "last_round_finished_at": self.last_round_finished_at,
                 "new_groups_detected": self.new_groups_detected,
                 "auto_pause_reason": self.auto_pause_reason,
                 "proxy_expired_error": self.proxy_expired_error,
-                "continuous_waiting": self._continuous_waiting,
-                "current_platform": self.current_platform,
+                "continuous_waiting": effective_waiting,
+                "current_platform": cur_platform,
                 "next_platform": self.next_platform,
                 "last_completed_platform": self.last_completed_platform,
+                "parallel_mode": bool(is_fb_active and is_th_active),
+                "facebook": {
+                    "is_running": is_fb_active,
+                    "active_run_id": self.active_run_id_fb,
+                    "loop_round": self.loop_round_fb,
+                    "waiting": self._waiting_fb,
+                    **self._stats_fb,
+                },
+                "threads": {
+                    "is_running": is_th_active,
+                    "active_run_id": self.active_run_id_threads,
+                    "loop_round": self.loop_round_threads,
+                    "waiting": self._waiting_threads,
+                    "active_threads_keywords": self.active_threads_keywords[:50],
+                    "threads_keyword_meta": self.threads_keyword_meta,
+                    **self._stats_threads,
+                },
                 "active_threads_keywords": self.active_threads_keywords[:50],
                 "threads_keyword_meta": self.threads_keyword_meta,
-                **self._stats,
+                **merged_stats,
             },
             "sims": sims,
             "recent_runs": recent_runs,
@@ -2728,7 +2806,16 @@ class PublicCrawlOrchestrator:
         continuous: bool | None = None,
         platform: str = "auto",
     ) -> dict[str, Any]:
-        if self.is_running:
+        is_fb_active = bool(self._task_fb and not self._task_fb.done())
+        is_th_active = bool(self._task_threads and not self._task_threads.done())
+        is_active_task = bool(self._active_task and not self._active_task.done())
+        if is_fb_active and is_th_active:
+            return {
+                "started": False,
+                "reason": "already_running",
+                "active_run_id": self.active_run_id_fb or self.active_run_id_threads or self.active_run_id,
+            }
+        if is_active_task or (self.is_running and not (is_fb_active or is_th_active)):
             return {
                 "started": False,
                 "reason": "already_running",
@@ -2773,6 +2860,76 @@ class PublicCrawlOrchestrator:
                     ),
                 }
             sims = [SimNodeRuntime(id="direct-local", label="Direct Guest (Dev)", status="idle")]
+
+        # Check if we have dedicated proxies for both platforms to run in parallel
+        fb_sims = [s for s in sims if getattr(s, "platform", None) == "facebook"]
+        threads_sims = [s for s in sims if getattr(s, "platform", None) == "threads"]
+        can_run_parallel = bool(fb_sims and threads_sims) and not group_ids and not keywords
+
+        if can_run_parallel and platform in {"auto", "both"}:
+            is_continuous = (
+                bool(not group_ids and cfg.get("enabled") and cfg_interval == 0)
+                if continuous is None
+                else bool(continuous and not group_ids)
+            )
+
+            self.stop_requested = False
+            self.is_running = True
+            self.started_at = _utc_now_iso()
+            self.current_platform = "both"
+
+            self.append_log(
+                "info",
+                "orchestrator",
+                (
+                    f"🚀 [CHẠY SONG SONG 24/24] Kích hoạt đồng thời 2 luồng độc lập: "
+                    f"Proxy FB #01 ({fb_sims[0].id} :4434) quét nhóm Facebook Public ⟷ "
+                    f"Proxy Threads #02 ({threads_sims[0].id} :4554) quét 30 từ khóa Threads No-Acc!"
+                ),
+            )
+
+            if not is_fb_active:
+                self._task_fb = asyncio.create_task(
+                    self._run_platform_continuous_loop(
+                        platform="facebook",
+                        active_sims=fb_sims,
+                        config=cfg,
+                        group_ids=None,
+                        keywords=None,
+                        limit_groups=limit_groups,
+                        attempt_fetcher=attempt_fetcher,
+                        continuous=is_continuous,
+                        trigger_source=trigger_source,
+                        triggered_by=triggered_by,
+                        only_due=effective_only_due,
+                    )
+                )
+
+            if not is_th_active:
+                self._task_threads = asyncio.create_task(
+                    self._run_platform_continuous_loop(
+                        platform="threads",
+                        active_sims=threads_sims,
+                        config=cfg,
+                        group_ids=None,
+                        keywords=None,
+                        limit_groups=limit_groups,
+                        threads_attempt_fetcher=threads_attempt_fetcher,
+                        continuous=is_continuous,
+                        trigger_source=trigger_source,
+                        triggered_by=triggered_by,
+                        only_due=False,
+                    )
+                )
+
+            return {
+                "started": True,
+                "mode": "parallel",
+                "platforms": ["facebook", "threads"],
+                "current_platform": "both",
+                "continuous": is_continuous,
+                "sim_nodes": [s.id for s in (fb_sims + threads_sims)],
+            }
 
         alternating_enabled = bool(cfg.get("alternating_threads_enabled", True))
         if group_ids:
@@ -2959,6 +3116,192 @@ class PublicCrawlOrchestrator:
             "sim_nodes": [s.id for s in active_sims],
         }
 
+    async def _run_platform_continuous_loop(
+        self,
+        *,
+        platform: str,
+        active_sims: list[SimNodeRuntime],
+        config: dict[str, Any],
+        group_ids: list[str] | None = None,
+        keywords: list[str] | None = None,
+        limit_groups: int | None = None,
+        attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
+        continuous: bool = True,
+        trigger_source: str = "manual",
+        triggered_by: str | None = None,
+        only_due: bool = False,
+    ) -> None:
+        """Independent 24/7 continuous loop for a single platform lane in parallel mode."""
+        loop_counter = 0
+        try:
+            while not self.stop_requested:
+                loop_counter += 1
+                cfg = await asyncio.to_thread(self.get_config_sync)
+                cfg_interval = int(cfg.get("cycle_interval_min") or 0)
+                if not cfg.get("enabled") or self.auto_pause_reason is not None:
+                    break
+                if all(s.status == "expired" for s in active_sims):
+                    self.append_log(
+                        "error",
+                        "orchestrator",
+                        f"Proxy cho {platform} đã hết hạn hoặc lỗi kết nối. Tạm dừng luồng {platform}.",
+                    )
+                    break
+
+                work_items: list[dict[str, Any]] = []
+                if platform == "facebook":
+                    self.loop_round_fb += 1
+                    groups = await asyncio.to_thread(
+                        self._select_due_groups_sync,
+                        group_ids=group_ids,
+                        default_interval_min=cfg_interval,
+                        only_due=False if cfg_interval <= 0 else only_due,
+                    )
+                    if limit_groups and limit_groups > 0:
+                        groups = groups[:limit_groups]
+                    if not groups:
+                        self.append_log(
+                            "info",
+                            "orchestrator",
+                            "[FB Song Song] Chưa có nhóm Public nào cần cào lúc này, nghỉ chờ vòng sau...",
+                        )
+                        if not continuous or self.stop_requested:
+                            break
+                        self._waiting_fb = True
+                        try:
+                            await asyncio.sleep(_continuous_breath_seconds())
+                        finally:
+                            self._waiting_fb = False
+                        continue
+                    work_items = [{"kind": "facebook", "group": g} for g in groups]
+                else:
+                    self.loop_round_threads += 1
+                    explicit_kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+                    if explicit_kws:
+                        threads_keywords = explicit_kws
+                        self.active_threads_keywords = [
+                            {"keyword": kw, "times_used": 0, "total_posts_found": 0, "high_score_posts": 0}
+                            for kw in threads_keywords
+                        ]
+                    else:
+                        from app.modules.all_platform.services.threads_keyword_service import (
+                            evolve_and_select_keywords,
+                        )
+                        kw_lo, kw_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"]
+                        kw_target = max(kw_lo, min(kw_hi, int(cfg.get("threads_keyword_target") or 30)))
+                        evolved = await evolve_and_select_keywords(target_count=kw_target, rotate_replace_count=6)
+                        threads_keywords = evolved.get("keywords") or []
+                        meta = evolved.get("meta") or {}
+                        self.active_threads_keywords = list(meta.get("items") or [])
+                        self.threads_keyword_meta = {k: v for k, v in meta.items() if k != "items"}
+                    if limit_groups and limit_groups > 0:
+                        threads_keywords = threads_keywords[:limit_groups]
+                    if not threads_keywords:
+                        self.append_log(
+                            "info",
+                            "orchestrator",
+                            "[Threads Song Song] Chưa có từ khóa Threads nào, nghỉ chờ vòng sau...",
+                        )
+                        if not continuous or self.stop_requested:
+                            break
+                        self._waiting_threads = True
+                        try:
+                            await asyncio.sleep(_continuous_breath_seconds())
+                        finally:
+                            self._waiting_threads = False
+                        continue
+                    work_items = [{"kind": "threads", "keyword": kw} for kw in threads_keywords]
+
+                run_id = await asyncio.to_thread(
+                    self._create_run_record_sync,
+                    trigger_source=trigger_source if loop_counter == 1 else "continuous_24h",
+                    triggered_by=triggered_by,
+                    total_groups=len(work_items),
+                    sim_ids=[s.id for s in active_sims],
+                    platform=platform,
+                )
+                if platform == "facebook":
+                    self.active_run_id_fb = run_id
+                else:
+                    self.active_run_id_threads = run_id
+
+                cur_round = self.loop_round_fb if platform == "facebook" else self.loop_round_threads
+                mode_str = f"Vòng #{cur_round} · Song Song 24/24" if continuous else f"Vòng #{cur_round}"
+                sim_labels = ", ".join(s.label for s in active_sims)
+                if platform == "threads":
+                    self.append_log(
+                        "info",
+                        "orchestrator",
+                        f"[{mode_str} · THREADS (Song Song)] Bắt đầu quét {len(work_items)} từ khóa AI qua {sim_labels} — 0 Cookie",
+                    )
+                else:
+                    self.append_log(
+                        "info",
+                        "orchestrator",
+                        f"[{mode_str} · FACEBOOK (Song Song)] Bắt đầu cào {len(work_items)} nhóm Public qua {sim_labels} — 0 Cookie",
+                    )
+
+                stats_target = self._stats_fb if platform == "facebook" else self._stats_threads
+                stats_target["total_groups"] = len(work_items)
+                stats_target["completed_groups"] = 0
+                stats_target["groups_ok"] = 0
+                stats_target["groups_failed"] = 0
+                stats_target["groups_private"] = 0
+                stats_target["posts_saved"] = 0
+                stats_target["ip_rotations"] = 0
+
+                await self._execute_run_task(
+                    run_id=run_id,
+                    platform=platform,
+                    work_items=work_items,
+                    active_sims=active_sims,
+                    config=cfg,
+                    keywords=keywords,
+                    attempt_fetcher=attempt_fetcher,
+                    threads_attempt_fetcher=threads_attempt_fetcher,
+                    continuous=False,
+                    limit_groups=limit_groups,
+                    stats_target=stats_target,
+                    round_idx=cur_round,
+                )
+
+                if not continuous or self.stop_requested or not cfg.get("enabled"):
+                    break
+
+                breath = _continuous_breath_seconds()
+                p_name = "Threads" if platform == "threads" else "Facebook"
+                self.append_log(
+                    "info",
+                    "orchestrator",
+                    f"🔄 [{p_name} Song Song] Hoàn tất Vòng #{cur_round}. Tự động tiếp tục Vòng #{cur_round + 1} sau {breath:.1f}s...",
+                )
+                if platform == "facebook":
+                    self._waiting_fb = True
+                else:
+                    self._waiting_threads = True
+                try:
+                    await asyncio.sleep(breath)
+                finally:
+                    if platform == "facebook":
+                        self._waiting_fb = False
+                    else:
+                        self._waiting_threads = False
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.error("[PUBLIC-4G] Lane %s error: %s", platform, exc, exc_info=True)
+            self.append_log("error", "orchestrator", f"Lỗi luồng {platform}: {exc}")
+        finally:
+            if platform == "facebook":
+                self.active_run_id_fb = None
+            else:
+                self.active_run_id_threads = None
+            is_fb = bool(self._task_fb and not self._task_fb.done())
+            is_th = bool(self._task_threads and not self._task_threads.done())
+            if not is_fb and not is_th:
+                self.is_running = False
+
     async def _execute_run_task(
         self,
         *,
@@ -2972,6 +3315,8 @@ class PublicCrawlOrchestrator:
         threads_attempt_fetcher: Callable[..., Awaitable[dict[str, Any]]] | None = None,
         continuous: bool = False,
         limit_groups: int | None = None,
+        stats_target: dict[str, Any] | None = None,
+        round_idx: int | None = None,
     ) -> None:
         t0 = time.perf_counter()
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
@@ -3021,25 +3366,39 @@ class PublicCrawlOrchestrator:
                             else:
                                 res = await worker.process_group(work_item["group"])
                             elapsed_samples.append(int(res.get("elapsed_ms") or 0))
-                            self._stats["completed_groups"] += 1
+                            st_dict = stats_target if stats_target is not None else self._stats
+                            st_dict["completed_groups"] += 1
                             st = res.get("status")
                             if st in {"ok", "rotated_retry"}:
-                                self._stats["groups_ok"] += 1
+                                st_dict["groups_ok"] += 1
                             elif st == "private_skipped":
-                                self._stats["groups_private"] += 1
+                                st_dict["groups_private"] += 1
                             else:
-                                self._stats["groups_failed"] += 1
-                            self._stats["posts_saved"] += int(res.get("posts_saved") or 0)
+                                st_dict["groups_failed"] += 1
+                            st_dict["posts_saved"] += int(res.get("posts_saved") or 0)
                             if elapsed_samples:
-                                self._stats["avg_ms_per_group"] = int(
+                                st_dict["avg_ms_per_group"] = int(
                                     sum(elapsed_samples) / len(elapsed_samples)
                                 )
+                            if stats_target is not None:
+                                self._stats["completed_groups"] += 1
+                                self._stats["posts_saved"] += int(res.get("posts_saved") or 0)
+                                if st in {"ok", "rotated_retry"}:
+                                    self._stats["groups_ok"] += 1
+                                elif st == "private_skipped":
+                                    self._stats["groups_private"] += 1
+                                else:
+                                    self._stats["groups_failed"] += 1
                             if res.get("proxy_expired") or sim.status == "expired":
                                 break
                         except Exception as exc:
                             logger.error("[PUBLIC-4G] Worker %s item failure: %s", sim.id, exc, exc_info=True)
-                            self._stats["completed_groups"] += 1
-                            self._stats["groups_failed"] += 1
+                            st_dict = stats_target if stats_target is not None else self._stats
+                            st_dict["completed_groups"] += 1
+                            st_dict["groups_failed"] += 1
+                            if stats_target is not None:
+                                self._stats["completed_groups"] += 1
+                                self._stats["groups_failed"] += 1
                         finally:
                             queue.task_done()
             except Exception as exc:
@@ -3075,24 +3434,26 @@ class PublicCrawlOrchestrator:
                 if user_stopped
                 else ("failed" if (run_error or all_proxies_expired) else "completed")
             )
+            final_stats = dict(stats_target or self._stats)
             await asyncio.to_thread(
                 self._finish_run_record_sync,
                 run_id=run_id,
                 status=final_status,
                 duration_ms=total_ms,
-                stats=dict(self._stats),
+                stats=final_stats,
                 error_summary=expired_reason_msg or run_error,
             )
             self.last_round_finished_at = _utc_now_iso()
             platform_tag = "Threads" if platform == "threads" else "Facebook"
-            unit_note = "Từ khóa OK" if platform == "threads" else f"{self._stats['groups_private']} Private"
+            unit_note = "Từ khóa OK" if platform == "threads" else f"{final_stats['groups_private']} Private"
+            effective_round = round_idx if round_idx is not None else self.loop_round
             self.append_log(
                 "error" if all_proxies_expired else "info",
                 "orchestrator",
                 (
-                    f"Kết thúc Vòng #{self.loop_round} [{platform_tag}] ({final_status}): "
-                    f"{self._stats['groups_ok']} OK ({unit_note}), {self._stats['groups_failed']} Lỗi, "
-                    f"+{self._stats['posts_saved']} bài mới, {self._stats['ip_rotations']} lần xoay IP 4G ({total_ms}ms)."
+                    f"Kết thúc Vòng #{effective_round} [{platform_tag}] ({final_status}): "
+                    f"{final_stats['groups_ok']} OK ({unit_note}), {final_stats['groups_failed']} Lỗi, "
+                    f"+{final_stats['posts_saved']} bài mới, {final_stats['ip_rotations']} lần xoay IP 4G ({total_ms}ms)."
                 ),
             )
             try:
@@ -3101,10 +3462,10 @@ class PublicCrawlOrchestrator:
                         "event": "public_4g_run_finished",
                         "run_id": run_id,
                         "platform": platform,
-                        "loop_round": self.loop_round,
+                        "loop_round": effective_round,
                         "status": final_status,
-                        "posts_saved": self._stats["posts_saved"],
-                        "groups_ok": self._stats["groups_ok"],
+                        "posts_saved": final_stats["posts_saved"],
+                        "groups_ok": final_stats["groups_ok"],
                     }
                 )
             except Exception:
@@ -3127,7 +3488,7 @@ class PublicCrawlOrchestrator:
                         {
                             "event": "public_4g_proxy_expired",
                             "run_id": run_id,
-                            "loop_round": self.loop_round,
+                            "loop_round": effective_round,
                             "error": expired_reason_msg,
                         }
                     )
@@ -3154,10 +3515,11 @@ class PublicCrawlOrchestrator:
                 if continuous and fresh_cfg.get("enabled") and fresh_interval == 0 and self.auto_pause_reason is None:
                     should_continue_loop = True
 
-            self.is_running = False
-            self.stop_requested = False
+            if stats_target is None:
+                self.is_running = False
+                self.stop_requested = False
 
-        if should_continue_loop:
+        if should_continue_loop and stats_target is None:
             breath = _continuous_breath_seconds()
             next_label = "Threads (~từ khóa AI)" if scheduled_next_platform == "threads" else "Facebook Public (reload nhóm DB)"
             self.append_log(
@@ -3174,16 +3536,32 @@ class PublicCrawlOrchestrator:
             )
 
     def request_stop(self) -> dict[str, Any]:
-        was_waiting = self._continuous_waiting or (
-            self._next_round_task is not None and not self._next_round_task.done()
+        was_waiting = (
+            self._continuous_waiting
+            or self._waiting_fb
+            or self._waiting_threads
+            or (self._next_round_task is not None and not self._next_round_task.done())
         )
         self._cancel_next_round_wait()
         self._continuous_attempt_fetcher = None
         self._continuous_threads_fetcher = None
-        if not self.is_running and not was_waiting:
+
+        is_fb_active = bool(self._task_fb and not self._task_fb.done())
+        is_th_active = bool(self._task_threads and not self._task_threads.done())
+        is_active = self.is_running or is_fb_active or is_th_active
+
+        if not is_active and not was_waiting:
             return {"stopped": False, "message": "Không có phiên cào Public 4G nào đang chạy."}
-        if self.is_running:
-            self.stop_requested = True
+
+        self.stop_requested = True
+        if self._task_fb and not self._task_fb.done():
+            self._task_fb.cancel()
+        if self._task_threads and not self._task_threads.done():
+            self._task_threads.cancel()
+        if self._active_task and not self._active_task.done():
+            self._active_task.cancel()
+
+        self.is_running = False
         self._persist_pause_state_sync(
             enabled=False,
             auto_pause_reason="manual_stop",
@@ -3194,7 +3572,10 @@ class PublicCrawlOrchestrator:
             "orchestrator",
             "Đã nhận lệnh DỪNG từ người dùng — dừng sau nhóm hiện tại & tạm tắt Auto 24/24.",
         )
-        return {"stopped": True, "active_run_id": self.active_run_id}
+        return {
+            "stopped": True,
+            "active_run_id": self.active_run_id_fb or self.active_run_id_threads or self.active_run_id,
+        }
 
     async def maybe_trigger_scheduled_run(self, *, trigger_source: str = "scheduler") -> dict[str, Any] | None:
         """Called on app startup & every minute by APScheduler when continuous auto-crawl is enabled."""
