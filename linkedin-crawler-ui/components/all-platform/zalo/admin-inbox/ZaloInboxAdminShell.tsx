@@ -3680,7 +3680,15 @@ export function ZaloInboxAdminShell() {
         onClose={() => setShowDealModal(false)}
         prefill={{
           name: selectedName,
-          phone: currentLead?.phone || undefined,
+          // Fix (2026-11-13, "có sđt mà bên tạo cơ hội k fill dc"): truoc day
+          // CHI lay currentLead?.phone - header hien thi activeConvPhone (co
+          // them 2 fallback: quet tin nhan tim the danh thiep/so dien thoai,
+          // tra cuu backend getConversationPhone) nen nhieu hoi thoai CO so
+          // hien o header nhung currentLead (CRM Lead) chua ton tai/chua co
+          // phone -> "Them Lead nhanh" mo ra SDT trong trong khi header van
+          // dang hien dung so. Dung lai activeConvPhone (nguon hien thi THAT)
+          // lam uu tien, fallback currentLead?.phone cho tuong thich nguoc.
+          phone: activeConvPhone || currentLead?.phone || undefined,
           email: currentLead?.email || undefined,
           companyName: currentLead?.company_name || undefined,
           customerId: currentLead?.customer_id || undefined,
