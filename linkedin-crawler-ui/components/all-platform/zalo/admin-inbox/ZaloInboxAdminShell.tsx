@@ -1089,29 +1089,40 @@ export function ZaloInboxAdminShell() {
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionAtPos, setMentionAtPos] = useState<number | null>(null);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
-  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
-  const [messageMenuFor, setMessageMenuFor] = useState<string | null>(null);
-  const [menuPlacement, setMenuPlacement] = useState<"up" | "down">("up");
+  const [reactionPicker, setReactionPicker] = useState<{ id: string; openDown: boolean } | null>(null);
+  const [messageMenu, setMessageMenu] = useState<{ id: string; openDown: boolean } | null>(null);
   const [showSearchPanel, setShowSearchPanel] = useState(false);
+
+  // Tính toán hướng mở (bung xuống dưới hay lên trên) dựa trên khoảng cách THỰC TẾ tới đỉnh khung cuộn chatScrollRef
+  const computeMenuOpenDown = (el: HTMLElement): boolean => {
+    const btnRect = el.getBoundingClientRect();
+    if (chatScrollRef.current) {
+      const containerRect = chatScrollRef.current.getBoundingClientRect();
+      const distFromContainerTop = btnRect.top - containerRect.top;
+      // Menu cao ~130px. Nếu khoảng cách tới đỉnh khung cuộn < 170px, BẮT BUỘC bung XUỐNG DƯỚI để không bị che
+      return distFromContainerTop < 170;
+    }
+    return btnRect.top < 450;
+  };
 
   // Click outside để tự động đóng menu thao tác 3 chấm và picker cảm xúc
   useEffect(() => {
-    if (!messageMenuFor && !reactionPickerFor) return;
+    if (!messageMenu && !reactionPicker) return;
     const handlePointerDown = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (!target) return;
       if (!target.closest("[data-msg-menu]") && !target.closest("[data-msg-menu-btn]")) {
-        setMessageMenuFor(null);
+        setMessageMenu(null);
       }
       if (!target.closest("[data-zalo-reaction-ui]") && !target.closest("[data-zalo-reaction-btn]")) {
-        setReactionPickerFor(null);
+        setReactionPicker(null);
       }
     };
     document.addEventListener("mousedown", handlePointerDown);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
     };
-  }, [messageMenuFor, reactionPickerFor]);
+  }, [messageMenu, reactionPicker]);
 
   // Overlay xem ảnh (lightbox) — chỉ lưu INDEX trong chatImageUrls, không lưu URL
   // trực tiếp, để nút trượt qua lại tính next/prev đơn giản bằng index +-1.
@@ -1619,8 +1630,8 @@ export function ZaloInboxAdminShell() {
 
   useEffect(() => {
     lastChatScrollStateRef.current = { convId: "", lastMessageKey: "" };
-    setMessageMenuFor(null);
-    setReactionPickerFor(null);
+    setMessageMenu(null);
+    setReactionPicker(null);
     setLightboxIndex(null);
     groupMembersLoadKeyRef.current = null;
   }, [inbox.openConv, inbox.selectedAccountId]);
@@ -2905,7 +2916,10 @@ export function ZaloInboxAdminShell() {
                                         type="button"
                                         data-zalo-reaction-ui
                                         data-zalo-reaction-btn
-                                        onClick={() => setReactionPickerFor((prev) => (prev === msgKey ? null : msgKey))}
+                                        onClick={(e) => {
+                                          const openDown = computeMenuOpenDown(e.currentTarget);
+                                          setReactionPicker((prev) => (prev?.id === msgKey ? null : { id: msgKey, openDown }));
+                                        }}
                                         title="Thả cảm xúc"
                                         className="opacity-0 group-hover:opacity-100 transition-opacity text-[#A0A0A0] hover:text-amber-500 cursor-pointer"
                                       >
@@ -2918,23 +2932,20 @@ export function ZaloInboxAdminShell() {
                                           type="button"
                                           data-msg-menu-btn
                                           onClick={(e) => {
-                                            const btnRect = e.currentTarget.getBoundingClientRect();
-                                            // Tự động nhận diện nếu tin nhắn ở vùng trên cao (< 240px) thì bung menu XUỐNG DƯỚI để không bị che khuất
-                                            const openDown = btnRect.top < 240;
-                                            setMenuPlacement(openDown ? "down" : "up");
-                                            setMessageMenuFor((prev) => (prev === msgKey ? null : msgKey));
+                                            const openDown = computeMenuOpenDown(e.currentTarget);
+                                            setMessageMenu((prev) => (prev?.id === msgKey ? null : { id: msgKey, openDown }));
                                           }}
                                           title="Thao tác tin nhắn"
                                           className="flex h-5 w-5 items-center justify-center rounded-full text-[#A0A0A0] opacity-70 transition hover:bg-slate-100 hover:text-slate-700 group-hover:opacity-100 cursor-pointer"
                                         >
                                           <MoreVertical size={13} />
                                         </button>
-                                        {messageMenuFor === msgKey && (
+                                        {messageMenu?.id === msgKey && (
                                           <div
                                             data-msg-menu
                                             className={cn(
                                               "absolute z-50 w-36 rounded-xl border border-slate-200/90 bg-white p-1 shadow-xl transition-all",
-                                              menuPlacement === "down" ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
+                                              messageMenu.openDown ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
                                               isSent ? "right-0" : "left-0"
                                             )}
                                           >
@@ -2942,7 +2953,7 @@ export function ZaloInboxAdminShell() {
                                               type="button"
                                               onClick={() => {
                                                 inbox.setReplyingTo(msg);
-                                                setMessageMenuFor(null);
+                                                setMessageMenu(null);
                                               }}
                                               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] cursor-pointer"
                                             >
@@ -2954,7 +2965,7 @@ export function ZaloInboxAdminShell() {
                                               onClick={() => {
                                                 if (!canForwardMessage) return;
                                                 setForwardingMessage(msg);
-                                                setMessageMenuFor(null);
+                                                setMessageMenu(null);
                                               }}
                                               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
                                             >
@@ -2966,7 +2977,7 @@ export function ZaloInboxAdminShell() {
                                               onClick={() => {
                                                 if (!canCopyMessage) return;
                                                 handleCopyMessage(msg);
-                                                setMessageMenuFor(null);
+                                                setMessageMenu(null);
                                               }}
                                               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
                                             >
@@ -2987,12 +2998,12 @@ export function ZaloInboxAdminShell() {
                                       </button>
                                     )}
                                     {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>}
-                                    {reactionPickerFor === msgKey && (
+                                    {reactionPicker?.id === msgKey && (
                                       <div
                                         data-zalo-reaction-ui
                                         className={cn(
                                           "absolute z-40 transition-all",
-                                          menuPlacement === "down" ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
+                                          reactionPicker.openDown ? "top-full mt-1.5 animate-in fade-in slide-in-from-top-1" : "bottom-full mb-1.5 animate-in fade-in slide-in-from-bottom-1",
                                           isSent ? "right-0" : "left-0"
                                         )}
                                       >
@@ -3000,7 +3011,7 @@ export function ZaloInboxAdminShell() {
                                           activeIcon={msg.reactions?.[inbox.myZaloUid || "__me__"] || null}
                                           onPick={(icon) => {
                                             void inbox.reactToMessage(msg, icon);
-                                            setReactionPickerFor(null);
+                                            setReactionPicker(null);
                                           }}
                                         />
                                       </div>
