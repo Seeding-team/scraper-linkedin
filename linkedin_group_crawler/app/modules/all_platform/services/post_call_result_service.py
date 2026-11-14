@@ -98,6 +98,19 @@ def update_call_result(
         .execute()
     )
     saved_result = res.data[0] if res.data else upsert_data
+
+    # Tín hiệu "đã liên hệ" — tự nâng đánh giá bài lên 'can-lien-he' nếu đang
+    # 'chua-danh-gia' (mọi result_code, không phân loại). Best-effort: lỗi ở đây
+    # không được làm hỏng việc lưu kết quả liên hệ đã thành công ở trên.
+    try:
+        from app.modules.all_platform.services.post_evaluation_service import (
+            auto_promote_to_can_lien_he,
+        )
+
+        auto_promote_to_can_lien_he(post_id, platform)
+    except Exception as exc:
+        logger.warning(f"update_call_result: auto_promote_to_can_lien_he thất bại post_id={post_id}: {exc}")
+
     fresh = get_call_result(post_id, platform)
     if fresh:
         saved_result = fresh
