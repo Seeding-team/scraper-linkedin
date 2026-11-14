@@ -247,6 +247,43 @@ async def score_and_save_posts(
         content = row.get("content") or ""
         if not post_id or not content.strip():
             return
+
+        # MASTER REQUIREMENT 2026-11-15: Riêng Threads, chỉ nhận bài viết tiếng Việt.
+        # Bỏ qua AI check (tiết kiệm 100% token) và gạch ngay khỏi DB nếu là tiếng Anh hoặc ngoại ngữ.
+        if table == "threads_posts":
+            from app.modules.all_platform.services.threads_language_service import is_vietnamese_content
+            if not is_vietnamese_content(content):
+                await asyncio.to_thread(lambda: supabase.table(table).delete().eq("id", post_id).execute())
+                logger.info(
+                    f"[THREADS-LANG] ĐÃ GẠCH KHỎI DB bài viết Threads ngoại ngữ/tiếng Anh #{post_id}: {content[:60]}..."
+                )
+                summary["deleted"] += 1
+                if post_url:
+                    audit_results.append(
+                        {
+                            "platform": platform_name,
+                            "crawl_source": src_label,
+                            "run_id": run_id,
+                            "proxy_node": proxy_node,
+                            "group_id": row.get("group_id"),
+                            "group_name": group_name,
+                            "group_url": group_url,
+                            "post_id": post_id,
+                            "post_url": post_url,
+                            "content": content,
+                            "ai_status": "deleted_foreign_language",
+                            "lead_score": 0,
+                            "is_competitor": False,
+                            "is_buyer": False,
+                            "lead_need_category": "Ngoại ngữ (Loại trừ)",
+                            "lead_score_reason": "Bỏ qua AI check & gạch khỏi DB do bài viết tiếng Anh / ngoại ngữ (chỉ nhận bài tiếng Việt trên Threads)",
+                            "contact_phone": None,
+                            "auto_seeding_created": False,
+                            "zalo_triggered": False,
+                        }
+                    )
+                return
+
         async with semaphore:
             result = await score_text_for_lead(content, keywords=keywords)
         if not result:

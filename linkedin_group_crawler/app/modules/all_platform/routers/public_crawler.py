@@ -129,6 +129,18 @@ async def stop_public_crawl_run(
     return {"success": bool(result.get("stopped")), **result}
 
 
+@router.post("/resume-24h")
+async def resume_public_crawl_24h(
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    """Khôi phục hoặc kích hoạt chạy cào 24/24 liên tục sau deploy / sự cố."""
+    result = await public_crawl_orchestrator.resume_or_start_continuous_24h(
+        force_unpause=True,
+        trigger_source="manual_resume",
+    )
+    return {"success": bool(result.get("started") or result.get("reason") == "already_running"), **result}
+
+
 @router.put("/config")
 async def update_public_crawl_config(
     body: ConfigUpdateBody,
@@ -327,3 +339,14 @@ async def toggle_threads_keyword_status(
     is_act = body.is_active if body else None
     ok = await asyncio.to_thread(toggle_keyword, keyword_id=kw_id, is_active=is_act)
     return {"success": ok}
+
+
+@router.post("/threads/purge-foreign-language")
+async def purge_foreign_language_threads(
+    limit: int = Query(200, ge=1, le=1000),
+    current_user: Any = Depends(require_admin_or_leader),
+):
+    """Gạch bỏ các bài viết tiếng Anh / ngoại ngữ hiện có trong threads_posts."""
+    from app.modules.all_platform.services.threads_language_service import purge_foreign_threads_posts
+    result = await asyncio.to_thread(purge_foreign_threads_posts, batch_size=limit)
+    return {"success": True, "data": result}

@@ -1803,3 +1803,126 @@ def test_parallel_24h_concurrent_facebook_and_threads_execution(monkeypatch):
 
 
 
+
+def test_threads_language_filter_ignores_foreign_and_purges_non_vietnamese(monkeypatch):
+    """Ensure Threads exclusively ingests Vietnamese content, skipping AI check & purging English/foreign posts."""
+    from app.modules.all_platform.services.threads_language_service import (
+        is_vietnamese_content,
+    )
+
+    # 1. Test language classification rules
+    assert is_vietnamese_content("Cần tìm đơn vị thiết kế website landing page uy tín tại Hà Nội") is True
+    assert is_vietnamese_content("Can tim nguoi lam web gia re ib zalo 0901234567") is True
+    assert is_vietnamese_content("Bên mình nhận outsource phần mềm quản lý, liên hệ nhé") is True
+
+    # Foreign & English must be strictly rejected (False)
+    assert is_vietnamese_content("Looking for an experienced React developer to build a modern dashboard for our startup") is False
+    assert is_vietnamese_content("Hi everyone, does anyone know how to optimize PostgreSQL queries on AWS?") is False
+    assert is_vietnamese_content("Need someone to create a landing page for my ecommerce shop with Stripe integration") is False
+    assert is_vietnamese_content("これはテストです。新しいウェブサイトを探しています。") is False
+    assert is_vietnamese_content("这是一篇测试文章，寻找网站开发人员") is False
+    assert is_vietnamese_content("Hello world, this is a test post for threads") is False
+    assert is_vietnamese_content("") is False
+
+    # 2. Test score_and_save_posts for threads_posts: English post must be purged & skip OpenAI scoring
+    from app.modules.all_platform.services.lead_score_service import score_and_save_posts
+
+    deleted_post_ids = []
+
+    class _FakeTable:
+        def __init__(self, name):
+            self.name = name
+
+        def delete(self):
+            return self
+
+        def eq(self, col, val):
+            deleted_post_ids.append((col, val))
+            return self
+
+        def execute(self):
+            return {"data": []}
+
+    class _FakeSb:
+        def table(self, name):
+            return _FakeTable(name)
+
+    monkeypatch.setattr("app.modules.all_platform.services.lead_score_service.get_supabase_client", lambda: _FakeSb())
+    monkeypatch.setattr("app.modules.all_platform.services.lead_score_service.is_lead_scoring_configured", lambda: True)
+
+    openai_called = []
+
+    async def _mock_score_text(text, keywords=None):
+        openai_called.append(text)
+        return {"score": 85, "is_competitor": False, "is_buyer": True, "reason": "Cần làm web", "need_category": "Web"}
+
+    monkeypatch.setattr("app.modules.all_platform.services.lead_score_service.score_text_for_lead", _mock_score_text)
+
+    rows = [
+        {
+            "id": "th-vn-01",
+            "post_url": "https://www.threads.com/@user/post/vn01",
+            "content": "Cần tìm công ty làm app bán hàng đa nền tảng, ai nhận báo giá giúp mình",
+        },
+        {
+            "id": "th-en-02",
+            "post_url": "https://www.threads.com/@user/post/en02",
+            "content": "Looking for a full stack engineer with experience in Python and Next.js to build a SaaS platform",
+        },
+    ]
+
+    summary = asyncio.run(score_and_save_posts("threads_posts", rows, keywords=["app"]))
+
+    # Verification:
+    # 1. English post th-en-02 must be purged from database
+    assert ("id", "th-en-02") in deleted_post_ids
+    assert summary["deleted"] >= 1
+
+    # 2. OpenAI was ONLY called for the Vietnamese post, NOT for the English post!
+    assert len(openai_called) == 1
+    assert "Cần tìm công ty làm app" in openai_called[0]
+    assert not any("Looking for a full stack engineer" in t for t in openai_called)
+
+
+
+def test_auto_resume_24h_on_container_startup_unpauses_and_starts_loop(monkeypatch):
+    """Đảm bảo sau khi deploy/restart container, crawler 24/24 tự động gỡ pause cũ và tự chạy lại không cần user bấm tay."""
+    from app.modules.all_platform.services.public_4g_crawler_service import PublicCrawlOrchestrator
+
+    orchestrator = PublicCrawlOrchestrator()
+    # Giả lập trước khi deploy: crawler từng bị tắt (enabled=False, auto_pause_reason='manual_stop')
+    orchestrator.auto_pause_reason = "manual_stop"
+    orchestrator.stop_requested = True
+
+    persisted_state = {}
+
+    def _mock_persist_pause_state_sync(*, enabled=None, auto_pause_reason=None, proxy_expired_error=None):
+        persisted_state["enabled"] = enabled
+        persisted_state["auto_pause_reason"] = auto_pause_reason
+        persisted_state["proxy_expired_error"] = proxy_expired_error
+
+    monkeypatch.setattr(orchestrator, "_persist_pause_state_sync", _mock_persist_pause_state_sync)
+
+    start_run_called = []
+
+    async def _mock_start_run(**kwargs):
+        start_run_called.append(kwargs)
+        return {"started": True, "continuous": kwargs.get("continuous")}
+
+    monkeypatch.setattr(orchestrator, "start_run", _mock_start_run)
+
+    # 1. Gọi maybe_trigger_scheduled_run với trigger_source='startup'
+    result = asyncio.run(orchestrator.maybe_trigger_scheduled_run(trigger_source="startup"))
+
+    # 2. Kiểm chứng:
+    # Trạng thái pause cũ PHẢI được gỡ bỏ hoàn toàn
+    assert orchestrator.auto_pause_reason is None
+    assert orchestrator.stop_requested is False
+    assert persisted_state.get("enabled") is True
+    assert persisted_state.get("auto_pause_reason") is None
+
+    # Hàm start_run PHẢI được gọi với continuous=True và trigger_source='startup'
+    assert len(start_run_called) == 1
+    assert start_run_called[0]["continuous"] is True
+    assert start_run_called[0]["trigger_source"] == "startup"
+    assert result["started"] is True

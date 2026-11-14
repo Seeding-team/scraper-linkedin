@@ -185,6 +185,13 @@ def save_threads_crawl_batch(
             skipped_invalid += 1
             continue
 
+        # 2d. MASTER REQUIREMENT 2026-11-15: Riêng Threads, chỉ nhận bài viết tiếng Việt.
+        # Bỏ qua và không lưu vào DB nếu bài viết là tiếng Anh hoặc tiếng nước khác.
+        from app.modules.all_platform.services.threads_language_service import is_vietnamese_content
+        if not is_vietnamese_content(raw.get("content") or ""):
+            skipped_invalid += 1
+            continue
+
         post_time = _parse_post_time(raw.get("post_time"))
         # 3. Lọc bài cũ: bài không rõ thời gian cũng bỏ khi có giới hạn ngày (không
         # chứng minh được là bài mới) — giống FB bỏ bài không có time.
