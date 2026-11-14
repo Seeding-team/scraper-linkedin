@@ -28,7 +28,9 @@ from app.core.supabase_client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
-VN_TZ = ZoneInfo("Asia/Ho_Chi_Minh")
+# ZoneInfo("Asia/Ho_Chi_Minh") crash o production: container thieu goi he thong tzdata.
+# Dung timezone(timedelta(hours=7)) chuan xac UTC+7, dong nhat voi toan bo he thong.
+VN_TZ = timezone(timedelta(hours=7))
 ZALO_INBOX_KPI_LOCK_DAYS = 30
 
 _POST_URL_REGEX = re.compile(
