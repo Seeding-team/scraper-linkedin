@@ -1010,6 +1010,9 @@ export function useZaloAdminInbox() {
       timestamp_text: "Vừa xong",
       time_text: timeText,
       ts: now.getTime(),
+      staff_name: user?.name || "Bạn",
+      staff_avatar: (user as any)?.avatar_url || (user as any)?.avatar || null,
+      staff_email: user?.email || null,
       assets: [],
     };
 
@@ -1024,7 +1027,12 @@ export function useZaloAdminInbox() {
     );
 
     try {
-      await sendZaloMessage(accId, convId, { text });
+      await sendZaloMessage(accId, convId, {
+        text,
+        staff_name: user?.name,
+        staff_avatar: (user as any)?.avatar_url || (user as any)?.avatar,
+        staff_email: user?.email,
+      });
       await loadMessages(accId, convId, true);
       void loadConversations(accId);
       if (typeof window !== "undefined") {
@@ -1096,6 +1104,9 @@ export function useZaloAdminInbox() {
       timestamp_text: "Vừa xong",
       time_text: timeText,
       ts: now.getTime(),
+      staff_name: user?.name || "Bạn",
+      staff_avatar: (user as any)?.avatar_url || (user as any)?.avatar || null,
+      staff_email: user?.email || null,
       reply_to_id: replyTo?.message_id,
       assets: (files?.map((f) => ({
         url: URL.createObjectURL(f),
@@ -1118,12 +1129,18 @@ export function useZaloAdminInbox() {
 
     try {
       if (files && files.length > 0) {
-        await sendZaloMessageWithFiles(accId, convId, text, files);
+        await sendZaloMessageWithFiles(accId, convId, text, files, undefined, user?.name, (user as any)?.avatar_url || (user as any)?.avatar);
       } else if (pendingMentions.length > 0) {
         // Tin có @tag/@All — dùng route riêng hỗ trợ mentions (Mục 3.3.5 guide).
-        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions, replyTo);
+        await sendZaloMessageWithMentions(accId, convId, text, pendingMentions, replyTo, user?.name, (user as any)?.avatar_url || (user as any)?.avatar, user?.email);
       } else {
-        await sendZaloMessage(accId, convId, { text, reply_to: replyTo });
+        await sendZaloMessage(accId, convId, {
+          text,
+          reply_to: replyTo,
+          staff_name: user?.name,
+          staff_avatar: (user as any)?.avatar_url || (user as any)?.avatar,
+          staff_email: user?.email,
+        });
       }
       setPendingMentions([]);
       await loadMessages(accId, convId, true);

@@ -824,6 +824,9 @@ export interface ZaloSendMessageRequest {
   text: string;
   thread_type?: number;
   reply_to?: ZaloReplyToPayload;
+  staff_name?: string;
+  staff_avatar?: string;
+  staff_email?: string;
 }
 
 export interface ZaloSendMessageResponse {
@@ -855,6 +858,8 @@ export function sendZaloMessageWithFiles(
   text: string,
   files: File[],
   threadType?: number,
+  staffName?: string,
+  staffAvatar?: string,
 ): Promise<ZaloSendMessageResponse> {
   const formData = new FormData();
   if (text) {
@@ -862,6 +867,12 @@ export function sendZaloMessageWithFiles(
   }
   if (threadType !== undefined) {
     formData.append("thread_type", String(threadType));
+  }
+  if (staffName) {
+    formData.append("staff_name", staffName);
+  }
+  if (staffAvatar) {
+    formData.append("staff_avatar", staffAvatar);
   }
   for (const file of files) {
     formData.append("files", file);
@@ -1150,11 +1161,14 @@ export function sendZaloMessageWithMentions(
   text: string,
   mentions: ZaloMention[],
   replyTo?: ZaloReplyToPayload,
+  staffName?: string,
+  staffAvatar?: string,
+  staffEmail?: string,
 ): Promise<ZaloSendMessageResponse> {
   return requestJson(`/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/send`, {
     method: "POST",
     headers: buildHeaders({ "X-User-ID": accountId }),
-    body: JSON.stringify({ text, mentions, reply_to: replyTo }),
+    body: JSON.stringify({ text, mentions, reply_to: replyTo, staff_name: staffName, staff_avatar: staffAvatar, staff_email: staffEmail }),
   });
 }
 

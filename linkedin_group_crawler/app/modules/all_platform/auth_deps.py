@@ -165,6 +165,14 @@ def get_authenticated_caller_email(request: Request, authorization: str | None =
     return str(user.get("email") or "").strip().lower() or None
 
 
+def get_authenticated_caller_user(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any] | None:
+    """Thông tin user người gọi THẬT (id, email, name, avatar), lấy từ JWT."""
+    try:
+        return get_current_user(request, authorization)
+    except HTTPException:
+        return None
+
+
 async def require_admin_ws(websocket, authorization: str | None = None) -> dict[str, Any] | None:
     """Bản cho WebSocket — không raise HTTPException (không áp dụng được), tự đóng
     connection với close code 4403 nếu thiếu quyền. Trả None nếu đã đóng — caller
