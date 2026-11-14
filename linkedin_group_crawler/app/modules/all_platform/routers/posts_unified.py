@@ -113,6 +113,7 @@ def unified_filter_posts(payload: UnifiedFilterRequest) -> BaseResponse:
             search=payload.search,
             id_member=payload.id_member,
             call_result_code=payload.call_result_code,
+            contact_member_id=payload.contact_member_id,
             sort=payload.sort,
             page=payload.page,
             page_size=payload.page_size,
