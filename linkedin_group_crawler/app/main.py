@@ -91,9 +91,7 @@ async def lifespan(_: FastAPI):
                         from app.modules.all_platform.services.public_4g_crawler_service import (
                             public_crawl_orchestrator,
                         )
-                        logger.info("[PUBLIC-4G] Container deploy startup: Tự động kích hoạt cào Public 4G 24/24...")
-                        res = await public_crawl_orchestrator.resume_or_start_continuous_24h(force_unpause=True, trigger_source="startup")
-                        logger.info("[PUBLIC-4G] Kết quả kích hoạt cào 24/24 trên startup: %s", res)
+                        await public_crawl_orchestrator.maybe_trigger_scheduled_run(trigger_source="startup")
                     except asyncio.CancelledError:
                         pass
                     except Exception:

@@ -129,18 +129,6 @@ async def stop_public_crawl_run(
     return {"success": bool(result.get("stopped")), **result}
 
 
-@router.post("/resume-24h")
-async def resume_public_crawl_24h(
-    _user: dict[str, Any] = Depends(require_admin_or_leader),
-) -> dict[str, Any]:
-    """Khôi phục hoặc kích hoạt chạy cào 24/24 liên tục sau deploy / sự cố."""
-    result = await public_crawl_orchestrator.resume_or_start_continuous_24h(
-        force_unpause=True,
-        trigger_source="manual_resume",
-    )
-    return {"success": bool(result.get("started") or result.get("reason") == "already_running"), **result}
-
-
 @router.put("/config")
 async def update_public_crawl_config(
     body: ConfigUpdateBody,

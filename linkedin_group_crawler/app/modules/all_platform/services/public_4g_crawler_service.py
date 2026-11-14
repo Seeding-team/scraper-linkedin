@@ -3575,57 +3575,8 @@ class PublicCrawlOrchestrator:
             "active_run_id": self.active_run_id_fb or self.active_run_id_threads or self.active_run_id,
         }
 
-    async def resume_or_start_continuous_24h(
-        self,
-        *,
-        force_unpause: bool = True,
-        trigger_source: str = "startup",
-    ) -> dict[str, Any]:
-        """Đảm bảo cào Public 4G chạy 24/24 liên tục sau khi deploy hoặc khởi động container.
-
-        - Tự động xóa trạng thái pause cũ (manual_stop, proxy_expired).
-        - Tự động bật enabled = True trong DB nếu đang bị tắt.
-        - Khởi động 24/24 continuous loop (song song FB & Threads nếu có proxy, hoặc luân phiên).
-        """
-        is_fb_active = bool(self._task_fb and not self._task_fb.done())
-        is_th_active = bool(self._task_threads and not self._task_threads.done())
-        is_active_task = bool(self._active_task and not self._active_task.done())
-        if (is_fb_active and is_th_active) or is_active_task or self.is_running or self._continuous_waiting:
-            logger.info("[PUBLIC-4G] resume_or_start_continuous_24h: Luồng 24/24 đang chạy hoặc đang trong chu kỳ thở.")
-            return {
-                "started": False,
-                "reason": "already_running",
-                "active_run_id": self.active_run_id_fb or self.active_run_id_threads or self.active_run_id,
-            }
-
-        self.stop_requested = False
-        self.rotator.reset_proxy_health()
-        if force_unpause or self.auto_pause_reason is not None or self.proxy_expired_error is not None:
-            self.auto_pause_reason = None
-            self.proxy_expired_error = None
-            try:
-                await asyncio.to_thread(
-                    self._persist_pause_state_sync,
-                    enabled=True,
-                    auto_pause_reason=None,
-                    proxy_expired_error=None,
-                )
-            except Exception as exc:
-                logger.warning("[PUBLIC-4G] Ghi unpause state lên DB thất bại: %s", exc)
-
-        logger.info("[PUBLIC-4G] 🚀 Tự động kích hoạt cào Public 4G 24/24 sau deploy (trigger=%s)", trigger_source)
-        return await self.start_run(
-            trigger_source=trigger_source,
-            continuous=True,
-            platform="auto",
-        )
-
     async def maybe_trigger_scheduled_run(self, *, trigger_source: str = "scheduler") -> dict[str, Any] | None:
         """Called on app startup & every minute by APScheduler when continuous auto-crawl is enabled."""
-        if trigger_source == "startup":
-            # Khi container mới deploy xong, luôn khôi phục và đảm bảo cào 24/24 tự động chạy lại
-            return await self.resume_or_start_continuous_24h(force_unpause=True, trigger_source="startup")
-
         if self.is_running or self._continuous_waiting:
             return None
         cfg = await asyncio.to_thread(self.get_config_sync)
