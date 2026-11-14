@@ -947,6 +947,171 @@ def compute_zalo_kpi_counts(
     return counts
 
 
+def get_post_feed_message_stats(
+    user: Dict[str, Any],
+    platform: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    member_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+    *,
+    supabase: Optional[Client] = None,
+) -> Dict[str, Any]:
+    """Thống kê "Tin nhắn Zalo đã gửi" / "Khách đã phản hồi" cho widget Kết quả liên hệ trên Post
+    Feed — chỉ tính các dòng ``zalo_inbox_kpi`` có nguồn từ Post Feed (``post_feed_outbound`` /
+    ``post_feed_inbound``), KHÔNG tính ``direct_inbox``/``legacy_verified`` (nhắn trực tiếp trên
+    Zalo Inbox, không gắn với bài seeding nào).
+
+    Phân quyền giống hệt ``post_call_result_service.get_call_result_stats`` (tái dùng
+    ``_resolve_scoped_member_ids``): member chỉ thấy của mình, leader thấy team mình quản lý,
+    admin thấy toàn bộ hoặc lọc theo ``member_id``.
+
+    "sent" đếm theo ``first_outbound_at`` (lần đầu gửi) trong kỳ; "replied" đếm theo
+    ``first_customer_msg_at`` (lần đầu khách nhắn lại) trong kỳ — 2 field độc lập nên 1 dòng có
+    thể được tính "sent" ở ngày này và "replied" ở ngày khác.
+    """
+    from app.modules.all_platform.services.post_call_result_service import (
+        _resolve_scoped_member_ids,
+        _to_vn_day_str,
+    )
+
+    sb = supabase or get_supabase_client()
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    unreachable = ["00000000-0000-0000-0000-000000000000"]
+
+    s_str, e_str, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)
+    s_date = datetime.fromisoformat(s_str).date()
+    e_date = datetime.fromisoformat(e_str).date()
+    span_days = (e_date - s_date).days + 1
+    prev_e_date = s_date - timedelta(days=1)
+    prev_s_date = prev_e_date - timedelta(days=span_days - 1)
+    _, _, prev_start_utc, prev_end_utc = _vn_range_to_utc_bounds(
+        prev_s_date.isoformat(), prev_e_date.isoformat()
+    )
+
+    cols = "id_member, first_outbound_at, first_customer_msg_at, member:app_users!id_member(id, name, email)"
+
+    def _scoped(q):
+        q = q.in_("source_type", ["post_feed_outbound", "post_feed_inbound"])
+        if platform:
+            q = q.eq("source_platform", platform)
+        if allowed_member_ids is not None:
+            q = q.in_("id_member", allowed_member_ids or unreachable)
+        return q
+
+    sent_rows: List[dict] = []
+    replied_rows: List[dict] = []
+    prev_sent_count = 0
+    try:
+        sent_rows = (
+            _scoped(sb.table("zalo_inbox_kpi").select(cols))
+            .gte("first_outbound_at", start_utc)
+            .lt("first_outbound_at", end_utc)
+            .execute()
+        ).data or []
+        replied_rows = (
+            _scoped(sb.table("zalo_inbox_kpi").select(cols))
+            .gte("first_customer_msg_at", start_utc)
+            .lt("first_customer_msg_at", end_utc)
+            .execute()
+        ).data or []
+        prev_sent_res = (
+            _scoped(sb.table("zalo_inbox_kpi").select("id_member"))
+            .gte("first_outbound_at", prev_start_utc)
+            .lt("first_outbound_at", prev_end_utc)
+            .execute()
+        )
+        prev_sent_count = len(prev_sent_res.data or [])
+    except Exception as exc:
+        if not _is_missing_kpi_table_error(exc):
+            logger.warning(f"[ZALO-KPI] get_post_feed_message_stats error: {exc}")
+
+    by_member_entry: Dict[str, Dict[str, Any]] = {}
+    by_day_sent: Dict[str, int] = {}
+    by_day_replied: Dict[str, int] = {}
+
+    def _member_entry(row: dict) -> Dict[str, Any]:
+        mid = str(row.get("id_member") or "")
+        info = row.get("member") or {}
+        return by_member_entry.setdefault(
+            mid,
+            {"member_id": mid, "name": info.get("name"), "email": info.get("email"), "sent": 0, "replied": 0},
+        )
+
+    for row in sent_rows:
+        day = _to_vn_day_str(row.get("first_outbound_at"))
+        if day:
+            by_day_sent[day] = by_day_sent.get(day, 0) + 1
+        if row.get("id_member"):
+            _member_entry(row)["sent"] += 1
+
+    for row in replied_rows:
+        day = _to_vn_day_str(row.get("first_customer_msg_at"))
+        if day:
+            by_day_replied[day] = by_day_replied.get(day, 0) + 1
+        if row.get("id_member"):
+            _member_entry(row)["replied"] += 1
+
+    all_days = sorted(set(by_day_sent) | set(by_day_replied))
+    by_day = [
+        {"day": d, "sent": by_day_sent.get(d, 0), "replied": by_day_replied.get(d, 0)}
+        for d in all_days
+    ]
+    by_member = sorted(by_member_entry.values(), key=lambda x: (x["sent"] + x["replied"]), reverse=True)
+
+    return {
+        "sent": len(sent_rows),
+        "replied": len(replied_rows),
+        "prev_sent": prev_sent_count,
+        "by_member": by_member,
+        "by_day": by_day,
+        "range": {"start": s_str, "end": e_str},
+    }
+
+
+def get_zalo_followup_count(
+    user: Dict[str, Any],
+    team_id: Optional[str] = None,
+    member_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    within_days: int = 2,
+    *,
+    supabase: Optional[Client] = None,
+) -> int:
+    """Số hội thoại Zalo (nguồn Post Feed) đã gửi tin nhưng khách CHƯA trả lời, trong
+    `within_days` ngày gần nhất — dùng cho KPI/cảnh báo "Tin nhắn cần follow-up" ở
+    Dashboard Leader. Chỉ tính các hội thoại còn "mới" (trong vài ngày gần đây), không
+    tính toàn bộ lịch sử chưa trả lời — khớp đúng ý nghĩa "cần follow-up sớm".
+    """
+    from app.modules.all_platform.services.post_call_result_service import _resolve_scoped_member_ids
+
+    sb = supabase or get_supabase_client()
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    unreachable = ["00000000-0000-0000-0000-000000000000"]
+    since_utc = (datetime.now(timezone.utc) - timedelta(days=max(0, within_days))).isoformat()
+
+    query = (
+        sb.table("zalo_inbox_kpi")
+        .select("id", count="exact")
+        .in_("source_type", ["post_feed_outbound", "post_feed_inbound"])
+        .is_("first_customer_msg_at", "null")
+        .gte("first_outbound_at", since_utc)
+        .limit(1)
+    )
+    if platform:
+        query = query.eq("source_platform", platform)
+    if allowed_member_ids is not None:
+        query = query.in_("id_member", allowed_member_ids or unreachable)
+
+    try:
+        res = query.execute()
+        return int(res.count or 0)
+    except Exception as exc:
+        if not _is_missing_kpi_table_error(exc):
+            logger.warning(f"[ZALO-KPI] get_zalo_followup_count error: {exc}")
+        return 0
+
+
 def get_zalo_kpi_status_by_conversations(
     account_id: str,
     conversation_ids: Iterable[str],

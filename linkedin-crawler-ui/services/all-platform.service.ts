@@ -1242,6 +1242,7 @@ export const allPlatformPostsService = {
     product_seeding?: string;
     id_member?: string;
     call_result_code?: string;
+    contact_member_id?: string;
     search?: string;
     sort?: string;
     page?: number;
@@ -3074,6 +3075,7 @@ export const postCallResultService = {
     platform?: string;
     member_id?: string;
     result_code?: string;
+    team_id?: string;
   }): Promise<ApiResponse<CallResultStats>> => {
     const searchParams = new URLSearchParams();
     if (params?.date_from) searchParams.set("date_from", params.date_from);
@@ -3081,8 +3083,186 @@ export const postCallResultService = {
     if (params?.result_code) searchParams.set("result_code", params.result_code);
     if (params?.platform) searchParams.set("platform", params.platform);
     if (params?.member_id) searchParams.set("member_id", params.member_id);
+    if (params?.team_id) searchParams.set("team_id", params.team_id);
     const qs = searchParams.toString();
     return requestJson(`${BASE}/posts/call-results/stats${qs ? `?${qs}` : ""}`);
+  },
+
+  /** KPI/cảnh báo "Hẹn gọi lại quá hạn" (Dashboard Leader). */
+  getOverdueCallbacksCount: (params?: {
+    platform?: string;
+    member_id?: string;
+    team_id?: string;
+    threshold_days?: number;
+  }): Promise<ApiResponse<{ count: number }>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.platform) searchParams.set("platform", params.platform);
+    if (params?.member_id) searchParams.set("member_id", params.member_id);
+    if (params?.team_id) searchParams.set("team_id", params.team_id);
+    if (params?.threshold_days != null) searchParams.set("threshold_days", String(params.threshold_days));
+    const qs = searchParams.toString();
+    return requestJson(`${BASE}/posts/call-results/overdue-callbacks-count${qs ? `?${qs}` : ""}`);
+  },
+};
+
+export interface ZaloMessageStatsByMember {
+  member_id: string;
+  name: string | null;
+  email: string | null;
+  sent: number;
+  replied: number;
+}
+
+export interface ZaloMessageStatsByDay {
+  day: string;
+  sent: number;
+  replied: number;
+}
+
+export interface ZaloMessageStats {
+  sent: number;
+  replied: number;
+  prev_sent: number;
+  by_member: ZaloMessageStatsByMember[];
+  by_day: ZaloMessageStatsByDay[];
+  range: { start: string; end: string };
+}
+
+export interface ContactActivityMember {
+  member_id: string;
+  name: string | null;
+  email: string | null;
+  seed: number;
+  seed_verified: number;
+  call: number;
+  call_ok: number;
+  call_bad: number;
+  zalo: number;
+  total: number;
+}
+
+export interface DayBreakdownItem {
+  day: string;
+  seed: number;
+  seed_verified: number;
+  call: number;
+  call_ok: number;
+  call_bad: number;
+  zalo_sent: number;
+  zalo_replied: number;
+}
+
+export interface SeedingGroupCoverageItem {
+  group_name: string;
+  count: number;
+}
+
+export type ActivityLogActionType = "seed" | "call" | "zalo";
+
+export interface ActivityLogItem {
+  ts: string;
+  action_type: ActivityLogActionType;
+  member_id: string | null;
+  member_name: string | null;
+  post_label: string | null;
+  result_label: string;
+}
+
+export interface ActivityLogResponse {
+  items: ActivityLogItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  counts: { all: number; seed: number; call: number; zalo: number };
+}
+
+interface ContactActivityQueryParams {
+  platform?: string;
+  date_from?: string;
+  date_to?: string;
+  member_id?: string;
+  team_id?: string;
+}
+
+function buildContactActivityQuery(params?: ContactActivityQueryParams): URLSearchParams {
+  const searchParams = new URLSearchParams();
+  if (params?.platform) searchParams.set("platform", params.platform);
+  if (params?.date_from) searchParams.set("date_from", params.date_from);
+  if (params?.date_to) searchParams.set("date_to", params.date_to);
+  if (params?.member_id) searchParams.set("member_id", params.member_id);
+  if (params?.team_id) searchParams.set("team_id", params.team_id);
+  return searchParams;
+}
+
+export const postContactActivityService = {
+  /** Thanh "Ai đã làm": tổng seeding + gọi điện + nhắn Zalo theo từng thành viên trong kỳ. */
+  getWhoDidWhat: (params?: ContactActivityQueryParams): Promise<ApiResponse<ContactActivityMember[]>> => {
+    const qs = buildContactActivityQuery(params).toString();
+    return requestJson(`${BASE}/posts/call-results/contact-activity/who${qs ? `?${qs}` : ""}`);
+  },
+
+  /** Nhật ký hoạt động: gộp seeding + gọi điện + nhắn Zalo, phân trang.
+   *
+   * `result_code`/`overdue_only` chỉ áp cho sự kiện gọi điện (vd Lead = `interested`, Hẹn gọi lại
+   * = `callback`, kèm `overdue_only` cho "Follow-up quá hạn"). `needs_followup_only` chỉ áp cho
+   * sự kiện Zalo ("Tin nhắn cần follow-up"). `search` lọc theo tên thành viên/bài viết. */
+  getActivityLog: (
+    params?: ContactActivityQueryParams & {
+      action_type?: ActivityLogActionType;
+      result_code?: string;
+      overdue_only?: boolean;
+      needs_followup_only?: boolean;
+      search?: string;
+      page?: number;
+      page_size?: number;
+    }
+  ): Promise<ApiResponse<ActivityLogResponse>> => {
+    const searchParams = buildContactActivityQuery(params);
+    if (params?.action_type) searchParams.set("action_type", params.action_type);
+    if (params?.result_code) searchParams.set("result_code", params.result_code);
+    if (params?.overdue_only) searchParams.set("overdue_only", "true");
+    if (params?.needs_followup_only) searchParams.set("needs_followup_only", "true");
+    if (params?.search) searchParams.set("search", params.search);
+    if (params?.page) searchParams.set("page", String(params.page));
+    if (params?.page_size) searchParams.set("page_size", String(params.page_size));
+    const qs = searchParams.toString();
+    return requestJson(`${BASE}/posts/call-results/contact-activity/log${qs ? `?${qs}` : ""}`);
+  },
+
+  /** Thống kê "Tin nhắn Zalo đã gửi" / "Khách đã phản hồi" (nguồn Post Feed). */
+  getZaloMessageStats: (params?: ContactActivityQueryParams): Promise<ApiResponse<ZaloMessageStats>> => {
+    const qs = buildContactActivityQuery(params).toString();
+    return requestJson(`${BASE}/posts/call-results/zalo-message-stats${qs ? `?${qs}` : ""}`);
+  },
+
+  /** Tab "Theo ngày": seeding + gọi điện (OK/BAD) + Zalo (gửi/trả lời) theo từng ngày, đủ mọi
+   * ngày trong khoảng chọn (kể cả ngày không có hoạt động). */
+  getDayBreakdown: (params?: ContactActivityQueryParams): Promise<ApiResponse<DayBreakdownItem[]>> => {
+    const qs = buildContactActivityQuery(params).toString();
+    return requestJson(`${BASE}/posts/call-results/contact-activity/by-day${qs ? `?${qs}` : ""}`);
+  },
+
+  /** Tab Comment: độ phủ seeding/bình luận theo nhóm/nguồn trong kỳ. */
+  getSeedingGroupCoverage: (
+    params?: ContactActivityQueryParams & { limit?: number }
+  ): Promise<ApiResponse<SeedingGroupCoverageItem[]>> => {
+    const searchParams = buildContactActivityQuery(params);
+    if (params?.limit) searchParams.set("limit", String(params.limit));
+    const qs = searchParams.toString();
+    return requestJson(`${BASE}/posts/call-results/seeding-group-coverage${qs ? `?${qs}` : ""}`);
+  },
+
+  /** KPI/cảnh báo "Tin nhắn cần follow-up" (Dashboard Leader). */
+  getZaloFollowupCount: (
+    params?: Pick<ContactActivityQueryParams, "platform" | "member_id" | "team_id"> & { within_days?: number }
+  ): Promise<ApiResponse<{ count: number }>> => {
+    const searchParams = new URLSearchParams();
+    if (params?.platform) searchParams.set("platform", params.platform);
+    if (params?.member_id) searchParams.set("member_id", params.member_id);
+    if (params?.team_id) searchParams.set("team_id", params.team_id);
+    if (params?.within_days != null) searchParams.set("within_days", String(params.within_days));
+    const qs = searchParams.toString();
+    return requestJson(`${BASE}/posts/call-results/zalo-followup-count${qs ? `?${qs}` : ""}`);
   },
 };
 

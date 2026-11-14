@@ -127,6 +127,7 @@ def _fetch_posts(
     page: int = 1,
     page_size: int = 20,
     call_result_code: Optional[str] = None,
+    contact_member_id: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Fetch posts from a single table with full filter + sort + pagination.
 
@@ -151,6 +152,7 @@ def _fetch_posts(
             page=page,
             page_size=page_size,
             call_result_code=call_result_code,
+            contact_member_id=contact_member_id,
         )
 
     sb = _supabase()
@@ -262,6 +264,10 @@ def _fetch_posts(
 
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if contact_member_id:
+        matched_ids = _resolve_post_ids_by_contact_member(sb, table, contact_member_id)
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     # Sort
@@ -549,6 +555,62 @@ def _resolve_post_ids_by_call_result(sb: Client, table: str, call_result_code: s
     return [str(r["post_id"]) for r in (res.data or []) if r.get("post_id")]
 
 
+def _resolve_post_ids_by_contact_member(sb: Client, table: str, member_id: str) -> list[str]:
+    """post_id (= id của bảng post gốc) mà `member_id` đã từng GỌI ĐIỆN, NHẮN ZALO tư vấn (từ
+    Post Feed) hoặc SEEDING/BÌNH LUẬN — dùng cho thanh "Ai đã làm" ở widget Kết quả liên hệ (bấm
+    1 thành viên -> lọc luôn danh sách bài bên dưới).
+
+    Khác hẳn `id_member` hiện có ở `_fetch_posts`/`_fetch_keyword_posts` (đó là người CÀO bài,
+    một khái niệm hoàn toàn khác với "người đã liên hệ/seeding bài này").
+
+    Lưu ý: `seeding_content_kpi` không có cột platform đáng tin cậy ở mọi dòng lịch sử nên nhánh
+    seeding ở đây lọc theo `id_member` mà KHÔNG lọc platform — có thể lẫn vài bài seeding ở
+    platform khác (chấp nhận được, xem ghi chú trong kế hoạch triển khai).
+    """
+    platform = _TABLE_PLATFORM.get(table)
+    post_ids: set[str] = set()
+
+    try:
+        call_res = (
+            sb.table("post_call_results")
+            .select("post_id")
+            .eq("platform", platform)
+            .eq("updated_by", member_id)
+            .execute()
+        )
+        post_ids.update(str(r["post_id"]) for r in (call_res.data or []) if r.get("post_id"))
+    except Exception:
+        pass
+
+    try:
+        zalo_res = (
+            sb.table("zalo_inbox_kpi")
+            .select("source_post_id")
+            .in_("source_type", ["post_feed_outbound", "post_feed_inbound"])
+            .eq("source_platform", platform)
+            .eq("id_member", member_id)
+            .not_.is_("source_post_id", "null")
+            .execute()
+        )
+        post_ids.update(str(r["source_post_id"]) for r in (zalo_res.data or []) if r.get("source_post_id"))
+    except Exception:
+        pass
+
+    try:
+        seed_res = (
+            sb.table("seeding_content_kpi")
+            .select("id_post")
+            .eq("id_member", member_id)
+            .not_.is_("id_post", "null")
+            .execute()
+        )
+        post_ids.update(str(r["id_post"]) for r in (seed_res.data or []) if r.get("id_post"))
+    except Exception:
+        pass
+
+    return list(post_ids)
+
+
 def _fetch_keyword_posts(
     *,
     table: str,
@@ -562,6 +624,7 @@ def _fetch_keyword_posts(
     page: int,
     page_size: int,
     call_result_code: Optional[str] = None,
+    contact_member_id: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Bài Threads/YouTube (bảng threads_posts/youtube_posts, cào qua "Markee Seeding Extension").
 
@@ -599,6 +662,10 @@ def _fetch_keyword_posts(
 
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if contact_member_id:
+        matched_ids = _resolve_post_ids_by_contact_member(sb, table, contact_member_id)
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if sort == "lead_score_high":
@@ -984,6 +1051,7 @@ def get_unified_posts(
     page: int = 1,
     page_size: int = 20,
     call_result_code: Optional[str] = None,
+    contact_member_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fetch posts from one or all platforms, fully filtered server-side."""
     platforms_to_fetch = _tables_for_platform(platform)
@@ -1021,6 +1089,7 @@ def get_unified_posts(
                 page=1,
                 page_size=combined_limit,
                 call_result_code=call_result_code,
+                contact_member_id=contact_member_id,
             )
             # Add platform tag
             platform_name = table.replace("_posts", "")
@@ -1078,6 +1147,7 @@ def get_unified_posts(
             page=page,
             page_size=page_size,
             call_result_code=call_result_code,
+            contact_member_id=contact_member_id,
         )
         platform_name = table.replace("_posts", "")
         for p in posts:
@@ -1286,6 +1356,7 @@ def filter_unified_posts(
     page: int = 1,
     page_size: int = 20,
     call_result_code: Optional[str] = None,
+    contact_member_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Filter posts with ALL criteria applied server-side in Supabase."""
     date_from = date_from or date
@@ -1307,6 +1378,7 @@ def filter_unified_posts(
         page=page,
         page_size=page_size,
         call_result_code=call_result_code,
+        contact_member_id=contact_member_id,
     )
 
 

@@ -124,7 +124,18 @@ def update_call_result(
     return saved_result
 
 
-def _resolve_scoped_member_ids(user: dict[str, Any], member_id: Optional[str]) -> Optional[list[str]]:
+def _team_roster(team_id: str) -> list[str]:
+    """Danh sách id_member thuộc 1 team cụ thể (bảng `member_of_teams`)."""
+    supabase = get_supabase_client()
+    res = execute_supabase_query(
+        lambda: supabase.table("member_of_teams").select("id_member").eq("id_teams", team_id).execute()
+    )
+    return [r["id_member"] for r in (res.data or []) if r.get("id_member")]
+
+
+def _resolve_scoped_member_ids(
+    user: dict[str, Any], member_id: Optional[str], team_id: Optional[str] = None
+) -> Optional[list[str]]:
     """Trả list id_member được phép xem thống kê, hoặc None nếu không giới hạn (admin, không lọc).
 
     Theo đúng nguồn team đang thực sự dùng cho KPI/Dashboard leader (`teams` +
@@ -136,11 +147,13 @@ def _resolve_scoped_member_ids(user: dict[str, Any], member_id: Optional[str]) -
     Deal, không liên quan tới team quản lý seeding/KPI — xem docstring
     `crm_team_service.py`).
 
-    - member: chỉ chính mình.
+    - member: chỉ chính mình (bỏ qua `team_id`/`member_id` truyền lên).
     - leader: các thành viên thuộc (các) team mà leader đó là `id_leader`, cộng
-      chính leader. `member_id` (nếu có) phải nằm trong tập này, không thì trả
-      về 1 id không tồn tại (rỗng an toàn) thay vì lỗi.
-    - admin: None (không giới hạn) trừ khi có `member_id` cụ thể.
+      chính leader. Nếu có `team_id` (bộ lọc Team ở Dashboard Leader), giao thêm
+      với roster của đúng team đó — leader chọn team không phải của mình sẽ ra
+      rỗng an toàn, không lỗi. `member_id` (nếu có) phải nằm trong tập cuối cùng.
+    - admin: `team_id` giới hạn theo đúng roster team đó (không giới hạn role);
+      không có `team_id`/`member_id` thì None (không giới hạn).
     """
     role = str(user.get("role") or "member").strip().lower()
     user_id = user.get("id")
@@ -164,11 +177,21 @@ def _resolve_scoped_member_ids(user: dict[str, Any], member_id: Optional[str]) -
         member_ids.append(user_id)
         member_ids = list(set(member_ids))
 
+        if team_id:
+            roster = set(_team_roster(team_id))
+            member_ids = [m for m in member_ids if m in roster]
+
         if member_id:
             return [member_id] if member_id in member_ids else [_UNREACHABLE_ID]
-        return member_ids
+        return member_ids or [_UNREACHABLE_ID]
 
     # admin
+    if team_id:
+        roster = _team_roster(team_id)
+        if member_id:
+            return [member_id] if member_id in roster else [_UNREACHABLE_ID]
+        return roster or [_UNREACHABLE_ID]
+
     if member_id:
         return [member_id]
     return None
@@ -181,6 +204,7 @@ def get_call_result_stats(
     platform: Optional[str] = None,
     member_id: Optional[str] = None,
     result_code: Optional[str] = None,
+    team_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Thống kê "Kết quả liên hệ" theo loại / theo thành viên / theo ngày (giờ VN).
 
@@ -204,7 +228,7 @@ def get_call_result_stats(
         start_d, end_d = end_d, start_d
     start_utc, end_utc = _vn_week_range_to_utc(start_d.isoformat(), end_d.isoformat())
 
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
 
     query = (
         supabase.table("post_call_results")
@@ -289,6 +313,40 @@ def get_call_result_stats(
         "total": total,
         "range": {"start": start_d.isoformat(), "end": end_d.isoformat()},
     }
+
+
+def get_overdue_callbacks_count(
+    user: dict[str, Any],
+    team_id: Optional[str] = None,
+    member_id: Optional[str] = None,
+    platform: Optional[str] = None,
+    threshold_days: int = 1,
+) -> int:
+    """Số bài có kết quả liên hệ MỚI NHẤT là 'callback' (hẹn gọi lại) nhưng đã quá
+    `threshold_days` kể từ `last_call_at` mà chưa có lần gọi mới hơn — dùng cho thẻ
+    KPI/cảnh báo "Hẹn gọi lại quá hạn" ở Dashboard Leader.
+
+    `post_call_results` là upsert theo `(post_id, platform)` nên mỗi dòng LUÔN là kết
+    quả gần nhất của bài đó — không cần join lịch sử để biết "còn hiệu lực" hay không.
+    """
+    supabase = get_supabase_client()
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    threshold_utc = (datetime.now(timezone.utc) - timedelta(days=max(0, threshold_days))).isoformat()
+
+    query = (
+        supabase.table("post_call_results")
+        .select("id", count="exact")
+        .eq("result_code", "callback")
+        .lt("last_call_at", threshold_utc)
+        .limit(1)
+    )
+    if platform:
+        query = query.eq("platform", platform)
+    if allowed_member_ids is not None:
+        query = query.in_("updated_by", allowed_member_ids or [_UNREACHABLE_ID])
+
+    res = execute_supabase_query(lambda: query.execute())
+    return int(res.count or 0)
 
 
 def _parse_date_safe(value: Optional[str]) -> Optional[date]:
