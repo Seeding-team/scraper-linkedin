@@ -358,9 +358,9 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
             {
               type: "item",
               id: "external-schedules",
-              href: "/all-platform/lich-cao-hang-doi",
-              icon: "calendar_today",
-              label: "Lịch cào & Hàng đợi",
+              href: "/all-platform/lich-cao-hang-doi?tab=public-4g",
+              icon: "public",
+              label: "Cào Public 4G (No-Acc)",
               matchStartsWith: ["/all-platform/lich-cao-hang-doi"],
             },
             {

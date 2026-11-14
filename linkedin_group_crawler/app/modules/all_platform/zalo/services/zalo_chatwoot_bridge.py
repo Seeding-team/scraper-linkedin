@@ -167,124 +167,8 @@ def _chunks(items: List[Dict[str, Any]], size: int) -> List[List[Dict[str, Any]]
 
 
 async def run_bridge_tick_for_account(cfg: Dict[str, Any]) -> None:
-    account_id = cfg["account_id"]
-    if not cfg.get("chatwoot_account_id") or not cfg.get("chatwoot_inbox_id"):
-        return  # chưa nhập Chatwoot ID: không làm gì
-    cursor = await _read_cursor(account_id)
-    rows = await _rest(
-        "GET", "zalo_messages",
-        params={
-            "select": "*", "user_id": f"eq.{account_id}", "is_sent": "eq.false", "is_deleted": "eq.false",
-            "ts": f"gt.{cursor}", "order": "ts.asc", "limit": str(MESSAGES_PER_TICK),
-        },
-    ) or []
-    if not rows:
-        return
-
-    direct = await direct_thread_ids(account_id, sorted({r["group_id"] for r in rows if r.get("group_id")}))
-    scope_mode = cfg.get("scope_mode") or "all"
-    rules = await get_rules(account_id)
-    wait_raw = cfg.get("batch_wait_seconds")
-    wait_s = int(wait_raw) if isinstance(wait_raw, int) and not isinstance(wait_raw, bool) else 10
-    handled = await _handled_keys(account_id, [_msg_key(r) for r in rows])
-    now_ms = int(time.time() * 1000)
-
-    # Bước 1: loại tin không áp dụng; các tin còn lại gom theo hội thoại (giữ thứ tự thời gian).
-    max_done_ts = cursor            # tin mới nhất đã xử lý xong (không còn cần đọc lại)
-    pending_first_ts: List[int] = []  # mốc tin chờ xử lý -> cursor không được vượt qua
-    by_thread: Dict[str, List[Dict[str, Any]]] = {}
-    for row in rows:
-        row_ts = int(row.get("ts") or 0)
-        thread_id = row.get("group_id")
-        text = (row.get("content") or "").strip()
-        is_text = (row.get("msg_kind") or row.get("type") or "text") in TEXT_MSG_KINDS
-        key = _msg_key(row)
-        if key in handled or thread_id not in direct or not text or not is_text:
-            max_done_ts = max(max_done_ts, row_ts)
-            continue
-        if not in_scope(scope_mode, rules.get(thread_id)):
-            await log_event(
-                account_id, thread_id, "in", key, text, "skipped",
-                "Ngoài phạm vi bot (đã tắt cho người này)" if scope_mode == "all"
-                else "Ngoài phạm vi bot (người này chưa được bật)",
-            )
-            max_done_ts = max(max_done_ts, row_ts)
-            continue
-        by_thread.setdefault(thread_id, []).append(row)
-
-    # Bước 2: mỗi hội thoại chia mẻ; mẻ đủ điều kiện thì xử lý, chưa đủ thì hoãn (giữ cursor lại).
-    stop = False
-    for thread_id, thread_rows in by_thread.items():
-        if stop:
-            pending_first_ts.append(int(thread_rows[0].get("ts") or 0))
-            continue
-        paused = await is_paused_or_expire(cfg, thread_id)
-        chunks = _chunks(thread_rows, MAX_BATCH_MESSAGES if wait_s > 0 else 1)   # wait=0: tắt gom, từng tin một
-        for idx, batch in enumerate(chunks):
-            first_ts = int(batch[0].get("ts") or 0)
-            last_ts = int(batch[-1].get("ts") or 0)
-            if stop or not _batch_ready(batch, idx == len(chunks) - 1, wait_s, now_ms):
-                pending_first_ts.append(first_ts)
-                continue
-
-            keys = [_msg_key(r) for r in batch]
-            texts = [(r.get("content") or "").strip() for r in batch]
-            if paused:
-                for k, t in zip(keys, texts):
-                    await log_event(account_id, thread_id, "in", k, t, "paused", "Nhân viên đang tiếp quản hội thoại")
-                max_done_ts = max(max_done_ts, last_ts)
-                continue
-            if cfg.get("dry_run", True):
-                note = f"Gộp {len(batch)} tin thành 1 câu hỏi" if len(batch) > 1 else None
-                for k, t in zip(keys, texts):
-                    await log_event(account_id, thread_id, "in", k, t, "dry_run", note)
-                max_done_ts = max(max_done_ts, last_ts)
-                continue
-            if not N8N_INCOMING_URL:
-                logger.warning("[zalo-bot] thiếu ZALO_BOT_N8N_INCOMING_URL -> không đẩy được tin sang n8n")
-                pending_first_ts.append(first_ts)
-                stop = True
-                continue
-            if not _consume_rate_budget(account_id):
-                logger.info(f"[zalo-bot] rate_limited account={account_id} — dừng tick, thử lại sau")
-                pending_first_ts.append(first_ts)
-                stop = True
-                continue
-
-            try:
-                await _post_to_n8n(cfg, _combine_batch(batch))
-            except Exception as exc:
-                logger.warning(f"[zalo-bot] đẩy sang n8n lỗi, thử lại tick sau: {exc}")
-                await log_event(account_id, thread_id, "in", keys[-1], "\n".join(t for t in texts if t), "error", str(exc)[:500])
-                pending_first_ts.append(first_ts)
-                stop = True
-                continue
-            note = f"Gộp {len(batch)} tin thành 1 câu hỏi" if len(batch) > 1 else None
-            for k, t in zip(keys, texts):
-                await log_event(account_id, thread_id, "in", k, t, "forwarded", note)
-            max_done_ts = max(max_done_ts, last_ts)
-
-    # Bước 3: cursor đi tới tin đã xong, nhưng không vượt qua tin còn chờ (sẽ đọc lại ở tick sau; _handled_keys chống trùng).
-    new_cursor = max_done_ts
-    if pending_first_ts:
-        new_cursor = min(new_cursor, min(pending_first_ts) - 1)
-    if new_cursor > cursor:
-        await _write_cursor(account_id, new_cursor)
-
-
-async def run_bridge_tick() -> None:
-    """1 tick toàn cục — gọi định kỳ từ main.py lifespan."""
-    try:
-        configs = await _rest("GET", "zalo_bot_configs", params={"select": "*", "is_enabled": "eq.true"}) or []
-    except Exception:
-        logger.exception("[zalo-bot] không tải được config")
-        return
-    for cfg in configs:
-        async with _lock_for(cfg["account_id"]):
-            try:
-                await run_bridge_tick_for_account(cfg)
-            except Exception:
-                logger.exception(f"[zalo-bot] tick lỗi account={cfg['account_id']}")
+    # Chế độ Bot AI tự động nhắn tin đã được vô hiệu hóa theo yêu cầu quản trị viên
+    return
 
 
 async def send_outbound_message(
@@ -299,6 +183,11 @@ async def send_outbound_message(
     if not row or not row.get("is_enabled"):
         return {"status": "skipped", "reason": "bot chưa bật cho tài khoản này"}
     is_staff = (sender_type or "").strip().lower() == "user"
+    if not is_staff:
+        # Master requested to permanently disable automatic messaging from Zalo Bot
+        logger.info(f"[zalo-bot] Bot auto-reply permanently disabled by administrator (account={account_id}, thread={thread_id})")
+        return {"status": "skipped", "reason": "Bot auto messaging is disabled by administrator"}
+
     sent_by = "staff" if is_staff else "bot"
     cfg = {**row}
 

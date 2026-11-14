@@ -142,6 +142,7 @@ export type MaterialSymbolName =
   | "reply"
   | "forward"
   | "cancel"
+  | "public"
   | "folder_shared";
 
 export interface MaterialIconProps {

@@ -16,3 +16,7 @@ data/raw/*.html
 .pytest_cache/
 *.session
 *.session-journal
+
+temp_otp/
+**/temp_otp/**
+*temp_otp*

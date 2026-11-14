@@ -21,6 +21,7 @@ import { useAppAuth } from "@/contexts/AppAuthContext";
 import { cn } from "@/lib/utils";
 import { publicCrawlerService } from "@/services/public-crawler.service";
 import type {
+  ThreadsKeywordLibraryItem,
   ProxyTestResponse,
   PublicCrawlConfig,
   PublicCrawlGroupItem,
@@ -312,6 +313,22 @@ export function Public4GCrawlerPanel() {
   const [triggeringRun, setTriggeringRun] = useState(false);
   const [testingProxyNode, setTestingProxyNode] = useState<string | null>(null);
   const [lastProxyTest, setLastProxyTest] = useState<ProxyTestResponse | null>(null);
+  // Thư viện từ khóa Threads theo Chủ đề (mở full quyền cho member, leader, admin)
+  const [threadsLibraryKeywords, setThreadsLibraryKeywords] = useState<ThreadsKeywordLibraryItem[]>([]);
+  const [threadsTopics, setThreadsTopics] = useState<string[]>([
+    "Website",
+    "Mobile App",
+    "Phần mềm & CRM",
+    "Marketing & Ads",
+    "AI & Automation",
+    "Chung",
+  ]);
+  const [selectedTopic, setSelectedTopic] = useState("Website");
+  const [customTopicInput, setCustomTopicInput] = useState("");
+  const [newKeywordInput, setNewKeywordInput] = useState("");
+  const [isAddingKeyword, setIsAddingKeyword] = useState(false);
+  const [libraryFilterTopic, setLibraryFilterTopic] = useState("all");
+
   const [feedback, setFeedback] = useState<{ type: "success" | "error" | "info"; text: string } | null>(
     null,
   );
@@ -323,6 +340,72 @@ export function Public4GCrawlerPanel() {
     setNumberInputs(configToNumberStrings(clean, cfg.max_allowed_concurrent_sims ?? cap));
     setConfigDirty(false);
   }, []);
+
+  const loadThreadsLibrary = useCallback(async () => {
+    try {
+      const res = await publicCrawlerService.getThreadsKeywords();
+      if (res.success && Array.isArray(res.items)) {
+        setThreadsLibraryKeywords(res.items);
+        if (res.topics && res.topics.length > 0) {
+          setThreadsTopics(res.topics);
+        }
+      }
+    } catch {
+      // quiet fail
+    }
+  }, []);
+
+  const handleAddKeywordToLibrary = async () => {
+    const raw = newKeywordInput.trim();
+    if (!raw) {
+      setFeedback({ type: "error", text: "Vui lòng nhập từ khóa cần thêm vào thư viện Threads" });
+      return;
+    }
+    const topicToUse = customTopicInput.trim() || selectedTopic || "Chung";
+    const kws = raw.split(/[,\n]/).map((k) => k.trim()).filter(Boolean);
+    if (kws.length === 0) return;
+
+    setIsAddingKeyword(true);
+    try {
+      const res = await publicCrawlerService.addThreadsKeywords({
+        topic: topicToUse,
+        keywords: kws,
+      });
+      if (res.success) {
+        setFeedback({
+          type: "success",
+          text: res.message || `Đã thêm ${kws.length} từ khóa vào chủ đề "${topicToUse}"`,
+        });
+        setNewKeywordInput("");
+        setCustomTopicInput("");
+        await loadThreadsLibrary();
+      } else {
+        setFeedback({ type: "error", text: res.message || "Không thể thêm từ khóa" });
+      }
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi khi thêm từ khóa",
+      });
+    } finally {
+      setIsAddingKeyword(false);
+    }
+  };
+
+  const handleDeleteKeywordFromLibrary = async (kwId: string, kwName: string) => {
+    try {
+      const res = await publicCrawlerService.deleteThreadsKeyword(kwId);
+      if (res.success) {
+        setFeedback({ type: "success", text: `Đã xóa từ khóa "${kwName}" khỏi thư viện` });
+        await loadThreadsLibrary();
+      }
+    } catch (err) {
+      setFeedback({
+        type: "error",
+        text: err instanceof Error ? err.message : "Lỗi khi xóa từ khóa",
+      });
+    }
+  };
 
   const loadAll = useCallback(
     async (syncDraft = false) => {
@@ -336,6 +419,7 @@ export function Public4GCrawlerPanel() {
           syncFormFromServer(statusRes.config, (statusRes.sims || []).length);
         }
         setGroups(groupsRes.groups || []);
+        void loadThreadsLibrary();
       } catch (err) {
         setFeedback({
           type: "error",
@@ -359,6 +443,7 @@ export function Public4GCrawlerPanel() {
         setStatusData(statusRes);
         syncFormFromServer(statusRes.config, (statusRes.sims || []).length);
         setGroups(groupsRes.groups || []);
+        void loadThreadsLibrary();
       })
       .catch((err) => {
         if (cancelled) return;
@@ -1324,10 +1409,10 @@ export function Public4GCrawlerPanel() {
             </label>
           </div>
 
-          {/* Cấu hình Threads No-Acc (~30 từ khóa AI) & Luân phiên FB <-> Threads */}
-          <div className="rounded-xl border border-purple-200/80 bg-purple-50/40 p-3 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label className="inline-flex items-center gap-2 cursor-pointer text-xs font-black text-purple-950">
+          {/* Threads No-Acc Seeding Settings & Keyword Library */}
+          <div className="rounded-xl border border-purple-200/80 bg-purple-50/40 p-3 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-purple-200/60">
+              <label className="flex items-center gap-2 text-xs font-bold text-purple-900 cursor-pointer">
                 <input
                   type="checkbox"
                   disabled={!canControl}
@@ -1338,33 +1423,14 @@ export function Public4GCrawlerPanel() {
                   }}
                   className="size-4 accent-purple-600 rounded"
                 />
-                Luân phiên 24/24 sang Threads No-Acc (từ khóa AI tự biến đổi)
+                <span>Luân phiên 24/24 sang Threads No-Acc (Thư viện từ khóa theo chủ đề)</span>
               </label>
-              <span className="text-[11px] font-semibold text-purple-700">
-                FB Hết Nhóm → Threads AI → FB → ...
+              <span className="text-[11px] font-semibold text-purple-700 bg-purple-100/80 px-2 py-0.5 rounded-full border border-purple-200">
+                FB Hết Nhóm → Threads Thư viện từ khóa → FB → ...
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-              <label
-                className="space-y-1 text-xs"
-                title="AI tự sinh & thay thế từ khóa kém hiệu quả mỗi vòng để luôn giữ khoảng 30 từ khóa ngon nhất (5–50)."
-              >
-                <span className="font-bold text-slate-600 block">
-                  Số từ khóa AI Threads{" "}
-                  <span className="font-normal text-[10px] text-slate-400">(5–50)</span>
-                </span>
-                <input
-                  type="number"
-                  min={PUBLIC_CRAWL_LIMITS.threads_keyword_target.min}
-                  max={PUBLIC_CRAWL_LIMITS.threads_keyword_target.max}
-                  disabled={!canControl}
-                  value={numberInputs.threads_keyword_target}
-                  onChange={(e) => handleNumericChange("threads_keyword_target", e.target.value)}
-                  onBlur={() => commitNumericField("threads_keyword_target")}
-                  className="w-full rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-xs font-semibold"
-                />
-              </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <label
                 className="space-y-1 text-xs"
                 title="Số bài tối đa lưu mỗi từ khóa Threads trong 1 vòng (5–30)."
@@ -1407,34 +1473,159 @@ export function Public4GCrawlerPanel() {
               </label>
             </div>
 
-            {runtime?.active_threads_keywords && runtime.active_threads_keywords.length > 0 && (
-              <div className="pt-1.5 border-t border-purple-200/60">
-                <div className="text-[11px] font-bold text-purple-900 mb-1.5">
-                  Bộ từ khóa Threads đang quay vòng ({runtime.active_threads_keywords.length} từ):
+            {/* THƯ VIỆN TỪ KHÓA THREADS THEO CHỦ ĐỀ (OPEN CHO TOÀN BỘ MEMBER, LEADER, ADMIN) */}
+            <div className="pt-2 border-t border-purple-200/60 space-y-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-purple-950 uppercase tracking-wider">
+                    📚 Thư viện từ khóa Threads ({threadsLibraryKeywords.length} từ)
+                  </span>
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.2 rounded-full">
+                    Cào toàn bộ sau mỗi vòng
+                  </span>
                 </div>
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                  {runtime.active_threads_keywords.map((kwItem) => (
-                    <span
-                      key={kwItem.keyword}
-                      title={`Đã dùng ${kwItem.times_used} vòng · ${kwItem.total_posts_found} bài · ${kwItem.high_score_posts} Lead >=70đ`}
-                      className={cn(
-                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border",
-                        kwItem.high_score_posts > 0
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-200"
-                          : "bg-white text-purple-900 border-purple-200",
-                      )}
-                    >
-                      <span>{kwItem.keyword}</span>
-                      {(kwItem.high_score_posts > 0 || kwItem.total_posts_found > 0) && (
-                        <span className="font-mono text-[9px] opacity-80">
-                          ({kwItem.high_score_posts}L/{kwItem.total_posts_found}B)
-                        </span>
-                      )}
-                    </span>
-                  ))}
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 font-medium">Lọc chủ đề:</span>
+                  <select
+                    value={libraryFilterTopic}
+                    onChange={(e) => setLibraryFilterTopic(e.target.value)}
+                    className="rounded-lg border border-purple-200 bg-white px-2 py-1 text-xs font-semibold text-purple-900"
+                  >
+                    <option value="all">Tất cả chủ đề</option>
+                    {threadsTopics.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
-            )}
+
+              {/* Form thêm từ khóa mới vào Thư viện */}
+              <div className="rounded-xl border border-purple-200 bg-white p-2.5 space-y-2 shadow-2xs">
+                <div className="text-[11px] font-bold text-slate-700 flex items-center gap-1">
+                  <span>+ Thêm từ khóa mới để chạy seeding Threads:</span>
+                  <span className="text-[10px] font-normal text-slate-500">
+                    (Vòng cào sau sẽ tự động nạp lại và cào toàn bộ)
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                  <div className="sm:col-span-4">
+                    <select
+                      value={selectedTopic}
+                      onChange={(e) => setSelectedTopic(e.target.value)}
+                      className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-800"
+                    >
+                      {threadsTopics.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                      <option value="custom">+ Chủ đề khác...</option>
+                    </select>
+                  </div>
+                  {selectedTopic === "custom" && (
+                    <div className="sm:col-span-3">
+                      <input
+                        type="text"
+                        value={customTopicInput}
+                        onChange={(e) => setCustomTopicInput(e.target.value)}
+                        placeholder="Tên chủ đề mới..."
+                        className="w-full rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-xs font-medium"
+                      />
+                    </div>
+                  )}
+                  <div className={selectedTopic === "custom" ? "sm:col-span-3" : "sm:col-span-6"}>
+                    <input
+                      type="text"
+                      value={newKeywordInput}
+                      onChange={(e) => setNewKeywordInput(e.target.value)}
+                      placeholder="Nhập từ khóa (vd: thiết kế web, landing page, app bán hàng)..."
+                      className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void handleAddKeywordToLibrary();
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <button
+                      type="button"
+                      disabled={isAddingKeyword || !newKeywordInput.trim()}
+                      onClick={() => void handleAddKeywordToLibrary()}
+                      className="w-full rounded-lg bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs py-1.5 px-3 transition shadow-xs disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1"
+                    >
+                      <span>{isAddingKeyword ? "Đang thêm..." : "+ Thêm"}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Danh sách hiển thị các từ khóa phân loại theo Chủ đề */}
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {threadsLibraryKeywords.length === 0 ? (
+                  <div className="text-xs text-slate-500 py-3 text-center">
+                    Thư viện chưa có từ khóa. Hãy thêm từ khóa phía trên để bắt đầu cào Threads.
+                  </div>
+                ) : (
+                  Object.entries(
+                    threadsLibraryKeywords
+                      .filter((k) => libraryFilterTopic === "all" || k.topic === libraryFilterTopic)
+                      .reduce<Record<string, ThreadsKeywordLibraryItem[]>>((acc, kw) => {
+                        const t = kw.topic || "Chung";
+                        if (!acc[t]) acc[t] = [];
+                        acc[t].push(kw);
+                        return acc;
+                      }, {})
+                  ).map(([topicName, items]) => (
+                    <div key={topicName} className="rounded-lg border border-purple-100 bg-white/80 p-2 space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-purple-900 border-b border-purple-50 pb-1">
+                        <span className="flex items-center gap-1">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-600"></span>
+                          <span>{topicName}</span>
+                          <span className="text-[10px] font-normal text-slate-500">({items.length} từ)</span>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {items.map((kwItem) => (
+                          <span
+                            key={kwItem.id || kwItem.keyword}
+                            title={`Chủ đề: ${kwItem.topic} · Đã dùng ${kwItem.times_used} vòng · ${kwItem.total_posts_found} bài · ${kwItem.high_score_posts} Lead >=70đ`}
+                            className={cn(
+                              "inline-flex items-center gap-1 pl-2.5 pr-1.5 py-0.5 rounded-full text-[11px] font-semibold border transition shadow-2xs",
+                              kwItem.high_score_posts > 0
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : "bg-white text-purple-900 border-purple-200",
+                            )}
+                          >
+                            <span>{kwItem.keyword}</span>
+                            {(kwItem.high_score_posts > 0 || kwItem.total_posts_found > 0) && (
+                              <span className="font-mono text-[9px] opacity-80">
+                                ({kwItem.high_score_posts}L/{kwItem.total_posts_found}B)
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleDeleteKeywordFromLibrary(kwItem.id || kwItem.keyword, kwItem.keyword)}
+                              className="ml-0.5 p-0.5 rounded-full hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition cursor-pointer"
+                              title="Xóa từ khóa này khỏi thư viện"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="text-[10.5px] text-purple-800 bg-purple-100/50 p-2 rounded-lg border border-purple-200/60 leading-relaxed">
+                💡 <strong>Cơ chế tự động:</strong> Hệ thống sẽ cào <strong>TOÀN BỘ</strong> các từ khóa trong thư viện trên mỗi vòng lặp Threads. Khi thành viên thêm từ khóa hoặc chủ đề mới, ngay sau khi vòng hiện tại kết thúc, vòng kế tiếp sẽ tự động nạp lại và cào đầy đủ. AI đề xuất & đánh giá từ khóa đã được tắt để tiết kiệm 100% token AI.
+              </div>
+            </div>
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1 border-t border-slate-100">

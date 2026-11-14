@@ -260,3 +260,70 @@ async def list_public_crawled_and_ai_posts(
         limit=limit,
     )
     return {"success": True, **data}
+
+
+class AddThreadsKeywordBody(BaseModel):
+    topic: str = "Chung"
+    keywords: List[str]
+
+
+class ToggleThreadsKeywordBody(BaseModel):
+    is_active: Optional[bool] = None
+
+
+@router.get("/threads-keywords")
+async def get_threads_keywords_library(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Lấy danh sách toàn bộ từ khóa trong Thư viện Threads (mở cho cả member, leader, admin)."""
+    from app.modules.all_platform.services.threads_keyword_service import (
+        DEFAULT_TOPICS,
+        list_all_keywords,
+    )
+
+    items = await asyncio.to_thread(list_all_keywords)
+    return {"success": True, "items": items, "topics": list(DEFAULT_TOPICS)}
+
+
+@router.post("/threads-keywords")
+async def add_threads_keywords_to_library(
+    body: AddThreadsKeywordBody,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Thêm từ khóa mới theo Chủ đề vào Thư viện Threads (mở cho cả member, leader, admin)."""
+    from app.modules.all_platform.services.threads_keyword_service import add_keywords
+
+    creator = user.get("name") or user.get("email") or "Thành viên"
+    res = await asyncio.to_thread(
+        add_keywords,
+        topic=body.topic,
+        keywords=body.keywords,
+        created_by=creator,
+    )
+    return res
+
+
+@router.delete("/threads-keywords/{kw_id}")
+async def delete_threads_keyword_from_library(
+    kw_id: str,
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Xóa từ khóa khỏi Thư viện Threads."""
+    from app.modules.all_platform.services.threads_keyword_service import delete_keyword
+
+    ok = await asyncio.to_thread(delete_keyword, keyword_id=kw_id)
+    return {"success": ok}
+
+
+@router.post("/threads-keywords/{kw_id}/toggle")
+async def toggle_threads_keyword_status(
+    kw_id: str,
+    body: Optional[ToggleThreadsKeywordBody] = None,
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Bật / Tắt trạng thái từ khóa trong Thư viện Threads."""
+    from app.modules.all_platform.services.threads_keyword_service import toggle_keyword
+
+    is_act = body.is_active if body else None
+    ok = await asyncio.to_thread(toggle_keyword, keyword_id=kw_id, is_active=is_act)
+    return {"success": ok}

@@ -2989,9 +2989,8 @@ class PublicCrawlOrchestrator:
                     evolve_and_select_keywords,
                 )
 
-                kw_lo, kw_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"]
-                kw_target = max(kw_lo, min(kw_hi, int(cfg.get("threads_keyword_target") or 30)))
-                evolved = await evolve_and_select_keywords(target_count=kw_target, rotate_replace_count=6)
+                # Nạp động TOÀN BỘ từ khóa active trong Thư viện từ khóa Threads (0 token AI)
+                evolved = await evolve_and_select_keywords(target_count=int(cfg.get('threads_keyword_target') or 0) or None)
                 threads_keywords = evolved.get("keywords") or []
                 meta = evolved.get("meta") or {}
                 self.active_threads_keywords = list(meta.get("items") or [])
@@ -3188,9 +3187,8 @@ class PublicCrawlOrchestrator:
                         from app.modules.all_platform.services.threads_keyword_service import (
                             evolve_and_select_keywords,
                         )
-                        kw_lo, kw_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["threads_keyword_target"]
-                        kw_target = max(kw_lo, min(kw_hi, int(cfg.get("threads_keyword_target") or 30)))
-                        evolved = await evolve_and_select_keywords(target_count=kw_target, rotate_replace_count=6)
+                        # Tự động reload mới TOÀN BỘ từ khóa trong Thư viện Threads trước mỗi vòng (0 token AI)
+                        evolved = await evolve_and_select_keywords(target_count=int(cfg.get('threads_keyword_target') or 0) or None)
                         threads_keywords = evolved.get("keywords") or []
                         meta = evolved.get("meta") or {}
                         self.active_threads_keywords = list(meta.get("items") or [])

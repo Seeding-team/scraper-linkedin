@@ -1,4 +1,5 @@
 import type {
+  ThreadsKeywordLibraryItem,
   CrawledPostsOverviewResponse,
   ProxyTestResponse,
   PublicCrawlActionResponse,
@@ -111,4 +112,26 @@ export const publicCrawlerService = {
     const qs = searchParams.toString();
     return request<CrawledPostsOverviewResponse>(`/crawled-posts${qs ? `?${qs}` : ""}`);
   },
+  getThreadsKeywords: () =>
+    request<{ success: boolean; items: ThreadsKeywordLibraryItem[]; topics: string[] }>("/threads-keywords"),
+
+  addThreadsKeywords: (body: { topic: string; keywords: string[] }) =>
+    request<{ success: boolean; message: string; added_count: number; new_keywords: string[]; topic: string }>(
+      "/threads-keywords",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
+
+  deleteThreadsKeyword: (id: string) =>
+    request<{ success: boolean }>(`/threads-keywords/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  toggleThreadsKeyword: (id: string, is_active?: boolean) =>
+    request<{ success: boolean }>(`/threads-keywords/${encodeURIComponent(id)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ is_active }),
+    }),
 };

@@ -1346,7 +1346,7 @@ def test_threads_no_acc_merge_timestamps_and_state_classification() -> None:
 
 
 def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> None:
-    """Verify evolve_and_select_keywords maintains ~30 short queries, retires 0-lead terms & evolves new ones."""
+    """Verify evolve_and_select_keywords loads all active keywords from library with 0 AI tokens."""
     from app.modules.all_platform.services import threads_keyword_service as kw_svc
 
     registry_rows: list[dict] = [
@@ -1383,6 +1383,9 @@ def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> No
             self._action = "select"
             return self
 
+        def order(self, *_args, **_kw):
+            return self
+
         def insert(self, payload):
             self._action = "insert"
             self._payload = payload
@@ -1400,23 +1403,6 @@ def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> No
         def execute(self):
             if self._action == "select":
                 return _FakeExec([dict(r) for r in registry_rows])
-            if self._action == "insert" and isinstance(self._payload, list):
-                for item in self._payload:
-                    registry_rows.append(
-                        {
-                            "keyword": item["keyword"],
-                            "is_active": item.get("is_active", True),
-                            "times_used": 0,
-                            "total_posts_found": 0,
-                            "high_score_posts": 0,
-                        }
-                    )
-                return _FakeExec(self._payload)
-            if self._action == "update" and isinstance(self._payload, dict):
-                for r in registry_rows:
-                    if r["keyword"] == self._eq_kw:
-                        r.update(self._payload)
-                return _FakeExec([])
             return _FakeExec([])
 
     class _FakeSb:
@@ -1426,21 +1412,11 @@ def test_threads_ai_keywords_30_evolution_replaces_weak_terms(monkeypatch) -> No
     monkeypatch.setattr(kw_svc, "get_supabase_client", lambda: _FakeSb())
     monkeypatch.setattr(kw_svc, "is_configured", lambda: True)
 
-    async def _fake_ai_gen(n: int, existing: list[str]) -> list[str]:
-        existing_low = {e.lower() for e in existing}
-        candidates = [f"ai tu khoa moi {idx}" for idx in range(1, n + 5)]
-        return [c for c in candidates if c.lower() not in existing_low][:n]
-
-    monkeypatch.setattr(kw_svc, "_generate_keywords", _fake_ai_gen)
-
-    res = asyncio.run(kw_svc.evolve_and_select_keywords(target_count=30, rotate_replace_count=6))
+    res = asyncio.run(kw_svc.evolve_and_select_keywords(target_count=30))
     assert len(res["keywords"]) == 30
     meta = res["meta"]
-    assert meta["ai_powered"] is True
-    assert len(meta["deactivated"]) == 6
-    assert all(k.startswith("tu khoa yeu") for k in meta["deactivated"])
-    assert meta["newly_generated"] == 6
-    assert all(not k.startswith("tu khoa yeu") for k in res["keywords"])
+    assert meta["ai_powered"] is False
+    assert meta["newly_generated"] == 0
 
 
 def test_alternating_24h_facebook_then_threads_then_facebook_loop(monkeypatch) -> None:

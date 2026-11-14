@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { FaThreads, FaYoutube } from "react-icons/fa6";
-import { SeedingExtensionPanel, type PanelTab } from "@/components/all-platform/components/seeding-extension/seeding-extension-panel";
+// SeedingExtensionPanel deprecated - now using Public 4G No-Acc crawler
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
@@ -359,7 +359,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       setIsCleaningFeed(false);
     }
   };
-  const [panelFocus, setPanelFocus] = useState<{ tab: PanelTab; nonce: number } | null>(null);
+
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
@@ -1324,45 +1324,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
       
       <>
-          <div className="bg-card border border-border rounded-2xl p-5 mb-4">
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              <StatCard
-                icon="description"
-                label="Tổng bài hôm nay"
-                value={stats.totalPostsToday}
-                trend={{
-                  value: Math.abs(fbDiff),
-                  isUp: fbDiff >= 0,
-                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
-                }}
-                accent="blue"
-              />
-              <StatCard
-                icon="trending_up"
-                label="Tiến độ KPI"
-                value={stats.kpiProgress || 0}
-                progress={{
-                  value: stats.kpiProgressPercent || 0,
-                  label: `${stats.kpiProgressPercent || 0}% trong tập bài`,
-                }}
-                accent="green"
-              />
-              <StatCard
-                icon="rocket_launch"
-                label="Đã seeded hôm nay"
-                value={stats.seededToday}
-                sub="Ước tính từ batch hôm nay"
-                accent="amber"
-              />
-              <StatCard
-                icon="visibility"
-                label="Tổng bài hiển thị"
-                value={totalCount}
-                sub={`${totalCount} bài trong cơ sở dữ liệu`}
-                accent="indigo"
-              />
-            </div>
-          </div>
+          {/* Khối 4 StatCard cũ đã được gỡ bỏ để tinh gọn màn hình */}
 
           {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
           {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
@@ -1384,40 +1346,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           {CURRENT_USER_EMAIL && (
             <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
           )}
-          {/* 1 extension gộp (Markee Seeding Extension): cào bài + bình luận hàng loạt cho cả
-              Facebook và LinkedIn, theo tab nền tảng đang chọn — thay cho 2 launcher riêng
-              "Siêu Tốc Cào Dữ Liệu" + "Seeding Comment Hàng Loạt" trước đây (chỉ có ở tab Facebook).
-              Threads/YouTube: chỉ cào (tìm theo từ khoá hoặc link), feed/xu hướng tải lại mỗi khi lưu xong. */}
-          {CURRENT_USER_EMAIL && (
-            <SeedingExtensionPanel
-              platform={feedPlatform}
-              posts={posts}
-              focusRequest={panelFocus}
-              onCrawlSaved={(platform, data) => {
-                if ((platform === "threads" || platform === "youtube") && data.count > 0) {
-                  fetchPosts();
-                  
-                }
-              }}
-              onCrawlDone={(platform, data) => {
-                fetchPosts();
-                fetchStats();
-                if (platform === "threads" || platform === "youtube") 
-                setCrawlResultsSummary((prev) => ({ ...prev, totalPosts: data.totalSaved }));
-                setShowCrawlResultModal(true);
-              }}
-              onCommentDone={(seededUrls) => {
-                fetchPosts();
-                fetchStats();
-                if (seededUrls) setRecentlySeededUrls(seededUrls);
-                setShowSeedingResultModal(true);
-              }}
-            />
-          )}
+          {/* SeedingExtensionPanel đã được gỡ bỏ - cào Public 4G No-Acc tự động */}
 
-          {/* 4 Metric Summary Cards chuẩn HTML template */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 mb-2">
-            <div
+          {/* Filter Pills Trạng Thái Seeding Tinh Gọn (Thay thế 5 Card cồng kềnh - Phẳng, Hiện đại) */}
+          <div className="flex flex-wrap items-center gap-2 mb-3 bg-white border border-gray-200/80 p-2 sm:p-2.5 rounded-2xl shadow-xs">
+            <button
+              type="button"
               onClick={() => {
                 setSeedingStatusFilter("all");
                 setCallFilter("all");
@@ -1425,20 +1359,24 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
               className={cn(
-                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
-                seedingStatusFilter === "all" ? "border-blue-500 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                seedingStatusFilter === "all"
+                  ? "bg-slate-900 text-white shadow-xs ring-2 ring-slate-900/10"
+                  : "bg-gray-100/80 text-gray-700 hover:bg-gray-200/80"
               )}
             >
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
-                <span>Tổng bài viết</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-[#6078eb]" />
-              </div>
-              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-gray-900">
+              <span className="w-2 h-2 rounded-full bg-[#6078eb]" />
+              <span>Tất cả bài viết</span>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
+                seedingStatusFilter === "all" ? "bg-white/20 text-white" : "bg-white text-gray-800 shadow-2xs"
+              )}>
                 {seedingMetrics.all}
-              </strong>
-            </div>
+              </span>
+            </button>
 
-            <div
+            <button
+              type="button"
               onClick={() => {
                 setSeedingStatusFilter("todo");
                 setCallFilter("all");
@@ -1446,20 +1384,24 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
               className={cn(
-                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
-                seedingStatusFilter === "todo" ? "border-amber-500 ring-2 ring-amber-100 bg-amber-50/20" : "border-gray-200/80 hover:border-gray-300"
+                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                seedingStatusFilter === "todo"
+                  ? "bg-amber-500 text-white shadow-xs ring-2 ring-amber-500/20"
+                  : "bg-amber-50 text-amber-800 border border-amber-200/60 hover:bg-amber-100/70"
               )}
             >
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
-                <span>Cần liên hệ</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-[#ee9a50]" />
-              </div>
-              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-amber-600">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span>Cần liên hệ</span>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
+                seedingStatusFilter === "todo" ? "bg-white/20 text-white" : "bg-amber-200/60 text-amber-900"
+              )}>
                 {seedingMetrics.todo}
-              </strong>
-            </div>
+              </span>
+            </button>
 
-            <div
+            <button
+              type="button"
               onClick={() => {
                 setSeedingStatusFilter("doing");
                 setCallFilter("all");
@@ -1467,20 +1409,24 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
               className={cn(
-                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
-                seedingStatusFilter === "doing" ? "border-blue-400 ring-2 ring-blue-100 bg-blue-50/20" : "border-gray-200/80 hover:border-gray-300"
+                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                seedingStatusFilter === "doing"
+                  ? "bg-blue-600 text-white shadow-xs ring-2 ring-blue-600/20"
+                  : "bg-blue-50 text-blue-800 border border-blue-200/60 hover:bg-blue-100/70"
               )}
             >
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
-                <span>Đang liên hệ</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-[#6087e6]" />
-              </div>
-              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-blue-600">
+              <span className="w-2 h-2 rounded-full bg-blue-400" />
+              <span>Đang liên hệ</span>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
+                seedingStatusFilter === "doing" ? "bg-white/20 text-white" : "bg-blue-200/60 text-blue-900"
+              )}>
                 {seedingMetrics.doing}
-              </strong>
-            </div>
+              </span>
+            </button>
 
-            <div
+            <button
+              type="button"
               onClick={() => {
                 setSeedingStatusFilter("done");
                 setCallFilter("all");
@@ -1488,21 +1434,24 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
               className={cn(
-                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
-                seedingStatusFilter === "done" ? "border-emerald-500 ring-2 ring-emerald-100 bg-emerald-50/20" : "border-gray-200/80 hover:border-gray-300"
+                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                seedingStatusFilter === "done"
+                  ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
+                  : "bg-emerald-50 text-emerald-800 border border-emerald-200/60 hover:bg-emerald-100/70"
               )}
             >
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
-                <span>Đã liên hệ</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-[#1ab28c]" />
-              </div>
-              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-emerald-600">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>Đã liên hệ</span>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
+                seedingStatusFilter === "done" ? "bg-white/20 text-white" : "bg-emerald-200/60 text-emerald-900"
+              )}>
                 {seedingMetrics.done}
-              </strong>
-            </div>
+              </span>
+            </button>
 
-            {/* Card 5: Chưa phù hợp / Bỏ qua (Đầy đủ 5 cột theo đúng Master Requirement) */}
-            <div
+            <button
+              type="button"
               onClick={() => {
                 setSeedingStatusFilter("skip");
                 setCallFilter("all");
@@ -1510,18 +1459,21 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
               className={cn(
-                "bg-white border rounded-2xl p-4 sm:p-5 shadow-xs cursor-pointer transition-all hover:shadow-md",
-                seedingStatusFilter === "skip" ? "border-rose-500 ring-2 ring-rose-100 bg-rose-50/20" : "border-gray-200/80 hover:border-gray-300"
+                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                seedingStatusFilter === "skip"
+                  ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
+                  : "bg-rose-50 text-rose-800 border border-rose-200/60 hover:bg-rose-100/70"
               )}
             >
-              <div className="flex items-center justify-between text-xs font-semibold text-gray-500">
-                <span>Chưa phù hợp (Bỏ qua)</span>
-                <span className="w-2.5 h-2.5 rounded-full bg-[#f43f5e]" />
-              </div>
-              <strong className="text-2xl sm:text-3xl font-bold tracking-tight block mt-2 text-rose-600">
+              <span className="w-2 h-2 rounded-full bg-rose-400" />
+              <span>Chưa phù hợp (Bỏ qua)</span>
+              <span className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
+                seedingStatusFilter === "skip" ? "bg-white/20 text-white" : "bg-rose-200/60 text-rose-900"
+              )}>
                 {seedingMetrics.skip}
-              </strong>
-            </div>
+              </span>
+            </button>
           </div>
 
           {/* Filter Chips cho Kết Quả Cuộc Gọi (chỉ hiện khi đang xem "Cần liên hệ") */}
@@ -1786,7 +1738,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         onClose={() => setYoutubeCommentPost(null)}
         onNeedLinkChannel={() => {
           setYoutubeCommentPost(null);
-          setPanelFocus({ tab: "channel", nonce: Date.now() });
+          toast.info("Vui lòng thiết lập kênh YouTube trong phần Quản lý tài khoản.");
         }}
       />
 

@@ -3094,32 +3094,49 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
           </div>
-          {/* COMPACT AI REPLY SUGGESTIONS (Streamlined to give MAXIMUM space to messages feed) */}
+          {/* THƯ VIỆN MẪU CÂU INBOX TRƯỢT NGANG (THAY THẾ GỢI Ý AI THEO YÊU CẦU MASTER) */}
           {inbox.openConv && (
-            <div className="shrink-0 border-t border-slate-100 bg-slate-50/60 px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs">
-              <span className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-purple-700 bg-purple-50 border border-purple-200/70 px-2 py-0.5 rounded-lg">
-                <Sparkles size={12} className="text-purple-600 fill-purple-300" />
-                <span>Gợi ý AI:</span>
+            <div className="shrink-0 border-t border-slate-100 bg-slate-50/70 px-3 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar text-xs">
+              <span className="shrink-0 flex items-center gap-1 text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200/80 px-2 py-0.5 rounded-lg shadow-2xs">
+                <Star size={12} className="text-rose-600 fill-rose-300" />
+                <span>Mẫu câu:</span>
               </span>
-              <div className="flex items-center gap-1.5 min-w-0">
-                {AI_SUGGESTIONS.map(sug => (
+              <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar py-0.5">
+                {(inboxTemplates.length > 0
+                  ? inboxTemplates
+                  : (activeTemplateGroup?.items || []).map((text, idx) => ({
+                      id: `fallback-${idx}`,
+                      title: text.length > 28 ? `${text.slice(0, 28)}...` : text,
+                      content: text,
+                      label: "Mẫu",
+                    }))
+                ).map((tpl) => (
                   <button
-                    key={sug}
-                    onClick={() => appendAiSuggestion(sug)}
-                    className="shrink-0 rounded-lg border border-slate-200/80 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 hover:border-purple-300 hover:text-purple-700 shadow-2xs transition"
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => {
+                      inbox.setReply((prev) => (prev.trim() ? `${prev.trim()}\n${tpl.content}` : tpl.content));
+                    }}
+                    title={tpl.content}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-slate-200/90 bg-white hover:bg-rose-50/70 hover:border-rose-300 hover:text-rose-700 px-2.5 py-0.5 text-[11px] font-medium text-slate-700 shadow-2xs transition cursor-pointer whitespace-nowrap active:scale-95"
                   >
-                    {sug}
+                    {tpl.label && (
+                      <span className="text-[9px] px-1 py-0.2 rounded font-bold uppercase bg-slate-100 text-slate-500">
+                        {tpl.label}
+                      </span>
+                    )}
+                    <span className="max-w-[200px] truncate">{tpl.title || tpl.content.slice(0, 25)}</span>
                   </button>
                 ))}
               </div>
               <Link
                 href="/all-platform/quick-comments?tab=inbox"
                 target="_blank"
-                className="shrink-0 ml-auto inline-flex items-center gap-1 text-[10.5px] font-bold text-slate-500 hover:text-[#E3000F] px-1.5 py-0.5 rounded transition"
-                title="Tùy chỉnh mẫu câu trong Thư viện mẫu inbox"
+                className="shrink-0 ml-auto inline-flex items-center gap-1 text-[10.5px] font-bold text-slate-500 hover:text-[#E3000F] px-1.5 py-0.5 rounded transition whitespace-nowrap"
+                title="Tùy chỉnh và quản lý mẫu câu trong Thư viện mẫu inbox"
               >
                 <Settings size={11} />
-                <span>Tùy chỉnh</span>
+                <span>Thư viện</span>
               </Link>
             </div>
           )}

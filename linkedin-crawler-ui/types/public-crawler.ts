@@ -27,6 +27,22 @@ export interface ThreadsKeywordStatItem {
   times_used: number;
   total_posts_found: number;
   high_score_posts: number;
+  topic?: string;
+  id?: string;
+  is_active?: boolean;
+}
+
+export interface ThreadsKeywordLibraryItem {
+  id: string;
+  keyword: string;
+  topic: string;
+  is_active: boolean;
+  times_used: number;
+  total_posts_found: number;
+  high_score_posts: number;
+  last_used_at?: string | null;
+  created_at?: string | null;
+  created_by?: string | null;
 }
 
 export interface PublicCrawlRuntime {

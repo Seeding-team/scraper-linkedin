@@ -230,7 +230,7 @@ async def lifespan(_: FastAPI):
         from app.modules.all_platform.zalo.services.push_notifier import run_push_tick
         zalo_push_task = asyncio.create_task(_tick_loop("zalo-push", run_push_tick, "PUSH_POLL_INTERVAL_MS", 4000))
 
-    if _os.getenv("DISABLE_ZALO_CHATWOOT_BRIDGE", "").strip().lower() in {"1", "true", "yes"}:
+    if _os.getenv("DISABLE_ZALO_CHATWOOT_BRIDGE", "1").strip().lower() in {"1", "true", "yes"}:
         logger.warning("DISABLE_ZALO_CHATWOOT_BRIDGE enabled -> not starting Zalo -> Chatwoot bridge.")
     else:
         from app.modules.all_platform.zalo.services.zalo_chatwoot_bridge import run_bridge_tick

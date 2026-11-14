@@ -288,6 +288,11 @@ facebook-module/backend/__pycache__
 facebook-module/backend/**/__pycache__
 facebook-module/backend/artifacts
 facebook-module/backend/temp_otp
+# Global Temporary OTP Directories
+temp_otp/
+**/temp_otp/**
+**/temp_otp
+*temp_otp*
 facebook-module/frontend/.env*
 facebook-module/frontend/node_modules
 facebook-module/frontend/.next

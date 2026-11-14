@@ -1,26 +1,20 @@
-"""Registry từ khoá/chủ đề Threads tự khám phá bằng LLM (migration 160, bảng
-threads_keyword_registry) — yêu cầu 2026-10-02:
+"""Thư viện từ khoá/chủ đề Threads phục vụ Seeding Crawler (migration 160 & 233, bảng threads_keyword_registry).
 
-"trước khi cào tự động tới vòng thread thì trong lúc chờ chạy facebook linkedin thì call
-llm để list ra tầm 10 chủ đề hoặc keyword có khả năng ra các bài tìm kiếm website (tầm 20
-chủ đề + key) -> sau đó cào -> cào xong thì so sánh key/chủ đề nào có ra các bài điểm AI
-cao thì lưu lại ... sử dụng hàng ngày thường xuyên, mỗi ngày list thêm ~5 chủ đề/từ khoá,
-max 50, vượt max thì so sánh hiệu quả xoá bớt từ khoá kém, đề xuất cái mới vào".
-
-Luồng: GET /extension/threads/keywords được bg/rotation-crawl.js gọi NGAY ĐẦU 1 vòng (song
-song lúc đang cào Facebook/LinkedIn, không chờ) -> ensure_daily_expansion() tự mở rộng/dọn
-registry nếu cần -> trả về danh sách từ khoá active hiện tại để dùng cho vòng Threads.
-Sau khi cào xong 1 từ khoá, extension_crawl_threads.py AWAIT score_and_save_posts() trực
-tiếp (không fire-and-forget như FB/LI) rồi gọi record_keyword_result() cập nhật hiệu quả.
+Yêu cầu cập nhật mới nhất:
+1. Người dùng (mở full quyền cho member, leader, admin) tự thêm từ khóa theo Chủ đề vào Thư viện.
+2. Vòng cào Threads tự động lấy TOÀN BỘ từ khóa active trong thư viện để cào.
+3. Cơ chế Nạp động: Khi có người thêm từ khóa/chủ đề mới, ngay sau khi vòng hiện tại kết thúc,
+   vòng sau sẽ tự động reload lại toàn bộ và cào hết từ khóa mới.
+4. Loại bỏ hoàn toàn AI đề xuất từ khóa & AI đánh giá từ khóa để tiết kiệm tối đa token AI.
+   (Chỉ giữ lại AI chấm điểm bài viết ở post_evaluation_service).
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Optional
-
-import httpx
+import os
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -29,13 +23,16 @@ from app.core.supabase_client import get_supabase_client
 logger = get_logger(__name__)
 
 TABLE = "threads_keyword_registry"
-MAX_KEYWORDS = 50
-TARGET_ACTIVE_KEYWORDS = 30
-INITIAL_GENERATE_COUNT = 30
-DAILY_ADD_COUNT = 6
+DEFAULT_TOPICS: tuple[str, ...] = (
+    "Website",
+    "Mobile App",
+    "Phần mềm & CRM",
+    "Marketing & Ads",
+    "AI & Automation",
+    "Chung",
+)
 
 DEFAULT_THREADS_FALLBACK_KEYWORDS: tuple[str, ...] = (
-    # Empirically verified 16-26 posts/query on Threads Guest search
     "làm web",
     "thiết kế web",
     "thiết kế website",
@@ -57,7 +54,6 @@ DEFAULT_THREADS_FALLBACK_KEYWORDS: tuple[str, ...] = (
     "wordpress",
     "shopify",
     "chạy ads",
-    # High-recall 1-2 word tech/business terms
     "web design",
     "mobile app",
     "automation",
@@ -67,368 +63,292 @@ DEFAULT_THREADS_FALLBACK_KEYWORDS: tuple[str, ...] = (
     "khởi nghiệp",
     "digital marketing",
     "kinh doanh",
-    "marketing",
-    "bất động sản",
 )
 
-_KEYWORD_GEN_SYSTEM_PROMPT = (
-    "Bạn là chuyên gia tìm kiếm khách hàng (sales/growth) cho 1 công ty thiết kế website, "
-    "landing page, mobile app, phần mềm quản lý (CRM/ERP/POS) và outsource IT tại Việt Nam.\n"
-    "Hãy đề xuất ĐÚNG {n} từ khoá tìm kiếm CỰC NGẮN (ƯU TIÊN 1 ĐẾN 2 TỪ, tối đa 3 từ đối với "
-    "cụm danh từ rất phổ thông) để search trực tiếp trên Threads Guest (threads.com/search).\n"
-    "LƯU Ý THỰC NGHIỆM QUAN TRỌNG: Threads Guest search TRẢ VỀ 0 KẾT QUẢ với các cụm ghép 3-4 từ "
-    "chi tiết hoặc câu hỏi như \"tìm người làm web\", \"làm web bán hàng\", \"làm landing page\", "
-    "\"thuê code web\", \"cần làm app\", \"viết app\", \"làm tool\", \"seo web\". Ngược lại, các từ "
-    "khóa 1-2 từ cốt lõi như \"làm web\", \"thiết kế web\", \"landing page\", \"phần mềm\", "
-    "\"phần mềm quản lý\", \"outsource\", \"lập trình\", \"freelancer\", \"crm\", \"erp\", "
-    "\"chatbot\", \"tự động hóa\", \"n8n\", \"mini app\", \"wordpress\", \"shopify\", \"ui ux\" "
-    "trả về đều đặn 16-26 bài thật mỗi lượt.\n"
-    "Ưu tiên các cụm 1-2 từ về nhu cầu công nghệ, kinh doanh, AI, automation, thương mại điện tử, "
-    "web/app/SaaS.\n"
-    "TUYỆT ĐỐI KHÔNG đề xuất trùng hoặc gần giống các từ khoá đã có / vừa bị loại sau: {existing}.\n\n"
-    'Chỉ trả về DUY NHẤT JSON: {{"keywords": ["...", ...]}} — đúng {n} phần tử, không giải thích, không markdown.'
+# Persistent file cache for topic mappings (resilient fallback if migration 233 hasn't run yet)
+_TOPICS_FILE_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "..",
+    "..",
+    "linkedin_group_crawler",
+    "data",
+    "threads_keyword_topics.json",
 )
+
+
+def _load_topics_map() -> Dict[str, str]:
+    try:
+        if os.path.exists(_TOPICS_FILE_PATH):
+            with open(_TOPICS_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+    except Exception as exc:
+        logger.debug(f"[threads_keyword] Không đọc được topics map file: {exc}")
+    return {}
+
+
+def _save_topics_map(topics_map: Dict[str, str]) -> None:
+    try:
+        os.makedirs(os.path.dirname(_TOPICS_FILE_PATH), exist_ok=True)
+        with open(_TOPICS_FILE_PATH, "w", encoding="utf-8") as f:
+            json.dump(topics_map, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        logger.debug(f"[threads_keyword] Không lưu được topics map file: {exc}")
+
+
+def _infer_topic(kw: str) -> str:
+    k = (kw or "").lower().strip()
+    if any(w in k for w in ("web", "landing page", "wordpress", "shopify", "ui ux", "thiết kế web", "html")):
+        return "Website"
+    if any(w in k for w in ("app", "mobile", "ios", "android", "flutter", "react native")):
+        return "Mobile App"
+    if any(w in k for w in ("phần mềm", "crm", "erp", "pos", "quản lý", "outsource", "lập trình", "code")):
+        return "Phần mềm & CRM"
+    if any(w in k for w in ("marketing", "ads", "seo", "bán hàng", "kinh doanh", "bất động sản", "freelancer")):
+        return "Marketing & Ads"
+    if any(w in k for w in ("ai", "agent", "bot", "n8n", "automation", "tự động hóa", "saas", "chatbot")):
+        return "AI & Tự động hóa"
+    return "Chung"
 
 
 def is_configured() -> bool:
-    return bool(settings.openai_api_key)
+    return True
 
 
 async def _generate_keywords(n: int, existing: list[str]) -> list[str]:
-    if not settings.openai_api_key:
-        return []
-    prompt = _KEYWORD_GEN_SYSTEM_PROMPT.format(n=n, existing=", ".join(existing) or "(chưa có)")
-    url = f"{settings.openai_base_url}/chat/completions"
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
-    body = {
-        "model": settings.ai_model,
-        "messages": [{"role": "system", "content": prompt}, {"role": "user", "content": "Đề xuất từ khoá."}],
-        "temperature": 0.8,
-        "max_tokens": 500,
-        "response_format": {"type": "json_object"},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            resp = await client.post(url, json=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        raw = data["choices"][0]["message"]["content"].strip()
-        parsed = json.loads(raw)
-        keywords = parsed.get("keywords") if isinstance(parsed, dict) else None
-        if not isinstance(keywords, list):
-            return []
-        existing_lower = {k.lower().strip() for k in existing}
-        out: list[str] = []
-        for k in keywords:
-            k = str(k).strip()
-            # Keep only concise 1-3 word queries compatible with strict contiguous phrase matching.
-            if k and len(k.split()) <= 3 and k.lower() not in existing_lower and k not in out:
-                out.append(k)
-        return out
-    except Exception as exc:
-        logger.warning(f"threads_keyword: tạo từ khoá mới thất bại: {exc}")
-        return []
+    """AI keyword suggestion is permanently disabled to save AI tokens per Master directive."""
+    return []
 
 
-def get_active_keywords(limit: int = MAX_KEYWORDS) -> list[dict]:
+def list_all_keywords() -> list[dict[str, Any]]:
+    """Lấy danh sách toàn bộ từ khóa trong Thư viện (kèm thông tin Chủ đề và thống kê)."""
     supabase = get_supabase_client()
-    res = (
-        supabase.table(TABLE)
-        .select("*")
-        .eq("is_active", True)
-        .order("high_score_posts", desc=True)
-        .order("total_posts_found", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return res.data or []
+    try:
+        query = supabase.table(TABLE).select("*")
+        if hasattr(query, "order"):
+            query = query.order("created_at", desc=False)
+        res = query.execute()
+        rows = res.data or []
+    except Exception as exc:
+        logger.warning(f"[threads_keyword] Lỗi query table {TABLE}: {exc}")
+        rows = []
+
+    topics_map = _load_topics_map()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        kw = str(r.get("keyword") or "").strip()
+        topic = str(r.get("topic") or "").strip()
+        if not topic or topic == "None":
+            topic = topics_map.get(kw) or _infer_topic(kw)
+
+        item = {
+            "id": str(r.get("id") or ""),
+            "keyword": kw,
+            "topic": topic,
+            "is_active": bool(r.get("is_active", True)),
+            "times_used": int(r.get("times_used") or 0),
+            "total_posts_found": int(r.get("total_posts_found") or 0),
+            "high_score_posts": int(r.get("high_score_posts") or 0),
+            "last_used_at": r.get("last_used_at"),
+            "created_at": r.get("created_at"),
+            "created_by": r.get("created_by") or "Hệ thống",
+        }
+        out.append(item)
+    return out
+
+
+def get_active_keywords(limit: int = 500) -> list[dict[str, Any]]:
+    """Lấy danh sách tất cả từ khóa đang Active trong thư viện để cào."""
+    all_kws = list_all_keywords()
+    active = [k for k in all_kws if k.get("is_active")]
+    return active[:limit]
+
+
+def add_keywords(
+    topic: str,
+    keywords: list[str],
+    created_by: Optional[str] = None,
+) -> dict[str, Any]:
+    """Thêm một hoặc nhiều từ khóa vào Thư viện theo Chủ đề (mở cho cả member, leader, admin)."""
+    clean_topic = (topic or "").strip() or "Chung"
+    clean_kws = [str(k).strip() for k in keywords if str(k).strip()]
+    if not clean_kws:
+        return {"success": False, "message": "Không có từ khóa hợp lệ để thêm", "added": 0}
+
+    supabase = get_supabase_client()
+    existing_rows = list_all_keywords()
+    existing_set = {r["keyword"].lower() for r in existing_rows}
+
+    topics_map = _load_topics_map()
+    to_insert: list[dict[str, Any]] = []
+    new_names: list[str] = []
+
+    for kw in clean_kws:
+        if kw.lower() in existing_set:
+            # Nếu đã tồn tại nhưng bị tắt -> bật lại và cập nhật chủ đề
+            try:
+                supabase.table(TABLE).update({"is_active": True}).eq("keyword", kw).execute()
+            except Exception:
+                pass
+            topics_map[kw] = clean_topic
+            continue
+
+        item = {
+            "keyword": kw,
+            "is_active": True,
+            "topic": clean_topic,
+            "created_by": created_by or "Thành viên",
+        }
+        to_insert.append(item)
+        new_names.append(kw)
+        topics_map[kw] = clean_topic
+        existing_set.add(kw.lower())
+
+    if to_insert:
+        try:
+            # Thử insert với cả cột topic và created_by
+            supabase.table(TABLE).insert(to_insert).execute()
+        except Exception as exc:
+            logger.warning(f"[threads_keyword] Insert có topic lỗi (chưa chạy migration 233?), fallback insert cơ bản: {exc}")
+            try:
+                # Fallback nếu DB chưa có cột topic
+                fallback_insert = [{"keyword": it["keyword"], "is_active": True} for it in to_insert]
+                supabase.table(TABLE).insert(fallback_insert).execute()
+            except Exception as e2:
+                logger.error(f"[threads_keyword] Fallback insert thất bại: {e2}")
+                return {"success": False, "message": str(e2), "added": 0}
+
+    _save_topics_map(topics_map)
+    logger.info(f"[threads_keyword] Đã thêm {len(new_names)} từ khóa mới vào chủ đề '{clean_topic}'")
+    return {
+        "success": True,
+        "message": f"Đã thêm {len(new_names)} từ khóa vào chủ đề '{clean_topic}'",
+        "added_count": len(new_names),
+        "new_keywords": new_names,
+        "topic": clean_topic,
+    }
+
+
+def delete_keyword(keyword_id: str) -> bool:
+    """Xóa một từ khóa khỏi thư viện."""
+    if not keyword_id:
+        return False
+    supabase = get_supabase_client()
+    try:
+        # Xóa theo id hoặc keyword
+        res = supabase.table(TABLE).delete().eq("id", keyword_id).execute()
+        if not res.data:
+            supabase.table(TABLE).delete().eq("keyword", keyword_id).execute()
+        return True
+    except Exception as exc:
+        logger.error(f"[threads_keyword] Xóa từ khóa {keyword_id} lỗi: {exc}")
+        return False
+
+
+def toggle_keyword(keyword_id: str, is_active: Optional[bool] = None) -> bool:
+    """Bật / Tắt trạng thái hoạt động của một từ khóa."""
+    if not keyword_id:
+        return False
+    supabase = get_supabase_client()
+    try:
+        if is_active is None:
+            # Lấy trạng thái hiện tại
+            curr = supabase.table(TABLE).select("is_active").eq("id", keyword_id).limit(1).execute()
+            if curr.data:
+                is_active = not bool(curr.data[0].get("is_active", True))
+            else:
+                is_active = True
+        supabase.table(TABLE).update({"is_active": is_active}).eq("id", keyword_id).execute()
+        return True
+    except Exception as exc:
+        logger.error(f"[threads_keyword] Toggle từ khóa {keyword_id} lỗi: {exc}")
+        return False
 
 
 async def ensure_daily_expansion() -> None:
-    """Gọi mỗi khi rotation-crawl chuẩn bị vào vòng Threads — tự sinh từ khoá mới nếu
-    chưa làm hôm nay, và dọn bớt từ khoá kém hiệu quả nếu vượt MAX_KEYWORDS. Không raise
-    (lỗi ở đây chỉ log — registry rỗng vẫn trả về được, rotation-crawl.js tự fallback)."""
-    if not is_configured():
-        return
-    try:
-        supabase = get_supabase_client()
-        all_rows = supabase.table(TABLE).select("*").execute().data or []
-        active_rows = [r for r in all_rows if r.get("is_active")]
-        existing_keywords = [r["keyword"] for r in all_rows]
-
-        if not all_rows:
-            # Lan dau: sinh luon ~20 chu de/tu khoa khoi diem.
-            new_keywords = await _generate_keywords(INITIAL_GENERATE_COUNT, existing_keywords)
-            logger.info(f"threads_keyword: khởi tạo registry với {len(new_keywords)} từ khoá")
-        else:
-            now_utc = datetime.now(timezone.utc)
-            today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-            created_today = any(
-                _parse_ts(r.get("created_at")) and _parse_ts(r.get("created_at")) >= today_start for r in all_rows
-            )
-            new_keywords = [] if created_today else await _generate_keywords(DAILY_ADD_COUNT, existing_keywords)
-            if new_keywords:
-                logger.info(f"threads_keyword: thêm {len(new_keywords)} từ khoá mới hôm nay")
-
-        if new_keywords:
-            supabase.table(TABLE).insert([{"keyword": k} for k in new_keywords]).execute()
-            active_rows = active_rows + [{"keyword": k, "high_score_posts": 0, "total_posts_found": 0, "times_used": 0} for k in new_keywords]
-
-        # Vuot MAX_KEYWORDS: tat (is_active=false) nhung tu khoa kem hieu qua nhat, GIU LAI
-        # tu khoa chua tung dung (times_used=0, can co co hoi thu truoc khi bi loai).
-        if len(active_rows) > MAX_KEYWORDS:
-            tried = [r for r in active_rows if (r.get("times_used") or 0) > 0]
-            tried.sort(key=lambda r: (r.get("high_score_posts") or 0, r.get("total_posts_found") or 0))
-            excess = len(active_rows) - MAX_KEYWORDS
-            to_disable = tried[:excess]
-            for r in to_disable:
-                kw = r.get("keyword")
-                if kw:
-                    supabase.table(TABLE).update({"is_active": False}).eq("keyword", kw).execute()
-            if to_disable:
-                logger.info(f"threads_keyword: tắt {len(to_disable)} từ khoá kém hiệu quả nhất (vượt {MAX_KEYWORDS})")
-    except Exception as exc:
-        logger.warning(f"threads_keyword: ensure_daily_expansion lỗi (bỏ qua): {exc}")
-
-
-def _parse_ts(raw: Optional[str]):
-    if not raw:
-        return None
-    try:
-        return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    """AI keyword expansion is disabled per Master directive."""
+    return
 
 
 def record_keyword_result(keyword: str, total_found: int, high_score_count: int) -> None:
-    """Cập nhật hiệu quả 1 từ khoá sau khi cào xong (gọi từ extension_crawl_threads.py sau
-    khi await score_and_save_posts() trực tiếp)."""
+    """Cập nhật hiệu quả 1 từ khoá sau khi cào xong (chỉ tăng bộ đếm, 0 token AI)."""
     if not keyword:
         return
     try:
         supabase = get_supabase_client()
-        res = supabase.table(TABLE).select("times_used, total_posts_found, high_score_posts").eq("keyword", keyword).limit(1).execute()
+        res = (
+            supabase.table(TABLE)
+            .select("times_used, total_posts_found, high_score_posts")
+            .eq("keyword", keyword)
+            .limit(1)
+            .execute()
+        )
         if not res.data:
-            # Tu khoa nay khong nam trong registry (vd nguoi dung tu nhap tay) - bo qua,
-            # khong tu them vao registry o day de tranh registry phinh to ngoai y muon.
             return
         row = res.data[0]
         supabase.table(TABLE).update({
             "times_used": (row.get("times_used") or 0) + 1,
             "total_posts_found": (row.get("total_posts_found") or 0) + total_found,
             "high_score_posts": (row.get("high_score_posts") or 0) + high_score_count,
-            "last_used_at": "now()",
+            "last_used_at": datetime.now(timezone.utc).isoformat(),
         }).eq("keyword", keyword).execute()
     except Exception as exc:
-        logger.warning(f"threads_keyword: record_keyword_result lỗi cho '{keyword}': {exc}")
-
-
-def _keyword_efficiency_key(row: dict) -> tuple[float, int, int]:
-    """Score keyword effectiveness: high-score leads per run first, then total posts found."""
-    used = max(0, int(row.get("times_used") or 0))
-    high = max(0, int(row.get("high_score_posts") or 0))
-    total = max(0, int(row.get("total_posts_found") or 0))
-    high_rate = high / max(1, used)
-    return (round(high_rate, 4), high, total)
+        logger.warning(f"[threads_keyword] record_keyword_result lỗi cho '{keyword}': {exc}")
 
 
 async def evolve_and_select_keywords(
-    target_count: int = TARGET_ACTIVE_KEYWORDS,
-    rotate_replace_count: int = DAILY_ADD_COUNT,
-) -> dict:
-    """Self-evolving keyword selector executed before every Threads 4G phase.
+    target_count: Optional[int] = None,
+    rotate_replace_count: int = 0,
+) -> dict[str, Any]:
+    """Tự động nạp động TOÀN BỘ từ khóa active trong Thư viện để cào cho vòng Threads.
 
-    1. Guarantees ~30 active short Vietnamese intent queries (`2-4` words).
-    2. Retires up to `rotate_replace_count` lowest-yield tried keywords (`times_used >= 2`,
-       zero high-score leads) and generates fresh AI variations (or unused curated fallbacks)
-       so Threads continuously probes new buyer niches without drifting stale.
-    3. Interleaves untried/newly generated keywords with proven top performers so every round
-       both exploits high-converting terms and explores new angles.
+    - Không gọi AI đề xuất hay đánh giá -> Tiết kiệm 100% token AI.
+    - Cào TOÀN BỘ từ khóa hiện có trong thư viện theo tất cả các chủ đề.
+    - Luôn đọc mới từ cơ sở dữ liệu trước mỗi vòng -> Khi người dùng thêm từ khóa mới,
+      vòng kế tiếp sẽ tự động nạp lại và cào đầy đủ ngay lập tức.
     """
-    import random
+    rows = list_all_keywords()
+    active_rows = [r for r in rows if r.get("is_active")]
 
-    bounded_target = max(5, min(MAX_KEYWORDS, int(target_count or TARGET_ACTIVE_KEYWORDS)))
-    replace_quota = max(0, min(12, int(rotate_replace_count or 0)))
+    # Nếu thư viện hoàn toàn trống, nạp bộ từ khóa nền tảng
+    if not active_rows:
+        logger.info("[threads_keyword] Thư viện từ khóa trống, nạp bộ từ khóa khởi điểm...")
+        add_keywords("Website", ["làm web", "thiết kế web", "thiết kế website", "landing page", "wordpress", "shopify", "ui ux"])
+        add_keywords("Mobile App", ["mobile app", "app bán hàng", "làm app", "flutter", "react native"])
+        add_keywords("Phần mềm & CRM", ["phần mềm", "crm", "erp", "phần mềm quản lý", "pos", "outsource", "lập trình"])
+        add_keywords("Marketing & Ads", ["chạy ads", "digital marketing", "bán hàng", "freelancer", "kinh doanh"])
+        add_keywords("AI & Automation", ["tự động hóa", "n8n", "chatbot", "ai agent", "saas", "automation"])
+        rows = list_all_keywords()
+        active_rows = [r for r in rows if r.get("is_active")]
 
-    try:
-        supabase = get_supabase_client()
-        all_rows = supabase.table(TABLE).select("*").execute().data or []
-    except Exception as exc:
-        logger.warning(f"threads_keyword: không đọc được DB registry, dùng fallback pool: {exc}")
-        fallback = list(DEFAULT_THREADS_FALLBACK_KEYWORDS)[:bounded_target]
-        return {
-            "keywords": fallback,
-            "meta": {
-                "total_active": len(fallback),
-                "newly_generated": 0,
-                "deactivated": [],
-                "ai_powered": False,
-                "used_fallback": True,
-                "items": [{"keyword": kw, "times_used": 0, "total_posts_found": 0, "high_score_posts": 0} for kw in fallback],
-            },
-        }
-
-    active_rows = [r for r in all_rows if r.get("is_active")]
-    existing_lower = {str(r.get("keyword") or "").strip().lower() for r in all_rows if r.get("keyword")}
-    existing_all = [str(r.get("keyword") or "").strip() for r in all_rows if r.get("keyword")]
-
-    deactivated: list[str] = []
-    newly_added: list[str] = []
-    ai_powered = False
-
-    # 1. Retire legacy >=4-word phrases (excluding curated fallback whitelist) & 0-result / 0-lead terms
-    fallback_lower = {k.lower() for k in DEFAULT_THREADS_FALLBACK_KEYWORDS}
-    legacy_long_rows = [
-        r for r in active_rows
-        if len(str(r.get("keyword") or "").strip().split()) >= 4
-        and str(r.get("keyword") or "").strip().lower() not in fallback_lower
-    ]
-    zero_post_tried = [
-        r for r in active_rows
-        if int(r.get("times_used") or 0) >= 1 and int(r.get("total_posts_found") or 0) == 0
-    ]
-    zero_post_tried.sort(key=lambda r: -int(r.get("times_used") or 0))
-    dead_first_map: dict[str, dict] = {}
-    for r in legacy_long_rows + zero_post_tried:
-        kw = str(r.get("keyword") or "")
-        if kw and kw not in dead_first_map:
-            dead_first_map[kw] = r
-    dead_first = list(dead_first_map.values())
-    dead_first_kws = set(dead_first_map.keys())
-
-    tried_rows = [r for r in active_rows if int(r.get("times_used") or 0) >= 2]
-    zero_lead_tried = [
-        r for r in tried_rows
-        if int(r.get("high_score_posts") or 0) == 0 and str(r.get("keyword") or "") not in dead_first_kws
-    ]
-    zero_lead_tried.sort(
-        key=lambda r: (
-            int(r.get("total_posts_found") or 0),
-            -int(r.get("times_used") or 0),
-        )
-    )
-    retire_candidates: list[dict] = []
-    if replace_quota > 0 or legacy_long_rows:
-        if len(dead_first) > replace_quota and len(active_rows) >= min(15, bounded_target):
-            retire_candidates = dead_first[: max(len(legacy_long_rows), min(len(dead_first), 15))]
-        elif (dead_first or zero_lead_tried) and len(active_rows) >= min(15, bounded_target):
-            retire_candidates = (dead_first + zero_lead_tried)[: max(replace_quota, len(legacy_long_rows))]
-        elif legacy_long_rows:
-            retire_candidates = legacy_long_rows
-        elif is_configured() and len(active_rows) >= bounded_target:
-            mature_low = [
-                r for r in tried_rows
-                if int(r.get("times_used") or 0) >= 4 and int(r.get("high_score_posts") or 0) < 3
-            ]
-            if len(mature_low) >= 8:
-                mature_low.sort(key=_keyword_efficiency_key)
-                retire_candidates = mature_low[: min(2, replace_quota)]
-
-    if retire_candidates:
-        retire_kws = [str(r["keyword"]) for r in retire_candidates if r.get("keyword")]
-        for kw in retire_kws:
-            try:
-                supabase.table(TABLE).update({"is_active": False}).eq("keyword", kw).execute()
-                deactivated.append(kw)
-            except Exception as exc:
-                logger.warning(f"threads_keyword: tắt từ khóa kém '{kw}' thất bại: {exc}")
-        if deactivated:
-            retired_set = set(deactivated)
-            active_rows = [r for r in active_rows if r.get("keyword") not in retired_set]
-
-    # 2. Compute deficit to reach bounded_target (~30) + optional fresh exploration swap
-    deficit = max(0, bounded_target - len(active_rows))
-    want_generate = deficit
-    if want_generate > 0:
-        if is_configured():
-            ai_candidates = await _generate_keywords(want_generate, existing_all)
-            if ai_candidates:
-                ai_powered = True
-            for kw in ai_candidates:
-                clean = str(kw).strip()
-                if clean and clean.lower() not in existing_lower:
-                    newly_added.append(clean)
-                    existing_lower.add(clean.lower())
-                    existing_all.append(clean)
-
-        # Backfill remaining gap from curated high-recall fallback list
-        if len(newly_added) < want_generate:
-            for fb_kw in DEFAULT_THREADS_FALLBACK_KEYWORDS:
-                if len(newly_added) >= want_generate:
-                    break
-                if fb_kw.lower() not in existing_lower:
-                    newly_added.append(fb_kw)
-                    existing_lower.add(fb_kw.lower())
-                    existing_all.append(fb_kw)
-
-        if newly_added:
-            try:
-                supabase.table(TABLE).insert([{"keyword": k, "is_active": True} for k in newly_added]).execute()
-            except Exception as exc:
-                logger.warning(f"threads_keyword: lưu từ khóa mới thất bại: {exc}")
-            for k in newly_added:
-                active_rows.append({
-                    "keyword": k,
-                    "is_active": True,
-                    "times_used": 0,
-                    "total_posts_found": 0,
-                    "high_score_posts": 0,
-                })
-
-    # 3. Safety cap at MAX_KEYWORDS
-    if len(active_rows) > MAX_KEYWORDS:
-        tried_extra = [r for r in active_rows if int(r.get("times_used") or 0) > 0]
-        tried_extra.sort(key=_keyword_efficiency_key)
-        excess = len(active_rows) - MAX_KEYWORDS
-        for r in tried_extra[:excess]:
-            kw = r.get("keyword")
-            if kw:
-                try:
-                    supabase.table(TABLE).update({"is_active": False}).eq("keyword", kw).execute()
-                    deactivated.append(str(kw))
-                except Exception:
-                    pass
-        retired_set = set(deactivated)
-        active_rows = [r for r in active_rows if r.get("keyword") not in retired_set]
-
-    # 4. Build balanced round order: interleave untried/new explorations & top winners
-    untried = [r for r in active_rows if int(r.get("times_used") or 0) == 0]
-    tried = [r for r in active_rows if int(r.get("times_used") or 0) > 0]
-    tried.sort(key=_keyword_efficiency_key, reverse=True)
-    random.shuffle(untried)
-
-    # Mildly shuffle within top/mid buckets so consecutive loops vary keyword sequence
-    ordered_rows: list[dict] = []
-    u_idx, t_idx = 0, 0
-    while (u_idx < len(untried) or t_idx < len(tried)) and len(ordered_rows) < bounded_target:
-        if t_idx < len(tried):
-            ordered_rows.append(tried[t_idx])
-            t_idx += 1
-        if u_idx < len(untried) and len(ordered_rows) < bounded_target:
-            ordered_rows.append(untried[u_idx])
-            u_idx += 1
-
-    keywords = [str(r["keyword"]).strip() for r in ordered_rows if r.get("keyword")]
-    if not keywords:
-        keywords = list(DEFAULT_THREADS_FALLBACK_KEYWORDS)[:bounded_target]
+    keywords = [str(r["keyword"]).strip() for r in active_rows if str(r.get("keyword") or "").strip()]
+    if target_count is not None and target_count > 0 and len(keywords) > target_count:
+        keywords = keywords[:target_count]
 
     return {
         "keywords": keywords,
         "meta": {
-            "total_active": len(active_rows),
+            "total_active": len(keywords),
             "selected_count": len(keywords),
-            "newly_generated": len(newly_added),
-            "new_keywords": newly_added,
-            "deactivated": deactivated,
-            "ai_powered": ai_powered,
+            "newly_generated": 0,
+            "new_keywords": [],
+            "deactivated": [],
+            "ai_powered": False,
             "items": [
                 {
+                    "id": str(r.get("id") or ""),
                     "keyword": str(r.get("keyword") or ""),
+                    "topic": str(r.get("topic") or "Chung"),
                     "times_used": int(r.get("times_used") or 0),
                     "total_posts_found": int(r.get("total_posts_found") or 0),
                     "high_score_posts": int(r.get("high_score_posts") or 0),
+                    "is_active": bool(r.get("is_active", True)),
+                    "created_by": str(r.get("created_by") or "Hệ thống"),
                 }
-                for r in ordered_rows[:bounded_target]
+                for r in active_rows
             ],
         },
     }
