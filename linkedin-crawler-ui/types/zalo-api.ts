@@ -270,6 +270,9 @@ export interface ZaloLibraryMessage {
   reactions?: Record<string, string> | null;
   // Optimistic UI state
   sending_status?: "sending" | "sent" | "failed";
+  staff_name?: string | null;
+  staff_email?: string | null;
+  staff_avatar?: string | null;
 }
 
 export type ZaloLibraryContentKind = "all" | "text" | "image";

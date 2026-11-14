@@ -510,6 +510,17 @@ function ZaloMessageAssetView({ asset, message, compact = false, onImageClick }:
   );
 }
 
+function getStaffInitials(name?: string | null): string {
+  if (!name || !name.trim()) return "NV";
+  const clean = name.trim();
+  if (clean.toLowerCase() === "bạn" || clean.toLowerCase() === "me") return "NV";
+  const parts = clean.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  const first = parts[parts.length - 2][0];
+  const second = parts[parts.length - 1][0];
+  return (first + second).toUpperCase();
+}
+
 function ZaloSpecialCardView({ card, isSent }: { card: ZaloSpecialCard; isSent: boolean }) {
   const iconName = card.kind === "link" ? "link" : "description";
   const body = (
@@ -2907,10 +2918,48 @@ export function ZaloInboxAdminShell() {
                                 const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
                                 const canCopyMessage = canActOnMessage && !!msg.content?.trim();
                                 const canForwardMessage = canActOnMessage && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
+                                const staffName =
+                                  msg.staff_name ||
+                                  (msg.raw_content as any)?.staff_name ||
+                                  (msg.raw_content as any)?.sender_staff?.name ||
+                                  (isSent ? (user?.name || "Bạn") : msg.sender_name || "Khách hàng");
+                                const staffAvatar =
+                                  msg.staff_avatar ||
+                                  (msg.raw_content as any)?.staff_avatar ||
+                                  (msg.raw_content as any)?.sender_staff?.avatar ||
+                                  (isSent ? ((user as any)?.avatar_url || (user as any)?.avatar || null) : null);
                                 return (
                                   <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
-                                    {isSent && msg.sent_by === "bot" && <ZaloBotMessageBadge />}
+                                    {isSent && (
+                                      <>
+                                        {msg.sent_by === "bot" ? (
+                                          <ZaloBotMessageBadge />
+                                        ) : (
+                                          <div className="flex items-center gap-1 rounded-full bg-slate-50 border border-slate-200/90 py-0.5 pl-0.5 pr-2 shadow-2xs hover:bg-slate-100 transition-colors">
+                                            {staffAvatar ? (
+                                              <img
+                                                src={staffAvatar}
+                                                alt={staffName}
+                                                className="w-3.5 h-3.5 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
+                                              />
+                                            ) : (
+                                              <span className="w-3.5 h-3.5 rounded-full bg-blue-100 text-[#0084ff] text-[8px] font-bold flex items-center justify-center shrink-0">
+                                                {getStaffInitials(staffName)}
+                                              </span>
+                                            )}
+                                            <span className="text-[9.5px] font-medium text-slate-700 max-w-[140px] truncate leading-none">
+                                              {staffName}
+                                            </span>
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
                                     {time && <span className="text-[9px] text-[#A0A0A0]">{time}</span>}
+                                    {isSent && (
+                                      <span title="Đã gửi qua Zalo" className="inline-flex items-center text-blue-500">
+                                        <MaterialIcon name="done_all" className="text-[12px] text-blue-500 font-bold" />
+                                      </span>
+                                    )}
                                     {canReact && (
                                       <button
                                         type="button"

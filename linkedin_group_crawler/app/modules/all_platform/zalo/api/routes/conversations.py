@@ -13,7 +13,7 @@ from loguru import logger
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 
-from app.modules.all_platform.auth_deps import get_authenticated_caller_email
+from app.modules.all_platform.auth_deps import get_authenticated_caller_email, get_authenticated_caller_user
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 from app.modules.all_platform.zalo.schemas.library import (
     ZaloConversationListResponse,
@@ -347,6 +347,7 @@ async def get_conversations(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
     limit: int = Query(500, ge=1, le=2000),
 ):
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -383,6 +384,7 @@ async def resolve_conversation_account(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Tim tai khoan Zalo dang giu 1 conv_id, dung cho luong 'Xu ly' tu trang
     Khach hang (CRM) - bam vao la tu dong chon dung acc + nhay thang toi hoi
@@ -486,6 +488,7 @@ async def sync_recent_conversations(
             _chat_sort_ms(chat),
             int(getattr(chat, "unread_count", 0) or 0),
         ),
+        #
         reverse=True,
     )[: body.limit]
 
@@ -786,6 +789,7 @@ async def get_conversation_messages(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -819,6 +823,24 @@ async def get_conversation_messages(
         )
         # Nhãn "Bot": tin gửi đi do Bot AI trả lời (khớp nhật ký bot) -> sent_by="bot".
         await annotate_bot_messages(user_id, conversation_id.strip(), rows)
+        # Bóc tách thông tin nhân sự gửi tin nhắn nội bộ từ raw_content
+        for row in rows:
+            raw = row.get("raw_content")
+            if isinstance(raw, dict):
+                if not row.get("staff_name") and raw.get("staff_name"):
+                    row["staff_name"] = raw.get("staff_name")
+                if not row.get("staff_avatar") and raw.get("staff_avatar"):
+                    row["staff_avatar"] = raw.get("staff_avatar")
+                if not row.get("staff_email") and raw.get("staff_email"):
+                    row["staff_email"] = raw.get("staff_email")
+                if isinstance(raw.get("sender_staff"), dict):
+                    s = raw["sender_staff"]
+                    if not row.get("staff_name") and s.get("name"):
+                        row["staff_name"] = s.get("name")
+                    if not row.get("staff_avatar") and s.get("avatar"):
+                        row["staff_avatar"] = s.get("avatar")
+                    if not row.get("staff_email") and s.get("email"):
+                        row["staff_email"] = s.get("email")
         response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
@@ -845,6 +867,7 @@ async def search_conversation_messages_endpoint(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
     limit: int = Query(50, ge=1, le=200),
 ):
     """Tìm tin nhắn cũ chứa từ khoá TRONG 1 hội thoại cụ thể (1 người hoặc 1
@@ -885,6 +908,7 @@ async def sync_conversation_messages_manually(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Đồng bộ bù tin nhắn thủ công cho một cuộc hội thoại từ Zalo."""
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -922,6 +946,9 @@ class SendMessageRequest(BaseModel):
     mentions: Optional[List[Mention]] = Field(
         None, description="[{pos,uid,len}] — vị trí/uid/độ dài mỗi mention trong `text`"
     )
+    staff_name: Optional[str] = Field(None, description="Họ tên nhân viên gửi tin nhắn nội bộ")
+    staff_avatar: Optional[str] = Field(None, description="Avatar nhân viên gửi tin nhắn nội bộ")
+    staff_email: Optional[str] = Field(None, description="Email nhân viên gửi tin nhắn nội bộ")
     reply_to: Optional[ReplyToPayload] = Field(
         None, description="Trả lời/trích dẫn 1 tin nhắn cụ thể trong hội thoại"
     )
@@ -1006,6 +1033,7 @@ async def send_message_to_conversation(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Gửi tin nhắn văn bản trực tiếp vào một hội thoại Zalo qua ZCA API.
 
@@ -1073,6 +1101,28 @@ async def send_message_to_conversation(
     # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
     # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
     api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    staff_name = getattr(body, "staff_name", None)
+    staff_avatar = getattr(body, "staff_avatar", None)
+    resolved_staff_name = (
+        staff_name
+        or (caller_user.get("name") if caller_user else None)
+        or (x_caller_email.split("@")[0] if x_caller_email else None)
+    )
+    resolved_staff_email = x_caller_email or (caller_user.get("email") if caller_user else None)
+    resolved_staff_avatar = (
+        staff_avatar
+        or (caller_user.get("avatar_url") or caller_user.get("avatar") if caller_user else None)
+    )
+    raw_staff_override = {
+        "staff_name": resolved_staff_name,
+        "staff_email": resolved_staff_email,
+        "staff_avatar": resolved_staff_avatar,
+        "sender_staff": {
+            "name": resolved_staff_name,
+            "email": resolved_staff_email,
+            "avatar": resolved_staff_avatar,
+        },
+    }
     await _persist_outgoing_message(
         user_id,
         conversation_id.strip(),
@@ -1081,6 +1131,7 @@ async def send_message_to_conversation(
         message_type="text",
         mentions=body.mentions,
         reply_to_id=body.reply_to.message_id.strip() if body.reply_to else None,
+        raw_content_override=raw_staff_override,
     )
     # Nhân viên vừa nhắn tay: tạm dừng Bot ở hội thoại này (nếu bật cấu hình tự tạm dừng).
     await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
@@ -1107,6 +1158,8 @@ async def send_media_to_conversation(
     conversation_id: str,
     text: Optional[str] = Form(None),
     thread_type: Optional[int] = Form(None),
+    staff_name: Optional[str] = Form(None),
+    staff_avatar: Optional[str] = Form(None),
     files: List[UploadFile] = File(...),
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
@@ -1114,6 +1167,7 @@ async def send_media_to_conversation(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Gửi hình ảnh hoặc tài liệu kèm chữ vào một hội thoại Zalo qua ZCA API."""
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -1215,6 +1269,26 @@ async def send_media_to_conversation(
         # 2026-08-26); vẫn thử "result" phòng hộ nếu 1 worker cũ chưa restart kịp
         # còn trả key cũ — tránh lại rơi vào fallback ID tạm gây lặp tin.
         api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+        resolved_staff_name = (
+            staff_name
+            or (caller_user.get("name") if caller_user else None)
+            or (x_caller_email.split("@")[0] if x_caller_email else None)
+        )
+        resolved_staff_email = x_caller_email or (caller_user.get("email") if caller_user else None)
+        resolved_staff_avatar = (
+            staff_avatar
+            or (caller_user.get("avatar_url") or caller_user.get("avatar") if caller_user else None)
+        )
+        raw_staff_override = {
+            "staff_name": resolved_staff_name,
+            "staff_email": resolved_staff_email,
+            "staff_avatar": resolved_staff_avatar,
+            "sender_staff": {
+                "name": resolved_staff_name,
+                "email": resolved_staff_email,
+                "avatar": resolved_staff_avatar,
+            },
+        }
         caption = text.strip() if text else ""
         if not caption and not all_images:
             # File thường không có chữ kèm — dùng tên file thật làm content, giống
@@ -1235,6 +1309,7 @@ async def send_media_to_conversation(
             message_type="image" if all_images and uploaded_urls else "file",
             image_urls=uploaded_urls,
             uploaded_assets=uploaded_assets,
+            raw_content_override=raw_staff_override,
         )
         await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
         await _auto_track_zalo_conversation_sender(user_id, conversation_id.strip(), x_caller_email)
@@ -1285,6 +1360,7 @@ async def mark_conversation_read(
     # localStorage — ai cũng sửa được bằng DevTools để mạo danh leader/admin
     # bất kỳ). Giờ lấy từ JWT đã xác thực (cookie crawlpro_access_token).
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Đánh dấu hội thoại là đã đọc. Cập nhật trong Supabase và thông báo ZCA (nếu đăng nhập)."""
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -1365,6 +1441,7 @@ async def forward_conversation_message(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Chuyển tiếp 1 tin nhắn (chữ hoặc ảnh) sang N hội thoại khác.
 
@@ -1485,6 +1562,7 @@ async def recall_conversation_message(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Thu hồi tin nhắn thật (api.undo — Mục 3.3.5 guide) — tin biến mất ở CẢ HAI phía.
 
@@ -1582,6 +1660,7 @@ async def delete_conversation(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Xóa cuộc trò chuyện khỏi sidebar và dọn dẹp tin nhắn trong DB."""
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -1634,6 +1713,7 @@ async def delete_conversation_message(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Xóa tin nhắn: Xóa ở phía tôi (local DB delete) hoặc Thu hồi (api.undo hai phía)."""
     user_id = _normalize_user_id(account_id or x_user_id)
@@ -1722,6 +1802,7 @@ async def react_to_conversation_message(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
     x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     """Thả cảm xúc cho 1 tin — giống bấm giữ tin nhắn trên app Zalo rồi chọn
     icon. KHÁC recall: cho phép react tin của BẤT KỲ AI (không chỉ tin mình
@@ -2380,6 +2461,28 @@ async def send_sticker_to_conversation(
         logger.info(f"Could not resolve sticker detail for id={body.id}: {exc}")
 
     api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+    staff_name = getattr(body, "staff_name", None)
+    staff_avatar = getattr(body, "staff_avatar", None)
+    resolved_staff_name = (
+        staff_name
+        or (caller_user.get("name") if caller_user else None)
+        or (x_caller_email.split("@")[0] if x_caller_email else None)
+    )
+    resolved_staff_email = x_caller_email or (caller_user.get("email") if caller_user else None)
+    resolved_staff_avatar = (
+        staff_avatar
+        or (caller_user.get("avatar_url") or caller_user.get("avatar") if caller_user else None)
+    )
+    raw_staff_override = {
+        "staff_name": resolved_staff_name,
+        "staff_email": resolved_staff_email,
+        "staff_avatar": resolved_staff_avatar,
+        "sender_staff": {
+            "name": resolved_staff_name,
+            "email": resolved_staff_email,
+            "avatar": resolved_staff_avatar,
+        },
+    }
     await _persist_outgoing_message(
         user_id,
         conversation_id.strip(),
@@ -2387,9 +2490,11 @@ async def send_sticker_to_conversation(
         content="",
         message_type="image" if sticker_url else "sticker",
         image_urls=[sticker_url] if sticker_url else None,
-        raw_content_override=(
-            {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
-        ),
+        raw_content_override=dict(raw_staff_override, **({"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else {})),
+        # clean
+        # old_override=(
+            # {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
+        #
     )
     await note_staff_reply(user_id, conversation_id.strip(), None)
     return {"ok": True, "result": result}
