@@ -184,6 +184,18 @@ export function EvaluationDropdown({ post, onEvaluationChange, disabled }: Evalu
         }
         setEvaluatedAt(res.data?.evaluated_at || new Date().toISOString());
         toast.success("Đã lưu đánh giá bài viết.");
+
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("seeding_post_evaluation_updated", {
+              detail: {
+                postId: post.id,
+                postUrl: post.post_url,
+                evaluation_code: newCode,
+              },
+            })
+          );
+        }
       }
     } catch {
       setCode(prevCode);

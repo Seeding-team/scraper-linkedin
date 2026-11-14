@@ -68,16 +68,19 @@ def _build_message(need_category: Optional[str]) -> str:
     return _ZALO_TEMPLATES.get(need_category or "other", _ZALO_TEMPLATES["other"])
 
 
-async def _update(comment_id: str, fields: dict[str, Any]) -> None:
+async def _update(comment_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
     import asyncio
 
     try:
         supabase = get_supabase_client()
-        await asyncio.to_thread(
+        res = await asyncio.to_thread(
             lambda: supabase.table("auto_seeding_comments").update(fields).eq("id", comment_id).execute()
         )
+        rows = res.data or []
+        return rows[0] if rows else None
     except Exception as exc:
         logger.warning(f"auto_seeding_zalo: không ghi được trạng thái cho {comment_id}: {exc}")
+        return None
 
 
 async def maybe_send_zalo_consult(
@@ -135,7 +138,7 @@ async def maybe_send_zalo_consult(
         except Exception as exc:
             logger.info(f"auto_seeding_zalo: upsert hội thoại thất bại (bỏ qua, tin đã gửi): {exc}")
 
-        await _update(
+        updated_row = await _update(
             comment_id,
             {
                 "zalo_status": "sent",
@@ -147,6 +150,22 @@ async def maybe_send_zalo_consult(
                 "zalo_display_name": display_name if display_name != uid else None,
             },
         )
+        if updated_row:
+            try:
+                import asyncio
+
+                from app.modules.all_platform.services.post_evaluation_service import (
+                    auto_promote_to_can_lien_he,
+                )
+
+                row_platform = updated_row.get("platform") or "facebook"
+                row_post_id = (
+                    updated_row.get("id_post_li") if row_platform == "linkedin" else updated_row.get("id_post_fb")
+                )
+                if row_post_id:
+                    await asyncio.to_thread(auto_promote_to_can_lien_he, str(row_post_id), row_platform)
+            except Exception as exc:
+                logger.warning(f"auto_seeding_zalo: auto_promote_to_can_lien_he thất bại comment={comment_id}: {exc}")
         try:
             from app.modules.all_platform.services.zalo_inbox_kpi_service import (
                 record_post_feed_outbound,

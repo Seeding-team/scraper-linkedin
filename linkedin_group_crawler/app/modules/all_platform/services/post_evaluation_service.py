@@ -120,6 +120,72 @@ def update_evaluation(
     return fresh if fresh else saved_review
 
 
+def auto_promote_to_can_lien_he(post_id: str, platform: str = "facebook") -> Optional[dict[str, Any]]:
+    """Tự động nâng đánh giá bài viết lên 'can-lien-he' khi hệ thống phát hiện tín hiệu
+    ĐÃ liên hệ được (ghi nhận kết quả gọi điện, hoặc bot tự động nhắn Zalo tư vấn thành
+    công) — để bài tự chuyển sang cột "Cần liên hệ" mà không cần ai bấm tay.
+
+    Tôn trọng lựa chọn thủ công: chỉ tự nâng khi bài CHƯA có dòng đánh giá hoặc đang ở
+    'chua-danh-gia'. Nếu người dùng đã chọn tay bất kỳ trạng thái nào khác (kể cả
+    'khong-phu-hop') thì bỏ qua, không ghi đè lựa chọn đó. Idempotent: nếu đã là
+    'can-lien-he' rồi thì không upsert lại, không ghi thêm history (gọi lại nhiều lần an toàn).
+    """
+    supabase = get_supabase_client()
+    platform = platform or "facebook"
+
+    existing = get_review(post_id, platform)
+    current_code = existing.get("evaluation_code") if existing else None
+
+    if current_code == "can-lien-he":
+        return existing
+
+    if current_code not in (None, "chua-danh-gia"):
+        return existing
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    upsert_data: dict[str, Any] = {
+        "post_id": str(post_id),
+        "platform": platform,
+        "evaluation_code": "can-lien-he",
+        "evaluated_by": None,
+        "evaluated_at": now_iso,
+        "updated_at": now_iso,
+    }
+    if existing is not None:
+        upsert_data["exclude_keyword_exempt"] = existing.get("exclude_keyword_exempt", False)
+
+    res = execute_supabase_query(
+        lambda: supabase.table("post_quick_review")
+        .upsert(upsert_data, on_conflict="post_id,platform")
+        .execute()
+    )
+    saved_review = res.data[0] if res.data else upsert_data
+
+    history_entry = {
+        "post_id": str(post_id),
+        "platform": platform,
+        "previous_evaluation_code": current_code,
+        "evaluation_code": "can-lien-he",
+        "reason": "Tự động nâng khi có tín hiệu đã liên hệ (kết quả gọi điện / nhắn Zalo tư vấn thành công).",
+        "action_type": "auto_contact_signal",
+        "evaluated_by": None,
+        "created_at": now_iso,
+    }
+    execute_supabase_query(
+        lambda: supabase.table("post_evaluation_history").insert(history_entry).execute()
+    )
+
+    logger.info(
+        "auto_promote_to_can_lien_he post_id=%s platform=%s previous_code=%s",
+        post_id,
+        platform,
+        current_code,
+    )
+
+    fresh = get_review(post_id, platform)
+    return fresh if fresh else saved_review
+
+
 def batch_reject(
     post_ids: list[str],
     user: dict[str, Any],
