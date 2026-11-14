@@ -1,73 +1,81 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import { useState } from "react";
 import { useAppAuth } from "@/contexts/AppAuthContext";
-import { allPlatformPostsService } from "@/services/all-platform.service";
-import { SeedingActivityPanel } from "@/components/all-platform/feed/SeedingActivityPanel";
-import { TeamEfficiencyWidget } from "@/components/all-platform/feed/TeamEfficiencyWidget";
 import { MemberOnlineTimeWidget } from "@/components/all-platform/feed/MemberOnlineTimeWidget";
-import type { FeedPlatform } from "@/types/unified.types";
+import { FilterBar } from "@/components/all-platform/leader-dashboard/FilterBar";
+import { KpiCardGrid } from "@/components/all-platform/leader-dashboard/KpiCardGrid";
+import { TabOverview } from "@/components/all-platform/leader-dashboard/TabOverview";
+import { TabContactResults } from "@/components/all-platform/leader-dashboard/TabContactResults";
+import { TabMessages } from "@/components/all-platform/leader-dashboard/TabMessages";
+import { TabComments } from "@/components/all-platform/leader-dashboard/TabComments";
+import { TabMembers } from "@/components/all-platform/leader-dashboard/TabMembers";
+import { FlatListDrawer, type FlatListQuery } from "@/components/all-platform/leader-dashboard/FlatListDrawer";
+import { Member360Drawer } from "@/components/all-platform/leader-dashboard/Member360Drawer";
+import { useLeaderDashboardFilters } from "@/components/all-platform/leader-dashboard/useLeaderDashboardFilters";
+import { useLeaderDashboardData } from "@/components/all-platform/leader-dashboard/useLeaderDashboardData";
+import { exportActivityLogCsv } from "@/components/all-platform/leader-dashboard/exportCsv";
+import { PERIOD_LABEL } from "@/components/all-platform/leader-dashboard/shared";
+
+type Tab = "overview" | "contact" | "messages" | "comments" | "members";
+
+const TABS: [Tab, string][] = [
+  ["overview", "Tổng quan"],
+  ["contact", "Kết quả liên hệ"],
+  ["messages", "Tin nhắn"],
+  ["comments", "Comment"],
+  ["members", "Thành viên"],
+];
 
 export default function LeaderDashboardPage() {
   const { user } = useAppAuth();
-  const email = user?.email || "";
   const isLeaderOrAdmin = user?.role === "admin" || user?.role === "leader";
 
-  const [platform, setPlatform] = useState<FeedPlatform>("facebook");
-  const [dailyTrend, setDailyTrend] = useState<Array<{ date: string; posts: number; comments: number; inbox: number }>>([]);
-  const [isLoadingTrend, setIsLoadingTrend] = useState(true);
+  const filters = useLeaderDashboardFilters(user?.id, user?.role);
+  const data = useLeaderDashboardData(filters);
 
-  const fetchDailyTrend = useCallback(async () => {
-    if (!email) return;
-    setIsLoadingTrend(true);
-    try {
-      const res = await allPlatformPostsService.getDailyTrend({
-        email,
-        platform,
-      });
-      if (res.success && res.data) {
-        setDailyTrend(res.data);
-      }
-    } catch {
-      // ignore
-    } finally {
-      setIsLoadingTrend(false);
-    }
-  }, [email, platform]);
+  const [tab, setTab] = useState<Tab>("overview");
+  const [flatList, setFlatList] = useState<{ open: boolean; title: string; query: FlatListQuery | null }>({
+    open: false, title: "", query: null,
+  });
+  const [member360, setMember360] = useState<{ open: boolean; memberId: string | null; memberName: string | null }>({
+    open: false, memberId: null, memberName: null,
+  });
 
-  useEffect(() => {
-    fetchDailyTrend();
-  }, [fetchDailyTrend]);
+  const openFlatList = (title: string, query: FlatListQuery) => setFlatList({ open: true, title, query });
+  const openMember360 = (memberId: string, memberName: string | null) =>
+    setMember360({ open: true, memberId, memberName });
+
+  const exportQuery = {
+    date_from: filters.date_from, date_to: filters.date_to,
+    platform: filters.platform || undefined, team_id: filters.teamId || undefined, member_id: filters.memberId || undefined,
+    search: filters.search || undefined,
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50/50 p-6 md:p-8 space-y-6">
-      {/* Header riêng biệt của trang */}
+    <div className="min-h-screen bg-slate-50/50 p-6 md:p-8 space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-xs">
-        <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-            <span className="material-symbols-outlined text-[28px] text-[#be123c]">analytics</span>
-            Dashboard Leader Seeding
-          </h1>
-          <p className="text-xs text-gray-500 mt-1 font-medium">
-            Báo cáo xu hướng 14 ngày, tổng bài cào được, comment đã verify, inbox nhận được của toàn đội ngũ.
-          </p>
+        <div className="flex items-start gap-3">
+          <span className="material-symbols-outlined text-[24px] text-[#be123c] mt-0.5">bolt</span>
+          <div>
+            <h1 className="text-2xl font-black text-gray-900 tracking-tight">Dashboard Leader</h1>
+            <p className="text-xs text-gray-500 mt-1 font-medium">
+              Giám sát hiệu suất Team: cuộc gọi, tin Zalo, comment và khách cần chăm sóc. Bấm vào số liệu để xem chi tiết.
+            </p>
+          </div>
         </div>
-        <div className="flex items-center gap-2 bg-gray-100 p-1.5 rounded-xl border border-gray-200">
-          {(["facebook", "linkedin", "threads", "youtube"] as const).map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setPlatform(p)}
-              className={`px-3 py-1 rounded-lg text-xs font-bold uppercase transition cursor-pointer ${
-                platform === p
-                  ? "bg-white text-gray-900 shadow-xs"
-                  : "text-gray-500 hover:text-gray-900"
-              }`}
-            >
-              {p}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-700 px-2.5 py-1 text-[11px] font-bold">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Đang hoạt động
+          </span>
+          <button
+            type="button"
+            onClick={() => void exportActivityLogCsv(exportQuery)}
+            className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-[12.5px] font-bold hover:opacity-90 transition cursor-pointer inline-flex items-center gap-1.5"
+          >
+            <span className="material-symbols-outlined text-[16px]">download</span>
+            Xuất báo cáo CSV
+          </button>
         </div>
       </div>
 
@@ -77,70 +85,77 @@ export default function LeaderDashboardPage() {
           <p className="font-semibold text-sm text-gray-700">Dữ liệu Dashboard Leader chỉ dành cho Leader và Quản trị viên.</p>
         </div>
       ) : (
-        <div className="space-y-6">
-          {/* Biểu đồ xu hướng 14 ngày */}
-          <div className="bg-white border border-gray-100 rounded-2xl p-6 shadow-xs">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-gray-900">Xu hướng 14 ngày gần nhất ({platform.toUpperCase()})</h3>
-                <p className="text-xs text-gray-500">Tổng bài cào được · Comment đã verify · Inbox nhận được, theo từng ngày.</p>
-              </div>
-              {isLoadingTrend && <span className="text-xs text-gray-400">Đang tải...</span>}
-            </div>
-            {dailyTrend.length === 0 ? (
-              <div className="flex h-[240px] items-center justify-center text-sm text-gray-400">
-                {isLoadingTrend ? "Đang tải dữ liệu xu hướng..." : "Chưa có dữ liệu xu hướng."}
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={dailyTrend} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorPosts" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorComments" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#16a34a" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#16a34a" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorInbox" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.35} />
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(d: string) => d.slice(5).replace("-", "/")}
-                    tick={{ fontSize: 11, fill: "#737373" }}
-                    axisLine={{ stroke: "#e5e5e5" }}
-                    tickLine={false}
-                  />
-                  <YAxis tick={{ fontSize: 11, fill: "#737373" }} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip
-                    labelFormatter={(d) => `Ngày ${String(d ?? "").slice(5).replace("-", "/")}`}
-                    contentStyle={{ borderRadius: 8, fontSize: 12, border: "1px solid #e5e5e5" }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Area type="monotone" dataKey="posts" name="Tổng bài" stroke="#2563eb" fill="url(#colorPosts)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="comments" name="Comment" stroke="#16a34a" fill="url(#colorComments)" strokeWidth={2} />
-                  <Area type="monotone" dataKey="inbox" name="Inbox" stroke="#f59e0b" fill="url(#colorInbox)" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
+        <div className="space-y-4">
+          <FilterBar filters={filters} />
+
+          <div className="bg-card border border-border rounded-2xl p-5">
+            <KpiCardGrid
+              data={data}
+              period={filters.period}
+              dateFrom={filters.date_from}
+              dateTo={filters.date_to}
+              platform={filters.platform}
+              teamId={filters.teamId}
+              memberId={filters.memberId}
+              search={filters.search}
+              onOpenDrawer={openFlatList}
+            />
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
-            <div className="xl:col-span-2">
-              <SeedingActivityPanel email={email} />
+          <div className="bg-card border border-border rounded-2xl p-1.5">
+            <div className="flex gap-1 overflow-x-auto">
+              {TABS.map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setTab(key)}
+                  className={`px-3.5 py-2 rounded-xl text-[13px] font-bold whitespace-nowrap transition cursor-pointer ${
+                    tab === key ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <TeamEfficiencyWidget email={email} />
           </div>
 
-          <MemberOnlineTimeWidget email={email} />
+          {tab === "overview" && (
+            <TabOverview filters={filters} data={data} onOpenFlatList={openFlatList} onOpenMember360={openMember360} />
+          )}
+          {tab === "contact" && (
+            <TabContactResults filters={filters} data={data} onOpenFlatList={openFlatList} />
+          )}
+          {tab === "messages" && <TabMessages filters={filters} data={data} onOpenFlatList={openFlatList} />}
+          {tab === "comments" && <TabComments filters={filters} data={data} />}
+          {tab === "members" && <TabMembers data={data} onOpenMember360={openMember360} exportQuery={exportQuery} />}
+
+          <p className="text-[11px] text-muted-foreground text-center">
+            Dữ liệu thật từ hệ thống — seeding/bình luận được tính chung 1 hành động (không tách
+            &quot;lỗi đăng&quot;/&quot;khách đã phản hồi&quot;); &quot;quá hạn&quot; suy ra theo
+            thời gian, chưa có lịch hẹn gọi lại cụ thể trong hệ thống.
+          </p>
+
+          <MemberOnlineTimeWidget email={user?.email || ""} />
         </div>
       )}
+
+      <FlatListDrawer
+        open={flatList.open}
+        onOpenChange={(open) => setFlatList((s) => ({ ...s, open }))}
+        title={flatList.title}
+        subtitle={PERIOD_LABEL[filters.period]}
+        query={flatList.query}
+      />
+      <Member360Drawer
+        open={member360.open}
+        onOpenChange={(open) => setMember360((s) => ({ ...s, open }))}
+        memberId={member360.memberId}
+        memberName={member360.memberName}
+        dateFrom={filters.date_from}
+        dateTo={filters.date_to}
+        platform={filters.platform}
+        periodLabel={PERIOD_LABEL[filters.period]}
+      />
     </div>
   );
 }
-

@@ -649,6 +649,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // cục bộ trong widget) vì fetchPosts() cần đọc giá trị này.
   const [selectedCallResultCode, setSelectedCallResultCode] = useState<string | null>(null);
 
+  // Widget "Kết quả liên hệ": bấm 1 thành viên ở thanh "Ai đã làm" -> lọc server-side
+  // danh sách post bên dưới theo đúng thành viên đó (bấm lại thì bỏ chọn). Cùng lý do
+  // sống ở cha như selectedCallResultCode ở trên.
+  const [contactMemberId, setContactMemberId] = useState<string | null>(null);
+
   // Fetch Taxonomy
   const fetchCategories = useCallback(async () => {
     try {
@@ -734,6 +739,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           product_seeding: filters.product_seeding || undefined,
           search: filters.search || undefined,
           call_result_code: selectedCallResultCode || undefined,
+          contact_member_id: contactMemberId || undefined,
           sort: filters.sort,
           page: requestPage,
           page_size: requestPageSize,
@@ -804,7 +810,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } finally {
       setIsLoadingPosts(false);
     }
-  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode]);
+  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode, contactMemberId]);
 
   
 
@@ -1664,6 +1670,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           <CallResultStatsWidget
             selectedCode={selectedCallResultCode}
             onSelectCode={setSelectedCallResultCode}
+            contactMemberId={contactMemberId}
+            onSelectContactMember={setContactMemberId}
             platform={feedPlatform}
             userRole={user?.role}
           />
