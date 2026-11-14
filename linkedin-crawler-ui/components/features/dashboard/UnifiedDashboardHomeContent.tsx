@@ -27,7 +27,7 @@ import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/K
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, type TeamMember } from "@/services/all-platform.service";
+import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, allPlatformKpiService, type TeamMember } from "@/services/all-platform.service";
 import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -363,6 +363,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
   const [socialAccounts, setSocialAccounts] = useState<SocialAccount[]>([]);
+
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
 
   useEffect(() => {
@@ -626,6 +627,60 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     kpiTarget: 0,
     kpiProgressPercent: 0,
   });
+
+  // 4 Chỉ số StatCards cốt lõi theo yêu cầu của Master
+  const [newPostsCount, setNewPostsCount] = useState<number>(0);
+  const [inboxTodayCount, setInboxTodayCount] = useState<number>(0);
+
+  // Tính số bài mới kể từ lần cuối user vào trang (lưu timestamp trong localStorage)
+  useEffect(() => {
+    if (typeof window === "undefined" || !CURRENT_USER_EMAIL) return;
+    const storageKey = `markee_last_visit_${CURRENT_USER_EMAIL.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const rawLastVisit = localStorage.getItem(storageKey);
+    const lastVisitTs = rawLastVisit ? parseInt(rawLastVisit, 10) : 0;
+
+    if (posts && posts.length > 0) {
+      if (lastVisitTs > 0) {
+        const count = posts.filter((p) => {
+          const postTime = new Date(p.created_at || p.crawl_date || p.post_time || 0).getTime();
+          return postTime > lastVisitTs;
+        }).length;
+        setNewPostsCount(count);
+      } else {
+        setNewPostsCount(stats.totalPostsToday || posts.length);
+      }
+    }
+
+    // Đếm số bài đã nhắn tin (inbox Zalo) hôm nay từ mảng posts
+    const inboxInPosts = posts.filter((p) => {
+      return !!(p as any).zalo_sent_by || (p as any).status === "contacted" || p.verify_status === "yes";
+    }).length;
+    setInboxTodayCount((prev) => Math.max(prev, inboxInPosts));
+
+    // Cập nhật timestamp lần truy cập (sau khi người dùng đã nhìn thấy số liệu)
+    const timer = setTimeout(() => {
+      localStorage.setItem(storageKey, Date.now().toString());
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [posts, CURRENT_USER_EMAIL, stats.totalPostsToday]);
+
+  // Lấy thêm số lượng inbox hoàn thành từ API KPI của user để đảm bảo số liệu thực tế nhất
+  useEffect(() => {
+    if (!CURRENT_USER_EMAIL) return;
+    allPlatformKpiService
+      .getByEmail(CURRENT_USER_EMAIL)
+      .then((res) => {
+        if (res?.success && res.data) {
+          const data = res.data as any;
+          const currentInbox = Number(data.kpi_inbox_current || 0);
+          if (currentInbox > 0) {
+            setInboxTodayCount((prev) => Math.max(prev, currentInbox));
+          }
+        }
+      })
+      .catch(() => {});
+  }, [CURRENT_USER_EMAIL]);
   // Mac dinh true (khong phai false): luc moi mount, user/CURRENT_USER_EMAIL tu
   // AppAuthContext chua kip load xong nen fetchPosts() se return som (guard
   // !CURRENT_USER_EMAIL) va KHONG bao gio set isLoadingPosts=true - neu khoi
@@ -1324,7 +1379,48 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
       
       <>
-          {/* Khối 4 StatCard cũ đã được gỡ bỏ để tinh gọn màn hình */}
+          {/* 4 StatCard cốt lõi theo yêu cầu Master:
+              1. Tổng bài viết hôm nay
+              2. Bài viết mới (so với lần cuối vào của người đó)
+              3. Số bài viết đã bình luận trong ngày
+              4. Số bài viết đã được nhắn tin trong ngày */}
+          <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 mb-4 shadow-xs">
+            <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+              <StatCard
+                icon="description"
+                label="Tổng bài hôm nay"
+                value={stats.totalPostsToday || 0}
+                trend={{
+                  value: Math.abs(fbDiff),
+                  isUp: fbDiff >= 0,
+                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
+                }}
+                sub="Cào về trong ngày hôm nay"
+                accent="blue"
+              />
+              <StatCard
+                icon="auto_awesome"
+                label="Bài viết mới"
+                value={newPostsCount}
+                sub={newPostsCount > 0 ? "Kể từ lần cuối bạn truy cập" : "Bạn đã xem hết bài mới"}
+                accent="amber"
+              />
+              <StatCard
+                icon="chat_bubble"
+                label="Đã bình luận hôm nay"
+                value={stats.seededToday || 0}
+                sub="Bài viết đã comment tương tác"
+                accent="green"
+              />
+              <StatCard
+                icon="send"
+                label="Đã nhắn tin hôm nay"
+                value={inboxTodayCount}
+                sub="Hội thoại Zalo & inbox kết nối"
+                accent="indigo"
+              />
+            </div>
+          </div>
 
           {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
           {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
