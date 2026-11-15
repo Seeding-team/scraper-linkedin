@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { postEvaluationService } from "@/services/all-platform.service";
 import type { UnifiedPost } from "@/types/unified.types";
@@ -27,6 +27,23 @@ export function QuickReviewToolbar({
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUndoing, setIsUndoing] = useState(false);
+
+  // Theo dõi nút gốc trong toolbar để hiện/ẩn nút nổi (FAB) khi cuộn trang
+  const originalButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [isOriginalButtonVisible, setIsOriginalButtonVisible] = useState(true);
+
+  useEffect(() => {
+    const node = originalButtonRef.current;
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsOriginalButtonVisible(entry.isIntersecting),
+      { threshold: 0.1 }
+    );
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, []);
 
   // Thống kê bài viết trên trang hiện tại
   const canLienHeCount = posts.filter(
@@ -119,6 +136,7 @@ export function QuickReviewToolbar({
     <>
       <div className="flex items-center gap-2">
         <button
+          ref={originalButtonRef}
           type="button"
           onClick={() => setIsConfirmOpen(true)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-2xs transition cursor-pointer"
@@ -195,21 +213,21 @@ export function QuickReviewToolbar({
                 <>
                   <button
                     type="button"
-                    disabled={isSubmitting || unreviewedCount === 0}
-                    onClick={() => handleExecuteBatchReject(false)}
-                    className="px-3.5 py-2 rounded-xl text-xs font-bold border border-border bg-card hover:bg-muted text-foreground transition shadow-2xs cursor-pointer disabled:opacity-50"
+                    disabled={isSubmitting}
+                    onClick={() => handleExecuteBatchReject(true)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-border bg-card hover:bg-muted text-foreground transition shadow-2xs cursor-pointer disabled:opacity-50"
                   >
-                    {isSubmitting ? "Đang xử lý..." : "Hoàn tất Review"}
+                    <span>{isSubmitting ? "Đang xử lý..." : "Xác nhận & Sang trang tiếp"}</span>
+                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
                   </button>
 
                   <button
                     type="button"
-                    disabled={isSubmitting}
-                    onClick={() => handleExecuteBatchReject(true)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
+                    disabled={isSubmitting || unreviewedCount === 0}
+                    onClick={() => handleExecuteBatchReject(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground transition shadow-sm cursor-pointer disabled:opacity-50"
                   >
-                    <span>{isSubmitting ? "Đang xử lý..." : "Xác nhận & Sang trang tiếp"}</span>
-                    <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
+                    {isSubmitting ? "Đang xử lý..." : "Hoàn tất Review"}
                   </button>
                 </>
               ) : (
@@ -226,6 +244,23 @@ export function QuickReviewToolbar({
           </div>
         </div>
       )}
+
+      {/* Nút nổi (FAB) - hiện khi nút gốc cuộn ra khỏi viewport */}
+      <button
+        type="button"
+        aria-hidden={isOriginalButtonVisible}
+        tabIndex={isOriginalButtonVisible ? -1 : 0}
+        onClick={() => setIsConfirmOpen(true)}
+        className={`fixed right-4 bottom-4 md:right-6 md:bottom-6 z-40 inline-flex items-center gap-1.5 px-4 py-3 rounded-full text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-lg transition-all duration-200 cursor-pointer ${
+          isOriginalButtonVisible
+            ? "opacity-0 translate-y-2 pointer-events-none"
+            : "opacity-100 translate-y-0"
+        }`}
+        title="Mở Review Nhanh để hoàn tất đánh giá các bài viết trên trang"
+      >
+        <span className="material-symbols-outlined text-[20px]">bolt</span>
+        <span className="hidden sm:inline">Review Nhanh</span>
+      </button>
     </>
   );
 }
