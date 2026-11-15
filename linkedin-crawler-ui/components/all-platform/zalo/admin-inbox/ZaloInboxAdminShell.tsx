@@ -2447,7 +2447,7 @@ export function ZaloInboxAdminShell() {
             </div>
           )}
 
-          {inbox.selectedAccountId && accountStatus === "offline" && (
+          {inbox.selectedAccountId && !inbox.loadingAccounts && accountStatus === "offline" && (
             <div className="bg-amber-50/80 border-b border-amber-200/80 px-4 py-2 flex items-center justify-between text-xs text-amber-800 flex-shrink-0">
               <span className="flex items-center gap-1.5 font-medium">
                 <MaterialIcon name="warning_amber" className="text-amber-500 text-base" />
@@ -2474,7 +2474,7 @@ export function ZaloInboxAdminShell() {
             </div>
           )}
 
-          {inbox.selectedAccountId && accountStatus === "connecting" && (
+          {inbox.selectedAccountId && !inbox.loadingAccounts && accountStatus === "connecting" && (
             <div className="bg-sky-50 border-b border-sky-200 px-4 py-1.5 flex items-center justify-between text-xs text-sky-800 flex-shrink-0">
               <span className="flex items-center gap-1.5 font-medium">
                 <MaterialIcon name="sync" className="text-sky-500 text-base animate-spin" />
@@ -3218,6 +3218,43 @@ export function ZaloInboxAdminShell() {
                     })}
                   </div>
                 ))}
+              </div>
+            ) : inbox.loadingMessages ? (
+              <div className="flex h-full flex-col justify-end p-4 space-y-4 animate-in fade-in duration-150">
+                {/* Chat Skeleton Loader khi đang nạp tin nhắn */}
+                <div className="flex items-start gap-2.5 max-w-[75%]">
+                  <div className="w-8 h-8 rounded-full bg-slate-200 animate-pulse shrink-0" />
+                  <div className="space-y-1.5 flex-1">
+                    <div className="h-3.5 bg-slate-200 rounded-md w-28 animate-pulse" />
+                    <div className="h-10 bg-slate-100 rounded-2xl rounded-tl-xs px-3 py-2 w-64 animate-pulse flex items-center">
+                      <div className="h-3 bg-slate-200/80 rounded w-48" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start justify-end gap-2.5 self-end max-w-[75%]">
+                  <div className="space-y-1.5 flex-1 flex flex-col items-end">
+                    <div className="h-9 bg-blue-100/70 rounded-2xl rounded-tr-xs px-3 py-2 w-56 animate-pulse flex items-center justify-end">
+                      <div className="h-3 bg-blue-200/80 rounded w-40" />
+                    </div>
+                    <div className="h-2.5 bg-slate-200 rounded w-14 animate-pulse" />
+                  </div>
+                </div>
+                <div className="flex items-start gap-2.5 max-w-[75%]">
+                  <div className="w-8 h-8 rounded-full bg-slate-200 animate-pulse shrink-0" />
+                  <div className="space-y-1.5 flex-1">
+                    <div className="h-14 bg-slate-100 rounded-2xl rounded-tl-xs px-3 py-2 w-72 animate-pulse space-y-1.5 justify-center flex flex-col">
+                      <div className="h-3 bg-slate-200/80 rounded w-56" />
+                      <div className="h-3 bg-slate-200/60 rounded w-36" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-start justify-end gap-2.5 self-end max-w-[75%]">
+                  <div className="space-y-1.5 flex-1 flex flex-col items-end">
+                    <div className="h-10 bg-blue-100/70 rounded-2xl rounded-tr-xs px-3 py-2 w-64 animate-pulse flex items-center justify-end">
+                      <div className="h-3 bg-blue-200/80 rounded w-48" />
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="flex h-full flex-col items-center justify-center text-center p-6 text-slate-400">

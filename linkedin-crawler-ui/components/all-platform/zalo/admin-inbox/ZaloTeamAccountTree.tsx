@@ -57,8 +57,8 @@ export default function ZaloTeamAccountTree({
   const pickerRef = useRef<HTMLDivElement>(null);
 
   const getAccountStatus = useCallback((s: ZaloAccountInfo): AccountStatus => {
-    if (s.listener?.auth_expired) return "expired";
-    if (s.listener?.connected) return "online";
+    if (s.listener?.auth_expired || s.status === "session_expired") return "expired";
+    if (s.listener?.connected || (s.listener?.running && s.status === "confirmed" && !s.listener?.auth_expired)) return "online";
     if (s.listener?.running) return "connecting";
     return "offline";
   }, []);
@@ -190,8 +190,8 @@ export default function ZaloTeamAccountTree({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [accountOpen]);
 
-  const onlineCount = sessions.filter((s) => s.listener?.connected).length;
-  const expiredCount = sessions.filter((s) => s.listener?.auth_expired).length;
+  const onlineCount = sessions.filter((s) => getAccountStatus(s) === "online").length;
+  const expiredCount = sessions.filter((s) => getAccountStatus(s) === "expired").length;
   const offlineCount = sessions.length - onlineCount - expiredCount;
 
   return (
