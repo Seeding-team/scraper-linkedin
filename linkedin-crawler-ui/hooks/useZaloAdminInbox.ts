@@ -387,7 +387,11 @@ export function useZaloAdminInbox() {
           loaded.push(r.value);
           for (const acc of r.value.accounts) {
             seenAccountIds.add(acc.account_id);
-            if (acc.listener?.connected) {
+            const isOnline = Boolean(
+              acc.listener?.connected ||
+              (acc.listener?.running && acc.status === "confirmed" && !acc.listener?.auth_expired)
+            );
+            if (isOnline) {
               onlineSet.add(acc.account_id);
               expiredSet.delete(acc.account_id);
             } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
@@ -408,7 +412,11 @@ export function useZaloAdminInbox() {
           accounts: unassignedAccounts,
         });
         for (const acc of unassignedAccounts) {
-          if (acc.listener?.connected) {
+          const isOnline = Boolean(
+            acc.listener?.connected ||
+            (acc.listener?.running && acc.status === "confirmed" && !acc.listener?.auth_expired)
+          );
+          if (isOnline) {
             onlineSet.add(acc.account_id);
             expiredSet.delete(acc.account_id);
           } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
@@ -1436,6 +1444,9 @@ export function useZaloAdminInbox() {
       if (expiredAccounts.has(accountId)) return "expired";
       for (const group of memberAccounts) {
         const accInfo = group.accounts.find((a) => a.account_id === accountId);
+        if (accInfo?.listener?.connected || (accInfo?.listener?.running && accInfo?.status === "confirmed" && !accInfo?.listener?.auth_expired)) {
+          return "online";
+        }
         if (accInfo?.listener?.running) return "connecting";
       }
       return "offline";

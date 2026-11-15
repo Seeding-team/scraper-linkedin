@@ -475,7 +475,7 @@ class ZcaPersistentListenerManager:
         """Periodic watchdog để tự động kết nối lại các listener bị ngắt tạm thời."""
         while True:
             try:
-                await asyncio.sleep(60.0)
+                await asyncio.sleep(30.0)
                 for user_id in await list_zca_auth_users():
                     st = self.status(user_id)
                     if not st.get("running") and not st.get("auth_expired"):
@@ -483,7 +483,7 @@ class ZcaPersistentListenerManager:
                         if auth:
                             logger.info(f"ZCA Watchdog: auto-restarting disconnected listener for user={user_id}")
                             try:
-                                await self.start_listener(user_id, auth)
+                                await self.start_listener(user_id, auth, force_restart=True)
                             except Exception as exc:
                                 logger.debug(f"ZCA Watchdog restart failed for user={user_id}: {exc}")
             except asyncio.CancelledError:
@@ -512,11 +512,21 @@ class ZcaPersistentListenerManager:
                 "messages_seen": 0,
                 "auth_expired": False,
             }
-        running = bool(state.proc and state.proc.returncode is None)
+        running = False
+        if state.proc and state.proc.returncode is None:
+            if state.pid:
+                try:
+                    os.kill(state.pid, 0)
+                    running = True
+                except (ProcessLookupError, OSError):
+                    running = False
+                    state.connected = False
+            else:
+                running = True
         return {
             "user_id": user_id,
             "running": running,
-            "connected": state.connected,
+            "connected": state.connected and running,
             "pid": state.pid if running else None,
             "last_event_at": state.last_event_at,
             "last_error": state.last_error,
@@ -944,6 +954,10 @@ class ZcaPersistentListenerManager:
                 proc.stdin.write(json.dumps({"auth": state.auth, "user_id": state.user_id}).encode("utf-8"))
                 await proc.stdin.drain()
                 proc.stdin.close()
+                try:
+                    await proc.stdin.wait_closed()
+                except Exception:
+                    pass
 
         state.last_event_at = _now_iso()
         state.last_error = None
@@ -1110,14 +1124,15 @@ class ZcaPersistentListenerManager:
 
         state.last_event_at = _now_iso()
         event_name = event.get("event")
-        if event_name in {"ready", "starting", "old_messages_requested"}:
+        if event_name in {"starting", "old_messages_requested"}:
             return
-        if event_name == "connected":
+        if event_name in {"login_ok", "listener_ready", "ready", "connected", "heartbeat"}:
             state.connected = True
             state.restart_attempt = 0
             state.last_error = None
-            logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
-            await self._sync_recent_groups_after_connect(state)
+            if event_name == "connected":
+                logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
+                await self._sync_recent_groups_after_connect(state)
             return
         if event_name in {"disconnected", "closed", "stopping"}:
             state.connected = False

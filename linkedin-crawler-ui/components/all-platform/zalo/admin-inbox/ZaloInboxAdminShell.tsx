@@ -2480,6 +2480,14 @@ export function ZaloInboxAdminShell() {
                 <MaterialIcon name="sync" className="text-sky-500 text-base animate-spin" />
                 <span>Đang kết nối tài khoản Zalo với máy chủ...</span>
               </span>
+              <button
+                type="button"
+                onClick={() => void inbox.reconnectAccount()}
+                disabled={inbox.isReconnecting}
+                className="text-sky-700 hover:text-sky-900 underline font-medium text-xs ml-2 cursor-pointer disabled:opacity-50"
+              >
+                {inbox.isReconnecting ? "Đang thử lại..." : "Thử kết nối lại"}
+              </button>
             </div>
           )}
 
