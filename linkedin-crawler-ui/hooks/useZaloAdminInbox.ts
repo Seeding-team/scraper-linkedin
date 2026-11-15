@@ -163,8 +163,17 @@ export function useZaloAdminInbox() {
   const [sendError, setSendError] = useState<string | null>(null);
 
   // ── Online status ───────────────────────────────────────────────────────────
-  const [onlineAccounts, setOnlineAccounts] = useState<Set<string>>(new Set());
+  const [onlineAccounts, setOnlineAccounts] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = sessionStorage.getItem("zalo_online_accounts");
+        if (saved) return new Set(JSON.parse(saved));
+      } catch { /* no-op */ }
+    }
+    return new Set();
+  });
   const [expiredAccounts, setExpiredAccounts] = useState<Set<string>>(new Set());
+  const inFlightFetchRef = useRef<string | null>(null);
 
   // ── KPI stats & weekly progress ─────────────────────────────────────────────
   const [kpiByOwner, setKpiByOwner] = useState<Record<string, number>>({});
@@ -428,6 +437,11 @@ export function useZaloAdminInbox() {
       setMemberAccounts(loaded);
       setOnlineAccounts(onlineSet);
       setExpiredAccounts(expiredSet);
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("zalo_online_accounts", JSON.stringify(Array.from(onlineSet)));
+        } catch { /* no-op */ }
+      }
     } catch (e) {
       console.error("loadMemberAccounts error", e);
     } finally {
@@ -485,16 +499,7 @@ export function useZaloAdminInbox() {
     setSelectedConvId("");
     setMessages([]);
     setConversations([]);
-
-    // Tự động đánh thức / kết nối lại listener nền nếu tài khoản đang offline và chưa hết hạn
-    if (accountId && !onlineAccounts.has(accountId) && !expiredAccounts.has(accountId)) {
-      restartZaloAccountListener(accountId)
-        .then(() => {
-          setTimeout(() => { void loadMemberAccounts(); }, 1500);
-        })
-        .catch(() => {});
-    }
-  }, [memberAccounts, onlineAccounts, expiredAccounts, loadMemberAccounts]);
+  }, [memberAccounts]);
 
   const loadConversations = useCallback(async (accountId: string) => {
     if (!accountId) return;
@@ -565,16 +570,24 @@ export function useZaloAdminInbox() {
     setReplyingTo(null);
     setSendError(null);
 
-    // Nếu đã có tin nhắn trong bộ đệm: hiển thị NGAY trong 0ms, không xóa trắng màn hình
-    if (convMessagesCacheRef.current.has(convId)) {
-      const cached = convMessagesCacheRef.current.get(convId) || [];
+    // ⚡ 0ms Instant Response: Bộ đệm đa tầng (RAM Cache -> SessionStorage)
+    let cached = convMessagesCacheRef.current.get(convId);
+    if ((!cached || cached.length === 0) && typeof window !== "undefined") {
+      try {
+        const raw = sessionStorage.getItem(`zalo_conv_msgs_${convId}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            cached = parsed;
+            convMessagesCacheRef.current.set(convId, parsed);
+          }
+        }
+      } catch { /* no-op */ }
+    }
+
+    if (cached && cached.length > 0) {
       setMessages(cached);
       setLoadingMessages(false);
-      // Nạp ngầm dữ liệu mới nhất từ server
-      const currentAccId = selectedAccountIdRef.current;
-      if (currentAccId) {
-        void loadMessages(currentAccId, convId, true);
-      }
     } else {
       setMessages([]);
       setLoadingMessages(true);
@@ -583,6 +596,9 @@ export function useZaloAdminInbox() {
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
     if (!accountId || !convId) return;
+    const fetchKey = `${accountId}:${convId}:${append ? "bg" : "fg"}`;
+    if (inFlightFetchRef.current === fetchKey) return;
+    inFlightFetchRef.current = fetchKey;
     const requestSeq = ++messageLoadSeqRef.current;
     if (!append && !convMessagesCacheRef.current.has(convId)) {
       setLoadingMessages(true);
@@ -593,8 +609,13 @@ export function useZaloAdminInbox() {
       if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
       if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
-        // Lưu vào bộ đệm cache client-side để lần mở sau hiển thị 0ms
+        // Lưu vào bộ đệm cache client-side (RAM + SessionStorage) để lần mở sau hiển thị 0ms
         convMessagesCacheRef.current.set(convId, res.messages);
+        if (typeof window !== "undefined") {
+          try {
+            sessionStorage.setItem(`zalo_conv_msgs_${convId}`, JSON.stringify(res.messages.slice(-50)));
+          } catch { /* no-op */ }
+        }
 
         const signature = res.messages
           .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}`)
@@ -616,6 +637,9 @@ export function useZaloAdminInbox() {
     } catch (e) {
       console.error("loadMessages error", e);
     } finally {
+      if (inFlightFetchRef.current === fetchKey) {
+        inFlightFetchRef.current = null;
+      }
       if (selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
         setLoadingMessages(false);
       }
@@ -1440,18 +1464,25 @@ export function useZaloAdminInbox() {
 
   const getAccountStatus = useCallback(
     (accountId: string): ZaloAccountOnlineStatus => {
+      if (!accountId) return "offline";
       if (onlineAccounts.has(accountId)) return "online";
       if (expiredAccounts.has(accountId)) return "expired";
       for (const group of memberAccounts) {
         const accInfo = group.accounts.find((a) => a.account_id === accountId);
-        if (accInfo?.listener?.connected || (accInfo?.listener?.running && accInfo?.status === "confirmed" && !accInfo?.listener?.auth_expired)) {
-          return "online";
+        if (accInfo) {
+          if (accInfo.listener?.auth_expired || accInfo.status === "session_expired") return "expired";
+          if (accInfo.listener?.connected || (accInfo.listener?.running && accInfo.status === "confirmed" && !accInfo.listener?.auth_expired)) {
+            return "online";
+          }
+          if (accInfo.listener?.running) return "connecting";
+          return "offline";
         }
-        if (accInfo?.listener?.running) return "connecting";
       }
+      // Khi đang nạp accounts và chưa tìm thấy account, trả về connecting để không bị giật banner offline
+      if (loadingAccounts) return "connecting";
       return "offline";
     },
-    [expiredAccounts, onlineAccounts, memberAccounts]
+    [expiredAccounts, onlineAccounts, memberAccounts, loadingAccounts]
   );
 
   const selectedAccountInfo = useMemo<ZaloAccountInfo | undefined>(() => {
