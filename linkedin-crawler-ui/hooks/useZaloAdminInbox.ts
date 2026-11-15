@@ -153,6 +153,8 @@ export function useZaloAdminInbox() {
   const [selectedConvId, setSelectedConvId] = useState<string>("");
   const [messages, setMessages] = useState<ZaloLibraryMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [messageTotal, setMessageTotal] = useState(0);
 
   // ── Send Reply ──────────────────────────────────────────────────────────────
@@ -519,6 +521,34 @@ export function useZaloAdminInbox() {
   // ─────────────────────────────────────────────────────────────────────────────
   // Select conversation → load messages (Tối ưu 0ms tức thì qua Client Cache)
   // ─────────────────────────────────────────────────────────────────────────────
+  const loadMoreMessages = useCallback(async () => {
+    const accountId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accountId || !convId || loadingMore || !hasMoreMessages) return;
+
+    setLoadingMore(true);
+    try {
+      const currentCount = messages.length;
+      const res = await getZaloConversationMessages(accountId, convId, 50, currentCount);
+      if (res?.messages && res.messages.length > 0) {
+        setMessages((prev) => {
+          const existingIds = new Set(prev.map((m) => m.source_message_id || m.id));
+          const uniqueNew = res.messages.filter((m) => !existingIds.has(m.source_message_id || m.id));
+          return [...uniqueNew, ...prev];
+        });
+        const totalCount = res.total ?? (currentCount + res.messages.length);
+        setMessageTotal(totalCount);
+        setHasMoreMessages(currentCount + res.messages.length < totalCount);
+      } else {
+        setHasMoreMessages(false);
+      }
+    } catch (e) {
+      console.error("loadMoreMessages error", e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, hasMoreMessages, messages.length]);
+
   const onSelectConv = useCallback((convId: string) => {
     setSelectedConvId(convId);
     messageSignatureRef.current = "";
@@ -550,9 +580,8 @@ export function useZaloAdminInbox() {
       setLoadingMessages(true);
     }
     try {
-      // 200 tin mới nhất — đủ rộng để lightbox ảnh trượt qua lại có nhiều ảnh
-      // để xem, nhưng vẫn chặn trên để tránh tải/ render cả nghìn tin 1 lúc.
-      const res = await getZaloConversationMessages(accountId, convId, 200, 0);
+      // ⚡ Tối ưu tải tức thì (<150ms): Lần đầu chỉ nạp 50 tin mới nhất
+      const res = await getZaloConversationMessages(accountId, convId, 50, 0);
       if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
       if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
@@ -572,7 +601,9 @@ export function useZaloAdminInbox() {
             return pendingOptimistic.length > 0 ? [...res.messages, ...pendingOptimistic] : res.messages;
           });
         }
-        setMessageTotal(res.total ?? res.messages.length);
+        const totalCount = res.total ?? res.messages.length;
+        setMessageTotal(totalCount);
+        setHasMoreMessages(res.messages.length < totalCount);
       }
     } catch (e) {
       console.error("loadMessages error", e);
@@ -581,9 +612,9 @@ export function useZaloAdminInbox() {
         setLoadingMessages(false);
       }
     }
-    // Chỉ mark-read khi mở hội thoại/lần tải chính, tránh poll nền làm chậm và giật UI.
+    // Chỉ mark-read khi mở hội thoại/lần tải chính, chạy ngầm non-blocking để không cản trở render UI
     if (!append && selectedAccountIdRef.current === accountId && selectedConvIdRef.current === convId) {
-      try { await markZaloConversationAsRead(accountId, convId); } catch { /* no-op */ }
+      markZaloConversationAsRead(accountId, convId).catch(() => {});
     }
   }, []);
 
@@ -1475,6 +1506,9 @@ export function useZaloAdminInbox() {
     loadingChat: loadingMessages,
     loadingFresh: false,
     messageTotal,
+    hasMoreMessages,
+    loadingMore,
+    loadMoreMessages,
 
     // Actions
     scan,

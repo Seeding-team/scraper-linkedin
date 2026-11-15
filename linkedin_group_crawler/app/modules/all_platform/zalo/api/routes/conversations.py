@@ -779,6 +779,60 @@ async def _background_sync_conversation_messages(account_id: str, conversation_i
     except Exception as exc:
         logger.warning(f"Could not background sync messages for {conversation_id}: {exc}")
 
+def _propagate_cluster_staff_identity(rows: List[Dict[str, Any]]) -> None:
+    """Gán định danh nhân viên cho các tin nhắn con trong cùng 1 chùm gửi đi (burst/batch send).
+
+    Khi nhân viên gửi nhiều ảnh cùng lúc, Zalo tạo tin album chính kèm nhiều tin nhắn ảnh con riêng lẻ.
+    Các tin ảnh con này do ZCA listener ghi nhận từ websocket nên không mang sẵn staff_name.
+    Gom các tin gửi đi liên tiếp (cách nhau <= 30 giây, không có tin khách xen vào) thành 1 cụm,
+    và phổ biến staff_name, staff_avatar, staff_email của nhân viên đã gửi cho toàn bộ cụm.
+    """
+    if not rows:
+        return
+    # Sắp xếp tạm thời theo thời gian tăng dần để gom cụm
+    indexed = sorted(enumerate(rows), key=lambda x: int(x[1].get("ts") or 0))
+    current_cluster: List[Dict[str, Any]] = []
+
+    def apply_cluster(cluster: List[Dict[str, Any]]) -> None:
+        if not cluster:
+            return
+        staff_name = None
+        staff_avatar = None
+        staff_email = None
+        for r in cluster:
+            if r.get("staff_name"):
+                staff_name = r.get("staff_name")
+                staff_avatar = r.get("staff_avatar")
+                staff_email = r.get("staff_email")
+                break
+        if staff_name:
+            for r in cluster:
+                if not r.get("staff_name"):
+                    r["staff_name"] = staff_name
+                    r["staff_avatar"] = staff_avatar
+                    r["staff_email"] = staff_email
+
+    for _, r in indexed:
+        is_sent = bool(r.get("is_sent"))
+        if not is_sent:
+            apply_cluster(current_cluster)
+            current_cluster = []
+            continue
+
+        ts = int(r.get("ts") or 0)
+        if not current_cluster:
+            current_cluster.append(r)
+        else:
+            prev_ts = int(current_cluster[-1].get("ts") or 0)
+            if abs(ts - prev_ts) <= 30000:
+                current_cluster.append(r)
+            else:
+                apply_cluster(current_cluster)
+                current_cluster = [r]
+
+    apply_cluster(current_cluster)
+
+
 @router.get("/{conversation_id}/messages", response_model=ZaloLibraryListResponse)
 async def get_conversation_messages(
     conversation_id: str,
@@ -845,6 +899,8 @@ async def get_conversation_messages(
                     row["staff_name"] = raw.get("sent_by_staff_name")
                 if isinstance(raw.get("sender"), dict) and not row.get("staff_name") and raw["sender"].get("name"):
                     row["staff_name"] = raw["sender"].get("name")
+        # Phổ biến định danh nhân viên cho các tin nhắn ảnh/tệp con trong cùng đợt gửi (batch/burst)
+        _propagate_cluster_staff_identity(rows)
         response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
