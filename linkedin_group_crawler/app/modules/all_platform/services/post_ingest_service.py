@@ -436,6 +436,15 @@ def sync_process_and_save_posts_db(
             logger.error("Error saving to facebook_posts: %s", exc)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    if inserted_rows:
+        from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+        for row in inserted_rows:
+            try:
+                auto_reject_if_excluded(row.get("id"), "facebook", row.get("content") or "")
+            except Exception as exc:
+                logger.warning("auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
+
     return inserted_count, inserted_post_urls, inserted_rows
 
 

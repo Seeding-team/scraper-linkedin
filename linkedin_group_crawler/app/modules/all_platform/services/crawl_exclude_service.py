@@ -272,3 +272,87 @@ def compute_excluded_flag(
         "exempt": False,
     }
 
+
+# ── Tự động loại trừ bài MỚI cào khớp từ khóa (hook ở tầng ingest) ──────────
+
+
+def auto_reject_if_excluded(
+    post_id: str,
+    platform: str,
+    content: str,
+    search_keyword: str = "",
+) -> Optional[dict[str, Any]]:
+    """Tự động gắn 'khong-phu-hop' cho bài MỚI CÀO nếu nội dung khớp từ khóa loại trừ
+    đang active — gọi ngay sau khi insert bài thành công ở tầng ingest
+    (post_ingest_service.py, supabase_linkedin_extension_crawl_service.py,
+    supabase_threads_extension_crawl_service.py). CHỈ áp dụng cho bài mới đi qua đúng
+    điểm insert này, không quét lại bài cũ đã có sẵn trong DB (khác compute_excluded_flag()
+    ở trên vốn tính động mỗi lần load feed cho MỌI bài).
+
+    Tái dùng đúng logic match (normalize/strip dấu/contains-match) và cờ miễn trừ của
+    compute_excluded_flag() — không viết lại. Tôn trọng đánh giá thủ công đã có (chỉ tự
+    gán khi bài chưa có đánh giá hoặc đang 'chua-danh-gia'). Idempotent: gọi lại nhiều lần
+    trên cùng 1 post không ghi đè/không tạo thêm history thừa.
+    """
+    from app.modules.all_platform.services.post_evaluation_service import get_review
+
+    review = get_review(post_id, platform)
+    exc_info = compute_excluded_flag(
+        {"platform": platform, "content": content, "search_keyword": search_keyword},
+        review,
+    )
+    if not exc_info["is_excluded"]:
+        return None
+
+    current_code = review.get("evaluation_code") if review else None
+    if current_code not in (None, "chua-danh-gia"):
+        # Đã có đánh giá (thủ công hoặc đã tự động gắn 'khong-phu-hop' từ lần gọi trước) ->
+        # không ghi đè, không tạo history thừa.
+        return review
+
+    supabase = get_supabase_client()
+    now_iso = datetime.now(timezone.utc).isoformat()
+    matched_str = ", ".join(exc_info["matched_keywords"])
+
+    upsert_data: dict[str, Any] = {
+        "post_id": str(post_id),
+        "platform": platform,
+        "evaluation_code": "khong-phu-hop",
+        "reason": f"Tự động loại trừ do khớp từ khóa cấm: {matched_str}",
+        "evaluated_by": None,
+        "evaluated_at": now_iso,
+        "updated_at": now_iso,
+    }
+    if review is not None:
+        upsert_data["exclude_keyword_exempt"] = review.get("exclude_keyword_exempt", False)
+
+    res = execute_supabase_query(
+        lambda: supabase.table("post_quick_review")
+        .upsert(upsert_data, on_conflict="post_id,platform")
+        .execute()
+    )
+    saved_review = res.data[0] if res.data else upsert_data
+
+    history_entry = {
+        "post_id": str(post_id),
+        "platform": platform,
+        "previous_evaluation_code": current_code,
+        "evaluation_code": "khong-phu-hop",
+        "reason": f"Tự động loại trừ do khớp từ khóa cấm: {matched_str}",
+        "action_type": "auto_exclude_keyword",
+        "evaluated_by": None,
+        "created_at": now_iso,
+    }
+    execute_supabase_query(
+        lambda: supabase.table("post_evaluation_history").insert(history_entry).execute()
+    )
+
+    logger.info(
+        "auto_reject_if_excluded post_id=%s platform=%s matched=%s",
+        post_id,
+        platform,
+        exc_info["matched_keywords"],
+    )
+
+    return saved_review
+

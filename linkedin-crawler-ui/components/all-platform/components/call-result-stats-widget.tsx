@@ -552,7 +552,7 @@ export function CallResultStatsWidget({
                   <thead>
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Thành viên</th>
-                      <th className="py-1.5 text-right">Seeding</th>
+                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
                       <th className="py-1.5 text-right">Thành công</th>
                       <th className="py-1.5 text-right">Thất bại</th>
                       <th className="py-1.5 text-right">Zalo gửi</th>
@@ -607,7 +607,7 @@ export function CallResultStatsWidget({
                   <thead>
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Ngày</th>
-                      <th className="py-1.5 text-right">Seeding</th>
+                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
                       <th className="py-1.5 text-right">Thành công</th>
                       <th className="py-1.5 text-right">Thất bại</th>
                       <th className="py-1.5 text-right">Zalo gửi</th>

@@ -271,6 +271,17 @@ def save_threads_crawl_batch(
     else:
         inserted_rows = []
 
+    if inserted_rows:
+        from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+        for row in inserted_rows:
+            try:
+                auto_reject_if_excluded(
+                    row.get("id"), "threads", row.get("content") or "", keyword or ""
+                )
+            except Exception as exc:
+                logger.warning("[THREADS-EXT] auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
+
     logger.info(
         "[THREADS-EXT] keyword=%r | nhận=%d | URL lạ=%d | cũ=%d | đã có=%d | mới=%d | lưu=%d (limit=%d)",
         keyword, len(posts), skipped_invalid, skipped_old, len(existing), len(fresh), len(inserted_urls), limit,

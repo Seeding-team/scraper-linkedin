@@ -185,7 +185,7 @@ export function PendingKeywordsPanel({ onClose, onKeywordUpdated }: PendingKeywo
           </div>
           <div>
             <h2 className="text-base font-bold text-foreground">Quản lý Từ khóa Loại trừ & Đề xuất</h2>
-            <p className="text-xs text-muted-foreground">Tự động gắn cờ bài cào không phù hợp dựa trên danh sách từ cấm</p>
+            <p className="text-xs text-muted-foreground">Tự động gắn nhãn &quot;Không phù hợp&quot; cho bài cào mới dựa trên danh sách từ cấm</p>
           </div>
         </div>
 
