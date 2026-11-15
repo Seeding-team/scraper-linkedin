@@ -511,9 +511,11 @@ function ZaloMessageAssetView({ asset, message, compact = false, onImageClick }:
 }
 
 function getStaffInitials(name?: string | null): string {
-  if (!name || !name.trim()) return "NV";
+  if (!name || !name.trim()) return "?";
   const clean = name.trim();
-  if (clean.toLowerCase() === "bạn" || clean.toLowerCase() === "me") return "NV";
+  const lower = clean.toLowerCase();
+  if (lower === "không rõ nhân viên" || lower === "không rõ" || lower === "khong ro" || lower === "unknown") return "?";
+  if (lower === "bạn" || lower === "me") return "NV";
   const parts = clean.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   const first = parts[parts.length - 2][0];
@@ -2918,16 +2920,38 @@ export function ZaloInboxAdminShell() {
                                 const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
                                 const canCopyMessage = canActOnMessage && !!msg.content?.trim();
                                 const canForwardMessage = canActOnMessage && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
-                                const staffName =
-                                  msg.staff_name ||
-                                  (msg.raw_content as any)?.staff_name ||
-                                  (msg.raw_content as any)?.sender_staff?.name ||
-                                  (isSent ? (user?.name || "Bạn") : msg.sender_name || "Khách hàng");
-                                const staffAvatar =
-                                  msg.staff_avatar ||
-                                  (msg.raw_content as any)?.staff_avatar ||
-                                  (msg.raw_content as any)?.sender_staff?.avatar ||
-                                  (isSent ? ((user as any)?.avatar_url || (user as any)?.avatar || null) : null);
+                                const isOptimisticMsg = String(msg.id).startsWith("optimistic_");
+                                const rawStaffName =
+                                  (msg.staff_name && String(msg.staff_name).trim()) ||
+                                  ((msg.raw_content as any)?.staff_name && String((msg.raw_content as any).staff_name).trim()) ||
+                                  ((msg.raw_content as any)?.sender_staff?.name && String((msg.raw_content as any).sender_staff.name).trim()) ||
+                                  ((msg.raw_content as any)?.sent_by_staff_name && String((msg.raw_content as any).sent_by_staff_name).trim()) ||
+                                  ((msg.raw_content as any)?.sender?.name && String((msg.raw_content as any).sender.name).trim()) ||
+                                  null;
+
+                                let staffName = "Không rõ nhân viên";
+                                let staffAvatar: string | null = null;
+                                let isUnknownStaff = false;
+
+                                if (isSent) {
+                                  if (rawStaffName) {
+                                    staffName = rawStaffName;
+                                    staffAvatar =
+                                      msg.staff_avatar ||
+                                      (msg.raw_content as any)?.staff_avatar ||
+                                      (msg.raw_content as any)?.sender_staff?.avatar ||
+                                      null;
+                                  } else if (isOptimisticMsg) {
+                                    staffName = user?.name || "Bạn";
+                                    staffAvatar = (user as any)?.avatar_url || (user as any)?.avatar || null;
+                                  } else {
+                                    staffName = "Không rõ nhân viên";
+                                    staffAvatar = null;
+                                    isUnknownStaff = true;
+                                  }
+                                } else {
+                                  staffName = msg.sender_name || "Khách hàng";
+                                }
                                 return (
                                   <div className="relative mt-0.5 flex items-center gap-1 px-1" style={{ justifyContent: isSent ? "flex-end" : "flex-start" }}>
                                     {isSent && (
@@ -2935,7 +2959,18 @@ export function ZaloInboxAdminShell() {
                                         {msg.sent_by === "bot" ? (
                                           <ZaloBotMessageBadge />
                                         ) : (
-                                          <div className="flex items-center gap-1 rounded-full bg-slate-50 border border-slate-200/90 py-0.5 pl-0.5 pr-2 shadow-2xs hover:bg-slate-100 transition-colors">
+                                          <div
+                                            className={`flex items-center gap-1 rounded-full py-0.5 pl-0.5 pr-2 shadow-2xs transition-colors ${
+                                              isUnknownStaff
+                                                ? "bg-slate-100/90 border border-slate-200 text-slate-500 hover:bg-slate-200/80"
+                                                : "bg-slate-50 border border-slate-200/90 text-slate-700 hover:bg-slate-100"
+                                            }`}
+                                            title={
+                                              isUnknownStaff
+                                                ? "Không rõ nhân viên (gửi từ Zalo PC/điện thoại hoặc tin cũ trước khi gắn định danh nhân viên)"
+                                                : `Nhân viên gửi: ${staffName}`
+                                            }
+                                          >
                                             {staffAvatar ? (
                                               <img
                                                 src={staffAvatar}
@@ -2943,11 +2978,21 @@ export function ZaloInboxAdminShell() {
                                                 className="w-3.5 h-3.5 rounded-full object-cover ring-1 ring-slate-200 shrink-0"
                                               />
                                             ) : (
-                                              <span className="w-3.5 h-3.5 rounded-full bg-blue-100 text-[#0084ff] text-[8px] font-bold flex items-center justify-center shrink-0">
+                                              <span
+                                                className={`w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center shrink-0 ${
+                                                  isUnknownStaff
+                                                    ? "bg-slate-200 text-slate-500"
+                                                    : "bg-blue-100 text-[#0084ff]"
+                                                }`}
+                                              >
                                                 {getStaffInitials(staffName)}
                                               </span>
                                             )}
-                                            <span className="text-[9.5px] font-medium text-slate-700 max-w-[140px] truncate leading-none">
+                                            <span
+                                              className={`text-[9.5px] font-medium max-w-[140px] truncate leading-none ${
+                                                isUnknownStaff ? "text-slate-500 italic" : "text-slate-700"
+                                              }`}
+                                            >
                                               {staffName}
                                             </span>
                                           </div>

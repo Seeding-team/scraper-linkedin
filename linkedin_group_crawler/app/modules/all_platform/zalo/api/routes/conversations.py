@@ -841,6 +841,10 @@ async def get_conversation_messages(
                         row["staff_avatar"] = s.get("avatar")
                     if not row.get("staff_email") and s.get("email"):
                         row["staff_email"] = s.get("email")
+                if not row.get("staff_name") and raw.get("sent_by_staff_name"):
+                    row["staff_name"] = raw.get("sent_by_staff_name")
+                if isinstance(raw.get("sender"), dict) and not row.get("staff_name") and raw["sender"].get("name"):
+                    row["staff_name"] = raw["sender"].get("name")
         response_payload = {
             "messages": [ZaloLibraryMessage(**row) for row in rows],
             "groups": [],
@@ -2429,6 +2433,8 @@ async def send_sticker_to_conversation(
     body: SendStickerBody,
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
 ):
     user_id = _normalize_user_id(account_id or x_user_id)
     auth = await load_zca_auth(user_id)
