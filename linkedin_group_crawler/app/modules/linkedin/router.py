@@ -815,8 +815,17 @@ def crawl_linkedin_group(payload: CrawlGroupRequest) -> CrawlResponse:
                 posts_records.append(post_rec)
                 
             if posts_records:
-                supabase.table("linkedin_posts").upsert(posts_records, on_conflict="post_url").execute()
-                
+                posts_res = supabase.table("linkedin_posts").upsert(posts_records, on_conflict="post_url").execute()
+
+                if posts_res.data:
+                    from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+                    for row in posts_res.data:
+                        try:
+                            auto_reject_if_excluded(row.get("id"), "linkedin", row.get("content") or "")
+                        except Exception as exc:
+                            logger.warning("auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
+
         except Exception as db_err:
             logger.exception("Failed to save crawl results to Supabase")
 

@@ -57,7 +57,7 @@ export function ProposeKeywordModal({ post, onClose, onSuccess }: ProposeKeyword
             </div>
             <div>
               <h3 className="text-sm font-bold text-foreground">Đề xuất từ khóa loại trừ</h3>
-              <p className="text-[11px] text-muted-foreground">Admin duyệt sẽ tự động lọc bỏ các bài chứa từ này</p>
+              <p className="text-[11px] text-muted-foreground">Admin duyệt sẽ tự động gắn nhãn &quot;Không phù hợp&quot; cho các bài cào về sau có chứa từ này</p>
             </div>
           </div>
           <button

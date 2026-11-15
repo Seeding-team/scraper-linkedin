@@ -165,10 +165,19 @@ def save_crawl_batch_to_supabase(
                 post_records = [rec]
 
                 if post_records:
-                    supabase.table("linkedin_posts").upsert(
+                    res = supabase.table("linkedin_posts").upsert(
                         post_records, on_conflict="post_url"
                     ).execute()
                     total_posts += len(post_records)
+
+                    if res.data:
+                        from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+                        for row in res.data:
+                            try:
+                                auto_reject_if_excluded(row.get("id"), "linkedin", row.get("content") or "")
+                            except Exception as exc:
+                                logger.warning("auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
             except Exception:
                 logger.exception("Failed to upsert linkedin_posts for %s", group_url)
 

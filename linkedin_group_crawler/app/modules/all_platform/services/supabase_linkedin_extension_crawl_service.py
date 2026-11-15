@@ -253,6 +253,15 @@ def save_extension_crawl_batch(
             else:
                 logger.exception("[LI-EXT] Không insert được linkedin_posts cho %s", group_url)
 
+    if inserted_rows:
+        from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+        for row in inserted_rows:
+            try:
+                auto_reject_if_excluded(row.get("id"), "linkedin", row.get("content") or "")
+            except Exception as exc:
+                logger.warning("[LI-EXT] auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
+
     return {
         "success": True,
         "saved_count": saved_count,

@@ -181,6 +181,15 @@ def save_facebook_crawl_to_supabase(user_id: str, summaries: List[GroupSummary])
         try:
             res = supabase.table("facebook_posts").insert(posts_to_insert).execute()
 
+            if res.data:
+                from app.modules.all_platform.services.crawl_exclude_service import auto_reject_if_excluded
+
+                for row in res.data:
+                    try:
+                        auto_reject_if_excluded(row.get("id"), "facebook", row.get("content") or "")
+                    except Exception as exc:
+                        logger.warning("auto_reject_if_excluded lỗi cho post_id=%s: %s", row.get("id"), exc)
+
             # Ensure inserted_posts aligns with successful insert count is not exact
             # (supabase insert may ignore duplicates if unique constraints exist).
             # We still return candidate inserted_posts and background task will be
