@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -358,15 +359,34 @@ def _parse_date_safe(value: Optional[str]) -> Optional[date]:
         return None
 
 
-def _to_vn_day_str(value: Optional[str]) -> Optional[str]:
-    """Chuyển timestamptz (UTC, dạng ISO trả về từ PostgREST) sang ngày theo giờ VN."""
+_FRACTION_SECONDS_RE = re.compile(r"\.(\d+)(?=[+-]\d{2}(?::?\d{2})?$|$)")
+
+
+def _normalize_fraction_seconds(value: str) -> str:
+    """Chuẩn hoá phần lẻ giây về đúng 6 chữ số (pad '0' hoặc cắt bớt).
+
+    Postgres/PostgREST bỏ số 0 ở cuối phần lẻ giây (vd ``05.12345+00:00``), trong khi
+    ``datetime.fromisoformat`` của Python < 3.11 (image backend ``playwright/python:*-jammy``)
+    chỉ nhận đúng 3 hoặc 6 chữ số -> ValueError.
+    """
+    return _FRACTION_SECONDS_RE.sub(lambda m: "." + m.group(1)[:6].ljust(6, "0"), value, count=1)
+
+
+def _to_vn_day_str(value: Optional[str], context: Optional[str] = None) -> Optional[str]:
+    """Chuyển timestamptz (UTC, dạng ISO trả về từ PostgREST) sang ngày theo giờ VN.
+
+    Timestamp hỏng thật sự -> log warning (kèm ``context``, vd tên bảng/cột + id dòng) và trả
+    None, KHÔNG làm sập cả request.
+    """
     if not value:
         return None
+    raw = str(value)
     try:
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(_normalize_fraction_seconds(raw.strip().replace("Z", "+00:00")))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(VN_TZ).date().isoformat()
     except ValueError:
+        logger.warning(f"_to_vn_day_str: không parse được timestamp {raw!r} (context={context}) -> bỏ qua dòng")
         return None
 

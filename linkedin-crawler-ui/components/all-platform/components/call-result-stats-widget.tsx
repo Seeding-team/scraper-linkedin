@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 import {
   postCallResultService,
@@ -10,6 +10,7 @@ import {
   type ZaloMessageStats,
   type ContactActivityMember,
   type DayBreakdownItem,
+  type DayBreakdownMemberItem,
   type ActivityLogItem,
   type ActivityLogActionType,
 } from "@/services/all-platform.service";
@@ -25,8 +26,20 @@ interface CallResultStatsWidgetProps {
   className?: string;
 }
 
-type Period = "today" | "7" | "30";
 type Tab = "member" | "day" | "log";
+
+/** 2 preset ghim luôn hiện + 3 preset trong popover "tune". */
+type PresetKey = "today" | "7d" | "30d" | "thisMonth" | "lastMonth";
+
+const PINNED_PRESETS: [PresetKey, string][] = [
+  ["today", "Hôm nay"],
+  ["7d", "7 ngày qua"],
+];
+const OVERFLOW_PRESETS: [PresetKey, string][] = [
+  ["30d", "30 ngày qua"],
+  ["thisMonth", "Tháng này"],
+  ["lastMonth", "Tháng trước"],
+];
 
 // 8 mã call_result thật (migration 215) — nhóm cố định, không lấy từ API vì đây chỉ là
 // cách TRÌNH BÀY (chia 2 cột Thành công/Thất bại), không phải dữ liệu nghiệp vụ mới.
@@ -53,11 +66,39 @@ function addDaysIso(baseIso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-function periodRange(period: Period): { date_from: string; date_to: string } {
+/** Tách "YYYY-MM-DD" bằng string split thuần — tránh `new Date(iso)` parse theo UTC rồi đọc
+ * lại bằng getFullYear/getMonth theo local time (lệch ngày tùy múi giờ trình duyệt). */
+function parseIsoDateParts(iso: string): { y: number; m: number; d: number } {
+  const [y, m, d] = iso.split("-").map(Number);
+  return { y, m, d };
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function startOfMonthIso(y: number, m: number): string {
+  return `${y}-${pad2(m)}-01`;
+}
+
+/** `new Date(y, m, 0)` với tham số số (không parse chuỗi) luôn cho ngày cuối tháng `m` đúng
+ * theo local time, không phụ thuộc múi giờ như khi parse chuỗi ISO. */
+function endOfMonthIso(y: number, m: number): string {
+  const lastDay = new Date(y, m, 0).getDate();
+  return `${y}-${pad2(m)}-${pad2(lastDay)}`;
+}
+
+function presetRange(preset: PresetKey): { date_from: string; date_to: string } {
   const to = todayIso();
-  if (period === "today") return { date_from: to, date_to: to };
-  if (period === "7") return { date_from: addDaysIso(to, -6), date_to: to };
-  return { date_from: addDaysIso(to, -29), date_to: to };
+  if (preset === "today") return { date_from: to, date_to: to };
+  if (preset === "7d") return { date_from: addDaysIso(to, -6), date_to: to };
+  if (preset === "30d") return { date_from: addDaysIso(to, -29), date_to: to };
+  const { y, m } = parseIsoDateParts(to);
+  if (preset === "thisMonth") return { date_from: startOfMonthIso(y, m), date_to: to };
+  // lastMonth
+  const prevM = m === 1 ? 12 : m - 1;
+  const prevY = m === 1 ? y - 1 : y;
+  return { date_from: startOfMonthIso(prevY, prevM), date_to: endOfMonthIso(prevY, prevM) };
 }
 
 function formatDay(day: string): string {
@@ -107,9 +148,22 @@ export function CallResultStatsWidget({
   platform,
   className,
 }: CallResultStatsWidgetProps) {
-  const [period, setPeriod] = useState<Period>("7");
+  // Bộ lọc thời gian "pinned + overflow": preset chỉ set giá trị khởi tạo, sau đó date_from/date_to
+  // committed (dùng để fetch) và draft (gắn trực tiếp vào 2 input ngày) tách riêng — xem applyPreset/
+  // handleDraftDateChange bên dưới.
+  const initialRange = useMemo(() => presetRange("7d"), []);
+  const [dateFrom, setDateFrom] = useState(initialRange.date_from);
+  const [dateTo, setDateTo] = useState(initialRange.date_to);
+  const [draftFrom, setDraftFrom] = useState(initialRange.date_from);
+  const [draftTo, setDraftTo] = useState(initialRange.date_to);
+  const [activePreset, setActivePreset] = useState<PresetKey | null>("7d");
+  const [dateRangeError, setDateRangeError] = useState<string | null>(null);
+  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("member");
+  const [expandedDays, setExpandedDays] = useState<Set<string>>(new Set());
 
   const [callStats, setCallStats] = useState<CallResultStats | null>(null);
   const [zaloStats, setZaloStats] = useState<ZaloMessageStats | null>(null);
@@ -129,8 +183,65 @@ export function CallResultStatsWidget({
   const [dayRows, setDayRows] = useState<DayBreakdownItem[]>([]);
   const [isLoadingDay, setIsLoadingDay] = useState(false);
 
-  const { date_from, date_to } = useMemo(() => periodRange(period), [period]);
+  // date_from/date_to = committed (chỉ đổi khi 2 ô ngày hợp lệ) — API 3 tab (who/by-day/log) đã
+  // nhận date_from/date_to dạng "YYYY-MM-DD" tùy ý từ trước (không phải enum cố định), nên không
+  // cần sửa gì ở backend cho bộ lọc tùy chỉnh này.
+  const date_from = dateFrom;
+  const date_to = dateTo;
   const resolvedPlatform = platform && platform !== "all" ? platform : undefined;
+
+  const applyPreset = useCallback((preset: PresetKey) => {
+    const range = presetRange(preset);
+    setDraftFrom(range.date_from);
+    setDraftTo(range.date_to);
+    setDateFrom(range.date_from);
+    setDateTo(range.date_to);
+    setActivePreset(preset);
+    setDateRangeError(null);
+    setIsOverflowOpen(false);
+  }, []);
+
+  const handleDraftDateChange = useCallback((which: "from" | "to", value: string) => {
+    if (which === "from") setDraftFrom(value);
+    else setDraftTo(value);
+    // Sửa tay (dù chưa xong) -> bỏ active mọi preset ngay lập tức.
+    setActivePreset(null);
+
+    const nextFrom = which === "from" ? value : draftFrom;
+    const nextTo = which === "to" ? value : draftTo;
+    const today = todayIso();
+
+    if (!nextFrom || !nextTo) {
+      // Đang gõ dở (input date rỗng cho tới khi đủ ngày/tháng/năm) -> không fetch, không báo lỗi.
+      setDateRangeError(null);
+      return;
+    }
+    if (nextFrom > today || nextTo > today) {
+      // Phòng vệ thêm cho trường hợp input không chặn được ngày tương lai (đã có `max` ở input).
+      setDateRangeError(null);
+      return;
+    }
+    if (nextTo < nextFrom) {
+      setDateRangeError('Ngày "Đến" phải từ ngày "Từ" trở đi.');
+      return;
+    }
+    setDateRangeError(null);
+    setDateFrom(nextFrom);
+    setDateTo(nextTo);
+  }, [draftFrom, draftTo]);
+
+  // Đóng popover overflow khi bấm ra ngoài — không dùng portal (tránh lớp bug dropdown-portal
+  // đóng nhầm modal/sidebar đã gặp ở nơi khác, xem PostAssigneeDropdown.tsx).
+  useEffect(() => {
+    if (!isOverflowOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setIsOverflowOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [isOverflowOpen]);
 
   const fetchOverview = useCallback(async () => {
     setIsLoading(true);
@@ -223,7 +334,18 @@ export function CallResultStatsWidget({
     if (expanded && activeTab === "day") void fetchDayBreakdown();
   }, [expanded, activeTab, fetchDayBreakdown]);
 
-  const periodLabel = period === "today" ? "hôm nay" : period === "7" ? "7 ngày qua" : "30 ngày qua";
+  const toggleDayExpanded = useCallback((day: string) => {
+    setExpandedDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  }, []);
+
+  const periodLabel = activePreset
+    ? ([...PINNED_PRESETS, ...OVERFLOW_PRESETS].find(([key]) => key === activePreset)?.[1] || "").toLowerCase()
+    : `${formatDay(date_from)} – ${formatDay(date_to)}`;
 
   const callTotal = callStats?.total || 0;
   const callOk = useMemo(
@@ -238,14 +360,18 @@ export function CallResultStatsWidget({
 
   const sortedWho = useMemo(() => [...who].sort((a, b) => b.total - a.total), [who]);
 
-  // Bảng "Theo thành viên": merge who (seed/call ok+bad/zalo sent/tổng) + zaloStats.by_member (replied)
+  // Bảng "Theo thành viên": merge who (seed/call ok+bad/zalo sent/tổng) + zaloStats.by_member (replied).
+  // `who` cố ý KHÔNG lọc member_id ở API (dropdown + thanh "Ai đã làm" cần đủ mọi người), nên lọc
+  // ở đây cho khớp tab "Theo ngày" (getDayBreakdown có truyền member_id).
   const memberTableRows = useMemo(() => {
     const repliedMap = new Map((zaloStats?.by_member || []).map((m) => [m.member_id, m.replied]));
-    return sortedWho.map((m) => ({
-      ...m,
-      zaloReplied: repliedMap.get(m.member_id) || 0,
-    }));
-  }, [sortedWho, zaloStats]);
+    return sortedWho
+      .filter((m) => !contactMemberId || m.member_id === contactMemberId)
+      .map((m) => ({
+        ...m,
+        zaloReplied: repliedMap.get(m.member_id) || 0,
+      }));
+  }, [sortedWho, zaloStats, contactMemberId]);
 
   const memberTableTotals = useMemo(
     () =>
@@ -272,8 +398,9 @@ export function CallResultStatsWidget({
           call_bad: acc.call_bad + d.call_bad,
           zalo_sent: acc.zalo_sent + d.zalo_sent,
           zalo_replied: acc.zalo_replied + d.zalo_replied,
+          total: acc.total + d.total,
         }),
-        { seed: 0, call_ok: 0, call_bad: 0, zalo_sent: 0, zalo_replied: 0 }
+        { seed: 0, call_ok: 0, call_bad: 0, zalo_sent: 0, zalo_replied: 0, total: 0 }
       ),
     [dayRows]
   );
@@ -287,6 +414,88 @@ export function CallResultStatsWidget({
       </div>
     );
   }
+
+  // Bộ lọc thời gian: 1 bộ JSX duy nhất, render có điều kiện ở 1 trong 2 vị trí tùy `expanded`
+  // (header khi thu gọn, ngang hàng 3 tab khi mở rộng) — KHÔNG có 2 bản sao, chỉ 2 chỗ gọi
+  // `{filterBar}` cùng trỏ về 1 biến, nên state/handler (applyPreset, handleDraftDateChange,
+  // overflowRef...) vẫn là 1 bộ duy nhất dù hiện ở đâu.
+  const filterBar = (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {PINNED_PRESETS.map(([key, label]) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => applyPreset(key)}
+          className={cn(
+            "px-2.5 py-1 rounded-full border text-[11px] transition cursor-pointer",
+            activePreset === key
+              ? "border-border bg-muted text-foreground font-medium"
+              : "border-border bg-card text-muted-foreground hover:text-foreground font-bold"
+          )}
+        >
+          {label}
+        </button>
+      ))}
+
+      <div className="relative" ref={overflowRef}>
+        <button
+          type="button"
+          onClick={() => setIsOverflowOpen((v) => !v)}
+          aria-label="Chọn khoảng thời gian khác"
+          aria-expanded={isOverflowOpen}
+          className={cn(
+            "flex items-center justify-center w-7 h-7 rounded-lg border transition cursor-pointer",
+            isOverflowOpen || OVERFLOW_PRESETS.some(([key]) => key === activePreset)
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border bg-card text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <span className="material-symbols-outlined text-[16px]">tune</span>
+        </button>
+        {isOverflowOpen && (
+          <div className="absolute right-0 top-[calc(100%+4px)] z-20 w-40 rounded-lg border border-border bg-card shadow-lg p-1">
+            {OVERFLOW_PRESETS.map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => applyPreset(key)}
+                className={cn(
+                  "w-full text-left px-2.5 py-1.5 rounded-md text-[12px] transition cursor-pointer",
+                  activePreset === key ? "bg-muted font-medium text-foreground" : "text-foreground hover:bg-muted"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5">
+        <input
+          type="date"
+          aria-label="Từ ngày"
+          value={draftFrom}
+          max={todayIso()}
+          onChange={(e) => handleDraftDateChange("from", e.target.value)}
+          className="h-7 rounded-lg border border-border bg-card px-1.5 text-[11px]"
+        />
+        <span className="text-[11px] text-muted-foreground">–</span>
+        <input
+          type="date"
+          aria-label="Đến ngày"
+          value={draftTo}
+          max={todayIso()}
+          onChange={(e) => handleDraftDateChange("to", e.target.value)}
+          className="h-7 rounded-lg border border-border bg-card px-1.5 text-[11px]"
+        />
+      </div>
+
+      {dateRangeError && (
+        <span className="w-full text-[11px] font-semibold text-rose-600">{dateRangeError}</span>
+      )}
+    </div>
+  );
 
   return (
     <div className={cn("bg-card border border-border rounded-2xl overflow-hidden", className)}>
@@ -310,25 +519,7 @@ export function CallResultStatsWidget({
             ))}
           </select>
 
-          <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
-            {([
-              ["today", "Hôm nay"],
-              ["7", "7 ngày"],
-              ["30", "30 ngày"],
-            ] as [Period, string][]).map(([p, label]) => (
-              <button
-                key={p}
-                type="button"
-                onClick={() => setPeriod(p)}
-                className={cn(
-                  "px-2.5 py-1 rounded-md text-[11px] font-bold transition cursor-pointer",
-                  period === p ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {!expanded && filterBar}
         </div>
       </div>
 
@@ -524,26 +715,33 @@ export function CallResultStatsWidget({
             )}
           </div>
 
-          {/* 3 tab con */}
+          {/* 3 tab con — bên trái; thanh lọc thời gian ngang hàng, bên phải (xuống hàng trên
+              màn hẹp vì flex-wrap). */}
           <div className="p-4">
-            <div className="inline-flex gap-1 bg-muted rounded-lg p-1 mb-3">
-              {([
-                ["member", "Theo thành viên"],
-                ["day", "Theo ngày"],
-                ["log", "Nhật ký hoạt động"],
-              ] as [Tab, string][]).map(([t, label]) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setActiveTab(t)}
-                  className={cn(
-                    "px-2.5 py-1 rounded-md text-[12px] font-bold transition cursor-pointer",
-                    activeTab === t ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+              <div className="inline-flex gap-1 bg-muted rounded-lg p-1">
+                {([
+                  ["member", "Theo thành viên"],
+                  ["day", "Thống kê theo ngày"],
+                  ["log", "Nhật ký hoạt động"],
+                ] as [Tab, string][]).map(([t, label]) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setActiveTab(t)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[12px] font-bold transition cursor-pointer",
+                      activeTab === t ? "bg-card text-foreground shadow-2xs" : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* filterBar — cùng 1 biến JSX với bản ở header, chỉ hiện 1 trong 2 chỗ vì khối
+                  này chỉ render khi expanded (xem điều kiện !expanded ở header). */}
+              {filterBar}
             </div>
 
             {activeTab === "member" && (
@@ -612,33 +810,98 @@ export function CallResultStatsWidget({
                       <th className="py-1.5 text-right">Thất bại</th>
                       <th className="py-1.5 text-right">Zalo gửi</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
+                      <th className="py-1.5 text-right">Tổng</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingDay ? (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={7} className="py-4 text-center text-muted-foreground">
                           Đang tải...
                         </td>
                       </tr>
                     ) : dayRows.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={7} className="py-4 text-center text-muted-foreground">
                           Chưa có hoạt động nào trong kỳ này
                         </td>
                       </tr>
                     ) : (
                       <>
-                      {dayRows.map((d) => (
-                        <tr key={d.day} className="border-t border-border/60">
-                          <td className="py-1.5">{formatDay(d.day)}</td>
-                          <td className="py-1.5 text-right">{d.seed}</td>
-                          <td className="py-1.5 text-right text-emerald-600 font-bold">{d.call_ok}</td>
-                          <td className="py-1.5 text-right text-rose-600 font-bold">{d.call_bad}</td>
-                          <td className="py-1.5 text-right">{d.zalo_sent}</td>
-                          <td className="py-1.5 text-right">{d.zalo_replied}</td>
-                        </tr>
-                      ))}
+                      {dayRows.map((d) => {
+                        const isExpandable = d.total > 0;
+                        const isExpanded = isExpandable && expandedDays.has(d.day);
+                        return (
+                          <React.Fragment key={d.day}>
+                            <tr className="border-t border-border/60">
+                              <td className="py-1.5">
+                                <div className="flex items-center gap-1">
+                                  {isExpandable ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleDayExpanded(d.day)}
+                                      aria-label={isExpanded ? "Thu gọn theo thành viên" : "Xem theo thành viên"}
+                                      aria-expanded={isExpanded}
+                                      className="flex items-center justify-center w-4 h-4 shrink-0 text-muted-foreground hover:text-foreground cursor-pointer"
+                                    >
+                                      <span
+                                        className="material-symbols-outlined text-[16px] transition-transform duration-150"
+                                        style={{ transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                                      >
+                                        chevron_right
+                                      </span>
+                                    </button>
+                                  ) : (
+                                    <span className="w-4 h-4 shrink-0" />
+                                  )}
+                                  {formatDay(d.day)}
+                                </div>
+                              </td>
+                              <td className="py-1.5 text-right">{d.seed}</td>
+                              <td className="py-1.5 text-right text-emerald-600 font-bold">{d.call_ok}</td>
+                              <td className="py-1.5 text-right text-rose-600 font-bold">{d.call_bad}</td>
+                              <td className="py-1.5 text-right">{d.zalo_sent}</td>
+                              <td className="py-1.5 text-right">{d.zalo_replied}</td>
+                              <td className="py-1.5 text-right font-extrabold">{d.total}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr className="bg-muted/30">
+                                <td colSpan={7} className="p-0">
+                                  <div className="pl-8 pr-3 py-2">
+                                    <table className="w-full text-[12px]">
+                                      <thead>
+                                        <tr className="text-[10.5px] text-muted-foreground font-bold text-left">
+                                          <th className="py-1">Thành viên</th>
+                                          <th className="py-1 text-right">Seeding/Bình luận</th>
+                                          <th className="py-1 text-right">Zalo gửi</th>
+                                          <th className="py-1 text-right">Tổng</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {d.by_member.map((m: DayBreakdownMemberItem) => (
+                                          <tr key={m.member_id} className="border-t border-border/40">
+                                            <td className="py-1">
+                                              <div className="flex items-center gap-1.5">
+                                                <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold shrink-0">
+                                                  {getInitials(m.member_name)}
+                                                </span>
+                                                {m.member_name}
+                                              </div>
+                                            </td>
+                                            <td className="py-1 text-right">{m.seed}</td>
+                                            <td className="py-1 text-right">{m.zalo_sent}</td>
+                                            <td className="py-1 text-right font-bold">{m.total}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                       <tr className="border-t border-border font-extrabold bg-muted/40">
                         <td className="py-1.5">Tổng {dayRows.length} ngày</td>
                         <td className="py-1.5 text-right">{dayTableTotals.seed}</td>
@@ -646,6 +909,7 @@ export function CallResultStatsWidget({
                         <td className="py-1.5 text-right text-rose-600">{dayTableTotals.call_bad}</td>
                         <td className="py-1.5 text-right">{dayTableTotals.zalo_sent}</td>
                         <td className="py-1.5 text-right">{dayTableTotals.zalo_replied}</td>
+                        <td className="py-1.5 text-right">{dayTableTotals.total}</td>
                       </tr>
                       </>
                     )}

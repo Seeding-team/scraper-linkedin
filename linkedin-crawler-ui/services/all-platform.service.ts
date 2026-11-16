@@ -3141,6 +3141,15 @@ export interface ContactActivityMember {
   total: number;
 }
 
+export interface DayBreakdownMemberItem {
+  member_id: string;
+  member_name: string;
+  seed: number;
+  zalo_sent: number;
+  /** seed + call + zalo_sent (call không lộ riêng ở sub-row theo thành viên). */
+  total: number;
+}
+
 export interface DayBreakdownItem {
   day: string;
   seed: number;
@@ -3150,6 +3159,10 @@ export interface DayBreakdownItem {
   call_bad: number;
   zalo_sent: number;
   zalo_replied: number;
+  /** seed + call + zalo_sent — cùng công thức với `ContactActivityMember.total`. */
+  total: number;
+  /** Breakdown theo thành viên trong đúng ngày này, chỉ gồm thành viên có total > 0, giảm dần. */
+  by_member: DayBreakdownMemberItem[];
 }
 
 export interface SeedingGroupCoverageItem {

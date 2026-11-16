@@ -172,46 +172,79 @@ def get_day_breakdown(
     """Bảng "Theo ngày": seeding + gọi điện (tách OK/BAD) + Zalo (gửi/trả lời) theo từng ngày
     (giờ VN), đầy đủ MỌI ngày trong ``[date_from, date_to]`` kể cả ngày không có hoạt động nào —
     khớp với bảng "Theo ngày" của prototype (không chỉ liệt kê ngày có dữ liệu).
+
+    Mỗi dòng ngày còn có ``by_member`` — breakdown theo thành viên trong đúng ngày đó
+    (``member_id, member_name, seed, zalo_sent, total``), cho FE expand sub-row. Chỉ liệt kê
+    thành viên có ``total > 0`` trong ngày đó, sắp giảm dần theo ``total``.
+
+    Dòng nào có id_member/updated_by là NULL bị BỎ QUA HOÀN TOÀN (không tính vào bất cứ cột
+    nào, kể cả tổng ngày) — y hệt quy tắc của ``get_who_did_what`` (``if not mid: continue``),
+    để 2 tab "Theo thành viên" và "Theo ngày" luôn ra cùng tổng với cùng bộ lọc.
     """
     sb = get_supabase_client()
     allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
     start_vn, end_vn, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)
 
     days: dict[str, dict[str, Any]] = {}
+    day_members: dict[str, dict[str, dict[str, Any]]] = {}
     cursor = datetime.fromisoformat(start_vn).date()
     end_date = datetime.fromisoformat(end_vn).date()
     while cursor <= end_date:
-        days[cursor.isoformat()] = {
-            "day": cursor.isoformat(), "seed": 0, "seed_verified": 0, "call": 0, "call_ok": 0, "call_bad": 0,
+        day_str = cursor.isoformat()
+        days[day_str] = {
+            "day": day_str, "seed": 0, "seed_verified": 0, "call": 0, "call_ok": 0, "call_bad": 0,
             "zalo_sent": 0, "zalo_replied": 0,
         }
+        day_members[day_str] = {}
         cursor += timedelta(days=1)
 
     def _bump(day_str: Optional[str], key: str) -> None:
         if day_str and day_str in days:
             days[day_str][key] += 1
 
+    def _member_bucket(day_str: str, mid: str) -> dict[str, Any]:
+        return day_members[day_str].setdefault(
+            mid, {"member_id": mid, "name": None, "email": None, "seed": 0, "call": 0, "zalo_sent": 0}
+        )
+
+    def _apply_member_info(bucket: dict[str, Any], info: Optional[dict[str, Any]]) -> None:
+        info = info or {}
+        bucket["name"] = bucket["name"] or info.get("name")
+        bucket["email"] = bucket["email"] or info.get("email")
+
     try:
         query = (
             sb.table("seeding_content_kpi")
-            .select("id_member, created_at, verify")
+            .select("id_member, id_post, created_at, verify, member:app_users!id_member(id, name, email)")
             .gte("created_at", start_utc)
             .lt("created_at", end_utc)
         )
         if allowed_member_ids is not None:
             query = query.in_("id_member", allowed_member_ids or [_UNREACHABLE_ID])
         for row in (execute_supabase_query(lambda: query.execute()).data or []):
-            day_str = _to_vn_day_str(row.get("created_at"))
+            mid = row.get("id_member")
+            if not mid:
+                continue
+            day_str = _to_vn_day_str(
+                row.get("created_at"), context=f"seeding_content_kpi.created_at id_post={row.get('id_post')}"
+            )
             _bump(day_str, "seed")
             if row.get("verify"):
                 _bump(day_str, "seed_verified")
+            if day_str and day_str in days:
+                mb = _member_bucket(day_str, str(mid))
+                _apply_member_info(mb, row.get("member"))
+                mb["seed"] += 1
     except Exception as exc:
         logger.warning(f"get_day_breakdown: lỗi đếm seeding: {exc}")
 
     try:
         query = (
             sb.table("post_call_results")
-            .select("result_code, updated_by, last_call_at")
+            .select(
+                "post_id, result_code, updated_by, last_call_at, "
+                "updated_by_user:app_users!updated_by(id, name, email)"
+            )
             .not_.is_("last_call_at", "null")
             .gte("last_call_at", start_utc)
             .lt("last_call_at", end_utc)
@@ -221,20 +254,32 @@ def get_day_breakdown(
         if allowed_member_ids is not None:
             query = query.in_("updated_by", allowed_member_ids or [_UNREACHABLE_ID])
         for row in (execute_supabase_query(lambda: query.execute()).data or []):
-            day_str = _to_vn_day_str(row.get("last_call_at"))
+            mid = row.get("updated_by")
+            if not mid:
+                continue
+            day_str = _to_vn_day_str(
+                row.get("last_call_at"), context=f"post_call_results.last_call_at post_id={row.get('post_id')}"
+            )
             _bump(day_str, "call")
             code = row.get("result_code")
             if code in _OK_CALL_CODES:
                 _bump(day_str, "call_ok")
             elif code in _BAD_CALL_CODES:
                 _bump(day_str, "call_bad")
+            if day_str and day_str in days:
+                mb = _member_bucket(day_str, str(mid))
+                _apply_member_info(mb, row.get("updated_by_user"))
+                mb["call"] += 1
     except Exception as exc:
         logger.warning(f"get_day_breakdown: lỗi đếm gọi điện: {exc}")
 
     try:
         query = (
             sb.table("zalo_inbox_kpi")
-            .select("id_member, first_outbound_at, first_customer_msg_at")
+            .select(
+                "id_member, source_post_id, first_outbound_at, first_customer_msg_at, "
+                "member:app_users!id_member(id, name, email)"
+            )
             .in_("source_type", _POST_FEED_ZALO_SOURCES)
             .gte("first_outbound_at", start_utc)
             .lt("first_outbound_at", end_utc)
@@ -244,14 +289,42 @@ def get_day_breakdown(
         if allowed_member_ids is not None:
             query = query.in_("id_member", allowed_member_ids or [_UNREACHABLE_ID])
         for row in (execute_supabase_query(lambda: query.execute()).data or []):
-            day_str = _to_vn_day_str(row.get("first_outbound_at"))
+            mid = row.get("id_member")
+            if not mid:
+                continue
+            day_str = _to_vn_day_str(
+                row.get("first_outbound_at"),
+                context=f"zalo_inbox_kpi.first_outbound_at source_post_id={row.get('source_post_id')}",
+            )
             _bump(day_str, "zalo_sent")
             if row.get("first_customer_msg_at"):
                 _bump(day_str, "zalo_replied")
+            if day_str and day_str in days:
+                mb = _member_bucket(day_str, str(mid))
+                _apply_member_info(mb, row.get("member"))
+                mb["zalo_sent"] += 1
     except Exception as exc:
         logger.warning(f"get_day_breakdown: lỗi đếm Zalo: {exc}")
 
-    return [days[k] for k in sorted(days.keys())]
+    result = []
+    for k in sorted(days.keys()):
+        day = days[k]
+        total = day["seed"] + day["call"] + day["zalo_sent"]
+        by_member = []
+        for mb in day_members[k].values():
+            m_total = mb["seed"] + mb["call"] + mb["zalo_sent"]
+            if m_total <= 0:
+                continue
+            by_member.append({
+                "member_id": mb["member_id"],
+                "member_name": mb["name"] or mb["email"] or mb["member_id"],
+                "seed": mb["seed"],
+                "zalo_sent": mb["zalo_sent"],
+                "total": m_total,
+            })
+        by_member.sort(key=lambda m: m["total"], reverse=True)
+        result.append({**day, "total": total, "by_member": by_member})
+    return result
 
 
 _SEEDING_COVERAGE_TABLE_BY_PLATFORM = {
