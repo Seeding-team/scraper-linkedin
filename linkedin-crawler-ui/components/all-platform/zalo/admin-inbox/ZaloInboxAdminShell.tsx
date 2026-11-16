@@ -232,7 +232,7 @@ type JsonRecord = Record<string, unknown>;
 type NormalizedAsset = NonNullable<ZaloLibraryMessage["assets"]>[number] & { url: string };
 
 type ZaloSpecialCard = {
-  kind: "link" | "contact" | "bank" | "reminder" | "sticker" | "special";
+  kind: "link" | "contact" | "bank" | "reminder" | "sticker" | "call" | "special";
   title: string;
   subtitle?: string;
   description?: string;
@@ -433,6 +433,16 @@ function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]
   if (type.includes("sticker")) {
     return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
   }
+  const isSentMsg = Boolean(message.is_sent);
+  if (type.includes("call") || rawText.includes("voicecall") || rawText.includes("videocall") || /cuộc gọi/i.test(content)) {
+    const isMissed = /nhỡ|từ chối|không trả lời|missed|rejected/i.test(content) || /missed|reject/i.test(rawText);
+    return {
+      kind: "call",
+      title: content || (isMissed ? "Cuộc gọi nhỡ" : isSentMsg ? "Cuộc gọi đi" : "Cuộc gọi đến"),
+      subtitle: isMissed ? "Khách không nhấc máy" : description || "Cuộc gọi thoại",
+      description: isMissed ? "missed" : "completed",
+    };
+  }
   if (!looksLikeFileShare && (type.includes("link") || (url && (title || description || content === url)))) {
     let subtitle = "Liên kết";
     try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
@@ -524,6 +534,51 @@ function getStaffInitials(name?: string | null): string {
 }
 
 function ZaloSpecialCardView({ card, isSent }: { card: ZaloSpecialCard; isSent: boolean }) {
+  if (card.kind === "sticker") {
+    return (
+      <div className="py-1">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={card.imageUrl || card.url || ""}
+          alt={card.title || "Sticker"}
+          className="w-28 h-28 object-contain hover:scale-105 transition-transform duration-200 drop-shadow-xs cursor-pointer select-none"
+          loading="lazy"
+        />
+      </div>
+    );
+  }
+
+  if (card.kind === "call") {
+    const isMissed = card.description === "missed" || /nhỡ/i.test(card.title);
+    return (
+      <div className="flex justify-center my-1.5 w-full">
+        <div
+          className={cn(
+            "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full shadow-2xs text-xs",
+            isMissed
+              ? "bg-rose-50 border border-rose-200/80 text-rose-700"
+              : "bg-slate-50 border border-slate-200/90 text-slate-700"
+          )}
+        >
+          <span
+            className={cn(
+              "w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0",
+              isMissed
+                ? "bg-rose-100 text-rose-600"
+                : isSent
+                ? "bg-emerald-100 text-emerald-600"
+                : "bg-blue-100 text-blue-600"
+            )}
+          >
+            <MaterialIcon name="call" className="text-[12px]" />
+          </span>
+          <span className="font-semibold text-slate-800">{card.title}</span>
+          {card.subtitle && <span className="text-[10px] text-slate-500">• {card.subtitle}</span>}
+        </div>
+      </div>
+    );
+  }
+
   const iconName = card.kind === "link" ? "link" : "description";
   const body = (
     <div className={cn("overflow-hidden rounded-2xl border text-left shadow-xs", isSent ? "border-white/20 bg-white/15 text-white" : "border-slate-200 bg-white text-slate-800")}>
@@ -576,7 +631,7 @@ function linkifyText(text: string, isSent: boolean): React.ReactNode {
         href={segment}
         target="_blank"
         rel="noopener noreferrer"
-        className={cn("underline break-all", isSent ? "text-white" : "text-blue-600")}
+        className="text-blue-600 underline font-medium break-all hover:text-blue-800"
       >
         {segment}
       </a>
@@ -591,20 +646,26 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
   const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
   const otherAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) !== "image");
   const specialCard = inferSpecialCard(message, assets);
+  const isSticker = specialCard?.kind === "sticker";
+  const isCall = specialCard?.kind === "call";
   const hasText = Boolean(message.content?.trim());
-  const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
+  const showText = hasText && !isCall && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
-    "rounded-[19px] px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-xs",
+    "rounded-2xl px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-2xs",
     isSent
-      ? "bg-gradient-to-br from-[#0084ff] to-[#0066ee] text-white rounded-br-[4px] shadow-xs"
-      : "bg-[#f0f2f5] text-slate-900 rounded-bl-[4px] border border-slate-200/50 shadow-2xs",
-    isSelected && (isSent ? "ring-2 ring-blue-300 ring-offset-2" : "ring-2 ring-blue-400/50 bg-blue-50/60"),
+      ? "bg-[#e5efff] text-slate-900 border border-blue-200/80 rounded-tr-xs"
+      : "bg-white text-slate-900 border border-slate-200/80 rounded-tl-xs",
+    isSelected && (isSent ? "ring-2 ring-blue-400 ring-offset-2" : "ring-2 ring-blue-400/50 bg-blue-50/60"),
   );
+
+  if (isCall) {
+    return <ZaloSpecialCardView card={specialCard} isSent={isSent} />;
+  }
 
   return (
     <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
       {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{linkifyText(message.content || "", isSent)}</div>}
-      {specialCard && <div className={cn("max-w-[320px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
+      {specialCard && <div className={cn(isSticker ? "" : "max-w-[320px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
       {imageAssets.length > 0 && (
         <div
           className={cn(
@@ -826,6 +887,16 @@ export function ZaloInboxAdminShell() {
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-expand textarea theo nội dung gõ (Min: 46px, Max: 160px kèm thanh cuộn mượt)
+  useEffect(() => {
+    if (!chatInputRef.current) return;
+    const el = chatInputRef.current;
+    el.style.height = "auto";
+    const newHeight = Math.min(Math.max(el.scrollHeight, 46), 160);
+    el.style.height = `${newHeight}px`;
+  }, [inbox.reply]);
   const activeConvIdRef = useRef<string>("");
   const pendingScrollToBottomRef = useRef<boolean>(true);
   const groupMembersLoadKeyRef = useRef<string | null>(null);
@@ -2982,21 +3053,7 @@ export function ZaloInboxAdminShell() {
                             <div className={cn("max-w-[88%] sm:max-w-[75%]", isSent ? "text-right" : "text-left")}>
                               {!isSent && (
                                 <div className="flex items-center gap-1 mb-0.5 px-1">
-                                  <span className="text-[10px] font-semibold text-slate-500">{senderName}</span>
-                                  {isGroupSender && (
-                                    <button
-                                      type="button"
-                                      onClick={() => void handleMessageSenderPrivately(msg.sender_id!, senderName)}
-                                      disabled={startingDmSenderId === msg.sender_id}
-                                      title={`Nhan rieng cho ${senderName}`}
-                                      className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-[#E3000F] disabled:opacity-60 disabled:cursor-wait shrink-0"
-                                    >
-                                      <MaterialIcon
-                                        name={startingDmSenderId === msg.sender_id ? "sync" : "send"}
-                                        className={cn("text-[11px]", startingDmSenderId === msg.sender_id && "animate-spin")}
-                                      />
-                                    </button>
-                                  )}
+                                  <span className="text-[11px] font-semibold text-slate-600">{senderName}</span>
                                 </div>
                               )}
                               {!msg.is_deleted && msg.reply_to_id && (() => {
@@ -3168,6 +3225,23 @@ export function ZaloInboxAdminShell() {
                                             >
                                               <MaterialIcon name="reply" className="text-[13px]" /> Trả lời
                                             </button>
+                                            {!isSent && isGroupSender && msg.sender_id && (
+                                              <button
+                                                type="button"
+                                                disabled={startingDmSenderId === msg.sender_id}
+                                                onClick={() => {
+                                                  setMessageMenu(null);
+                                                  void handleMessageSenderPrivately(msg.sender_id!, senderName);
+                                                }}
+                                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-blue-600 hover:bg-blue-50 cursor-pointer disabled:opacity-60"
+                                              >
+                                                <MaterialIcon
+                                                  name={startingDmSenderId === msg.sender_id ? "sync" : "send"}
+                                                  className={cn("text-[13px] text-blue-500", startingDmSenderId === msg.sender_id && "animate-spin")}
+                                                />
+                                                Nhắn riêng với {senderName}
+                                              </button>
+                                            )}
                                             <button
                                               type="button"
                                               disabled={!canForwardMessage}
@@ -3425,6 +3499,19 @@ export function ZaloInboxAdminShell() {
 
               <button
                 type="button"
+                onClick={() => setShowStickerPicker((value) => !value)}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition cursor-pointer",
+                  showStickerPicker
+                    ? "border-blue-400 bg-blue-50 text-blue-600"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                )}
+              >
+                <MaterialIcon name="mood" className="text-[13px]" /> Sticker
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setPanelTab("templates")}
                 className="inline-flex items-center gap-1 rounded-lg border border-[#d81b60]/40 bg-[#fce4ec]/60 px-2.5 py-1 text-[11px] font-bold text-[#d81b60]"
               >
@@ -3498,7 +3585,29 @@ export function ZaloInboxAdminShell() {
                   )}
                 </div>
               )}
+              {showStickerPicker && (
+                <div className="absolute bottom-full left-4 z-40 mb-2 shadow-2xl">
+                  <div className="flex items-center justify-between px-2 pt-1 pb-1 border-b border-slate-100 mb-1">
+                    <span className="text-[11px] font-bold text-slate-700">Bộ nhãn dán Zalo</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowStickerPicker(false)}
+                      className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <ZaloStickerPicker
+                    accountId={inbox.selectedAccountId}
+                    onPick={(stk) => {
+                      setShowStickerPicker(false);
+                      handleSendSticker({ id: Number(stk.id), cateId: Number(stk.cateId) });
+                    }}
+                  />
+                </div>
+              )}
               <textarea
+                ref={chatInputRef}
                 value={inbox.reply}
                 onChange={handleReplyChange}
                 onPaste={handlePasteImage}
@@ -3511,7 +3620,8 @@ export function ZaloInboxAdminShell() {
                 rows={1}
                 disabled={!inbox.openConv || inbox.archiveReading || inbox.isSending}
                 placeholder="Nhập tin nhắn (nhấn Enter để gửi, Shift+Enter để xuống dòng)..."
-                className="flex-1 min-h-[46px] max-h-[120px] overflow-y-auto leading-relaxed rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] outline-none focus:border-[#0068FF] disabled:bg-slate-50 disabled:opacity-70 placeholder:text-slate-400"
+                className="flex-1 min-h-[46px] max-h-[160px] overflow-y-auto leading-relaxed rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-[13px] outline-none focus:border-[#0068FF] disabled:bg-slate-50 disabled:opacity-70 placeholder:text-slate-400 custom-scrollbar transition-[height] duration-75"
+                style={{ minHeight: "46px", maxHeight: "160px" }}
               />
 
               <button
