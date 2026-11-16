@@ -239,9 +239,14 @@ def test_day_breakdown_fills_every_day_including_zero_activity(patched_clients):
     # 2 ngay con lai khong co hoat dong nao nhung van phai xuat hien, toan 0
     assert result[1] == {
         "day": "2026-11-11", "seed": 0, "seed_verified": 0, "call": 0, "call_ok": 0, "call_bad": 0,
-        "zalo_sent": 0, "zalo_replied": 0,
+        "zalo_sent": 0, "zalo_replied": 0, "total": 0, "by_member": [],
     }
     assert result[2]["day"] == "2026-11-12"
+    # total theo hang = seed + call + zalo_sent (cung cong thuc voi get_who_did_what)
+    assert day0["total"] == 1 + 2 + 1
+    # by_member: mem-a lam ca 3 viec trong ngay 10/11 -> 1 dong, total = seed+call+zalo_sent
+    assert day0["by_member"] == [{"member_id": "mem-a", "member_name": "mem-a", "seed": 1, "zalo_sent": 1, "total": 4}]
+    assert result[1]["by_member"] == []
 
 
 def test_who_did_what_excludes_zero_total_members(patched_clients):
@@ -586,3 +591,268 @@ def test_zalo_followup_count_only_recent_unreplied(patched_clients):
     ]
     count = zalo_inbox_kpi_service.get_zalo_followup_count(ADMIN_USER, platform="facebook")
     assert count == 1
+
+
+# ---- _to_vn_day_str: phan le giay khong phai 3/6 chu so (lech tab "Theo thanh vien" vs "Theo ngay") ----
+
+import datetime as _dt
+import logging
+import re as _re
+
+
+class _StrictPy310Datetime(_dt.datetime):
+    """Gia lap ``datetime.fromisoformat`` cua Python 3.10 (image backend playwright/python:*-jammy):
+    chi nhan phan le giay dung 3 hoac 6 chu so. Python 3.11+ (may dev) nhan moi do dai nen neu
+    khong gia lap thi test 5 chu so van pass ca khi chua fix."""
+
+    @classmethod
+    def fromisoformat(cls, value):
+        m = _re.search(r"\.(\d+)", value)
+        if m and len(m.group(1)) not in (3, 6):
+            raise ValueError(f"Invalid isoformat string: {value!r}")
+        return super().fromisoformat(value)
+
+
+@pytest.fixture
+def strict_datetime():
+    with mock.patch.object(post_call_result_service, "datetime", _StrictPy310Datetime):
+        yield
+
+
+def test_strict_datetime_reproduces_py310_bug():
+    # Bao dam gia lap dung: chuoi 5 chu so phai loi khi KHONG chuan hoa.
+    with pytest.raises(ValueError):
+        _StrictPy310Datetime.fromisoformat("2026-11-10T03:04:05.12345+00:00")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "2026-11-10T03:04:05.12345+00:00",  # 5 chu so (Postgres cat so 0 cuoi)
+        "2026-11-10T03:04:05.1+00:00",
+        "2026-11-10T03:04:05.1234567+00:00",  # dai hon 6 -> cat
+        "2026-11-10T03:04:05.12345Z",
+    ],
+)
+def test_to_vn_day_str_odd_fraction_lengths_parse(strict_datetime, value):
+    # (a) 03:04 UTC = 10:04 gio VN cung ngay
+    assert post_call_result_service._to_vn_day_str(value) == "2026-11-10"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2026-11-10T03:04:05.123+00:00", "2026-11-10T03:04:05.123456+00:00", "2026-11-10T03:04:05+00:00"],
+)
+def test_to_vn_day_str_3_and_6_digits_still_work(strict_datetime, value):
+    # (b) case cu
+    assert post_call_result_service._to_vn_day_str(value) == "2026-11-10"
+
+
+def test_to_vn_day_str_crosses_midnight_vn(strict_datetime):
+    # 18:30 UTC = 01:30 sang hom sau gio VN
+    assert post_call_result_service._to_vn_day_str("2026-11-10T18:30:00.5+00:00") == "2026-11-11"
+
+
+def test_to_vn_day_str_malformed_logs_warning_and_returns_none(strict_datetime, caplog):
+    # (c) chuoi rac -> None + warning (kem gia tri goc + context), khong crash
+    with caplog.at_level(logging.WARNING, logger=post_call_result_service.logger.name):
+        assert post_call_result_service._to_vn_day_str("khong-phai-ngay", context="zalo_inbox_kpi id=z9") is None
+    assert any("khong-phai-ngay" in r.getMessage() and "z9" in r.getMessage() for r in caplog.records)
+
+
+def _seed_mixed_fraction_dataset(fake_db, start_utc: str) -> None:
+    base = _dt.datetime.fromisoformat(start_utc) + _dt.timedelta(hours=1)
+
+    def ts(minutes: int, fraction: str) -> str:
+        return (base + _dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%S") + f".{fraction}+00:00"
+
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "id_post": "s1", "created_at": ts(1, "12345"), "member": MEMBER_A},
+        {"id_member": "mem-b", "id_post": "s2", "created_at": ts(2, "123456"), "member": MEMBER_B},
+    ]
+    fake_db.store["post_call_results"] = [
+        {"post_id": "c1", "updated_by": "mem-a", "result_code": "interested", "last_call_at": ts(3, "1"),
+         "platform": "facebook", "updated_by_user": MEMBER_A},
+        {"post_id": "c2", "updated_by": "mem-b", "result_code": "noanswer", "last_call_at": ts(4, "123"),
+         "platform": "facebook", "updated_by_user": MEMBER_B},
+    ]
+    # Dung kich ban bao loi: 3 tin Zalo, 1 tin co phan le giay 5 chu so.
+    fake_db.store["zalo_inbox_kpi"] = [
+        {"id_member": "mem-a", "source_post_id": "z1", "first_outbound_at": ts(5, "12345"),
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook",
+         "member": MEMBER_A},
+        {"id_member": "mem-a", "source_post_id": "z2", "first_outbound_at": ts(6, "123456"),
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook",
+         "member": MEMBER_A},
+        {"id_member": "mem-b", "source_post_id": "z3", "first_outbound_at": ts(7, "123"),
+         "first_customer_msg_at": None, "source_type": "post_feed_inbound", "source_platform": "facebook",
+         "member": MEMBER_B},
+    ]
+
+
+@pytest.mark.parametrize("member_id", [None, "mem-a", "mem-b"])
+def test_member_tab_and_day_tab_totals_match(patched_clients, strict_datetime, member_id):
+    # (d) cung ky, cung bo loc (ke ca loc 1 member) -> tong 2 tab phai khop nhau.
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    _seed_mixed_fraction_dataset(fake_db, start_utc)
+    kwargs = dict(platform="facebook", date_from="2026-11-10", date_to="2026-11-10")
+
+    who = svc.get_who_did_what(ADMIN_USER, **kwargs)
+    # FE loc bang "Theo thanh vien" theo contactMemberId (who khong truyen member_id len API)
+    if member_id:
+        who = [m for m in who if m["member_id"] == member_id]
+    days = svc.get_day_breakdown(ADMIN_USER, member_id=member_id, **kwargs)
+
+    def total(rows, key):
+        return sum(r[key] for r in rows)
+
+    assert total(who, "seed") == total(days, "seed")
+    assert total(who, "call_ok") == total(days, "call_ok")
+    assert total(who, "call_bad") == total(days, "call_bad")
+    assert total(who, "zalo") == total(days, "zalo_sent")
+    assert total(who, "total") == total(days, "total")
+
+    # Va loc FE == loc server (get_who_did_what nhan member_id qua query string)
+    if member_id:
+        server_filtered = svc.get_who_did_what(ADMIN_USER, member_id=member_id, **kwargs)
+        assert [(m["member_id"], m["total"]) for m in server_filtered] == [(m["member_id"], m["total"]) for m in who]
+    else:
+        assert total(days, "zalo_sent") == 3  # khong con rot tin 5 chu so (truoc fix = 2)
+
+
+# ---- Viec 1: get_day_breakdown phai BO QUA id_member/updated_by NULL, giong get_who_did_what ----
+
+def test_day_breakdown_ignores_null_id_member_rows(patched_clients):
+    # (a) dong id_member NULL trong ngay X -> khong tinh vao total/seed/call/zalo cua ngay X.
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "id_post": "s1", "created_at": ts_in, "member": MEMBER_A},
+        {"id_member": None, "id_post": "s2", "created_at": ts_in},  # rac, phai bi bo qua
+    ]
+    fake_db.store["post_call_results"] = [
+        {"post_id": "c1", "updated_by": "mem-a", "result_code": "interested", "last_call_at": ts_in,
+         "platform": "facebook", "updated_by_user": MEMBER_A},
+        {"post_id": "c2", "updated_by": None, "result_code": "interested", "last_call_at": ts_in,
+         "platform": "facebook"},  # rac, phai bi bo qua
+    ]
+    fake_db.store["zalo_inbox_kpi"] = [
+        {"id_member": "mem-a", "source_post_id": "z1", "first_outbound_at": ts_in,
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook",
+         "member": MEMBER_A},
+        {"id_member": None, "source_post_id": "z2", "first_outbound_at": ts_in,
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook"},
+    ]
+
+    days = svc.get_day_breakdown(ADMIN_USER, platform="facebook", date_from="2026-11-10", date_to="2026-11-10")
+    day0 = days[0]
+    assert day0["seed"] == 1
+    assert day0["call"] == 1
+    assert day0["call_ok"] == 1
+    assert day0["zalo_sent"] == 1
+    assert day0["total"] == 1 + 1 + 1
+    # dong NULL cung khong lot vao by_member
+    assert day0["by_member"] == [{"member_id": "mem-a", "member_name": "Nguyễn A", "seed": 1, "zalo_sent": 1, "total": 3}]
+
+
+def test_who_and_day_breakdown_totals_match_with_null_id_member_rows(patched_clients):
+    # (b) tong cua get_day_breakdown va get_who_did_what cung ky, cung bo loc, co lan id_member
+    # NULL -> khop nhau tuyet doi.
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "id_post": "s1", "created_at": ts_in, "member": MEMBER_A},
+        {"id_member": None, "id_post": "s2", "created_at": ts_in},
+        {"id_member": "mem-b", "id_post": "s3", "created_at": ts_in, "member": MEMBER_B},
+    ]
+    fake_db.store["post_call_results"] = [
+        {"post_id": "c1", "updated_by": "mem-a", "result_code": "interested", "last_call_at": ts_in,
+         "platform": "facebook", "updated_by_user": MEMBER_A},
+        {"post_id": "c2", "updated_by": None, "result_code": "noanswer", "last_call_at": ts_in,
+         "platform": "facebook"},
+        {"post_id": "c3", "updated_by": "mem-b", "result_code": "refused", "last_call_at": ts_in,
+         "platform": "facebook", "updated_by_user": MEMBER_B},
+    ]
+    fake_db.store["zalo_inbox_kpi"] = [
+        {"id_member": "mem-a", "source_post_id": "z1", "first_outbound_at": ts_in,
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook",
+         "member": MEMBER_A},
+        {"id_member": None, "source_post_id": "z2", "first_outbound_at": ts_in,
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook"},
+    ]
+
+    kwargs = dict(platform="facebook", date_from="2026-11-10", date_to="2026-11-10")
+    who = svc.get_who_did_what(ADMIN_USER, **kwargs)
+    days = svc.get_day_breakdown(ADMIN_USER, **kwargs)
+
+    def total(rows, key):
+        return sum(r[key] for r in rows)
+
+    assert total(who, "seed") == total(days, "seed") == 2
+    assert total(who, "call") == total(days, "call") == 2
+    assert total(who, "call_ok") == total(days, "call_ok") == 1
+    assert total(who, "call_bad") == total(days, "call_bad") == 1
+    assert total(who, "zalo") == total(days, "zalo_sent") == 1
+    assert total(who, "total") == total(days, "total") == 5
+
+
+# ---- Viec 3: get_day_breakdown.by_member ----
+
+def test_day_breakdown_by_member_multiple_members_sorted_desc(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "id_post": "s1", "created_at": ts_in, "member": MEMBER_A},
+    ]
+    fake_db.store["post_call_results"] = [
+        {"post_id": "c1", "updated_by": "mem-b", "result_code": "interested", "last_call_at": ts_in,
+         "platform": "facebook", "updated_by_user": MEMBER_B},
+        {"post_id": "c2", "updated_by": "mem-b", "result_code": "noanswer", "last_call_at": ts_in,
+         "platform": "facebook", "updated_by_user": MEMBER_B},
+    ]
+    fake_db.store["zalo_inbox_kpi"] = [
+        {"id_member": "mem-a", "source_post_id": "z1", "first_outbound_at": ts_in,
+         "first_customer_msg_at": None, "source_type": "post_feed_outbound", "source_platform": "facebook",
+         "member": MEMBER_A},
+    ]
+
+    days = svc.get_day_breakdown(ADMIN_USER, platform="facebook", date_from="2026-11-10", date_to="2026-11-10")
+    day0 = days[0]
+    assert day0["total"] == 1 + 2 + 1  # seed(mem-a) + call(mem-b x2) + zalo_sent(mem-a)
+    # mem-b (total=2) dung truoc mem-a (total=2) hoac nguoc lai neu bang nhau - o day mem-b=2, mem-a=2 (1 seed+1 zalo)
+    by_id = {m["member_id"]: m for m in day0["by_member"]}
+    assert by_id["mem-a"] == {"member_id": "mem-a", "member_name": "Nguyễn A", "seed": 1, "zalo_sent": 1, "total": 2}
+    assert by_id["mem-b"] == {"member_id": "mem-b", "member_name": "Trần B", "seed": 0, "zalo_sent": 0, "total": 2}
+    assert len(day0["by_member"]) == 2
+
+
+def test_day_breakdown_by_member_empty_when_day_has_no_activity(patched_clients):
+    fake_db = patched_clients
+    fake_db.store["seeding_content_kpi"] = []
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+    days = svc.get_day_breakdown(ADMIN_USER, date_from="2026-11-10", date_to="2026-11-10")
+    assert days[0]["by_member"] == []
+
+
+def test_day_breakdown_by_member_falls_back_to_email_then_id(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-c", "id_post": "s1", "created_at": ts_in, "member": {"id": "mem-c", "name": None, "email": "c@x.com"}},
+        {"id_member": "mem-d", "id_post": "s2", "created_at": ts_in, "member": None},
+    ]
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+    days = svc.get_day_breakdown(ADMIN_USER, date_from="2026-11-10", date_to="2026-11-10")
+    by_id = {m["member_id"]: m["member_name"] for m in days[0]["by_member"]}
+    assert by_id["mem-c"] == "c@x.com"
+    assert by_id["mem-d"] == "mem-d"
