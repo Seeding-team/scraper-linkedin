@@ -84,6 +84,17 @@ export function QuickAddProductModal({
   const [showComponentPicker, setShowComponentPicker] = useState(false);
   const [showNestedAdd, setShowNestedAdd] = useState(false);
 
+  // "Trả theo tháng" cho san pham le/Add-on (feedback 2026-11-16, khach hoi
+  // mua san pham co tra gop theo thang khong) - dung CHUNG co che billingCycle
+  // voi Combo (xem catalogItemToQuoteItem() trong QuoteWorkspaceModal.tsx:
+  // hasDualCatalogPrice chi can monthlyPriceVnd + annualCommitMonthlyPriceVnd
+  // deu co gia tri, KHONG phan biet itemType) - truoc day chi Combo co UI de
+  // nhap 2 gia nay nen san pham le khong bao gio co dropdown Tra thang/Tra
+  // nam luc them vao bao gia. Mac dinh TAT (gia tri cu khong doi hanh vi).
+  const [componentAnnualOptionEnabled, setComponentAnnualOptionEnabled] = useState(false);
+  const [componentAnnualMonthlyPrice, setComponentAnnualMonthlyPrice] = useState('');
+  const [componentAnnualTotalPrice, setComponentAnnualTotalPrice] = useState('');
+
 
   const [parentId, setParentId] = useState(defaultGroupId || '');
   const [skuInput, setSkuInput] = useState('');
@@ -213,6 +224,9 @@ export function QuickAddProductModal({
             costVatRate: editingItem.defaultCostVatRate ?? 0,
           });
           setBundleComponents([]);
+          setComponentAnnualOptionEnabled(editingItem.annualCommitMonthlyPriceVnd != null);
+          setComponentAnnualMonthlyPrice(editingItem.annualCommitMonthlyPriceVnd != null ? String(editingItem.annualCommitMonthlyPriceVnd) : '');
+          setComponentAnnualTotalPrice(editingItem.annualTotalPriceVnd != null ? String(editingItem.annualTotalPriceVnd) : '');
         }
       } else {
         // Reset form
@@ -241,6 +255,9 @@ export function QuickAddProductModal({
         setProductType('');
         setVendorPartNumber('');
         setInternalNote('');
+        setComponentAnnualOptionEnabled(false);
+        setComponentAnnualMonthlyPrice('');
+        setComponentAnnualTotalPrice('');
         // keep default values...
       }
     }
@@ -401,6 +418,9 @@ export function QuickAddProductModal({
     if (!parentId) errs.parentId = 'Vui lòng chọn nhóm sản phẩm.';
     if (!nameInput.trim()) errs.name = 'Vui lòng nhập tên sản phẩm.';
     if (pricing.markupPercent >= 100) errs.markup = 'Markup phải nhỏ hơn 100%.';
+    if (itemType === 'component' && componentAnnualOptionEnabled && !((parseNullableNumber(componentAnnualMonthlyPrice) ?? 0) > 0)) {
+      errs.annualPrice = 'Vui lòng nhập giá / tháng khi thanh toán năm.';
+    }
     return errs;
   }
 
@@ -571,6 +591,18 @@ export function QuickAddProductModal({
             // noi THAT su nhan VAT vao gia von luc them vao bao gia).
             defaultCostVatRate: pricing.costVatRate || null,
             pricingPolicy: cleanText(pricing.pricingPolicy || ''),
+            // "Trả theo tháng" cho san pham le (xem comment o khai bao
+            // componentAnnualOptionEnabled) - khi bat, monthlyPriceVnd = CHINH
+            // gia ban/ĐVT da tinh o Card "Giá bán mặc định" (pricing.customerPriceVnd),
+            // KHONG phai 1 gia nhap rieng - dung 1 nguon gia duy nhat, tranh lech
+            // so voi "Giá bán mặc định" hien thi ben tren. Gui null khi tat de
+            // backend CLEAR dung field cu (xem nullable_clear_keys o
+            // supabase_service_catalog_service.py).
+            monthlyPriceVnd: componentAnnualOptionEnabled ? pricing.customerPriceVnd : null,
+            annualCommitMonthlyPriceVnd: componentAnnualOptionEnabled ? parseNullableNumber(componentAnnualMonthlyPrice) : null,
+            annualTotalPriceVnd: componentAnnualOptionEnabled
+              ? (parseNullableNumber(componentAnnualTotalPrice) ?? (parseNullableNumber(componentAnnualMonthlyPrice) != null ? parseNullableNumber(componentAnnualMonthlyPrice)! * 12 : null))
+              : null,
           };
       const saved = editingItem
         ? await serviceCatalogRepository.update(editingItem.id, payload)
@@ -1237,6 +1269,43 @@ export function QuickAddProductModal({
                       )}
                     </div>
                   </div>
+                </div>
+
+                {/* Card 3b: Tuy chon tra theo nam - CHI danh cho itemType==='component'
+                    (xem comment o khai bao componentAnnualOptionEnabled). Dung
+                    CHUNG co che billingCycle voi Combo o QuoteWorkspaceModal.tsx -
+                    khi bat, san pham co them dropdown "Trả tháng/Trả năm" luc
+                    them vao bao gia, giong het Combo. */}
+                <div className={`bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden ${itemType === 'bundle' ? 'hidden' : ''}`}>
+                  <div className="px-5 py-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                    <h3 className="font-semibold text-slate-800">Tùy chọn trả theo năm</h3>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" className="w-4 h-4 text-[#c2185b]" checked={componentAnnualOptionEnabled} onChange={e => setComponentAnnualOptionEnabled(e.target.checked)} />
+                      <span className="text-sm font-medium text-slate-700">Cho phép trả theo năm</span>
+                    </label>
+                  </div>
+                  {componentAnnualOptionEnabled && (
+                    <div className="p-5 grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá bán theo tháng</label>
+                        {/* "sao không làm giống Combo cho dễ" (2026-11-16) - Combo cho sua tay
+                         * tu do ca 3 o, nhung o nay CO CHU DICH khoa theo pricing.customerPriceVnd
+                         * (Card "Gia ban mac dinh" o tren) de luon dung 1 nguon gia duy nhat,
+                         * khong bao gio lech so (user da xac nhan giu co che khoa, chi doi GIAO
+                         * DIEN cho giong input binh thuong cua Combo thay vi 1 div xam tach biet). */}
+                        <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm bg-slate-50 text-slate-500" value={pricing.customerPriceVnd || null} disabled onChange={() => {}} />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá / tháng khi thanh toán năm <span className="text-[#c2185b]">*</span></label>
+                        <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(componentAnnualMonthlyPrice)} onChange={value => setComponentAnnualMonthlyPrice(value != null ? String(value) : '')} />
+                        {fieldErrors.annualPrice && <div className="text-[#c2185b] text-xs mt-1">{fieldErrors.annualPrice}</div>}
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Tổng thanh toán 12 tháng (để trống sẽ tự tính = giá/tháng × 12)</label>
+                        <CurrencyInput className="w-full h-9 px-3 border border-slate-300 rounded-md text-sm" value={parseNullableNumber(componentAnnualTotalPrice)} onChange={value => setComponentAnnualTotalPrice(value != null ? String(value) : '')} />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
