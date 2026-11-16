@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { useZaloAdminInbox, type ZaloConv } from "@/hooks/useZaloAdminInbox";
@@ -825,7 +825,9 @@ export function ZaloInboxAdminShell() {
   const [noteDraftState, setNoteDraftState] = useState({ convId: "", value: "" });
   const panelScrollRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const lastChatScrollStateRef = useRef({ convId: "", lastMessageKey: "" });
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const activeConvIdRef = useRef<string>("");
+  const pendingScrollToBottomRef = useRef<boolean>(true);
   const groupMembersLoadKeyRef = useRef<string | null>(null);
 
   // States for account edit
@@ -1610,44 +1612,69 @@ export function ZaloInboxAdminShell() {
   const setNoteDraft = (value: string) => setNoteDraftState({ convId: inbox.openConv, value });
   const noteChanged = noteDraft.trim() !== selectedNote.trim();
 
-  // Giữ feed ổn định: chỉ tự kéo xuống khi đổi hội thoại hoặc khi người dùng
-  // đang ở gần đáy, tránh poll realtime làm nhảy khỏi đoạn tin đang đọc.
-  useEffect(() => {
+  // Hàm cuộn thẳng xuống tin nhắn cuối cùng (đáy feed)
+  const scrollToBottom = useCallback((smooth = false) => {
     const el = chatScrollRef.current;
-    const convId = inbox.openConv || "";
-    const lastMsg = inbox.messages[inbox.messages.length - 1];
-    const lastMessageKey = lastMsg ? String(lastMsg.source_message_id || lastMsg.id || lastMsg.timestamp_text || "") : "";
-    const prev = lastChatScrollStateRef.current;
-    const convChanged = prev.convId !== convId;
-    const messageChanged = prev.lastMessageKey !== lastMessageKey;
-    if (!el || (!convChanged && !messageChanged)) {
-      lastChatScrollStateRef.current = { convId, lastMessageKey };
-      return;
-    }
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const shouldStickToBottom = convChanged || distanceFromBottom < 180;
-    lastChatScrollStateRef.current = { convId, lastMessageKey };
-    if (shouldStickToBottom) {
-      const scrollToBottom = () => {
-        if (chatScrollRef.current) {
-          chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-        }
-      };
-      requestAnimationFrame(() => {
-        scrollToBottom();
-        requestAnimationFrame(scrollToBottom);
-        window.setTimeout(scrollToBottom, 80);
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({
+        behavior: smooth ? "smooth" : "auto",
+        block: "end",
       });
     }
-  }, [inbox.messages, inbox.openConv]);
+  }, []);
 
+  // Khi chuyển sang hội thoại mới: bật cờ bắt buộc cuộn xuống đáy
   useEffect(() => {
-    lastChatScrollStateRef.current = { convId: "", lastMessageKey: "" };
+    if (activeConvIdRef.current !== (inbox.openConv || "")) {
+      activeConvIdRef.current = inbox.openConv || "";
+      pendingScrollToBottomRef.current = true;
+    }
     setMessageMenu(null);
     setReactionPicker(null);
     setLightboxIndex(null);
     groupMembersLoadKeyRef.current = null;
   }, [inbox.openConv, inbox.selectedAccountId]);
+
+  // Luôn đảm bảo kéo xuống tin nhắn cuối cùng khi nạp xong hoặc khi có tin mới
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el || !inbox.openConv) return;
+
+    // Nếu vừa đổi hội thoại hoặc đang chờ kéo xuống đáy
+    if (pendingScrollToBottomRef.current) {
+      if (inbox.messages.length > 0) {
+        scrollToBottom(false);
+        // Kích hoạt chuỗi kiểm tra đa mốc thời gian để đón đầu ảnh & layout DOM nạp xong
+        requestAnimationFrame(() => scrollToBottom(false));
+        const t1 = setTimeout(() => scrollToBottom(false), 50);
+        const t2 = setTimeout(() => scrollToBottom(false), 150);
+        const t3 = setTimeout(() => {
+          scrollToBottom(false);
+          pendingScrollToBottomRef.current = false;
+        }, 350);
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+          clearTimeout(t3);
+        };
+      }
+      return;
+    }
+
+    // Nếu đang ở trong hội thoại và phát sinh tin mới (gửi hoặc nhận):
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const lastMsg = inbox.messages[inbox.messages.length - 1];
+    const isLatestSentByMe = Boolean(lastMsg?.is_sent || String(lastMsg?.id).startsWith("optimistic_"));
+    
+    // Nếu tin mới do mình gửi hoặc người dùng đang ở gần đáy (< 260px): tự động cuộn xuống
+    if (isLatestSentByMe || distanceFromBottom < 260) {
+      requestAnimationFrame(() => scrollToBottom(false));
+      const t = setTimeout(() => scrollToBottom(false), 80);
+      return () => clearTimeout(t);
+    }
+  }, [inbox.messages, inbox.openConv, scrollToBottom]);
 
   useEffect(() => {
     if (!inbox.openConv || !inbox.selectedAccountId || inbox.loadingGroupMembers) return;
@@ -3218,6 +3245,8 @@ export function ZaloInboxAdminShell() {
                     })}
                   </div>
                 ))}
+                {/* Anchor cuộn tới tin nhắn cuối cùng */}
+                <div ref={messagesEndRef} className="h-px shrink-0" />
               </div>
             ) : inbox.loadingMessages ? (
               <div className="flex h-full flex-col justify-end p-4 space-y-4 animate-in fade-in duration-150">
