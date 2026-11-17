@@ -10,7 +10,12 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
-import { PostCallResultDropdown } from "@/components/all-platform/posts/PostCallResultDropdown";
+import {
+  PostCallResultDropdown,
+  FALLBACK_CALL_OPTIONS,
+  loadCallResultOptions,
+  type CallResultOption,
+} from "@/components/all-platform/posts/PostCallResultDropdown";
 import { ProposeKeywordModal } from "@/components/all-platform/posts/ProposeKeywordModal";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
@@ -26,6 +31,7 @@ import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
 import type { CrmLeadRow } from "@/modules/crm/types";
 import { toast } from "sonner";
 import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
+import { postCallResultService } from "@/services/all-platform.service";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -137,6 +143,47 @@ function formatPostDateTime(dateStr?: string | null) {
   }
 }
 
+// Thời gian tương đối tiếng Việt cạnh mốc giờ/ngày tuyệt đối (mọi kích thước màn hình).
+// Cùng ngưỡng với formatRelativeOrDate (PostCallResultDropdown.tsx) nhưng dừng ở 7 ngày —
+// từ 7 ngày trở lên trả về null vì khi đó phần ngày/giờ tuyệt đối hiển thị cạnh nó đã đủ,
+// lặp lại ngày tháng ở dạng "tương đối" (vd ">7 ngày trước") không có thêm giá trị.
+function formatRelativeTimeVi(dateStr?: string | null, nowMs: number = Date.now()): string | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  const diffMs = nowMs - d.getTime();
+  if (diffMs < 0) return null;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return "vừa xong";
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} phút trước`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} giờ trước`;
+  const diffDay = Math.floor(diffHour / 24);
+  if (diffDay < 7) return `${diffDay} ngày trước`;
+  return null;
+}
+
+// Pill "đề xuất nhanh" cho Kết quả liên hệ trên mobile — 3 code hay dùng nhất, ghim cứng
+// ở đây để dễ đổi sau này. Các code còn lại rơi vào popover "..." cạnh hàng pill.
+const PINNED_CALL_RESULT_CODES = ["interested", "noanswer", "refused"];
+
+// Nhóm thành công/thất bại để tô màu pill — khớp đúng statusCategory đang dùng trong
+// thống kê Kết quả liên hệ (call-result-stats-widget.tsx / TabContactResults.tsx).
+const SUCCESS_CALL_RESULT_CODES = ["interested", "callback", "consulting", "waiting"];
+
+function getCallResultPillClass(code: string, isActive: boolean): string {
+  const isSuccess = SUCCESS_CALL_RESULT_CODES.includes(code);
+  const base = isSuccess
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+    : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100";
+  return cn(
+    "rounded-full border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+    base,
+    isActive && "ring-2 ring-offset-1 ring-current font-extrabold"
+  );
+}
+
 export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
   const { user: currentUser } = useAppAuth();
   const isYouTube = post.platform === "youtube";
@@ -147,6 +194,45 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
   const [showLeadDrawer, setShowLeadDrawer] = useState(false);
   const [showZaloContactModal, setShowZaloContactModal] = useState(false);
   const [isContentExpanded, setIsContentExpanded] = useState(false);
+  const [isMobileActionsOpen, setIsMobileActionsOpen] = useState(false);
+
+  // Việc 1: tick mỗi phút để thời gian tương đối ("x phút/giờ trước") tự cập nhật nếu
+  // người dùng ở lại trang lâu, không cần F5.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Việc 3: pill "đề xuất nhanh" Kết quả liên hệ trên mobile — dùng lại đúng
+  // loadCallResultOptions()/postCallResultService.updateCallResult() của
+  // PostCallResultDropdown (cache module-level nên gọi lại ở đây không tốn thêm request).
+  const [mobileCallOptions, setMobileCallOptions] = useState<CallResultOption[]>(FALLBACK_CALL_OPTIONS);
+  const [mobileCallResultCode, setMobileCallResultCode] = useState<string>(post.call_result_code || "");
+  const [mobileCallResultSavingCode, setMobileCallResultSavingCode] = useState<string | null>(null);
+  const [isCallResultOverflowOpen, setIsCallResultOverflowOpen] = useState(false);
+  // Override bất biến (không mutate post) để PostCallResultDropdown (đứng cùng hàng) đồng
+  // bộ ngay sau khi lưu qua pill, thay vì gán đè trực tiếp lên object post.
+  const [mobileCallResultOverride, setMobileCallResultOverride] = useState<Pick<
+    UnifiedPost,
+    "call_result_code" | "call_attempts" | "last_call_at" | "updated_by_user"
+  > | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    loadCallResultOptions().then((loaded) => {
+      if (mounted && loaded && loaded.length > 0) setMobileCallOptions(loaded);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (post.call_result_code !== undefined) {
+      setMobileCallResultCode(post.call_result_code || "");
+    }
+  }, [post.call_result_code]);
 
   const [localZaloStatus, setLocalZaloStatus] = useState<string | null>(
     post.auto_seeding_comment?.zalo_status || (post as any).zalo_status || null
@@ -392,6 +478,84 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
     return null;
   }, [currentUser, mySeeding, post, seedingContentIsAuto]);
 
+  // Việc 4: tính 1 lần, dùng chung cho vị trí desktop (giữ nguyên) lẫn popover mobile
+  // "..." cạnh "Làm nhiệm vụ" — tránh lặp lại 2 nơi 2 điều kiện dễ lệch nhau.
+  const assigneeInitialAssignee = useMemo(() => {
+    const anyPost = post as any;
+    if (anyPost.assigned_member) return anyPost.assigned_member as PostMemberItem;
+    if (anyPost.assigned_to) return { email: anyPost.assigned_to, name: anyPost.assigned_name } as PostMemberItem;
+    return null;
+  }, [post]);
+
+  const commentProofHref = useMemo(() => {
+    const show =
+      (effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment && effectiveSeeding.link_comment !== post.post_url) ||
+      (verifyStatus === "yes" && post.link_comment && post.link_comment !== post.post_url) ||
+      (post.all_seedings && post.all_seedings.some((s) => s.link_comment && s.link_comment !== post.post_url && s.verify_status === "yes"));
+    if (!show) return null;
+    return (
+      (effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment) ||
+      post.link_comment ||
+      (post.all_seedings && post.all_seedings[0] && post.all_seedings[0].link_comment) ||
+      post.post_url ||
+      null
+    );
+  }, [effectiveSeeding, post, verifyStatus]);
+
+  const showSeedingRosterBtn = userRole !== "member" && !!onViewSeedingRoster && !!post.id;
+
+  // Việc 3: chia danh sách code Kết quả liên hệ thành ghim (pill nổi) / còn lại (popover
+  // "...") theo PINNED_CALL_RESULT_CODES, giữ đúng thứ tự ghim đã khai báo.
+  const pinnedCallOptions = useMemo(
+    () =>
+      PINNED_CALL_RESULT_CODES.map((code) => mobileCallOptions.find((opt) => opt.code === code)).filter(
+        (opt): opt is CallResultOption => !!opt
+      ),
+    [mobileCallOptions]
+  );
+  const overflowCallOptions = useMemo(
+    () => mobileCallOptions.filter((opt) => !PINNED_CALL_RESULT_CODES.includes(opt.code)),
+    [mobileCallOptions]
+  );
+
+  const handleMobileCallResultSelect = async (opt: CallResultOption) => {
+    const prevCode = mobileCallResultCode;
+    setMobileCallResultSavingCode(opt.code);
+    setMobileCallResultCode(opt.code); // optimistic, giống PostCallResultDropdown
+    setIsCallResultOverflowOpen(false);
+    try {
+      const res = await postCallResultService.updateCallResult(post.id, {
+        result_code: opt.code,
+        platform: post.platform || "facebook",
+      });
+      if (!res.success) {
+        setMobileCallResultCode(prevCode);
+        toast.error(res.message || "Không thể lưu kết quả liên hệ.");
+        return;
+      }
+      // Không mutate post (immutable) — gộp qua postForCallResultDropdown để
+      // PostCallResultDropdown (đứng cùng hàng, luôn hiển thị) tự đồng bộ qua useEffect
+      // theo dõi post.call_result_code/call_attempts/last_call_at/updated_by_user sẵn có.
+      setMobileCallResultOverride({
+        call_result_code: opt.code,
+        call_attempts: (post.call_attempts || 0) + 1,
+        last_call_at: res.data?.last_call_at || new Date().toISOString(),
+        updated_by_user: res.data?.updated_by_user || post.updated_by_user,
+      });
+      toast.success(`✓ Đã lưu kết quả liên hệ: ${opt.label}`);
+    } catch {
+      setMobileCallResultCode(prevCode);
+      toast.error("Lỗi kết nối khi lưu kết quả liên hệ.");
+    } finally {
+      setMobileCallResultSavingCode(null);
+    }
+  };
+
+  const postForCallResultDropdown = useMemo(
+    () => (mobileCallResultOverride ? { ...post, ...mobileCallResultOverride } : post),
+    [post, mobileCallResultOverride]
+  );
+
   return (
     <div
       className={cn(
@@ -477,6 +641,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 const crawlDt = formatPostDateTime(post.crawl_date);
 
                 if (pubDt) {
+                  const relative = formatRelativeTimeVi(post.post_time || post.posted_at, nowTick);
                   return (
                     <div className="flex flex-col items-end">
                       <span
@@ -484,7 +649,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                         title={`Thời gian đăng bài gốc: ${pubDt.full}`}
                       >
                         <span className="text-slate-400 font-normal">🕒</span>
-                        <span>{pubDt.full}</span>
+                        <span>{pubDt.full}{relative ? ` · ${relative}` : ""}</span>
                       </span>
                       {crawlDt && crawlDt.date !== pubDt.date && (
                         <span
@@ -498,12 +663,13 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                   );
                 }
 
+                const crawlRelative = formatRelativeTimeVi(post.crawl_date, nowTick);
                 return (
                   <span
                     className="text-xs sm:text-sm text-muted-foreground font-medium"
                     title="Bài viết không rõ giờ đăng gốc — hiển thị thời gian cào về hệ thống"
                   >
-                    {crawlDt ? `Cào: ${crawlDt.full}` : ""}
+                    {crawlDt ? `Cào: ${crawlDt.full}${crawlRelative ? ` · ${crawlRelative}` : ""}` : ""}
                   </span>
                 );
               })()}
@@ -615,7 +781,11 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
               <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
                 <span className="w-6 h-6 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300 flex items-center justify-center text-xs">📞</span>
-                <span>{detectedPhone}</span>
+                {/* Mobile: bấm gọi thẳng; Desktop: chỉ hiển thị text như cũ */}
+                <a href={`tel:${detectedPhone}`} className="sm:hidden hover:underline underline-offset-2">
+                  {detectedPhone}
+                </a>
+                <span className="hidden sm:inline">{detectedPhone}</span>
               </span>
 
               {(post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name) && (
@@ -742,7 +912,60 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
 
             {/* Đánh giá và Kết quả liên hệ */}
             <EvaluationDropdown post={post} />
-            <PostCallResultDropdown post={post} />
+            <PostCallResultDropdown post={postForCallResultDropdown} />
+
+            {/* Việc 3 (mobile): hàng pill "đề xuất nhanh" cho Kết quả liên hệ, ngay dưới
+                2 dropdown trên (w-full ép flex-wrap xuống hàng mới). Chỉ hiện ở mobile,
+                desktop vẫn dùng mỗi PostCallResultDropdown như cũ. */}
+            <div className="w-full flex flex-wrap items-center gap-1.5 sm:hidden">
+              {pinnedCallOptions.map((opt) => (
+                <button
+                  key={opt.code}
+                  type="button"
+                  disabled={!!mobileCallResultSavingCode}
+                  onClick={() => handleMobileCallResultSelect(opt)}
+                  className={getCallResultPillClass(opt.code, mobileCallResultCode === opt.code)}
+                  title={`Lưu nhanh kết quả liên hệ: ${opt.label}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+
+              {overflowCallOptions.length > 0 && (
+                <div className="relative">
+                  <button
+                    type="button"
+                    disabled={!!mobileCallResultSavingCode}
+                    onClick={() => setIsCallResultOverflowOpen((v) => !v)}
+                    className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-border bg-card text-muted-foreground hover:bg-muted disabled:opacity-50 cursor-pointer"
+                    aria-label="Xem thêm kết quả liên hệ"
+                    title="Xem thêm kết quả liên hệ"
+                  >
+                    <span className="material-symbols-outlined text-[16px] leading-none block">more_horiz</span>
+                  </button>
+
+                  {isCallResultOverflowOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setIsCallResultOverflowOpen(false)} />
+                      <div className="absolute left-0 top-full mt-1 z-50 grid grid-cols-2 gap-1.5 w-56 p-2 rounded-xl border border-border bg-card shadow-xl">
+                        {overflowCallOptions.map((opt) => (
+                          <button
+                            key={opt.code}
+                            type="button"
+                            disabled={!!mobileCallResultSavingCode}
+                            onClick={() => handleMobileCallResultSelect(opt)}
+                            className={getCallResultPillClass(opt.code, mobileCallResultCode === opt.code)}
+                            title={`Lưu nhanh kết quả liên hệ: ${opt.label}`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Tên người đăng bài post gốc (hoặc Ẩn danh) */}
             {(() => {
@@ -765,17 +988,13 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               );
             })()}
 
-            {/* Assign người seeding */}
+            {/* Assign người seeding — Việc 4 (mobile): ẩn ở đây, gom vào popover "..."
+                cạnh "Làm nhiệm vụ" cho đỡ chật; desktop giữ nguyên vị trí như cũ. */}
             <PostAssigneeDropdown
               postId={post.id || post.post_url}
               teamMembers={teamMembers}
-              initialAssignee={
-                (post as any).assigned_member
-                  ? (post as any).assigned_member
-                  : (post as any).assigned_to
-                  ? { email: (post as any).assigned_to, name: (post as any).assigned_name }
-                  : null
-              }
+              initialAssignee={assigneeInitialAssignee}
+              className="hidden sm:inline-flex"
             />
           </div>
 
@@ -802,20 +1021,15 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               </span>
             )}
 
-            {/* Nút xem bình luận trực tiếp trên card (chỉ hiện khi đã có link comment minh chứng thật) */}
-            {((effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment && effectiveSeeding.link_comment !== post.post_url) ||
-              (verifyStatus === "yes" && post.link_comment && post.link_comment !== post.post_url) ||
-              (post.all_seedings && post.all_seedings.some((s) => s.link_comment && s.link_comment !== post.post_url && s.verify_status === "yes"))) && (
+            {/* Nút xem bình luận trực tiếp trên card (chỉ hiện khi đã có link comment minh
+                chứng thật) — Việc 4 (mobile): ẩn ở đây, gom vào popover "..." cạnh "Làm
+                nhiệm vụ"; desktop giữ nguyên vị trí như cũ. */}
+            {commentProofHref && (
               <a
-                href={
-                  (effectiveSeeding?.verify_status === "yes" && effectiveSeeding.link_comment) ||
-                  post.link_comment ||
-                  (post.all_seedings && post.all_seedings[0] && post.all_seedings[0].link_comment) ||
-                  post.post_url
-                }
+                href={commentProofHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer inline-flex items-center gap-1.5"
+                className="hidden sm:inline-flex px-3 py-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer items-center gap-1.5"
                 title="Xem bình luận minh chứng trực tiếp trên bài viết"
               >
                 <FiExternalLink className="w-4 h-4" />
@@ -836,12 +1050,13 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               </button>
             )}
 
-            {/* Nút xem seeding theo team: Admin và Leader đều xem được team của mình */}
-            {userRole !== "member" && onViewSeedingRoster && post.id && (
+            {/* Nút xem seeding theo team: Admin và Leader đều xem được team của mình —
+                Việc 4 (mobile): ẩn ở đây, gom vào popover "..." cạnh "Làm nhiệm vụ". */}
+            {showSeedingRosterBtn && (
               <button
                 type="button"
-                onClick={() => onViewSeedingRoster(post)}
-                className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer flex items-center gap-1.5"
+                onClick={() => onViewSeedingRoster!(post)}
+                className="hidden sm:flex px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-sm font-semibold transition shadow-sm cursor-pointer items-center gap-1.5"
                 aria-label="Xem seeding theo team"
                 title="Xem tiến độ và minh chứng seeding của cả team trên bài viết này"
               >
@@ -857,6 +1072,19 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               title="Xem nhiệm vụ, gợi ý mẫu bình luận và mở bài viết kích hoạt theo dõi KPI"
             >
               <span>📋 Làm nhiệm vụ</span>
+            </button>
+
+            {/* Việc 4 (mobile): gom "Gán seeding" + "Xem bình luận" + "Xem seeding theo
+                team" (ẩn ở vị trí gốc phía trên/dưới trên mobile) vào 1 popover riêng,
+                tách biệt với "Tùy chọn khác" (Xem chi tiết/Lên lịch/Xóa) bên dưới. */}
+            <button
+              type="button"
+              onClick={() => setIsMobileActionsOpen(true)}
+              className="sm:hidden px-2.5 py-2 bg-card border border-border text-muted-foreground hover:bg-muted rounded-lg transition shadow-sm cursor-pointer"
+              aria-label="Thêm hành động"
+              title="Thêm hành động (Gán seeding / Xem bình luận / Xem seeding theo team)"
+            >
+              <span className="material-symbols-outlined text-[18px] leading-none block">more_vert</span>
             </button>
 
             {/* Cac hanh dong it dung hon (Xem chi tiet / Len lich / Xoa) gom vao 1 modal
@@ -877,6 +1105,18 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
 
       {isTaskModalOpen && (
         <TaskModal post={post} onClose={() => setIsTaskModalOpen(false)} onCommentSuccess={onSeeding ? () => onSeeding(post) : undefined} />
+      )}
+
+      {isMobileActionsOpen && (
+        <MobilePostActionsSheet
+          post={post}
+          teamMembers={teamMembers}
+          assigneeInitialAssignee={assigneeInitialAssignee}
+          commentProofHref={commentProofHref}
+          showSeedingRosterBtn={showSeedingRosterBtn}
+          onViewSeedingRoster={onViewSeedingRoster}
+          onClose={() => setIsMobileActionsOpen(false)}
+        />
       )}
 
       {isMoreMenuOpen && (
@@ -1499,6 +1739,82 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
                 </div>
               </div>
             </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Việc 4: popover mobile gom "Gán seeding" + "Xem bình luận" + "Xem seeding theo team" —
+// 3 hành động này vẫn hiển thị inline như cũ trên desktop (sm: trở lên), chỉ gom lại ở
+// đây khi màn hình nhỏ. Tách biệt với MoreActionsModal (Xem chi tiết/Lên lịch/Xóa...).
+function MobilePostActionsSheet({
+  post,
+  teamMembers,
+  assigneeInitialAssignee,
+  commentProofHref,
+  showSeedingRosterBtn,
+  onViewSeedingRoster,
+  onClose,
+}: {
+  post: UnifiedPost;
+  teamMembers?: PostMemberItem[];
+  assigneeInitialAssignee: PostMemberItem | null;
+  commentProofHref: string | null;
+  showSeedingRosterBtn: boolean;
+  onViewSeedingRoster?: (post: UnifiedPost) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div
+        className="bg-card rounded-t-2xl sm:rounded-2xl border border-border shadow-xl w-full sm:max-w-sm max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-4 border-b border-border flex items-center justify-between sticky top-0 bg-card z-10">
+          <h3 className="font-bold text-base text-foreground">Thêm hành động</h3>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-muted">
+            <span className="material-symbols-outlined text-[18px]">close</span>
+          </button>
+        </div>
+
+        <div className="p-3 flex flex-col gap-2.5">
+          <div>
+            <div className="text-[11px] font-bold text-muted-foreground mb-1 px-1">Gán seeding</div>
+            <PostAssigneeDropdown
+              postId={post.id || post.post_url}
+              teamMembers={teamMembers}
+              initialAssignee={assigneeInitialAssignee}
+              className="w-full"
+            />
+          </div>
+
+          {commentProofHref && (
+            <a
+              href={commentProofHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onClose}
+              className="px-3 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-sm font-semibold transition cursor-pointer inline-flex items-center gap-1.5"
+            >
+              <FiExternalLink className="w-4 h-4" />
+              <span>Xem bình luận</span>
+            </a>
+          )}
+
+          {showSeedingRosterBtn && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onViewSeedingRoster?.(post);
+              }}
+              className="text-left px-3 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-sm font-semibold transition cursor-pointer flex items-center gap-1.5"
+            >
+              <span>👥</span>
+              <span>Xem seeding theo team</span>
+            </button>
           )}
         </div>
       </div>
