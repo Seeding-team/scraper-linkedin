@@ -22,6 +22,18 @@ jobs:
       run:
         working-directory: /opt/apps/seeding_markeeai/scraper-linkedin
     steps:
+      - name: Dam bao dia con trong
+        working-directory: /
+        run: |
+          avail=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+          echo "Dia con trong: ${avail}GB"
+          if [ "${avail:-0}" -lt 8 ]; then
+            echo "Dia sap day -> don Docker build cache + image mo coi"
+            docker builder prune -af || true
+            docker image prune -f || true
+            df -h / | tail -1
+          fi
+
       - name: Pull code theo ref duoc chon
         run: |
           REF="${{ github.event.inputs.ref || github.ref_name }}"
