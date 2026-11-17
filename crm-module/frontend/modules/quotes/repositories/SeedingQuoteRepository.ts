@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from '@/lib/session-expiry';
 import type {
   CreateIssuerCompanyInput,
   CreateQuoteFormInput,
@@ -109,6 +110,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
   const body = (await res.json()) as ApiResponse<T> & { detail?: string };
   if (!res.ok) {
+    if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
     // FastAPI HTTPException (403/422 that - vd require_quote_email_manager,
     // RuleValidationError) tra ve {"detail": "..."} thay vi {"message": "..."}
     // cua BaseResponse thuong dung trong file nay - doc ca 2 de khong hien

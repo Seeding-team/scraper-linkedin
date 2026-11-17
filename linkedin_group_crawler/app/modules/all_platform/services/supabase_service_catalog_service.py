@@ -816,6 +816,12 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "default_vat_rate", "quote_display_name", "quote_description", "quote_cta",
         "target_gross_margin_percent", "cost_basis_rule", "pricing_policy_exceptions",
         "default_cost_vat_rate",
+        # "Trả theo tháng" cho san pham le (feedback 2026-11-16) - khi Sale TAT
+        # toggle "Cho phep tra theo nam" o QuickAddProductModal, payload gui
+        # None cho ca 3 field nay de XOA gia tri cu (khong bi filter mat, gay
+        # du lieu cu "song lai" sau khi tat). Ap dung chung cho Combo (da dung
+        # 3 field nay tu truoc) vi cung 1 loi tiem an.
+        "monthly_price_vnd", "annual_commit_monthly_price_vnd", "annual_total_price_vnd",
     }
     update_data = {
         k: v for k, v in payload.items()

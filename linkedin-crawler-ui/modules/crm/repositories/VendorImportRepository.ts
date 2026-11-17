@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from '@/lib/session-expiry';
 
 export interface VendorImportBatch {
   id: string;
@@ -70,6 +71,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (!res.ok) {
+    if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
     let msg = res.statusText;
     try { const json = await res.json(); if (json.detail) msg = json.detail; } catch (e) {}
     throw new Error(`API Error: ${msg}`);

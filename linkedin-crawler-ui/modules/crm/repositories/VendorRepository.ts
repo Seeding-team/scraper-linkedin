@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from '@/lib/session-expiry';
 
 export interface CrmVendor {
   id: string;
@@ -26,7 +27,10 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers: getDefaultHeaders(options?.body instanceof FormData),
     ...options,
   });
-  if (!res.ok) throw new Error(`API Error: ${res.statusText}`);
+  if (!res.ok) {
+    if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
+    throw new Error(`API Error: ${res.statusText}`);
+  }
   return res.json();
 }
 

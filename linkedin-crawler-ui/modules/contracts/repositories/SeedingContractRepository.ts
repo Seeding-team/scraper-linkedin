@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from '@/lib/session-expiry';
 import type {
   Contract,
   ContractClause,
@@ -33,6 +34,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
   const body = (await res.json()) as ApiResponse<T>;
   if (!res.ok) {
+    if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
     throw new Error(body.message || `Lỗi máy chủ (${res.status})`);
   }
   if (body.success === false) {
