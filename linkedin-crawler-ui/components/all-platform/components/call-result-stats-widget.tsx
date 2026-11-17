@@ -28,17 +28,28 @@ interface CallResultStatsWidgetProps {
 
 type Tab = "member" | "day" | "log";
 
-/** 2 preset ghim luôn hiện + 3 preset trong popover "tune". */
-type PresetKey = "today" | "7d" | "30d" | "thisMonth" | "lastMonth";
+/** 2 preset ghim luôn hiện + 6 preset trong popover "tune". */
+type PresetKey =
+  | "today"
+  | "thisWeek"
+  | "thisMonth"
+  | "lastMonth"
+  | "lastWeek"
+  | "thisQuarter"
+  | "lastQuarter"
+  | "thisYear";
 
 const PINNED_PRESETS: [PresetKey, string][] = [
   ["today", "Hôm nay"],
-  ["7d", "7 ngày qua"],
+  ["thisWeek", "Tuần này"],
 ];
 const OVERFLOW_PRESETS: [PresetKey, string][] = [
-  ["30d", "30 ngày qua"],
   ["thisMonth", "Tháng này"],
   ["lastMonth", "Tháng trước"],
+  ["lastWeek", "Tuần trước"],
+  ["thisQuarter", "Quý này"],
+  ["lastQuarter", "Quý trước"],
+  ["thisYear", "Năm nay"],
 ];
 
 // 8 mã call_result thật (migration 215) — nhóm cố định, không lấy từ API vì đây chỉ là
@@ -88,17 +99,53 @@ function endOfMonthIso(y: number, m: number): string {
   return `${y}-${pad2(m)}-${pad2(lastDay)}`;
 }
 
+/** Thứ Hai của tuần chứa `iso` — `new Date(y, m-1, d)` (tham số số, local time) để
+ * `.getDay()` không lệch múi giờ như khi parse chuỗi ISO. getDay(): 0=CN..6=T7;
+ * số ngày lùi về thứ Hai = (getDay()+6)%7 (CN lùi 6 ngày, Hai lùi 0 ngày...). */
+function mondayOfWeekIso(iso: string): string {
+  const { y, m, d } = parseIsoDateParts(iso);
+  const dt = new Date(y, m - 1, d);
+  const diffToMonday = (dt.getDay() + 6) % 7;
+  dt.setDate(dt.getDate() - diffToMonday);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
+
+/** Quý: tháng 1/4/7/10 làm mốc đầu quý -> tháng đầu quý chứa tháng `m`. */
+function quarterStartMonth(m: number): number {
+  return Math.floor((m - 1) / 3) * 3 + 1;
+}
+
 function presetRange(preset: PresetKey): { date_from: string; date_to: string } {
   const to = todayIso();
   if (preset === "today") return { date_from: to, date_to: to };
-  if (preset === "7d") return { date_from: addDaysIso(to, -6), date_to: to };
-  if (preset === "30d") return { date_from: addDaysIso(to, -29), date_to: to };
   const { y, m } = parseIsoDateParts(to);
+  if (preset === "thisWeek") return { date_from: mondayOfWeekIso(to), date_to: to };
+  if (preset === "lastWeek") {
+    const thisMonday = mondayOfWeekIso(to);
+    return { date_from: addDaysIso(thisMonday, -7), date_to: addDaysIso(thisMonday, -1) };
+  }
   if (preset === "thisMonth") return { date_from: startOfMonthIso(y, m), date_to: to };
-  // lastMonth
-  const prevM = m === 1 ? 12 : m - 1;
-  const prevY = m === 1 ? y - 1 : y;
-  return { date_from: startOfMonthIso(prevY, prevM), date_to: endOfMonthIso(prevY, prevM) };
+  if (preset === "lastMonth") {
+    const prevM = m === 1 ? 12 : m - 1;
+    const prevY = m === 1 ? y - 1 : y;
+    return { date_from: startOfMonthIso(prevY, prevM), date_to: endOfMonthIso(prevY, prevM) };
+  }
+  if (preset === "thisQuarter") {
+    const qStart = quarterStartMonth(m);
+    return { date_from: startOfMonthIso(y, qStart), date_to: to };
+  }
+  if (preset === "lastQuarter") {
+    const qStart = quarterStartMonth(m);
+    let prevQStart = qStart - 3;
+    let prevY = y;
+    if (prevQStart < 1) {
+      prevQStart += 12;
+      prevY -= 1;
+    }
+    return { date_from: startOfMonthIso(prevY, prevQStart), date_to: endOfMonthIso(prevY, prevQStart + 2) };
+  }
+  // thisYear
+  return { date_from: `${y}-01-01`, date_to: to };
 }
 
 function formatDay(day: string): string {
@@ -151,12 +198,12 @@ export function CallResultStatsWidget({
   // Bộ lọc thời gian "pinned + overflow": preset chỉ set giá trị khởi tạo, sau đó date_from/date_to
   // committed (dùng để fetch) và draft (gắn trực tiếp vào 2 input ngày) tách riêng — xem applyPreset/
   // handleDraftDateChange bên dưới.
-  const initialRange = useMemo(() => presetRange("7d"), []);
+  const initialRange = useMemo(() => presetRange("thisWeek"), []);
   const [dateFrom, setDateFrom] = useState(initialRange.date_from);
   const [dateTo, setDateTo] = useState(initialRange.date_to);
   const [draftFrom, setDraftFrom] = useState(initialRange.date_from);
   const [draftTo, setDraftTo] = useState(initialRange.date_to);
-  const [activePreset, setActivePreset] = useState<PresetKey | null>("7d");
+  const [activePreset, setActivePreset] = useState<PresetKey | null>("thisWeek");
   const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
