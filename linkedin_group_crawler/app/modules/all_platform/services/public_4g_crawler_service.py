@@ -3074,7 +3074,7 @@ class PublicCrawlOrchestrator:
                 "info",
                 "orchestrator",
                 (
-                    f"[{mode_note} · THREADS NO-ACC] Bắt đầu quét {len(threads_keywords)} từ khóa AI "
+                    f"[{mode_note} · THREADS NO-ACC] Bắt đầu quét {len(threads_keywords)} từ khóa từ Thư viện Threads (quan-ly-nhom) "
                     f"qua {len(active_sims)} luồng Proxy Xoay ({', '.join(s.id for s in active_sims)}){ai_note}"
                 ),
             )
@@ -3231,7 +3231,7 @@ class PublicCrawlOrchestrator:
                     self.append_log(
                         "info",
                         "orchestrator",
-                        f"[{mode_str} · THREADS (Song Song)] Bắt đầu quét {len(work_items)} từ khóa AI qua {sim_labels} — 0 Cookie",
+                        f"[{mode_str} · THREADS (Song Song)] Bắt đầu quét {len(work_items)} từ khóa từ Thư viện Threads (quan-ly-nhom) qua {sim_labels} — 0 Cookie",
                     )
                 else:
                     self.append_log(
@@ -3519,7 +3519,7 @@ class PublicCrawlOrchestrator:
 
         if should_continue_loop and stats_target is None:
             breath = _continuous_breath_seconds()
-            next_label = "Threads (~từ khóa AI)" if scheduled_next_platform == "threads" else "Facebook Public (reload nhóm DB)"
+            next_label = "Threads (Thư viện từ khóa quan-ly-nhom)" if scheduled_next_platform == "threads" else "Facebook Public (reload nhóm DB)"
             self.append_log(
                 "info",
                 "orchestrator",
