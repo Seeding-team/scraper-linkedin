@@ -15,7 +15,7 @@ export interface CallResultOption {
   label: string;
 }
 
-const FALLBACK_CALL_OPTIONS: CallResultOption[] = [
+export const FALLBACK_CALL_OPTIONS: CallResultOption[] = [
   { code: "noanswer", label: "Đã gọi – không nghe máy" },
   { code: "callback", label: "Hẹn gọi lại" },
   { code: "consulting", label: "Đang tư vấn" },
@@ -29,7 +29,7 @@ const FALLBACK_CALL_OPTIONS: CallResultOption[] = [
 let cachedCallResultCategories: CallResultOption[] | null = null;
 let fetchCallPromise: Promise<CallResultOption[]> | null = null;
 
-async function loadCallResultOptions(): Promise<CallResultOption[]> {
+export async function loadCallResultOptions(): Promise<CallResultOption[]> {
   if (cachedCallResultCategories && cachedCallResultCategories.length > 0) {
     return cachedCallResultCategories;
   }
