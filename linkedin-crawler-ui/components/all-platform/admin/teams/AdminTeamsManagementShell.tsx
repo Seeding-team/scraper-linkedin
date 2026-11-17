@@ -219,6 +219,7 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
   // khoi "teams" (dung cho overview/quan ly tung team) de khong doi logic cu.
   const [summaryTeamOptions, setSummaryTeamOptions] = useState<TeamRow[]>([]);
   const [selectedSummaryTeamId, setSelectedSummaryTeamId] = useState("");
+  const [displayMode, setDisplayMode] = useState<"teams" | "members">("teams");
 
   const isAdmin =
     (user?.role as string) === "admin" ||
@@ -355,6 +356,91 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
     [teamKpiSummaries],
   );
 
+  // Tổng hợp và xếp hạng TOÀN BỘ thành viên từ % KPI cao nhất đến thấp nhất
+  const allMembersKpi = useMemo(() => {
+    const memberMap = new Map<
+      string,
+      {
+        member_id: string;
+        member_name: string;
+        member_email: string;
+        team_id: string;
+        team_name: string;
+        team?: TeamRow;
+        is_leader?: boolean;
+        post: number;
+        postTarget: number;
+        comment: number;
+        commentTarget: number;
+        inbox: number;
+        inboxTarget: number;
+        lead: number;
+        leadTarget: number;
+        percentage: number;
+        hasTarget: boolean;
+      }
+    >();
+
+    for (const r of kpiRows) {
+      if (!r.member_id) continue;
+      const team = teams.find((t) => t.id === r.team_id);
+      const team_name = (r as any).team_name || team?.name_team || "Chưa phân team";
+      const member_email = (r as any).member_email || "";
+      const member_name = r.member_name || (r as any).name || member_email || "N/A";
+
+      const post = r.kpi_post_current || 0;
+      const postTarget = r.kpi_post || 0;
+      const comment = r.verified_count || 0;
+      const commentTarget = r.kpi_comment || 0;
+      const inbox = r.kpi_inbox_current || 0;
+      const inboxTarget = r.kpi_inbox || 0;
+      const lead = r.kpi_lead_current || 0;
+      const leadTarget = r.kpi_lead || 0;
+
+      const { percentage, hasTarget } = computeWeightedPercentage({
+        post,
+        postTarget,
+        comment,
+        commentTarget,
+        inbox,
+        inboxTarget,
+        lead,
+        leadTarget,
+      });
+
+      memberMap.set(`${r.team_id}_${r.member_id}`, {
+        member_id: r.member_id,
+        member_name,
+        member_email,
+        team_id: r.team_id,
+        team_name,
+        team,
+        is_leader: r.is_leader,
+        post,
+        postTarget,
+        comment,
+        commentTarget,
+        inbox,
+        inboxTarget,
+        lead,
+        leadTarget,
+        percentage,
+        hasTarget,
+      });
+    }
+
+    // Sắp xếp: Đạt KPI % cao nhất -> thấp nhất, ưu tiên người có giao chỉ tiêu
+    return Array.from(memberMap.values()).sort((a, b) => {
+      if (b.hasTarget !== a.hasTarget) {
+        return b.hasTarget ? 1 : -1;
+      }
+      if (b.percentage !== a.percentage) {
+        return b.percentage - a.percentage;
+      }
+      return b.inbox + b.lead - (a.inbox + a.lead);
+    });
+  }, [kpiRows, teams]);
+
   // Thong ke tong - suy ra tu teamKpiSummaries (dung chung cong thuc co trong so).
   const stats = useMemo(() => {
     const totalTeams = teams.length;
@@ -371,8 +457,27 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
               withTarget.length,
           )
         : 0;
-    return { totalTeams, totalMembers, achievedTeams, completionRate };
-  }, [teams, teamKpiSummaries]);
+
+    let totalInboxActual = 0;
+    let totalInboxTarget = 0;
+    teamKpiSummaries.forEach((s) => {
+      totalInboxActual += s.totals.inbox;
+      totalInboxTarget += s.totals.inboxTarget;
+    });
+
+    const membersWithTarget = allMembersKpi.filter((m) => m.hasTarget);
+    const achievedMembers = membersWithTarget.filter((m) => m.percentage >= 100).length;
+
+    return {
+      totalTeams,
+      totalMembers,
+      achievedTeams,
+      completionRate,
+      totalInboxActual,
+      totalInboxTarget,
+      achievedMembers,
+    };
+  }, [teams, teamKpiSummaries, allMembersKpi]);
 
   const handleDeleteTeam = async (team: TeamRow) => {
     if (
@@ -533,8 +638,8 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
       <div className="space-y-5">
         {isOverviewView && (
           <>
-        {/* ── The thong ke tong (icon chip pastel nhat, giong MetricCard cua app) ── */}
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        {/* ── The thong ke tong (5 the: bo sung KPI Inbox toan thanh vien) ── */}
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5">
           <StatCard
             icon={LuLayoutGrid}
             label="Tổng số Team"
@@ -546,6 +651,13 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
             label="Tổng số Thành viên"
             value={stats.totalMembers}
             iconClassName="bg-green-50 text-green-600"
+          />
+          <StatCard
+            icon={LuInbox}
+            label="KPI Inbox Toàn Bộ"
+            value={`${stats.totalInboxActual} / ${stats.totalInboxTarget}`}
+            hint="Zalo & FB toàn thành viên"
+            iconClassName="bg-orange-50 text-orange-600"
           />
           <StatCard
             icon={LuTarget}
@@ -563,12 +675,204 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
           />
         </div>
 
+        {/* ── Thanh chuyen doi linh hoat giua Xem theo Team va Xem toan bo thanh vien ── */}
+        <div className="flex items-center justify-between gap-4 flex-wrap pt-1">
+          <div className="inline-flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => setDisplayMode("teams")}
+              className={cn(
+                "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                displayMode === "teams"
+                  ? "bg-white text-primary shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <LuLayoutGrid size={14} />
+              <span>Xem theo Team ({teams.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setDisplayMode("members")}
+              className={cn(
+                "inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                displayMode === "members"
+                  ? "bg-white text-primary shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <LuUsers size={14} />
+              <span>Xem toàn thành viên ({allMembersKpi.length})</span>
+            </button>
+          </div>
+
+          {displayMode === "members" && (
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full font-bold text-[11px] border border-emerald-200/60">
+                <LuTrendingUp size={12} />
+                Sắp xếp: KPI cao → thấp
+              </span>
+              <span>({stats.achievedMembers} / {allMembersKpi.length} đạt KPI)</span>
+            </div>
+          )}
+        </div>
+
+        {/* ── Che do Xem toan thanh vien: Bang xep hang tu cao den thap ── */}
+        {displayMode === "members" && (
+          <div className="rounded-xl border border-border bg-white overflow-hidden shadow-sm">
+            <div className="px-5 py-4 border-b border-border bg-muted/40 flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2">
+                  <LuUsers size={17} className="text-foreground" />
+                  <span className="text-base font-bold text-foreground">
+                    Bảng xếp hạng KPI toàn bộ thành viên
+                  </span>
+                  <span className="rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 text-[11px] font-bold">
+                    {allMembersKpi.length} nhân sự
+                  </span>
+                </div>
+                <p className="text-[12.5px] text-muted-foreground mt-0.5">
+                  Xếp theo % hoàn thành KPI có trọng số: Lead 45% · Inbox 40% · Comment 5% · Call 10% (Cao → Thấp)
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto max-h-[calc(100vh-280px)] overflow-y-auto">
+              <table className="w-full border-collapse text-[13px]">
+                <thead className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider shadow-xs">
+                  <tr>
+                    <th className="px-4 py-3 text-center w-12 bg-slate-100">Hạng</th>
+                    <th className="px-4 py-3 text-left bg-slate-100 min-w-[180px]">Thành viên</th>
+                    <th className="px-3 py-3 text-left bg-slate-100 min-w-[140px]">Team trực thuộc</th>
+                    <th className="px-3 py-3 text-center text-[#ba244a] bg-slate-100 min-w-[90px]">Cuộc gọi (CALL)</th>
+                    <th className="px-3 py-3 text-center bg-slate-100 min-w-[85px]">Comment</th>
+                    <th className="px-3 py-3 text-center text-orange-700 bg-slate-100 min-w-[110px]">Inbox Zalo & FB</th>
+                    <th className="px-3 py-3 text-center text-violet-700 bg-slate-100 min-w-[85px]">Lead</th>
+                    <th className="px-4 py-3 text-left bg-slate-100 min-w-[180px]">Tiến độ KPI</th>
+                    <th className="px-3 py-3 text-center bg-slate-100 min-w-[100px]">Trạng thái</th>
+                    <th className="px-3 py-3 text-center bg-slate-100 min-w-[110px]">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {allMembersKpi.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="px-4 py-12 text-center text-muted-foreground italic">
+                        Chưa có dữ liệu thành viên trong tuần này.
+                      </td>
+                    </tr>
+                  ) : (
+                    allMembersKpi.map((m, idx) => {
+                      const RANK_MEDAL = ["🥇", "🥈", "🥉"];
+                      const isHit = m.hasTarget && m.percentage >= 100;
+                      const isClose = m.hasTarget && m.percentage >= 50 && m.percentage < 100;
+                      return (
+                        <tr key={`${m.team_id}_${m.member_id}`} className="hover:bg-slate-50/70 transition">
+                          <td className="px-4 py-3 text-center font-bold">
+                            {idx < 3 ? (
+                              <span className="text-base">{RANK_MEDAL[idx]}</span>
+                            ) : (
+                              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-[11px] font-bold text-slate-600">
+                                {idx + 1}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-foreground whitespace-nowrap">{m.member_name}</span>
+                              {m.is_leader && (
+                                <span className="rounded-full bg-violet-100 text-violet-700 px-1.5 py-0.5 text-[9px] font-bold uppercase">
+                                  Leader
+                                </span>
+                              )}
+                            </div>
+                            {m.member_email && (
+                              <div className="text-[11px] text-muted-foreground truncate max-w-[160px]">{m.member_email}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className="inline-block rounded-lg bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 whitespace-nowrap border border-slate-200/60">
+                              {m.team_name}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-center font-bold text-[#ba244a] whitespace-nowrap">
+                            {m.post}
+                            <span className="text-[11px] font-normal text-muted-foreground"> / {m.postTarget}</span>
+                          </td>
+                          <td className="px-3 py-3 text-center font-bold text-foreground whitespace-nowrap">
+                            {m.comment}
+                            <span className="text-[11px] font-normal text-muted-foreground"> / {m.commentTarget}</span>
+                          </td>
+                          <td className="px-3 py-3 text-center font-bold text-orange-600 whitespace-nowrap">
+                            {m.inbox}
+                            <span className="text-[11px] font-normal text-muted-foreground"> / {m.inboxTarget}</span>
+                          </td>
+                          <td className="px-3 py-3 text-center font-bold text-violet-700 whitespace-nowrap">
+                            {m.lead}
+                            <span className="text-[11px] font-normal text-muted-foreground"> / {m.leadTarget}</span>
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2.5">
+                              <div className="h-2 flex-1 rounded-full bg-slate-100 overflow-hidden min-w-[70px]">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all duration-500",
+                                    isHit ? "bg-emerald-500" : isClose ? "bg-amber-500" : "bg-slate-300"
+                                  )}
+                                  style={{ width: `${Math.min(100, m.percentage)}%` }}
+                                />
+                              </div>
+                              <span className="w-10 text-right text-xs font-bold text-foreground tabular-nums">
+                                {m.hasTarget ? `${m.percentage}%` : "—"}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-center whitespace-nowrap">
+                            {!m.hasTarget ? (
+                              <span className="rounded-full bg-slate-100 text-slate-500 px-2 py-0.5 text-[10px] font-semibold">
+                                Chưa giao KPI
+                              </span>
+                            ) : isHit ? (
+                              <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                                Đạt KPI
+                              </span>
+                            ) : isClose ? (
+                              <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5 text-[10px] font-bold">
+                                Gần đạt
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-rose-50 text-rose-700 px-2 py-0.5 text-[10px] font-semibold border border-rose-200/60">
+                                Chưa đạt
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-center whitespace-nowrap">
+                            {m.team && (
+                              <button
+                                type="button"
+                                onClick={() => handleViewMembers(m.team!)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-border bg-white text-xs font-semibold text-foreground hover:bg-slate-50 hover:text-primary transition shadow-2xs cursor-pointer"
+                              >
+                                <LuEye size={12} />
+                                <span>Chi tiết KPI</span>
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* ── So sanh chi tiet giua cac team (bang, xep hang theo % hoan thanh) ── */}
-        {!isLoading && teams.length > 0 && (
+        {displayMode === "teams" && !isLoading && teams.length > 0 && (
           <TeamPerformanceTrendSection teams={teams} />
         )}
 
-        {!isLoading && teamKpiSummariesRanked.length > 0 && (
+        {displayMode === "teams" && !isLoading && teamKpiSummariesRanked.length > 0 && (
           <div className="rounded-xl border border-border bg-white overflow-hidden shadow-sm">
             <div className="px-5 py-4 border-b border-border bg-muted/50">
               <div className="flex items-center gap-2">
@@ -654,7 +958,7 @@ export function AdminTeamsManagementShell({ view = "overview" }: { view?: AdminT
         )}
 
         {/* ── Quan ly tung team (card + hanh dong) ─────────────────────────── */}
-        {showTeamsManagement && !isLoading && teams.length > 0 && (
+        {displayMode === "teams" && showTeamsManagement && !isLoading && teams.length > 0 && (
           <div>
             <div className="flex items-center gap-2 mb-3">
               <LuLayoutGrid size={17} className="text-foreground" />
