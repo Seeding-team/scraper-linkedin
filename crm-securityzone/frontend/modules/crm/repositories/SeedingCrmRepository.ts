@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from '@/lib/env';
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from '@/lib/session-expiry';
 import { CascadeConfirmRequiredError, cascadeSummaryFromBody } from '../utils/cascadeDelete';
 import { notifyDealsChanged } from '../utils/dealSync';
 import {
@@ -205,6 +206,7 @@ async function apiRequest<T>(path: string, options?: RequestInit): Promise<ApiRe
   });
   const body = (await res.json()) as ApiResponse<T>;
   if (!res.ok) {
+    if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
     const errors = (body.data as ValidationErrorPayload | undefined)?.errors;
     const detail = Array.isArray(errors) && errors.length ? `: ${errors.join('; ')}` : '';
     throw new Error(

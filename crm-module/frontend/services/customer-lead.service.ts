@@ -1,4 +1,5 @@
 import { API_BASE_URL, API_KEY } from "@/lib/env";
+import { SESSION_EXPIRED_MESSAGE, handleSessionExpired } from "@/lib/session-expiry";
 
 /* =============================================================
    CRM Customer Interface — full schema
@@ -559,11 +560,15 @@ async function apiFetch(path: string, options?: RequestInit, retries: number = 1
       // HTTP loi that (401/500/503...) khac voi "success:false" nghiep vu (van la 200) -
       // truoc day bi nuot am tham thanh du lieu rong, nhin giong "trang trong, F5 lai co".
       if (!res.ok) {
+        // 401 (het phien) retry lai cung vo ich (van se 401) - bao luon, khong
+        // doi het so lan retry moi bao, va redirect ve dang nhap.
+        if (res.status === 401) { handleSessionExpired(); throw new Error(SESSION_EXPIRED_MESSAGE); }
         throw new Error(data?.message || data?.detail || `Loi may chu (${res.status})`);
       }
       return data;
     } catch (err) {
       lastError = err;
+      if (err instanceof Error && err.message === SESSION_EXPIRED_MESSAGE) break;
       if (attempt < retries) {
         await new Promise((r) => setTimeout(r, 800));
       }
