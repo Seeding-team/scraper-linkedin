@@ -248,20 +248,24 @@ export function EvaluationDropdown({ post, onEvaluationChange, disabled, classNa
         </span>
       )}
 
-      {/* Button kích hoạt Dropdown */}
+      {/* Button kích hoạt Dropdown — min-w-0 để button thực sự co được theo flex-1 của
+          wrapper (Việc 4 lượt trước), nếu không button giữ nguyên max-content width và
+          đẩy vỡ hàng thay vì nhường chỗ cho span label truncate bên trong. */}
       <button
         type="button"
         disabled={disabled || isSaving}
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold border transition shadow-2xs ${activeOption.bg} ${
+        className={`min-w-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md font-semibold border transition shadow-2xs ${activeOption.bg} ${
           disabled ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
         }`}
         title="Bấm để đổi trạng thái đánh giá bài cào"
       >
         <span className={`w-2 h-2 rounded-full shrink-0 ${activeOption.dot}`} />
-        <span>{activeOption.label}</span>
+        {/* Việc 1: label text thường (không phải <select>) — nowrap + ellipsis trên chính
+            span này, không phải cả button, để không vỡ 2 dòng khi hàng bị ép hẹp. */}
+        <span className="min-w-0 truncate">{activeOption.label}</span>
         <svg
-          className={`w-3.5 h-3.5 transition-transform duration-200 text-current opacity-70 ${isOpen ? "rotate-180" : ""}`}
+          className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 text-current opacity-70 ${isOpen ? "rotate-180" : ""}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"

@@ -645,7 +645,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                   return (
                     <div className="flex flex-col items-end">
                       <span
-                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100"
+                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-foreground"
                         title={`Thời gian đăng bài gốc: ${pubDt.full}`}
                       >
                         <span className="text-slate-400 font-normal">🕒</span>
@@ -666,7 +666,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 const crawlRelative = formatRelativeTimeVi(post.crawl_date, nowTick);
                 return (
                   <span
-                    className="text-xs sm:text-sm text-slate-800 dark:text-slate-100 font-semibold"
+                    className="text-xs sm:text-sm text-foreground font-semibold"
                     title="Bài viết không rõ giờ đăng gốc — hiển thị thời gian cào về hệ thống"
                   >
                     {crawlDt ? `Cào: ${crawlDt.full}${crawlRelative ? ` · ${crawlRelative}` : ""}` : ""}

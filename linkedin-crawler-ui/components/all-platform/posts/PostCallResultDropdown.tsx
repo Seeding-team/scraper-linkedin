@@ -212,13 +212,15 @@ export function PostCallResultDropdown({
           setIsOpen(!isOpen);
         }}
         className={cn(
-          "inline-flex items-center justify-between gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted/60 shadow-2xs cursor-pointer",
+          // min-w-0: button cần tự co được theo flex-1 của wrapper (Việc 4 lượt trước),
+          // nếu không giữ nguyên max-content width và đẩy vỡ hàng.
+          "min-w-0 inline-flex items-center justify-between gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted/60 shadow-2xs cursor-pointer",
           currentValue && "border-primary/40 font-bold text-foreground",
           disabled && "opacity-60 cursor-not-allowed"
         )}
         title={formattedLastCall ? `Lần gọi gần nhất: ${formattedLastCall}` : undefined}
       >
-        <span className="truncate max-w-[150px]">{displayLabel}</span>
+        <span className="min-w-0 truncate max-w-[150px]">{displayLabel}</span>
         <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground opacity-70" />
       </button>
 
