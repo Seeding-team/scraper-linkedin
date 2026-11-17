@@ -3047,6 +3047,10 @@ export interface CallResultStats {
   by_member: CallResultStatsByMember[];
   by_day: CallResultStatsByDay[];
   total: number;
+  /** Cột "Comment" (widget Kết quả liên hệ): số dòng seeding_content_kpi trong kỳ đang chọn. */
+  comment_count: number;
+  /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — dùng tính xu hướng "+N"/"-N". */
+  comment_count_prev: number;
   range: { start: string; end: string };
 }
 

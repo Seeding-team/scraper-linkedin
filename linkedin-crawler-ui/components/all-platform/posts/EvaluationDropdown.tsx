@@ -12,6 +12,7 @@ interface EvaluationDropdownProps {
   post: UnifiedPost;
   onEvaluationChange?: (newCode: string, isExempt?: boolean) => void;
   disabled?: boolean;
+  className?: string;
 }
 
 interface EvaluationOption {
@@ -104,7 +105,7 @@ async function loadEvaluationOptions(): Promise<EvaluationOption[]> {
   return fetchPromise;
 }
 
-export function EvaluationDropdown({ post, onEvaluationChange, disabled }: EvaluationDropdownProps) {
+export function EvaluationDropdown({ post, onEvaluationChange, disabled, className }: EvaluationDropdownProps) {
   const currentCode = post.evaluation_code || "chua-danh-gia";
   const currentExempt = !!post.exclude_keyword_exempt;
   const isExcluded = !!post.is_excluded && !currentExempt;
@@ -236,7 +237,7 @@ export function EvaluationDropdown({ post, onEvaluationChange, disabled }: Evalu
   };
 
   return (
-    <div className="relative inline-flex items-center gap-1.5 text-xs">
+    <div className={`relative inline-flex items-center gap-1.5 text-xs ${className || ""}`}>
       {/* Badge cảnh báo từ khóa loại trừ nếu có */}
       {isExcluded && (
         <span

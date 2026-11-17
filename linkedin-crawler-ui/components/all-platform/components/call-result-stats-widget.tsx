@@ -15,6 +15,7 @@ import {
   type ActivityLogActionType,
 } from "@/services/all-platform.service";
 import { getInitials } from "@/components/all-platform/layout/AllPlatformSidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface CallResultStatsWidgetProps {
   selectedCode: string | null;
@@ -65,6 +66,20 @@ const ACTION_META: Record<ActivityLogActionType, { label: string; dot: string; b
 
 function pct(a: number, b: number): number {
   return b > 0 ? Math.round((a / b) * 100) : 0;
+}
+
+// Thiết kế mới (Bước 2): badge % cạnh số "X / Y" — xanh nếu tỷ lệ tốt (>=50%), xám nếu thấp
+// nhưng vẫn có dữ liệu, đỏ nếu tỷ lệ = 0% hẳn (có mẫu số nhưng không thành công nào).
+function ratioBadgeClass(pctVal: number, hasDenominator: boolean): string {
+  if (!hasDenominator) return "bg-muted text-muted-foreground";
+  if (pctVal >= 50) return "bg-emerald-50 text-emerald-700";
+  if (pctVal > 0) return "bg-muted text-muted-foreground";
+  return "bg-rose-50 text-rose-600";
+}
+
+// Progress bar mỏng dưới mỗi cột — xanh lá nếu tỷ lệ cao (>=50%), xám nếu thấp/0%.
+function ratioBarClass(pctVal: number): string {
+  return pctVal >= 50 ? "bg-emerald-500" : "bg-muted-foreground/30";
 }
 
 function todayIso(): string {
@@ -152,6 +167,46 @@ function formatDay(day: string): string {
   const parts = day.split("-");
   if (parts.length !== 3) return day;
   return `${parts[2]}/${parts[1]}`;
+}
+
+// Thiết kế mới (Bước 2): tiêu đề mỗi cột trong "3 thẻ số liệu" — icon màu trong khung vuông bo
+// góc ~40px + icon "ⓘ" kèm Tooltip (Radix, tái dùng đúng component đã dùng ở post-card/dropdown
+// updated_by) giải thích ngắn gọn ý nghĩa số liệu của cột.
+function StatCardHeader({
+  icon,
+  iconBgClass,
+  iconTextClass,
+  title,
+  tooltip,
+}: {
+  icon: string;
+  iconBgClass: string;
+  iconTextClass: string;
+  title: string;
+  tooltip: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <span
+        className={cn("flex items-center justify-center w-10 h-10 rounded-xl shrink-0", iconBgClass, iconTextClass)}
+      >
+        <span className="material-symbols-outlined text-[20px]">{icon}</span>
+      </span>
+      <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-muted-foreground">
+        {title}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="material-symbols-outlined text-[14px] cursor-default opacity-70 hover:opacity-100">
+              info
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <span className="font-medium text-xs max-w-[220px] inline-block">{tooltip}</span>
+          </TooltipContent>
+        </Tooltip>
+      </span>
+    </div>
+  );
 }
 
 function MemberChip({
@@ -399,11 +454,11 @@ export function CallResultStatsWidget({
     () => (callStats?.by_type || []).filter((t) => OK_CODES.has(t.code)).reduce((s, t) => s + t.count, 0),
     [callStats]
   );
-  const callBad = Math.max(0, callTotal - callOk);
-
-  const zaloSentDeltaPct = zaloStats && zaloStats.prev_sent > 0
-    ? Math.round(((zaloStats.sent - zaloStats.prev_sent) / zaloStats.prev_sent) * 100)
-    : null;
+  // Cột "Comment" (Bước 1): đếm seeding_content_kpi — xu hướng "+N"/"-N" so với kỳ trước,
+  // tính kiểu CHÊNH LỆCH TUYỆT ĐỐI (không phải %) theo đúng mô tả Bước 2 ("chỉ hiện số + badge
+  // xu hướng +N/-N", không có badge % vì Comment không có khái niệm tỷ lệ).
+  const commentCount = callStats?.comment_count ?? 0;
+  const commentDelta = commentCount - (callStats?.comment_count_prev ?? 0);
 
   const sortedWho = useMemo(() => [...who].sort((a, b) => b.total - a.total), [who]);
 
@@ -570,54 +625,97 @@ export function CallResultStatsWidget({
         </div>
       </div>
 
-      {/* 3 thẻ số liệu */}
+      {/* 3 thẻ số liệu — thiết kế mới (Bước 2): icon vuông màu + "X / Y" + badge % (Cuộc
+          gọi/Zalo) hoặc "+N/-N" (Comment) + progress bar mỏng (Cuộc gọi/Zalo). Cột Zalo hiển
+          thị "đã trả lời / đã gửi" (zaloStats.replied/sent — dữ liệu gốc KHÔNG đổi, chỉ gộp 2
+          số cũ ở cột 2+3 cũ vào chung 1 cột theo đúng tỷ lệ "X / Y"). */}
       <div className="grid grid-cols-1 sm:grid-cols-3 border-t border-border">
-        <div className="p-4 border-b sm:border-b-0 sm:border-r border-border">
-          <div className="text-[12px] font-semibold text-muted-foreground mb-1">Cuộc gọi đã thực hiện</div>
-          <div className="text-[26px] font-extrabold leading-tight">{callTotal}</div>
-          {callTotal > 0 && (
-            <>
-              <div className="flex h-1.5 rounded-full overflow-hidden bg-muted my-1.5">
-                <span className="bg-emerald-500" style={{ width: `${pct(callOk, callTotal)}%` }} />
-                <span className="bg-rose-400" style={{ width: `${pct(callBad, callTotal)}%` }} />
-              </div>
-              <div className="flex gap-3 text-[12px] font-bold">
-                <span className="text-emerald-600">
-                  {callOk} thành công ({pct(callOk, callTotal)}%)
+        {(() => {
+          const callPctVal = pct(callOk, callTotal);
+          return (
+            <div className="p-4 border-b sm:border-b-0 border-border">
+              <StatCardHeader
+                icon="call"
+                iconBgClass="bg-rose-100"
+                iconTextClass="text-rose-600"
+                title="Cuộc gọi"
+                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn."
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-[26px] font-extrabold leading-tight">
+                  {callOk} / {callTotal}
                 </span>
-                <span className="text-rose-600">{callBad} thất bại</span>
+                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
+                  {callPctVal}%
+                </span>
               </div>
-            </>
-          )}
-        </div>
+              <div className="text-[12px] text-muted-foreground mt-0.5">
+                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện
+              </div>
+              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+                <span className={cn("block h-full", ratioBarClass(callPctVal))} style={{ width: `${callPctVal}%` }} />
+              </div>
+            </div>
+          );
+        })()}
 
-        <div className="p-4 border-b sm:border-b-0 sm:border-r border-border">
-          <div className="text-[12px] font-semibold text-muted-foreground mb-1">Tin nhắn Zalo đã gửi</div>
-          <div className="text-[26px] font-extrabold leading-tight">{zaloStats?.sent ?? 0}</div>
-          <div className="text-[12px] text-muted-foreground">
-            {zaloSentDeltaPct === null ? (
-              <span className="text-emerald-600 font-semibold">mới</span>
-            ) : (
-              <span className={cn("font-semibold", zaloSentDeltaPct >= 0 ? "text-emerald-600" : "text-rose-600")}>
-                {zaloSentDeltaPct >= 0 ? "▲" : "▼"} {Math.abs(zaloSentDeltaPct)}%
-              </span>
-            )}{" "}
-            so với kỳ trước
+        {(() => {
+          const zaloSent = zaloStats?.sent ?? 0;
+          const zaloReplied = zaloStats?.replied ?? 0;
+          const zaloPctVal = pct(zaloReplied, zaloSent);
+          return (
+            <div className="p-4 border-b sm:border-b-0 sm:border-l border-border">
+              <StatCardHeader
+                icon="chat"
+                iconBgClass="bg-sky-100"
+                iconTextClass="text-sky-600"
+                title="Zalo"
+                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn."
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-[26px] font-extrabold leading-tight">
+                  {zaloReplied} / {zaloSent}
+                </span>
+                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
+                  {zaloPctVal}%
+                </span>
+              </div>
+              <div className="text-[12px] text-muted-foreground mt-0.5">
+                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi
+              </div>
+              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+                <span className={cn("block h-full", ratioBarClass(zaloPctVal))} style={{ width: `${zaloPctVal}%` }} />
+              </div>
+            </div>
+          );
+        })()}
+
+        <div className="p-4 sm:border-l border-border">
+          <StatCardHeader
+            icon="chat_bubble"
+            iconBgClass="bg-violet-100"
+            iconTextClass="text-violet-600"
+            title="Comment"
+            tooltip="Số lượt seeding/bình luận (ghi nhận KPI) trong kỳ đang chọn, so với cùng độ dài kỳ liền trước."
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[26px] font-extrabold leading-tight">{commentCount}</span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                commentDelta > 0
+                  ? "bg-emerald-50 text-emerald-700"
+                  : commentDelta < 0
+                    ? "bg-rose-50 text-rose-600"
+                    : "bg-muted text-muted-foreground"
+              )}
+            >
+              {commentDelta > 0 ? "+" : ""}
+              {commentDelta}
+            </span>
           </div>
-        </div>
-
-        <div className="p-4">
-          <div className="text-[12px] font-semibold text-muted-foreground mb-1">Khách đã phản hồi</div>
-          <div className="text-[26px] font-extrabold leading-tight">{zaloStats?.replied ?? 0}</div>
-          <div className="text-[12px] text-muted-foreground">
-            {zaloStats && zaloStats.sent > 0 ? (
-              <>
-                <span className="font-bold text-amber-600">{pct(zaloStats.replied, zaloStats.sent)}%</span> số tin đã gửi
-                có trả lời
-              </>
-            ) : (
-              "Chưa có tin nào được gửi"
-            )}
+          <div className="text-[12px] text-muted-foreground mt-0.5">
+            {commentCount} lượt seeding/bình luận trong kỳ
           </div>
         </div>
       </div>

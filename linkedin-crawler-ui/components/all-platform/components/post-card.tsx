@@ -6,7 +6,7 @@ import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { FiExternalLink, FiMessageSquare } from "react-icons/fi";
 import { ZaloContactModal } from "./zalo-contact-modal";
 import { ZaloKpiStatusBadge } from "./ZaloKpiStatusBadge";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
@@ -645,7 +645,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                   return (
                     <div className="flex flex-col items-end">
                       <span
-                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-700 dark:text-slate-200"
+                        className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100"
                         title={`Thời gian đăng bài gốc: ${pubDt.full}`}
                       >
                         <span className="text-slate-400 font-normal">🕒</span>
@@ -666,7 +666,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 const crawlRelative = formatRelativeTimeVi(post.crawl_date, nowTick);
                 return (
                   <span
-                    className="text-xs sm:text-sm text-muted-foreground font-medium"
+                    className="text-xs sm:text-sm text-slate-800 dark:text-slate-100 font-semibold"
                     title="Bài viết không rõ giờ đăng gốc — hiển thị thời gian cào về hệ thống"
                   >
                     {crawlDt ? `Cào: ${crawlDt.full}${crawlRelative ? ` · ${crawlRelative}` : ""}` : ""}
@@ -777,15 +777,13 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
             2026-10-02). */}
         {/* Khung số điện thoại trích xuất từ bài viết & Nút nhắn tin Zalo */}
         {detectedPhone ? (
-          <div className="mb-3 rounded-xl border border-sky-200/80 bg-sky-50/70 dark:bg-sky-950/25 dark:border-sky-800/60 p-2.5 sm:p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs transition-colors">
+          <>
+          {/* Desktop/tablet: giữ nguyên thiết kế dạng pill gọn như cũ */}
+          <div className="hidden sm:flex mb-3 rounded-xl border border-sky-200/80 bg-sky-50/70 dark:bg-sky-950/25 dark:border-sky-800/60 p-2.5 sm:p-3 flex-col sm:flex-row sm:items-center justify-between gap-2.5 shadow-xs transition-colors">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
               <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100">
                 <span className="w-6 h-6 rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/60 dark:text-sky-300 flex items-center justify-center text-xs">📞</span>
-                {/* Mobile: bấm gọi thẳng; Desktop: chỉ hiển thị text như cũ */}
-                <a href={`tel:${detectedPhone}`} className="sm:hidden hover:underline underline-offset-2">
-                  {detectedPhone}
-                </a>
-                <span className="hidden sm:inline">{detectedPhone}</span>
+                <span>{detectedPhone}</span>
               </span>
 
               {(post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name) && (
@@ -858,6 +856,90 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               </button>
             </div>
           </div>
+
+          {/* Mobile: Việc 2 (toàn khối SĐT nằm trong 1 link tel: duy nhất, icon vào trong) +
+              Việc 3 (khối phóng to, số to in đậm, badge dưới số, chevron gợi ý bấm được) */}
+          <div className="sm:hidden mb-3">
+            <a
+              href={`tel:${detectedPhone}`}
+              className="flex items-center gap-3 rounded-xl border border-sky-200/80 bg-sky-50/70 dark:bg-sky-950/25 dark:border-sky-800/60 p-3 shadow-xs active:scale-[0.99] active:bg-sky-100/70 transition-all"
+            >
+              <span className="shrink-0 w-[38px] h-[38px] rounded-full bg-sky-600 text-white flex items-center justify-center text-base">
+                📞
+              </span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-[17px] font-bold text-slate-900 dark:text-slate-50 truncate">
+                  {detectedPhone}
+                </span>
+                <span className="mt-1 flex flex-wrap items-center gap-1">
+                  {(post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name) && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-sky-700 dark:text-sky-300 bg-sky-100/60 dark:bg-sky-900/40 px-1.5 py-0.5 rounded-md">
+                      Zalo: {post.auto_seeding_comment?.zalo_display_name || (post as any).zalo_display_name}
+                    </span>
+                  )}
+                  {effectiveZaloStatus === "sent" ? (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300/60">
+                      ✓ Đã nhắn Zalo{effectiveZaloSentBy ? ` (${effectiveZaloSentBy})` : ""}
+                    </span>
+                  ) : effectiveZaloStatus === "failed" ? (
+                    <span
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                      title={post.auto_seeding_comment?.zalo_error || undefined}
+                    >
+                      ⚠️ Chưa nhắn được qua Zalo
+                    </span>
+                  ) : null}
+                  <ZaloKpiStatusBadge
+                    kpiStatus={effectiveZaloKpiStatus}
+                    zaloStatus={effectiveZaloStatus}
+                  />
+                </span>
+              </span>
+              <ChevronRight className="shrink-0 w-5 h-5 text-sky-400" />
+            </a>
+
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowZaloContactModal(true)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold shadow-xs active:scale-95 transition-all",
+                  effectiveZaloStatus === "sent"
+                    ? "bg-emerald-600 hover:bg-emerald-500 text-white"
+                    : "bg-sky-600 hover:bg-sky-500 text-white"
+                )}
+                title={
+                  effectiveZaloStatus === "sent"
+                    ? `Đã được nhắn tin Zalo bởi ${effectiveZaloSentBy || "thành viên"}. Bấm để xem hoặc nhắn thêm.`
+                    : "Chọn tài khoản Zalo đang kết nối để nhắn tin tới khách hàng"
+                }
+              >
+                <FiMessageSquare className="w-3.5 h-3.5" />
+                <span>{effectiveZaloStatus === "sent" ? `✓ ${effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn` : "Đã nhắn Zalo"}` : "Nhắn tin Zalo"}</span>
+              </button>
+
+              {(effectiveZaloConvId || post.auto_seeding_comment?.zalo_conversation_id) && (
+                <a
+                  href={`/all-platform/zalo-inbox?conv=${encodeURIComponent(effectiveZaloConvId || post.auto_seeding_comment?.zalo_conversation_id || "")}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 rounded-lg border border-sky-300 dark:border-sky-700 px-2.5 py-1.5 text-xs font-medium text-sky-700 dark:text-sky-300 hover:bg-sky-100/60 dark:hover:bg-sky-900/40 transition-colors"
+                >
+                  <span>Hộp thoại</span>
+                  <FiExternalLink className="w-3 h-3" />
+                </a>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowLeadDrawer(true)}
+                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1.5 text-xs font-bold text-white shadow-xs active:scale-95 transition-all"
+              >
+                + Lead
+              </button>
+            </div>
+          </div>
+          </>
         ) : null}
 
         {/* Bình luận cào được từ chính bài viết (LinkedIn, extension >= 2.0) */}
@@ -893,26 +975,28 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
 
           <div className="flex items-center gap-2.5 flex-wrap">
             {isYouTube ? (
-              <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt xem">
+              <span className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt xem">
                 👁 {(post.view_count || 0).toLocaleString()} lượt xem
               </span>
             ) : (
               <>
-                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
+                <span className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 bg-amber-50/60 text-amber-700 rounded-md text-[11px] font-bold border border-amber-100/40" title="Lượt thích/Cảm xúc">
                   👍 {post.reactions?.toLocaleString() || 0}
                 </span>
-                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
+                <span className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 bg-muted text-muted-foreground rounded-md text-[11px] font-bold border border-border" title="Lượt bình luận">
                   💬 {post.comments?.toLocaleString() || 0}
                 </span>
-                <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
+                <span className="shrink-0 flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 rounded-md text-[11px] font-bold border border-blue-100/50" title="Lượt chia sẻ">
                   🔁 {post.shares?.toLocaleString() || 0}
                 </span>
               </>
             )}
 
-            {/* Đánh giá và Kết quả liên hệ */}
-            <EvaluationDropdown post={post} />
-            <PostCallResultDropdown post={postForCallResultDropdown} />
+            {/* Đánh giá và Kết quả liên hệ. Việc 4: className flex-1 min-w-0 chỉ áp dụng
+                dưới sm (mobile) để 2 dropdown chia đều phần còn lại cạnh pill 👍/💬 trên
+                cùng 1 hàng flex-wrap; từ sm trở lên quay về kích thước tự nhiên như cũ. */}
+            <EvaluationDropdown post={post} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
+            <PostCallResultDropdown post={postForCallResultDropdown} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
 
             {/* Việc 3 (mobile): hàng pill "đề xuất nhanh" cho Kết quả liên hệ, ngay dưới
                 2 dropdown trên (w-full ép flex-wrap xuống hàng mới). Chỉ hiện ở mobile,
@@ -999,27 +1083,57 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
           </div>
 
           <div className="flex items-center gap-2">
-            {effectiveZaloStatus === "sent" ? (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300">
-                ✓ {effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn Zalo` : "Đã nhắn Zalo"}
-              </span>
-            ) : isRejected(post.link_comment) ? (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-red-100 text-red-700 border-red-200">
-                X Bị từ chối
-              </span>
-            ) : (effectiveSeeding && effectiveSeeding.verify_status === "yes") || (verifyStatus === "yes") ? (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
-                ✓ Đã comment
-              </span>
-            ) : (effectiveSeeding && effectiveSeeding.verify_status === "pending") || verifyStatus === "pending" ? (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300">
-                ⏳ Đang làm nhiệm vụ
-              </span>
-            ) : (
-              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-muted text-muted-foreground border-border">
-                Chưa seeding
-              </span>
-            )}
+            {/* Việc 5 (mobile): avatar tròn viết tắt người được gán, đặt cạnh badge trạng
+                thái seeding (đã rút gọn không viền/không nền ngay bên dưới). Desktop vẫn
+                giữ nguyên PostAssigneeDropdown đầy đủ ở khối bên trái (dòng ~1077). */}
+            <PostAssigneeDropdown
+              postId={post.id || post.post_url}
+              teamMembers={teamMembers}
+              initialAssignee={assigneeInitialAssignee}
+              compact
+              className="sm:hidden"
+            />
+
+            {/* Desktop/tablet: giữ nguyên badge trạng thái dạng pill viền + nền như cũ */}
+            <span className="hidden sm:inline-flex">
+              {effectiveZaloStatus === "sent" ? (
+                <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-950/60 dark:text-sky-300">
+                  ✓ {effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn Zalo` : "Đã nhắn Zalo"}
+                </span>
+              ) : isRejected(post.link_comment) ? (
+                <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-red-100 text-red-700 border-red-200">
+                  X Bị từ chối
+                </span>
+              ) : (effectiveSeeding && effectiveSeeding.verify_status === "yes") || (verifyStatus === "yes") ? (
+                <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-emerald-100 text-emerald-700 border-emerald-200">
+                  ✓ Đã comment
+                </span>
+              ) : (effectiveSeeding && effectiveSeeding.verify_status === "pending") || verifyStatus === "pending" ? (
+                <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300">
+                  ⏳ Đang làm nhiệm vụ
+                </span>
+              ) : (
+                <span className="px-2.5 py-1 rounded-md text-[11px] font-bold border bg-muted text-muted-foreground border-border">
+                  Chưa seeding
+                </span>
+              )}
+            </span>
+
+            {/* Mobile: Việc 5 — rút gọn badge trạng thái thành text nhỏ, không viền/không
+                nền, đặt cạnh avatar người được gán ở trên. */}
+            <span className="sm:hidden text-[11px] font-bold">
+              {effectiveZaloStatus === "sent" ? (
+                <span className="text-sky-700 dark:text-sky-300">✓ {effectiveZaloSentBy ? `${effectiveZaloSentBy} đã nhắn Zalo` : "Đã nhắn Zalo"}</span>
+              ) : isRejected(post.link_comment) ? (
+                <span className="text-red-600">X Bị từ chối</span>
+              ) : (effectiveSeeding && effectiveSeeding.verify_status === "yes") || (verifyStatus === "yes") ? (
+                <span className="text-emerald-700">✓ Đã comment</span>
+              ) : (effectiveSeeding && effectiveSeeding.verify_status === "pending") || verifyStatus === "pending" ? (
+                <span className="text-amber-700 dark:text-amber-300">⏳ Đang làm nhiệm vụ</span>
+              ) : (
+                <span className="text-muted-foreground">Chưa seeding</span>
+              )}
+            </span>
 
             {/* Nút xem bình luận trực tiếp trên card (chỉ hiện khi đã có link comment minh
                 chứng thật) — Việc 4 (mobile): ẩn ở đây, gom vào popover "..." cạnh "Làm
@@ -1074,25 +1188,28 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               <span>📋 Làm nhiệm vụ</span>
             </button>
 
-            {/* Việc 4 (mobile): gom "Gán seeding" + "Xem bình luận" + "Xem seeding theo
-                team" (ẩn ở vị trí gốc phía trên/dưới trên mobile) vào 1 popover riêng,
-                tách biệt với "Tùy chọn khác" (Xem chi tiết/Lên lịch/Xóa) bên dưới. */}
+            {/* Việc 5 (mobile): gộp 2 nút "..." cũ (MobilePostActionsSheet + "Tùy chọn
+                khác") thành 1 nút duy nhất, mở popover chứa cả 2 nhóm hành động (xem
+                MobilePostActionsSheet bên dưới). Desktop không đổi — vẫn chỉ 1 nút
+                "Tùy chọn khác" như cũ (hidden sm:inline-flex ở nút kế bên). */}
             <button
               type="button"
               onClick={() => setIsMobileActionsOpen(true)}
               className="sm:hidden px-2.5 py-2 bg-card border border-border text-muted-foreground hover:bg-muted rounded-lg transition shadow-sm cursor-pointer"
               aria-label="Thêm hành động"
-              title="Thêm hành động (Gán seeding / Xem bình luận / Xem seeding theo team)"
+              title="Thêm hành động"
             >
               <span className="material-symbols-outlined text-[18px] leading-none block">more_vert</span>
             </button>
 
             {/* Cac hanh dong it dung hon (Xem chi tiet / Len lich / Xoa) gom vao 1 modal
-                rieng, mo qua nut 3 cham - giu footer gon, chi con 3 nut chinh o tren. */}
+                rieng, mo qua nut 3 cham - giu footer gon, chi con 3 nut chinh o tren.
+                Việc 5 (mobile): ẩn nút này trên mobile vì đã gộp vào nút "..." duy nhất
+                phía trên; desktop giữ nguyên như cũ. */}
             <button
               type="button"
               onClick={() => setIsMoreMenuOpen(true)}
-              className="px-2.5 py-2 bg-card border border-border text-muted-foreground hover:bg-muted rounded-lg transition shadow-sm cursor-pointer"
+              className="hidden sm:inline-flex px-2.5 py-2 bg-card border border-border text-muted-foreground hover:bg-muted rounded-lg transition shadow-sm cursor-pointer"
               aria-label="Tùy chọn khác"
               title="Tùy chọn khác"
             >
@@ -1115,6 +1232,10 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
           commentProofHref={commentProofHref}
           showSeedingRosterBtn={showSeedingRosterBtn}
           onViewSeedingRoster={onViewSeedingRoster}
+          onViewDetail={handleView}
+          onSchedule={onSchedule}
+          onDelete={onDelete}
+          onProposeKeyword={() => setIsProposeKeywordOpen(true)}
           onClose={() => setIsMobileActionsOpen(false)}
         />
       )}
@@ -1746,9 +1867,12 @@ function TaskModal({ post, onClose, onCommentSuccess }: { post: UnifiedPost; onC
   );
 }
 
-// Việc 4: popover mobile gom "Gán seeding" + "Xem bình luận" + "Xem seeding theo team" —
-// 3 hành động này vẫn hiển thị inline như cũ trên desktop (sm: trở lên), chỉ gom lại ở
-// đây khi màn hình nhỏ. Tách biệt với MoreActionsModal (Xem chi tiết/Lên lịch/Xóa...).
+// Việc 5: popover mobile gộp DUY NHẤT 1 nút "..." chứa cả 2 nhóm hành động trước đây
+// tách thành 2 nút riêng — nhóm MỚI (Gán seeding/Xem bình luận/Xem seeding theo team,
+// vẫn hiển thị inline như cũ trên desktop) phía trên, 1 đường kẻ ngang, rồi tới nhóm CŨ
+// (Xem chi tiết/Lên lịch/Đề xuất từ khóa loại trừ/Xóa — y hệt MoreActionsModal, chỉ gộp
+// hiển thị, giữ nguyên handler từng mục) phía dưới. Desktop không đổi, vẫn dùng riêng
+// MoreActionsModal qua nút "Tùy chọn khác" như cũ.
 function MobilePostActionsSheet({
   post,
   teamMembers,
@@ -1756,6 +1880,10 @@ function MobilePostActionsSheet({
   commentProofHref,
   showSeedingRosterBtn,
   onViewSeedingRoster,
+  onViewDetail,
+  onSchedule,
+  onDelete,
+  onProposeKeyword,
   onClose,
 }: {
   post: UnifiedPost;
@@ -1764,6 +1892,10 @@ function MobilePostActionsSheet({
   commentProofHref: string | null;
   showSeedingRosterBtn: boolean;
   onViewSeedingRoster?: (post: UnifiedPost) => void;
+  onViewDetail: () => void;
+  onSchedule?: (post: UnifiedPost) => void;
+  onDelete?: (post: UnifiedPost) => void | Promise<void>;
+  onProposeKeyword?: () => void;
   onClose: () => void;
 }) {
   return (
@@ -1814,6 +1946,63 @@ function MobilePostActionsSheet({
             >
               <span>👥</span>
               <span>Xem seeding theo team</span>
+            </button>
+          )}
+
+          {/* Việc 5: đường kẻ ngang phân cách nhóm mới/cũ */}
+          <div className="border-t border-border my-0.5" />
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onViewDetail();
+            }}
+            className="text-left px-3 py-2.5 rounded-xl hover:bg-muted flex items-center gap-2 text-sm font-semibold text-foreground"
+          >
+            <span className="material-symbols-outlined text-[18px] text-primary">visibility</span>
+            Xem chi tiết
+          </button>
+
+          {onSchedule && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onSchedule(post);
+              }}
+              className="text-left px-3 py-2.5 rounded-xl hover:bg-muted flex items-center gap-2 text-sm font-semibold text-foreground"
+            >
+              <span className="material-symbols-outlined text-[18px] text-amber-600">schedule</span>
+              Lên lịch
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onProposeKeyword?.();
+            }}
+            className="text-left px-3 py-2.5 rounded-xl hover:bg-rose-50 flex items-center gap-2 text-sm font-semibold text-rose-600 transition cursor-pointer"
+          >
+            <span className="material-symbols-outlined text-[18px]">filter_alt</span>
+            Đề xuất từ khóa loại trừ
+          </button>
+
+          {onDelete && post.id && (
+            <button
+              type="button"
+              onClick={() => {
+                const ok = window.confirm(`Xóa bài viết này?\n\n${post.group_name || "(không có nhóm)"}`);
+                if (!ok) return;
+                onClose();
+                void onDelete(post);
+              }}
+              className="text-left px-3 py-2.5 rounded-xl hover:bg-red-50 flex items-center gap-2 text-sm font-semibold text-red-600"
+            >
+              <span className="material-symbols-outlined text-[18px]">delete</span>
+              Xóa bài viết
             </button>
           )}
         </div>

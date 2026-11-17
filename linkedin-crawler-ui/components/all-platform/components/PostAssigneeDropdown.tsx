@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { allPlatformUsersService } from "@/services/all-platform.service";
+import { getInitials } from "@/components/all-platform/layout/AllPlatformSidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 export interface PostMemberItem {
   email: string;
@@ -18,6 +20,10 @@ interface PostAssigneeDropdownProps {
   initialAssignee?: PostMemberItem | null;
   onAssigneeChange?: (member: PostMemberItem | null) => void;
   className?: string;
+  // Việc 5 (mobile): hiện trigger dạng avatar tròn viết tắt (getInitials) thay vì pill
+  // tên đầy đủ, kèm Tooltip hiện tên đầy đủ khi chạm/hover — logic gán/bỏ gán giữ nguyên,
+  // chỉ đổi hình thức hiển thị của nút trigger.
+  compact?: boolean;
 }
 
 export function PostAssigneeDropdown({
@@ -26,6 +32,7 @@ export function PostAssigneeDropdown({
   initialAssignee,
   onAssigneeChange,
   className,
+  compact,
 }: PostAssigneeDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -145,37 +152,68 @@ export function PostAssigneeDropdown({
     }
   };
 
+  const assigneeLabel = currentAssignee?.name || currentAssignee?.email || "Gán seeding";
+
   return (
     <div className={cn("relative inline-block text-left", className)} ref={containerRef}>
       {/* Trigger Button */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer select-none",
-          currentAssignee
-            ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 font-semibold shadow-xs"
-            : "bg-background text-foreground border-border hover:bg-muted shadow-2xs"
-        )}
-        title={
-          currentAssignee
-            ? `Người phụ trách seeding: ${currentAssignee.name || currentAssignee.email}`
-            : "Gán người phụ trách seeding bài viết này"
-        }
-      >
-        <span className="material-symbols-outlined text-[15px] opacity-80 leading-none">
-          person
-        </span>
-        <span className="truncate max-w-[130px]">
-          {currentAssignee?.name || currentAssignee?.email || "Gán seeding"}
-        </span>
-        <span className="material-symbols-outlined text-[15px] opacity-70 ml-0.5 leading-none">
-          expand_more
-        </span>
-      </button>
+      {compact ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsOpen(!isOpen);
+              }}
+              className={cn(
+                "inline-flex items-center justify-center w-7 h-7 rounded-full text-[11px] font-bold border transition cursor-pointer select-none shrink-0",
+                currentAssignee
+                  ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300"
+                  : "bg-background text-muted-foreground border-border hover:bg-muted"
+              )}
+            >
+              {currentAssignee ? getInitials(assigneeLabel) : (
+                <span className="material-symbols-outlined text-[15px] leading-none">person</span>
+              )}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <span className="font-medium text-xs">
+              {currentAssignee ? `Người phụ trách seeding: ${assigneeLabel}` : "Gán người phụ trách seeding bài viết này"}
+            </span>
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsOpen(!isOpen);
+          }}
+          className={cn(
+            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer select-none",
+            currentAssignee
+              ? "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950/40 dark:text-purple-300 font-semibold shadow-xs"
+              : "bg-background text-foreground border-border hover:bg-muted shadow-2xs"
+          )}
+          title={
+            currentAssignee
+              ? `Người phụ trách seeding: ${assigneeLabel}`
+              : "Gán người phụ trách seeding bài viết này"
+          }
+        >
+          <span className="material-symbols-outlined text-[15px] opacity-80 leading-none">
+            person
+          </span>
+          <span className="truncate max-w-[130px]">
+            {assigneeLabel}
+          </span>
+          <span className="material-symbols-outlined text-[15px] opacity-70 ml-0.5 leading-none">
+            expand_more
+          </span>
+        </button>
+      )}
 
       {/* Dropdown Menu */}
       {isOpen && (
