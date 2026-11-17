@@ -307,11 +307,36 @@ def get_call_result_stats(
 
     by_day = [{"day": day, "count": count} for day, count in sorted(by_day_count.items())]
 
+    # Cột "Comment" (widget Kết quả liên hệ) — đếm số dòng seeding_content_kpi trong cùng kỳ
+    # và kỳ trước liền kề (cùng độ dài) để tính xu hướng "+N"/"-N", giống cách get_post_feed_message_stats
+    # (zalo_inbox_kpi_service.py) tính prev_sent cho cột Zalo. seeding_content_kpi không có cột
+    # platform đáng tin cậy ở mọi dòng lịch sử (xem post_contact_activity_service.py) nên KHÔNG lọc
+    # theo platform ở đây, chỉ lọc theo id_member — giống mọi chỗ khác đang đếm bảng này.
+    span_days = (end_d - start_d).days + 1
+    prev_end_d = start_d - timedelta(days=1)
+    prev_start_d = prev_end_d - timedelta(days=span_days - 1)
+    prev_start_utc, prev_end_utc = _vn_week_range_to_utc(prev_start_d.isoformat(), prev_end_d.isoformat())
+
+    def _count_seeding_comments(gte_utc: str, lte_utc: str) -> int:
+        try:
+            query = supabase.table("seeding_content_kpi").select("id_member").gte("created_at", gte_utc).lte("created_at", lte_utc)
+            if allowed_member_ids is not None:
+                query = query.in_("id_member", allowed_member_ids or [_UNREACHABLE_ID])
+            return len(execute_supabase_query(lambda: query.execute()).data or [])
+        except Exception as exc:
+            logger.warning(f"get_call_result_stats: lỗi đếm seeding_content_kpi: {exc}")
+            return 0
+
+    comment_count = _count_seeding_comments(start_utc, end_utc)
+    comment_count_prev = _count_seeding_comments(prev_start_utc, prev_end_utc)
+
     return {
         "by_type": by_type,
         "by_member": by_member,
         "by_day": by_day,
         "total": total,
+        "comment_count": comment_count,
+        "comment_count_prev": comment_count_prev,
         "range": {"start": start_d.isoformat(), "end": end_d.isoformat()},
     }
 
