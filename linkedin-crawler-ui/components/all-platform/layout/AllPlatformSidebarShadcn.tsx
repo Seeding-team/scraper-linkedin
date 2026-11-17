@@ -205,6 +205,7 @@ function GroupLinks({
   toggleGroup: (id: string, current: boolean) => void;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const Icon = materialToLucideIcon(entry.icon);
   const hasActiveChild = entry.items.some((child) =>
@@ -357,7 +358,10 @@ function GroupLinks({
                   {/* Nut tieu de subgroup */}
                   <button
                     type="button"
-                    onClick={() => toggleSubgroup(child.id, isSubOpen)}
+                    onClick={() => {
+                      toggleSubgroup(child.id, isSubOpen);
+                      if (child.href) router.push(child.href);
+                    }}
                     className={cn(
                       "group/sub flex w-full items-center justify-between gap-1.5 rounded-lg px-2 py-1 text-[11.5px] font-bold uppercase tracking-wider transition-colors outline-none cursor-pointer",
                       subHasActiveChild

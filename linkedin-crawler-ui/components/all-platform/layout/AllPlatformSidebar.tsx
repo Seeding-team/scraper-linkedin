@@ -31,6 +31,9 @@ export interface NavSubGroupItem {
   label: string;
   items: NavLeafItem[];
   defaultOpen?: boolean;
+  // Tuy chon: bam vao chinh tieu de subgroup vua toggle mo/dong (hanh vi cu)
+  // vua dieu huong toi href nay (vd "Seeding ben ngoai" -> thang "Chua danh gia").
+  href?: string;
 }
 
 export type NavGroupChild = NavLeafItem | NavSubGroupItem;
@@ -308,6 +311,7 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       icon: "travel_explore",
       label: "Seeding bên ngoài",
       defaultOpen: true,
+      href: "/all-platform/post-feed?status=pending",
       items: [
         {
           type: "item",
