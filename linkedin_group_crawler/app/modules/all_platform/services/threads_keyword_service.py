@@ -109,7 +109,7 @@ def list_all_keywords() -> list[dict[str, Any]]:
             supabase.table(TABLE_CATEGORIES)
             .select("id, name, code, description, created_at, app_user_id, is_active")
             .eq("category_type", "keyword_item")
-            .order("created_at", desc=False)
+            .order("created_at", desc=True)
             .execute()
         )
         items_rows = items_res.data or []
@@ -393,11 +393,22 @@ async def evolve_and_select_keywords(
         rows = list_all_keywords()
         active_rows = [r for r in rows if r.get("is_active")]
 
+    # Sắp xếp ưu tiên:
+    # 1. Từ khóa mới thêm trên quan-ly-nhom?tab=threads hoặc chưa cào bao giờ (times_used == 0) lên ĐẦU TIÊN
+    # 2. Từ khóa cào lâu nhất (last_used_at cũ nhất) lên kế tiếp
+    sorted_active = sorted(
+        active_rows,
+        key=lambda r: (
+            1 if (r.get("times_used") or 0) > 0 else 0,
+            r.get("last_used_at") or "",
+        ),
+    )
+
     # Deduplicate theo text (case-insensitive) nhưng giữ nguyên display casing
     seen_lower = set()
     deduped_items = []
     keywords = []
-    for r in active_rows:
+    for r in sorted_active:
         kw = str(r.get("keyword") or "").strip()
         if not kw:
             continue

@@ -2995,6 +2995,11 @@ class PublicCrawlOrchestrator:
                 meta = evolved.get("meta") or {}
                 self.active_threads_keywords = list(meta.get("items") or [])
                 self.threads_keyword_meta = {k: v for k, v in meta.items() if k != "items"}
+                self.append_log(
+                    "info",
+                    "orchestrator",
+                    f"[Threads 4G] Đã lấy {len(threads_keywords)} từ khóa từ Quản lý nhóm (tab Threads): {', '.join(threads_keywords[:10])}{'...' if len(threads_keywords) > 10 else ''}",
+                )
             if limit_groups is not None and limit_groups > 0:
                 threads_keywords = threads_keywords[:limit_groups]
             if not threads_keywords:
@@ -3193,6 +3198,11 @@ class PublicCrawlOrchestrator:
                         meta = evolved.get("meta") or {}
                         self.active_threads_keywords = list(meta.get("items") or [])
                         self.threads_keyword_meta = {k: v for k, v in meta.items() if k != "items"}
+                        self.append_log(
+                            "info",
+                            "orchestrator",
+                            f"[Threads 4G] Vòng #{self.loop_round_threads}: Đã lấy {len(threads_keywords)} từ khóa từ Quản lý nhóm (tab Threads): {', '.join(threads_keywords[:10])}{'...' if len(threads_keywords) > 10 else ''}",
+                        )
                     if limit_groups and limit_groups > 0:
                         threads_keywords = threads_keywords[:limit_groups]
                     if not threads_keywords:
