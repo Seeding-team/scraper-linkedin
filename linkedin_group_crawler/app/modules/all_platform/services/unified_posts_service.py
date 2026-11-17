@@ -493,6 +493,7 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                     sent_map[p_norm] = r
 
             if sent_map:
+                borrowed_post_ids: list[str] = []
                 for p in posts:
                     ph = (p.get("auto_seeding_comment") or {}).get("phone_number") or p.get("phone_number")
                     if not ph and p.get("content"):
@@ -511,6 +512,40 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
                         p["zalo_status"] = "sent"
                         p["zalo_sent_by"] = p["auto_seeding_comment"].get("zalo_sent_by")
                         p["zalo_display_name"] = p["auto_seeding_comment"].get("zalo_display_name")
+                        if p.get("id"):
+                            borrowed_post_ids.append(str(p["id"]))
+
+                # Các bài "ăn theo" (mượn badge qua đồng bộ SĐT, không tự nó ghi
+                # zalo_status) cũng cần được auto-promote như bài gốc — nếu không, bài
+                # này đứng im ở "chua-danh-gia" dù UI đã hiện "Đã nhắn tin Zalo" (xem
+                # post_evaluation_service.auto_promote_to_can_lien_he). Lọc trước bằng
+                # batch-query review có sẵn (get_reviews_by_post_ids, cùng hàm feed đang
+                # dùng ở get_unified_posts) để chỉ gọi auto_promote cho đúng những bài
+                # đang "chua-danh-gia"/chưa có review — tránh query DB thừa mỗi lần load
+                # feed cho các bài đã có đánh giá (tay hoặc tự động) từ trước.
+                if borrowed_post_ids:
+                    try:
+                        from app.modules.all_platform.services.post_evaluation_service import (
+                            auto_promote_to_can_lien_he,
+                            get_reviews_by_post_ids,
+                        )
+
+                        reviews_map = get_reviews_by_post_ids(borrowed_post_ids, platform=platform)
+                        for pid in borrowed_post_ids:
+                            rev = reviews_map.get(pid)
+                            current_code = rev.get("evaluation_code") if rev else None
+                            if current_code in (None, "chua-danh-gia"):
+                                try:
+                                    auto_promote_to_can_lien_he(pid, platform)
+                                except Exception as promote_exc:
+                                    _get_logger().warning(
+                                        f"[AUTO-SEEDING-COMMENT] auto_promote_to_can_lien_he (đồng bộ SĐT) "
+                                        f"thất bại post_id={pid}: {promote_exc}"
+                                    )
+                    except Exception as promote_batch_exc:
+                        _get_logger().warning(
+                            f"[AUTO-SEEDING-COMMENT] Lỗi lọc trước review để auto-promote theo SĐT: {promote_batch_exc}"
+                        )
         except Exception as e:
             _get_logger().warning(f"[AUTO-SEEDING-COMMENT] Lỗi đồng bộ trạng thái Zalo sent theo SĐT: {e}")
 
