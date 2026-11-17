@@ -321,17 +321,17 @@ export function TeamManagement() {
             if (e.key === "Enter") e.currentTarget.blur();
             if (e.key === "Escape") setEditingCell(null);
           }}
-          className="w-10 text-center text-[10px] font-bold border border-primary rounded px-0.5 py-0 outline-none focus:ring-2 focus:ring-primary/20"
+          className="w-11 text-center text-[11px] font-bold border border-primary rounded px-1 py-0.5 outline-none focus:ring-2 focus:ring-primary/20 bg-white"
         />
       );
     }
     return (
       <span
-        className="text-[10px] text-slate-400 cursor-pointer hover:underline hover:text-primary transition"
+        className="text-[11px] font-medium text-slate-400 cursor-pointer hover:underline hover:text-primary transition ml-0.5"
         title="Bấm để sửa nhanh chỉ tiêu"
         onClick={() => { setEditingCell({ memberId: member.id, field }); setEditingValue(String(value)); }}
       >
-        {" "}/ {value}
+        / {value}
       </span>
     );
   }
@@ -444,7 +444,7 @@ export function TeamManagement() {
   const toolbarButtonClass =
     "inline-flex min-h-[42px] min-w-[132px] items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-xs font-bold transition active:scale-95 cursor-pointer";
   const memberActionButtonClass =
-    "inline-flex h-9 min-w-[78px] items-center justify-center gap-1 rounded-xl px-2.5 py-2 text-[10px] font-bold transition";
+    "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg px-2.5 text-[11px] font-semibold transition active:scale-95 cursor-pointer whitespace-nowrap shrink-0 shadow-2xs";
 
   const handleDeleteTeam = async () => {
     if (!selectedTeam || !user?.id) return;
@@ -910,18 +910,18 @@ export function TeamManagement() {
           )}
         </div>
 
-        <div className="hidden w-full overflow-x-auto md:block">
-          <table className="w-full min-w-[760px] text-left text-[12px]">
-            <thead className="bg-slate-50/75 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+        <div className="hidden w-full overflow-x-auto md:block max-h-[calc(100vh-250px)] overflow-y-auto">
+          <table className="w-full min-w-[860px] text-left text-[12px] border-collapse">
+            <thead className="sticky top-0 z-10 bg-slate-100 border-b border-slate-200 text-[11px] font-bold text-slate-600 uppercase tracking-wider shadow-xs">
               <tr>
-                <th className="px-3 py-2.5 text-left whitespace-nowrap">Thành viên</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap text-[#ba244a]" title="Số cuộc gọi tư vấn khách hàng ghi nhận từ Post Call Results">Cuộc gọi (CALL)</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap">Comment</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap" title="Số HỘI THOẠI tính KPI: Zalo đã xác minh + Facebook đã tính KPI">Inbox</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap" title="Số TIN NHẮN khách gửi tới. Chỉ tham khảo — không cộng vào KPI Inbox.">Khách reply (tham khảo)</th>
-                <th className="px-1 py-2.5 text-center whitespace-nowrap">Lead</th>
-                <th className="px-2 py-2.5 text-center whitespace-nowrap">Tiến độ</th>
-                <th className="px-2 py-2.5 text-center whitespace-nowrap">Hành động</th>
+                <th className="px-4 py-3 text-left whitespace-nowrap bg-slate-100 min-w-[180px]">Thành viên</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap text-[#ba244a] bg-slate-100 min-w-[95px]" title="Số cuộc gọi tư vấn khách hàng ghi nhận từ Post Call Results">Cuộc gọi (CALL)</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[85px]">Comment</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[85px]" title="Số HỘI THOẠI tính KPI: Zalo đã xác minh + Facebook đã tính KPI">Inbox</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[130px]" title="Số TIN NHẮN khách gửi tới. Chỉ tham khảo — không cộng vào KPI Inbox.">Khách reply (tham khảo)</th>
+                <th className="px-2 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[80px]">Lead</th>
+                <th className="px-3 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[110px]">Tiến độ</th>
+                <th className="px-3 py-3 text-center whitespace-nowrap bg-slate-100 min-w-[330px]">Hành động</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -949,53 +949,53 @@ export function TeamManagement() {
                   const percent = totalTarget === 0 ? 0 : Math.min(100, Math.round((totalCurrent / totalTarget) * 100));
 
                   return (
-                    <tr key={member.id} className="transition hover:bg-slate-50/50">
-                      <td className="px-3 py-2.5">
-                        <div className="flex items-center gap-1.5">
+                    <tr key={member.id} className="transition hover:bg-slate-50/70 border-b border-slate-100 last:border-b-0">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
                           <span className="whitespace-nowrap text-xs font-bold text-slate-800">{member.name || "N/A"}</span>
                           {totalTarget === 0 && (
                             <span
-                              className="whitespace-nowrap rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700"
+                              className="whitespace-nowrap rounded-full bg-amber-50 border border-amber-200/60 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700"
                               title="Tuần này chưa giao chỉ tiêu KPI cho thành viên này"
                             >
                               Chưa giao KPI
                             </span>
                           )}
                         </div>
-                        <div className="max-w-[120px] truncate text-[10px] font-medium text-slate-400" title={member.email}>{member.email}</div>
+                        <div className="max-w-[160px] truncate text-[11px] font-medium text-slate-400 mt-0.5" title={member.email}>{member.email}</div>
                       </td>
-                      <td className="px-1 py-2.5 text-center">
-                        <span className={cn("text-[11px] font-bold", member.kpiCallCurrent > 0 ? "text-[#ba244a]" : "text-slate-800")}>{member.kpiCallCurrent}</span>
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
+                        <span className={cn("text-[12px] font-bold", member.kpiCallCurrent > 0 ? "text-[#ba244a]" : "text-slate-800")}>{member.kpiCallCurrent}</span>
                         <InlineKpiTarget member={member} field="kpiCallTarget" value={member.kpiCallTarget} />
                       </td>
-                      <td className="px-1 py-2.5 text-center">
-                        <span className="text-[11px] font-bold text-slate-800">{member.kpiCommentCurrent}</span>
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
+                        <span className="text-[12px] font-bold text-slate-800">{member.kpiCommentCurrent}</span>
                         <InlineKpiTarget member={member} field="kpiCommentTarget" value={member.kpiCommentTarget} />
                       </td>
-                      <td className="px-1 py-2.5 text-center">
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
                         <span
-                          className={cn("text-[11px] font-bold", member.kpiInboxCurrent >= member.kpiInboxTarget && member.kpiInboxTarget > 0 ? "text-emerald-600" : "text-slate-800")}
+                          className={cn("text-[12px] font-bold", member.kpiInboxCurrent >= member.kpiInboxTarget && member.kpiInboxTarget > 0 ? "text-emerald-600" : "text-slate-800")}
                           title={`Tổng ${member.kpiInboxCurrent} hội thoại — Zalo đã xác minh: ${member.kpiInboxZalo}, Facebook đã tính KPI: ${member.kpiInboxFbKpi}`}
                         >
                           {member.kpiInboxCurrent}
                         </span>
                         <InlineKpiTarget member={member} field="kpiInboxTarget" value={member.kpiInboxTarget} />
                       </td>
-                      <td className="px-1 py-2.5 text-center">
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
                         <span
-                          className="text-[11px] font-bold text-slate-500"
+                          className="text-[12px] font-bold text-slate-500"
                           title="Số tin nhắn khách gửi tới trong tuần. Chỉ để tham khảo — KHÔNG cộng vào KPI Inbox."
                         >
                           {member.replyCurrent}
                         </span>
                       </td>
-                      <td className="px-1 py-2.5 text-center">
-                        <span className="text-[11px] font-bold text-slate-800">{member.kpiLeadCurrent}</span>
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
+                        <span className="text-[12px] font-bold text-slate-800">{member.kpiLeadCurrent}</span>
                         <InlineKpiTarget member={member} field="kpiLeadTarget" value={member.kpiLeadTarget} />
                       </td>
-                      <td className="px-2 py-2.5">
-                        <div className="flex items-center gap-1.5">
-                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 flex-1 min-w-[50px] overflow-hidden rounded-full bg-slate-100">
                             <div
                               className={cn("h-full rounded-full transition-all duration-500", percent >= 100 ? "bg-emerald-500" : percent > 50 ? "bg-amber-500" : "bg-[#ba244a]")}
                               style={{ width: `${percent}%` }}
@@ -1013,14 +1013,14 @@ export function TeamManagement() {
                           </span>
                         </div>
                       </td>
-                      <td className="px-2 py-2.5">
-                        <div className="flex flex-wrap items-center justify-center gap-2">
+                      <td className="px-3 py-3 text-center whitespace-nowrap min-w-[330px]">
+                        <div className="flex items-center justify-center gap-1.5 flex-nowrap">
                           <button onClick={() => handleViewSeeding(member)}
                             className={cn(
                               memberActionButtonClass,
-                              "border border-blue-100 bg-blue-50 text-blue-700 hover:bg-blue-100",
+                              "border border-blue-200 bg-blue-50/80 text-blue-700 hover:bg-blue-100",
                             )}>
-                            <MaterialIcon name="visibility" className="text-[12px]" />Seeding
+                            <MaterialIcon name="visibility" className="text-[13px]" />Seeding
                           </button>
                           <button onClick={() => {
                             setInboxMember({ email: member.email, name: member.name || member.email });
@@ -1028,9 +1028,9 @@ export function TeamManagement() {
                           }}
                             className={cn(
                               memberActionButtonClass,
-                              "border border-orange-100 bg-orange-50 text-orange-700 hover:bg-orange-100",
+                              "border border-orange-200 bg-orange-50/80 text-orange-700 hover:bg-orange-100",
                             )}>
-                            <MaterialIcon name="forum" className="text-[12px]" />Inbox
+                            <MaterialIcon name="forum" className="text-[13px]" />Inbox
                           </button>
                           <button onClick={() => {
                             setPostMember({ email: member.email, name: member.name || member.email });
@@ -1038,16 +1038,16 @@ export function TeamManagement() {
                           }}
                             className={cn(
                               memberActionButtonClass,
-                              "border border-red-100 bg-red-50 text-[#ba244a] hover:bg-red-100",
+                              "border border-red-200 bg-red-50/80 text-[#ba244a] hover:bg-red-100",
                             )}>
-                            <MaterialIcon name="call" className="text-[12px]" />Cuộc gọi
+                            <MaterialIcon name="call" className="text-[13px]" />Cuộc gọi
                           </button>
                           <button onClick={() => handleAssignKpi(member)}
                             className={cn(
                               memberActionButtonClass,
-                              "border border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200",
+                              "border border-slate-200 bg-slate-100/90 text-slate-700 hover:bg-slate-200",
                             )}>
-                            <MaterialIcon name="assignment" className="text-[12px]" />KPI
+                            <MaterialIcon name="assignment" className="text-[13px]" />KPI
                           </button>
                         </div>
                       </td>
