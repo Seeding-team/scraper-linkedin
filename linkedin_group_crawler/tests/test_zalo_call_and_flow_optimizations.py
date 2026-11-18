@@ -259,8 +259,8 @@ def test_module1_zca_call_engine_crypto_and_signaling():
         check=True,
     )
     out_b = json.loads(proc_b.stdout.strip().splitlines()[-1])
-    assert out_b["res"]["ok"] is False
     assert out_b["res"]["status"] == "privacy_blocked"
+    assert out_b["res"].get("call_ok") is False
     assert (
         "không muốn nhận cuộc gọi" in out_b["res"]["request_warning"]
         or "chặn người lạ" in out_b["res"]["request_warning"]

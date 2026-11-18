@@ -490,6 +490,8 @@ async def start_call_session(
             session.customer_name = str(profile["display_name"])
 
         req_res = sig_res.get("requestcall_result")
+        sig_status = sig_res.get("status")
+        raw_status = None
         if isinstance(req_res, dict):
             remote_candidate = (
                 req_res.get("rtpAddress")
@@ -499,36 +501,35 @@ async def start_call_session(
             parsed_remote = _parse_host_port(remote_candidate)
             if parsed_remote:
                 session.remote_rtp_addr = parsed_remote
-
             raw_status = req_res.get("status")
-            if raw_status is not None and int(raw_status) != 0:
-                if int(raw_status) == 7:
-                    session.status = "privacy_blocked"
-                    session.warning = str(req_res.get("msg") or "Đối phương hiện không nhận cuộc gọi từ người lạ (hoặc chưa kết bạn trên Zalo).")
-                else:
-                    session.status = "rejected"
-                    session.warning = str(req_res.get("msg") or f"Cuộc gọi bị từ chối từ Zalo (status: {raw_status}).")
-                session.ended_at = time.time()
-                session.close_media()
-            elif sig_res.get("ok") is False:
-                session.status = "failed"
-                session.warning = str(sig_res.get("request_warning") or "Không thể khởi tạo cuộc gọi.")
-                session.ended_at = time.time()
-                session.close_media()
-            else:
-                session.status = "ringing"
-                if sig_res.get("request_warning"):
-                    session.warning = str(sig_res["request_warning"])
+
+        if sig_status == "privacy_blocked" or (raw_status is not None and int(raw_status) == 7):
+            session.status = "privacy_blocked"
+            session.warning = str(
+                sig_res.get("request_warning")
+                or (req_res and req_res.get("msg"))
+                or "Đối phương hiện không nhận cuộc gọi từ người lạ (hoặc chưa kết bạn trên Zalo)."
+            )
+            session.ended_at = time.time()
+            session.close_media()
+        elif sig_status == "rejected" or (raw_status is not None and int(raw_status) != 0):
+            session.status = "rejected"
+            session.warning = str(
+                sig_res.get("request_warning")
+                or (req_res and req_res.get("msg"))
+                or f"Cuộc gọi bị từ chối từ Zalo (status: {raw_status})."
+            )
+            session.ended_at = time.time()
+            session.close_media()
+        elif sig_res.get("ok") is False or sig_res.get("call_ok") is False:
+            session.status = "failed"
+            session.warning = str(sig_res.get("request_warning") or "Không thể khởi tạo cuộc gọi.")
+            session.ended_at = time.time()
+            session.close_media()
         else:
-            if sig_res.get("ok") is False:
-                session.status = "failed"
-                session.warning = str(sig_res.get("request_warning") or "Lỗi khởi tạo cuộc gọi")
-                session.ended_at = time.time()
-                session.close_media()
-            else:
-                session.status = "ringing"
-                if sig_res.get("request_warning"):
-                    session.warning = str(sig_res["request_warning"])
+            session.status = "ringing"
+            if sig_res.get("request_warning"):
+                session.warning = str(sig_res["request_warning"])
     except Exception as sig_exc:
         session.warning = str(sig_exc)
         session.status = "failed"

@@ -333,7 +333,8 @@ async function startDirectZaloCall(
   }
 
   return {
-    ok: !isRejectedOrBusy,
+    ok: true,
+    call_ok: !isRejectedOrBusy,
     call_id: effectiveCallId,
     callee_id: targetUid,
     session: serverSession,
