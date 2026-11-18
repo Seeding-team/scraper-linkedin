@@ -41,80 +41,60 @@ jobs:
           echo "=== LAST 50 LINES OF ROUTER LOGS ==="
           docker logs --tail 50 seeding-router || true
 
-      - name: 6. Test Direct Call Signaling in Container
+      - name: 6. Test Direct Call Signaling Matrix in Container
         run: |
-          echo "=== TESTING DIRECT CALL SIGNALING MATRIX IN BACKEND CONTAINER ==="
+          echo "=== EXPORTING ZCA AUTH TO /tmp/test_auth.json INSIDE CONTAINER ==="
           docker exec -i seeding-backend python -c '
           import asyncio, json
           from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
-          from app.modules.all_platform.zalo.services.zca_api_bridge import _run_zca_command
 
-          async def run_test():
+          async def export_auth():
               auth = await load_zca_auth("zl_f2c46742")
-              print("AUTH_OK:", bool(auth))
-              callee_id = "6363678867120121443"
+              if not auth:
+                  print("ERROR: No auth for zl_f2c46742")
+                  return
+              with open("/tmp/test_auth.json", "w") as f:
+                  json.dump(auth, f)
+              print("AUTH EXPORTED OK!")
 
-              # 1. Step 1: RequestCall
-              print("--- STEP 1: 11300 requestcall ---")
-              s1 = await _run_zca_command("call-signal", auth, payload={
-                  "command": 11300,
-                  "calleeId": callee_id,
-                  "callId": 888777333,
-                  "codec": "[]",
-                  "typeRequest": 1,
-              })
-              print("STEP 1 RESULT:", json.dumps(s1, ensure_ascii=False))
-              s1_data = s1.get("response", {}).get("data") or {}
+          asyncio.run(export_auth())
+          '
 
-              # 2. Test Step 2 variations
-              variants = [
-                  {
-                      "name": "P1_rtpIP_sessId_subCommand3",
-                      "command": 11301,
-                      "calleeId": callee_id,
-                      "toId": s1_data.get("toId"),
-                      "callId": s1_data.get("id", 888777333),
-                      "rtpAddress": s1_data.get("rtpIP"),
-                      "rtcpAddress": s1_data.get("rtcpIP", s1_data.get("rtpIP")),
-                      "extendData": s1_data.get("sessId"),
-                      "session": s1_data.get("id", 888777333),
-                  },
-                  {
-                      "name": "P2_session_as_sessId",
-                      "command": 11301,
-                      "calleeId": callee_id,
-                      "toId": s1_data.get("toId"),
-                      "callId": s1_data.get("id", 888777333),
-                      "rtpAddress": s1_data.get("rtpIP"),
-                      "rtcpAddress": s1_data.get("rtcpIP", s1_data.get("rtpIP")),
-                      "session": s1_data.get("sessId"),
-                  },
-                  {
-                      "name": "P3_no_extendData_with_rtpIP",
-                      "command": 11301,
-                      "calleeId": callee_id,
-                      "callId": s1_data.get("id", 888777333),
-                      "rtpAddress": s1_data.get("rtpIP"),
-                      "rtcpAddress": s1_data.get("rtcpIP", s1_data.get("rtpIP")),
-                      "session": s1_data.get("id", 888777333),
-                  },
-              ]
+          echo "=== RUNNING NODE.JS SIGNALING PERMUTATION MATRIX ==="
+          docker exec -i seeding-backend node -e '
+          const fs = require("fs");
+          const { Zalo } = require("zca-js");
 
-              for v in variants:
-                  name = v.pop("name")
-                  try:
-                      res = await _run_zca_command("call-signal", auth, payload=v)
-                      print(f"[PASS] {name}:", json.dumps(res, ensure_ascii=False))
-                  except Exception as e:
-                      print(f"[FAIL] {name}:", e)
+          function normalizeCookieJar(cookies) {
+            if (!cookies) return null;
+            let parsed = typeof cookies === "string" ? JSON.parse(cookies) : cookies;
+            if (Array.isArray(parsed)) {
+              return parsed.map(c => {
+                let e = c.expires || c.expirationDate;
+                if (typeof e === "number") c.expires = new Date(e * 1000).toISOString();
+                return c;
+              });
+            }
+            if (parsed && Array.isArray(parsed.cookies)) {
+              parsed.cookies = parsed.cookies.map(c => {
+                let e = c.expires || c.expirationDate;
+                if (typeof e === "number") c.expires = new Date(e * 1000).toISOString();
+                return c;
+              });
+            }
+            return parsed;
+          }
 
-          asyncio.run(run_test())
-          ' || true
-            const api = await zalo.login();
-            console.log("LOGIN_OK:", !!api);
+          async function main() {
+            const authRaw = fs.readFileSync("/tmp/test_auth.json", "utf-8");
+            const auth = JSON.parse(authRaw);
+            const cookie = normalizeCookieJar(auth.cookies);
+            const zalo = new Zalo({ selfListen: false, checkUpdate: false, logging: false });
+            const api = await zalo.login({ cookie, imei: auth.imei, userAgent: auth.userAgent });
+            console.log("ZALO LOGIN OK!");
 
             let exec;
-            api.custom("__testExec", async ({ ctx, utils, props }) => {
+            api.custom("__diagExec", async ({ ctx, utils, props }) => {
               exec = async ({ endpointPath, paramsObj, method = "GET" }) => {
                 const baseDomain = "https://voicecall-wpa.chat.zalo.me";
                 const payloadWithImei = {
@@ -122,6 +102,7 @@ jobs:
                   ...(paramsObj && paramsObj.imei === undefined ? { imei: ctx.imei } : {}),
                 };
                 const encryptedParams = utils.encodeAES(JSON.stringify(payloadWithImei));
+                if (!encryptedParams) throw new Error("Failed to encodeAES");
                 if (method.toUpperCase() === "POST") {
                   const url = utils.makeURL(`${baseDomain}${endpointPath}`);
                   const res = await utils.request(url, {
@@ -136,43 +117,68 @@ jobs:
                 }
               };
             });
-            await api.__testExec();
+            await api.__diagExec();
 
             const calleeId = "6363678867120121443";
             const callId = Math.floor(Date.now() / 1000);
 
-            // Step 1: RequestCall
-            console.log("--- RUNNING STEP 1 (requestcall) ---");
+            console.log("--- EXECUTING STEP 1: 11300 requestcall ---");
             const s1 = await exec({
               endpointPath: "/api/voicecall/requestcall",
               paramsObj: { calleeId, callId, codec: "[]", typeRequest: 1 },
-              method: "GET",
+              method: "GET"
             });
-            console.log("STEP 1 SUCCESS:", JSON.stringify(s1));
+            console.log("STEP 1 RESULT:", JSON.stringify(s1));
 
-            // Test Permutations for Step 2
+            const toIdStr = String(s1.toId || "");
+            const rtp = s1.rtpIP || "171.244.25.121:4200";
+            const rtcp = s1.rtcpIP || rtp;
+            const effCallId = Number(s1.id || callId);
+
             const variants = [
-              { name: "V1_GET_original", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.id || callId, callId: s1.id || callId } },
-              { name: "V2_POST_original", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.id || callId, callId: s1.id || callId } },
-              { name: "V3_GET_sessId_string", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.sessId, callId: s1.id || callId } },
-              { name: "V4_POST_sessId_string", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.sessId, callId: s1.id || callId } },
-              { name: "V5_GET_sessId_param", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, toId: s1.toId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, sessId: s1.sessId, session: s1.sessId, callId: s1.id || callId } },
-              { name: "V6_POST_sessId_param", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, toId: s1.toId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, sessId: s1.sessId, session: s1.sessId, callId: s1.id || callId } },
-              { name: "V7_GET_subCommand_extendData", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, session: s1.id || callId, callId: s1.id || callId, subCommand: 3, extendData: s1.sessId || "" } },
-              { name: "V8_POST_subCommand_extendData", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, session: s1.id || callId, callId: s1.id || callId, subCommand: 3, extendData: s1.sessId || "" } },
-              { name: "V9_GET_merged_all", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, toId: s1.toId, fromId: s1.fromId, rtcpAddress: s1.rtcpIP, rtpAddress: s1.rtpIP, rtcpIP: s1.rtcpIP, rtpIP: s1.rtpIP, session: s1.id || callId, sessId: s1.sessId, callId: s1.id || callId, id: s1.id || callId, codec: "[]" } },
-              { name: "V10_POST_merged_all", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, toId: s1.toId, fromId: s1.fromId, rtcpAddress: s1.rtcpIP, rtpAddress: s1.rtpIP, rtcpIP: s1.rtcpIP, rtpIP: s1.rtpIP, session: s1.id || callId, sessId: s1.sessId, callId: s1.id || callId, id: s1.id || callId, codec: "[]" } },
+              // 1. GET vs POST with basic parameters
+              { name: "T01_GET_basic_uid", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
+              { name: "T02_POST_basic_uid", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
+              { name: "T03_GET_basic_toId", method: "GET", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
+              { name: "T04_POST_basic_toId", method: "POST", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
+
+              // 2. With extendData and subCommand 3
+              { name: "T05_GET_extendData_uid", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+              { name: "T06_POST_extendData_uid", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+              { name: "T07_GET_extendData_toId", method: "GET", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+              { name: "T08_POST_extendData_toId", method: "POST", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+
+              // 3. With both calleeId and toId
+              { name: "T09_GET_both_ids", method: "GET", params: { calleeId, toId: s1.toId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+              { name: "T10_POST_both_ids", method: "POST", params: { calleeId, toId: s1.toId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
+
+              // 4. Session variations (session as sessId string)
+              { name: "T11_GET_sessId_as_session", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: s1.sessId, callId: effCallId } },
+              { name: "T12_POST_sessId_as_session", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: s1.sessId, callId: effCallId } },
+
+              // 5. Codec as full array object instead of string "[]"
+              { name: "T13_GET_codec_array_obj", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: [{ id: 111, name: "opus", clockrate: 48000, channels: 1 }], session: effCallId, callId: effCallId } },
+              { name: "T14_POST_codec_array_obj", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: [{ id: 111, name: "opus", clockrate: 48000, channels: 1 }], session: effCallId, callId: effCallId } },
+
+              // 6. With callType: 1
+              { name: "T15_GET_callType1", method: "GET", params: { calleeId, callType: 1, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
+              { name: "T16_POST_callType1", method: "POST", params: { calleeId, callType: 1, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
             ];
 
+            console.log("--- TESTING 16 PERMUTATIONS FOR 11301 /api/voicecall/request ---");
             for (const v of variants) {
               try {
-                const res = await exec({ endpointPath: v.endpoint, paramsObj: v.params, method: v.method });
-                console.log(`[PASS] ${v.name}:`, JSON.stringify(res));
+                const res = await exec({
+                  endpointPath: "/api/voicecall/request",
+                  paramsObj: v.params,
+                  method: v.method
+                });
+                console.log(`>>> [PASS] ${v.name}:`, JSON.stringify(res));
               } catch (err) {
-                console.log(`[FAIL] ${v.name}:`, err.message || err);
+                console.log(`--- [FAIL] ${v.name}:`, err.message || JSON.stringify(err));
               }
             }
           }
 
-          run().catch(e => console.error("NODE_TEST_ERR:", e));
+          main().catch(e => console.error("FATAL_MAIN_ERR:", e));
           ' || true
