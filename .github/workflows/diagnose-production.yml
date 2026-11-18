@@ -43,47 +43,82 @@ jobs:
 
       - name: 6. Test Direct Call Signaling in Container
         run: |
-          echo "=== TESTING DIRECT CALL SIGNALING IN BACKEND CONTAINER ==="
-          docker exec -i seeding-backend python -c '
-          import asyncio, json
-          from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
-          from app.modules.all_platform.zalo.services.zca_api_bridge import (
-              _run_zca_command,
-              get_zca_user_info,
-              get_zca_friend_status,
-          )
+          echo "=== TESTING DIRECT CALL SIGNALING MATRIX IN BACKEND CONTAINER ==="
+          docker exec -i seeding-backend node -e '
+          const fs = require("fs");
+          const { Zalo } = require("zca-js");
 
-          async def test():
-              for acc in ["zl_f2c46742", "zl_9d67ca5d"]:
-                  auth = await load_zca_auth(acc)
-                  print(f"=== CHECKING ACCOUNT {acc} (AUTH: {bool(auth)}) ===")
-                  if not auth:
-                      continue
-                  for target_id in ["6363678867120121443", "6761472073330942737", "9011830205009724195"]:
-                      print(f"\n--- Target: {target_id} from {acc} ---")
-                      try:
-                          uinfo = await get_zca_user_info(auth, target_id)
-                          print(f"USER_INFO for {target_id}:", json.dumps(uinfo, ensure_ascii=False)[:300])
-                      except Exception as e:
-                          print(f"USER_INFO_ERR for {target_id}:", e)
+          async function run() {
+            // Load auth for zl_f2c46742
+            const dbAuth = JSON.parse(fs.readFileSync("/tmp/zca_auth_zl_f2c46742.json", "utf8") || "{}");
+            const zalo = new Zalo({
+              cookie: dbAuth.cookies,
+              imei: dbAuth.imei,
+              userAgent: dbAuth.userAgent,
+            });
+            const api = await zalo.login();
+            console.log("LOGIN_OK:", !!api);
 
-                      try:
-                          fstatus = await get_zca_friend_status(auth, target_id)
-                          print(f"FRIEND_STATUS for {target_id}:", json.dumps(fstatus, ensure_ascii=False))
-                      except Exception as e:
-                          print(f"FRIEND_STATUS_ERR for {target_id}:", e)
+            let exec;
+            api.custom("__testExec", async ({ ctx, utils, props }) => {
+              exec = async ({ endpointPath, paramsObj, method = "GET" }) => {
+                const baseDomain = "https://voicecall-wpa.chat.zalo.me";
+                const payloadWithImei = {
+                  ...paramsObj,
+                  ...(paramsObj && paramsObj.imei === undefined ? { imei: ctx.imei } : {}),
+                };
+                const encryptedParams = utils.encodeAES(JSON.stringify(payloadWithImei));
+                if (method.toUpperCase() === "POST") {
+                  const url = utils.makeURL(`${baseDomain}${endpointPath}`);
+                  const res = await utils.request(url, {
+                    method: "POST",
+                    body: new URLSearchParams({ params: encryptedParams }),
+                  });
+                  return utils.resolve(res);
+                } else {
+                  const url = utils.makeURL(`${baseDomain}${endpointPath}`, { params: encryptedParams });
+                  const res = await utils.request(url, { method: "GET" });
+                  return utils.resolve(res);
+                }
+              };
+            });
+            await api.__testExec();
 
-                      try:
-                          res = await _run_zca_command("call-start", auth, payload={
-                              "calleeId": target_id,
-                              "callId": 888777111,
-                              "callType": 1,
-                              "rtpAddress": "127.0.0.1:50000",
-                              "rtcpAddress": "127.0.0.1:50001",
-                          })
-                          print(f"CALL_START_RESPONSE for {target_id}:", json.dumps(res, ensure_ascii=False))
-                      except Exception as e:
-                          print(f"CALL_START_ERR for {target_id}:", e)
+            const calleeId = "6363678867120121443";
+            const callId = Math.floor(Date.now() / 1000);
 
-          asyncio.run(test())
+            // Step 1: RequestCall
+            console.log("--- RUNNING STEP 1 (requestcall) ---");
+            const s1 = await exec({
+              endpointPath: "/api/voicecall/requestcall",
+              paramsObj: { calleeId, callId, codec: "[]", typeRequest: 1 },
+              method: "GET",
+            });
+            console.log("STEP 1 SUCCESS:", JSON.stringify(s1));
+
+            // Test Permutations for Step 2
+            const variants = [
+              { name: "V1_GET_original", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.id || callId, callId: s1.id || callId } },
+              { name: "V2_POST_original", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.id || callId, callId: s1.id || callId } },
+              { name: "V3_GET_sessId_string", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.sessId, callId: s1.id || callId } },
+              { name: "V4_POST_sessId_string", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, codec: "[]", session: s1.sessId, callId: s1.id || callId } },
+              { name: "V5_GET_sessId_param", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, toId: s1.toId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, sessId: s1.sessId, session: s1.sessId, callId: s1.id || callId } },
+              { name: "V6_POST_sessId_param", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, toId: s1.toId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, sessId: s1.sessId, session: s1.sessId, callId: s1.id || callId } },
+              { name: "V7_GET_subCommand_extendData", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, session: s1.id || callId, callId: s1.id || callId, subCommand: 3, extendData: s1.sessId || "" } },
+              { name: "V8_POST_subCommand_extendData", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, rtcpAddress: s1.rtcpIP || s1.rtpIP, rtpAddress: s1.rtpIP, session: s1.id || callId, callId: s1.id || callId, subCommand: 3, extendData: s1.sessId || "" } },
+              { name: "V9_GET_merged_all", endpoint: "/api/voicecall/request", method: "GET", params: { calleeId, toId: s1.toId, fromId: s1.fromId, rtcpAddress: s1.rtcpIP, rtpAddress: s1.rtpIP, rtcpIP: s1.rtcpIP, rtpIP: s1.rtpIP, session: s1.id || callId, sessId: s1.sessId, callId: s1.id || callId, id: s1.id || callId, codec: "[]" } },
+              { name: "V10_POST_merged_all", endpoint: "/api/voicecall/request", method: "POST", params: { calleeId, toId: s1.toId, fromId: s1.fromId, rtcpAddress: s1.rtcpIP, rtpAddress: s1.rtpIP, rtcpIP: s1.rtcpIP, rtpIP: s1.rtpIP, session: s1.id || callId, sessId: s1.sessId, callId: s1.id || callId, id: s1.id || callId, codec: "[]" } },
+            ];
+
+            for (const v of variants) {
+              try {
+                const res = await exec({ endpointPath: v.endpoint, paramsObj: v.params, method: v.method });
+                console.log(`[PASS] ${v.name}:`, JSON.stringify(res));
+              } catch (err) {
+                console.log(`[FAIL] ${v.name}:`, err.message || err);
+              }
+            }
+          }
+
+          run().catch(e => console.error("NODE_TEST_ERR:", e));
           ' || true
