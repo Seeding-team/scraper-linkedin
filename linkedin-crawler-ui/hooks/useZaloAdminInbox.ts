@@ -19,6 +19,7 @@ import {
   acceptZaloFriendRequest,
   getZaloGroupMembers,
   sendZaloSticker,
+  sendZaloVoiceMessage,
   reactToZaloMessage,
   restartZaloAccountListener,
   type BuildZaloRealtimeStreamOptions,
@@ -103,9 +104,11 @@ export interface ZaloArchiveConv {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ACCOUNTS_POLL_MS = 15_000;
+const ACCOUNTS_POLL_MS = 20_000;
 const CONVERSATIONS_POLL_MS = 5_000;
+const CONVERSATIONS_SSE_POLL_MS = 20_000;
 const MESSAGES_POLL_MS = 7_000;
+const MESSAGES_SSE_POLL_MS = 22_000;
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
@@ -199,15 +202,18 @@ export function useZaloAdminInbox() {
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
+  const [sseConnected, setSseConnected] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
   const convPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const msgPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const accountPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hasLoadedAccountsRef = useRef(false);
+  const convSignatureRef = useRef("");
   const messageLoadSeqRef = useRef(0);
   const messageSignatureRef = useRef("");
   const selectedAccountIdRef = useRef(selectedAccountId);
   const selectedConvIdRef = useRef(selectedConvId);
-  // Bộ đệm client-side in-memory để chuyển đổi hội thoại 0ms tức thì, không bị trắng trơn 5-10s
+  // Bộ đệm client-side in-memory (khóa theo `${accountId}:${convId}`) để chuyển đổi hội thoại 0ms tức thì
   const convMessagesCacheRef = useRef<Map<string, ZaloLibraryMessage[]>>(new Map());
 
   useEffect(() => { selectedAccountIdRef.current = selectedAccountId; }, [selectedAccountId]);
@@ -361,79 +367,110 @@ export function useZaloAdminInbox() {
   }, [teams, selectedTeamId]);
 
   const loadMemberAccounts = useCallback(async () => {
-    setLoadingAccounts(true);
+    if (!hasLoadedAccountsRef.current) {
+      setLoadingAccounts(true);
+    }
     try {
-      // 1. Fetch team member accounts
-      const memberPromises = selectedTeamMembers.map(async (member) => {
-        const ownerId = member.id ?? member.email ?? "";
-        const email = member.email ?? "";
-        if (!ownerId) return null;
-        const res = await getZaloAccounts(ownerId, undefined, email);
-        const accounts = res?.accounts ?? [];
-        return {
-          ownerId,
-          ownerName: member.name ?? member.email ?? ownerId,
-          ownerEmail: email,
-          accounts: accounts as ZaloAccountInfo[],
-        } satisfies ZaloMemberAccount;
-      });
-
-      // 2. Always fetch default platform accounts to ensure all company accounts are available
-      const platformPromise = getZaloAccounts("default").catch(() => null);
-
-      const [memberResults, platformRes] = await Promise.all([
-        Promise.allSettled(memberPromises),
-        platformPromise,
-      ]);
-
       const loaded: ZaloMemberAccount[] = [];
       const seenAccountIds = new Set<string>();
       const onlineSet = new Set<string>();
       const expiredSet = new Set<string>();
 
-      for (const r of memberResults) {
-        if (r.status === "fulfilled" && r.value) {
-          loaded.push(r.value);
-          for (const acc of r.value.accounts) {
-            seenAccountIds.add(acc.account_id);
-            const isOnline = Boolean(
-              acc.listener?.connected ||
-              (acc.listener?.running && acc.status === "confirmed" && !acc.listener?.auth_expired)
-            );
-            if (isOnline) {
-              onlineSet.add(acc.account_id);
-              expiredSet.delete(acc.account_id);
-            } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
-              expiredSet.add(acc.account_id);
-            }
-          }
+      const trackAccountOnlineState = (acc: ZaloAccountInfo) => {
+        const isOnline = Boolean(
+          acc.listener?.connected ||
+          (acc.listener?.running && acc.status === "confirmed" && !acc.listener?.auth_expired)
+        );
+        if (isOnline) {
+          onlineSet.add(acc.account_id);
+          expiredSet.delete(acc.account_id);
+        } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
+          expiredSet.add(acc.account_id);
         }
-      }
+      };
 
-      // Add default platform accounts if any not yet seen
-      const platformAccounts = (platformRes?.accounts ?? []) as ZaloAccountInfo[];
-      const unassignedAccounts = platformAccounts.filter((a) => !seenAccountIds.has(a.account_id));
-      if (unassignedAccounts.length > 0) {
-        loaded.push({
-          ownerId: "default",
-          ownerName: "Tài khoản Zalo",
-          ownerEmail: "",
-          accounts: unassignedAccounts,
+      // Tối ưu chống N+1: Với Admin, 1 request getZaloAccounts("default") đã trả toàn bộ tài khoản công ty!
+      if (role === "admin") {
+        const platformRes = await getZaloAccounts("default").catch(() => null);
+        const allPlatformAccounts = (platformRes?.accounts ?? []) as ZaloAccountInfo[];
+        const byOwner = new Map<string, ZaloAccountInfo[]>();
+        for (const acc of allPlatformAccounts) {
+          trackAccountOnlineState(acc);
+          const ownerKey = String((acc as any).id_member || acc.owner_id || "default").trim() || "default";
+          const arr = byOwner.get(ownerKey) ?? [];
+          arr.push(acc);
+          byOwner.set(ownerKey, arr);
+        }
+
+        for (const member of selectedTeamMembers) {
+          const ownerId = member.id ?? member.email ?? "";
+          if (!ownerId) continue;
+          const accs = (byOwner.get(ownerId) ?? []).filter((a) => !seenAccountIds.has(a.account_id));
+          accs.forEach((a) => seenAccountIds.add(a.account_id));
+          loaded.push({
+            ownerId,
+            ownerName: member.name ?? member.email ?? ownerId,
+            ownerEmail: member.email ?? "",
+            accounts: accs,
+          });
+        }
+
+        const unassignedAccounts = allPlatformAccounts.filter((a) => !seenAccountIds.has(a.account_id));
+        if (unassignedAccounts.length > 0) {
+          loaded.push({
+            ownerId: "default",
+            ownerName: "Tài khoản Zalo",
+            ownerEmail: "",
+            accounts: unassignedAccounts,
+          });
+        }
+      } else {
+        // Leader / Member: fetch song song có kiểm soát
+        const memberPromises = selectedTeamMembers.map(async (member) => {
+          const ownerId = member.id ?? member.email ?? "";
+          const email = member.email ?? "";
+          if (!ownerId) return null;
+          const res = await getZaloAccounts(ownerId, undefined, email);
+          const accounts = res?.accounts ?? [];
+          return {
+            ownerId,
+            ownerName: member.name ?? member.email ?? ownerId,
+            ownerEmail: email,
+            accounts: accounts as ZaloAccountInfo[],
+          } satisfies ZaloMemberAccount;
         });
-        for (const acc of unassignedAccounts) {
-          const isOnline = Boolean(
-            acc.listener?.connected ||
-            (acc.listener?.running && acc.status === "confirmed" && !acc.listener?.auth_expired)
-          );
-          if (isOnline) {
-            onlineSet.add(acc.account_id);
-            expiredSet.delete(acc.account_id);
-          } else if (acc.listener?.auth_expired || acc.status === "session_expired") {
-            expiredSet.add(acc.account_id);
+
+        const platformPromise = getZaloAccounts("default").catch(() => null);
+        const [memberResults, platformRes] = await Promise.all([
+          Promise.allSettled(memberPromises),
+          platformPromise,
+        ]);
+
+        for (const r of memberResults) {
+          if (r.status === "fulfilled" && r.value) {
+            const uniqueAccs = r.value.accounts.filter((a) => !seenAccountIds.has(a.account_id));
+            uniqueAccs.forEach((acc) => {
+              seenAccountIds.add(acc.account_id);
+              trackAccountOnlineState(acc);
+            });
+            loaded.push({ ...r.value, accounts: uniqueAccs });
           }
+        }
+
+        const platformAccounts = (platformRes?.accounts ?? []) as ZaloAccountInfo[];
+        const unassignedAccounts = platformAccounts.filter((a) => !seenAccountIds.has(a.account_id));
+        if (unassignedAccounts.length > 0) {
+          unassignedAccounts.forEach(trackAccountOnlineState);
+          loaded.push({
+            ownerId: "default",
+            ownerName: "Tài khoản Zalo",
+            ownerEmail: "",
+            accounts: unassignedAccounts,
+          });
         }
       }
 
+      hasLoadedAccountsRef.current = true;
       setMemberAccounts(loaded);
       setOnlineAccounts(onlineSet);
       setExpiredAccounts(expiredSet);
@@ -447,7 +484,7 @@ export function useZaloAdminInbox() {
     } finally {
       setLoadingAccounts(false);
     }
-  }, [selectedTeamMembers]);
+  }, [selectedTeamMembers, role]);
 
   useEffect(() => {
     void loadMemberAccounts();
@@ -497,23 +534,38 @@ export function useZaloAdminInbox() {
     setSelectedOwnerId(ownerId);
     setSelectedAccountId(accountId);
     setSelectedConvId("");
+    convSignatureRef.current = "";
+    messageSignatureRef.current = "";
     setMessages([]);
     setConversations([]);
   }, [memberAccounts]);
 
-  const loadConversations = useCallback(async (accountId: string) => {
+  const loadConversations = useCallback(async (accountId: string, silent = false) => {
     if (!accountId) return;
-    setLoadingConvs(true);
+    if (!silent) {
+      setLoadingConvs(true);
+    }
     try {
       const res = await getZaloConversations(accountId);
-      if (res) {
+      if (res && selectedAccountIdRef.current === accountId) {
         const list = Array.isArray(res.conversations) ? res.conversations : [];
-        setConversations(list);
+        const sig = list
+          .map(
+            (c) =>
+              `${c.conversation_id}:${c.latest_message_at || ""}:${c.unread_count || 0}:${c.latest_content || ""}:${c.zalo_kpi_status || ""}:${c.zalo_kpi_is_lead ? 1 : 0}`,
+          )
+          .join("|");
+        if (!silent || sig !== convSignatureRef.current) {
+          convSignatureRef.current = sig;
+          setConversations(list);
+        }
       }
     } catch (e) {
       console.error("loadConversations error", e);
     } finally {
-      setLoadingConvs(false);
+      if (!silent) {
+        setLoadingConvs(false);
+      }
     }
   }, []);
 
@@ -521,15 +573,16 @@ export function useZaloAdminInbox() {
     if (convPollRef.current) clearInterval(convPollRef.current);
     if (!selectedAccountId) return;
 
-    void loadConversations(selectedAccountId);
+    void loadConversations(selectedAccountId, false);
+    const pollInterval = sseConnected ? CONVERSATIONS_SSE_POLL_MS : CONVERSATIONS_POLL_MS;
     convPollRef.current = setInterval(() => {
-      void loadConversations(selectedAccountIdRef.current);
-    }, CONVERSATIONS_POLL_MS);
+      void loadConversations(selectedAccountIdRef.current, true);
+    }, pollInterval);
 
     return () => {
       if (convPollRef.current) clearInterval(convPollRef.current);
     };
-  }, [selectedAccountId, loadConversations]);
+  }, [selectedAccountId, sseConnected, loadConversations]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Select conversation → load messages (Tối ưu 0ms tức thì qua Client Cache)
@@ -570,16 +623,19 @@ export function useZaloAdminInbox() {
     setReplyingTo(null);
     setSendError(null);
 
-    // ⚡ 0ms Instant Response: Bộ đệm đa tầng (RAM Cache -> SessionStorage)
-    let cached = convMessagesCacheRef.current.get(convId);
+    const accId = selectedAccountIdRef.current || "default";
+    const scopedCacheKey = `${accId}:${convId}`;
+
+    // ⚡ 0ms Instant Response: Bộ đệm đa tầng (RAM Cache -> SessionStorage) khóa theo accountId:convId
+    let cached = convMessagesCacheRef.current.get(scopedCacheKey);
     if ((!cached || cached.length === 0) && typeof window !== "undefined") {
       try {
-        const raw = sessionStorage.getItem(`zalo_conv_msgs_${convId}`);
+        const raw = sessionStorage.getItem(`zalo_conv_msgs_${scopedCacheKey}`);
         if (raw) {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed) && parsed.length > 0) {
             cached = parsed;
-            convMessagesCacheRef.current.set(convId, parsed);
+            convMessagesCacheRef.current.set(scopedCacheKey, parsed);
           }
         }
       } catch { /* no-op */ }
@@ -596,11 +652,12 @@ export function useZaloAdminInbox() {
 
   const loadMessages = useCallback(async (accountId: string, convId: string, append = false) => {
     if (!accountId || !convId) return;
-    const fetchKey = `${accountId}:${convId}:${append ? "bg" : "fg"}`;
+    const scopedCacheKey = `${accountId}:${convId}`;
+    const fetchKey = `${scopedCacheKey}:${append ? "bg" : "fg"}`;
     if (inFlightFetchRef.current === fetchKey) return;
     inFlightFetchRef.current = fetchKey;
     const requestSeq = ++messageLoadSeqRef.current;
-    if (!append && !convMessagesCacheRef.current.has(convId)) {
+    if (!append && !convMessagesCacheRef.current.has(scopedCacheKey)) {
       setLoadingMessages(true);
     }
     try {
@@ -609,16 +666,16 @@ export function useZaloAdminInbox() {
       if (selectedAccountIdRef.current !== accountId || selectedConvIdRef.current !== convId) return;
       if (requestSeq !== messageLoadSeqRef.current && !append) return;
       if (res?.messages) {
-        // Lưu vào bộ đệm cache client-side (RAM + SessionStorage) để lần mở sau hiển thị 0ms
-        convMessagesCacheRef.current.set(convId, res.messages);
+        // Lưu vào bộ đệm cache client-side (RAM + SessionStorage) theo khóa accountId:convId
+        convMessagesCacheRef.current.set(scopedCacheKey, res.messages);
         if (typeof window !== "undefined") {
           try {
-            sessionStorage.setItem(`zalo_conv_msgs_${convId}`, JSON.stringify(res.messages.slice(-50)));
+            sessionStorage.setItem(`zalo_conv_msgs_${scopedCacheKey}`, JSON.stringify(res.messages.slice(-50)));
           } catch { /* no-op */ }
         }
 
         const signature = res.messages
-          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}`)
+          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}:${JSON.stringify((m as any).reactions || null)}`)
           .join("|");
         if (signature !== messageSignatureRef.current) {
           messageSignatureRef.current = signature;
@@ -655,14 +712,15 @@ export function useZaloAdminInbox() {
     if (!selectedAccountId || !selectedConvId) return;
 
     void loadMessages(selectedAccountId, selectedConvId);
+    const pollInterval = sseConnected ? MESSAGES_SSE_POLL_MS : MESSAGES_POLL_MS;
     msgPollRef.current = setInterval(() => {
       void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
-    }, MESSAGES_POLL_MS);
+    }, pollInterval);
 
     return () => {
       if (msgPollRef.current) clearInterval(msgPollRef.current);
     };
-  }, [selectedAccountId, selectedConvId, loadMessages]);
+  }, [selectedAccountId, selectedConvId, sseConnected, loadMessages]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // SSE realtime for selected account
@@ -672,6 +730,7 @@ export function useZaloAdminInbox() {
       sseRef.current.close();
       sseRef.current = null;
     }
+    setSseConnected(false);
     if (!selectedAccountId) return;
 
     try {
@@ -680,9 +739,18 @@ export function useZaloAdminInbox() {
       const es = new EventSource(url);
       sseRef.current = es;
 
+      es.onopen = () => {
+        setSseConnected(true);
+      };
+
+      es.addEventListener("ready", () => {
+        setSseConnected(true);
+      });
+
       es.addEventListener("zalo-message", () => {
+        setSseConnected(true);
         void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
-        void loadConversations(selectedAccountIdRef.current);
+        void loadConversations(selectedAccountIdRef.current, true);
       });
 
       es.addEventListener("auth_expired", (event) => {
@@ -704,13 +772,14 @@ export function useZaloAdminInbox() {
       });
 
       es.onerror = () => {
-        // SSE auto-reconnects
+        setSseConnected(false);
       };
     } catch {
-      // SSE not supported
+      setSseConnected(false);
     }
 
     return () => {
+      setSseConnected(false);
       sseRef.current?.close();
       sseRef.current = null;
     };
@@ -1376,6 +1445,79 @@ export function useZaloAdminInbox() {
     }
   }, [loadMessages, showToast]);
 
+  const sendVoiceAction = useCallback(async (audioBlob: Blob, durationSec?: number, filename = "voice-note.m4a") => {
+    const accId = selectedAccountIdRef.current;
+    const convId = selectedConvIdRef.current;
+    if (!accId || !convId) return false;
+
+    const tempId = `optimistic_${Date.now()}`;
+    const now = new Date();
+    const timeText = now.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    const durLabel = durationSec && durationSec > 0 ? ` (${Math.round(durationSec)}s)` : "";
+    const contentLabel = `[Tin nhắn thoại${durLabel}]`;
+    const blobUrl = URL.createObjectURL(audioBlob);
+
+    const optimisticMsg: ZaloLibraryMessage = {
+      id: tempId,
+      user_id: accId,
+      source_message_id: tempId,
+      sender_id: myZaloUid || "me",
+      sender_name: "Bạn",
+      is_sent: true,
+      is_deleted: false,
+      type: "chat.voice",
+      content: contentLabel,
+      timestamp_text: "Vừa xong",
+      time_text: timeText,
+      ts: now.getTime(),
+      staff_name: user?.name || "Bạn",
+      staff_avatar: (user as any)?.avatar_url || (user as any)?.avatar || null,
+      staff_email: user?.email || null,
+      assets: [
+        {
+          url: blobUrl,
+          storage_url: blobUrl,
+          filename,
+          filesize: audioBlob.size,
+          mime_type: audioBlob.type || "audio/mp4",
+          status: "ready" as const,
+        } as any,
+      ],
+    };
+
+    setIsSending(true);
+    setMessages((prev) => [...prev, optimisticMsg]);
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.conversation_id === convId
+          ? { ...c, latest_content: contentLabel, unread_count: 0 }
+          : c,
+      ),
+    );
+
+    try {
+      await sendZaloVoiceMessage(accId, convId, audioBlob, filename, {
+        durationSec,
+        staffName: user?.name,
+        staffAvatar: (user as any)?.avatar_url || (user as any)?.avatar,
+      });
+      await loadMessages(accId, convId, true);
+      void loadConversations(accId, true);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+      }
+      showToast("Đã gửi tin nhắn thoại Zalo thành công!", true);
+      return true;
+    } catch (e) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      const msg = e instanceof Error ? e.message : "Gửi tin nhắn thoại thất bại";
+      showToast(msg, false);
+      return false;
+    } finally {
+      setIsSending(false);
+    }
+  }, [myZaloUid, user, loadMessages, loadConversations, showToast]);
+
   // ─────────────────────────────────────────────────────────────────────────────
   // Derived: map conversations to FB style ZaloConv
   // ─────────────────────────────────────────────────────────────────────────────
@@ -1589,6 +1731,8 @@ export function useZaloAdminInbox() {
     loadingGroupMembers,
     loadGroupMembers,
     sendStickerAction,
+    sendVoiceAction,
+    sseConnected,
     myZaloUid,
     reactToMessage,
 

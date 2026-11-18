@@ -17,6 +17,7 @@ interface TemplateItem {
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { toast } from "sonner";
 import { extractPostNeed } from "@/services/aiExtractService";
+import { ZaloCallModal } from "@/components/all-platform/zalo/centralized-shared/ZaloCallModal";
 
 interface ZaloContactModalProps {
   open: boolean;
@@ -55,6 +56,7 @@ export function ZaloContactModal({
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
+  const [callModalOpen, setCallModalOpen] = useState(false);
 
   // Danh sách mẫu câu chào Zalo & Mặc định cá nhân
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
@@ -423,8 +425,16 @@ export function ZaloContactModal({
 
           {/* Các nút hành động phụ */}
           <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
-            <span className="text-muted-foreground font-medium text-[11px]">Cách liên hệ khác:</span>
-            <div className="flex items-center gap-2">
+            <span className="text-muted-foreground font-medium text-[11px]">Gọi trực tiếp & kênh khác:</span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setCallModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#0068FF] hover:bg-[#0055D4] text-white font-bold transition-colors text-[11px] shadow-xs cursor-pointer"
+                title="Mở Zalo Call Studio: Kiểm tra Mic/Loa, gọi Zalo chuẩn HD & ghi nhận +1 KPI CALL"
+              >
+                <FiPhone className="w-3 h-3" /> Gọi Zalo HD
+              </button>
               <a
                 href={`https://zalo.me/${cleanPhone}`}
                 target="_blank"
@@ -437,11 +447,23 @@ export function ZaloContactModal({
                 href={`tel:${cleanPhone}`}
                 className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium transition-colors text-[11px]"
               >
-                <FiPhone className="w-3 h-3 text-slate-400" /> Gọi điện
+                <FiPhone className="w-3 h-3 text-slate-400" /> Gọi SIM
               </a>
             </div>
           </div>
         </div>
+
+        <ZaloCallModal
+          open={callModalOpen}
+          onClose={() => setCallModalOpen(false)}
+          accountId={selectedAccountId || "default"}
+          accountLabel={accounts.find((a) => a.account_id === selectedAccountId)?.label || selectedAccountId}
+          customerName={zaloDisplayName || `Khách ${cleanPhone}`}
+          phoneNumber={cleanPhone}
+          sourcePostId={postId || null}
+          sourcePlatform={platform || "facebook"}
+          initialMode="voice"
+        />
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-slate-100 dark:border-slate-800 px-5 py-3.5 bg-slate-50/50 dark:bg-slate-900/50">

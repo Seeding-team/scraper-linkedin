@@ -1415,6 +1415,68 @@ export function unsubscribeZaloPush(endpoint: string): Promise<{ subscribed: boo
 
 
 
+export interface ZaloCallHealthResponse {
+  ok: boolean;
+  server_ts_ms: number;
+  account_id: string;
+  has_auth: boolean;
+  listener_running: boolean;
+  listener_connected: boolean;
+  auth_expired: boolean;
+}
+
+export function checkZaloCallHealth(
+  accountId = "default",
+): Promise<ZaloCallHealthResponse> {
+  const params = new URLSearchParams({ account_id: accountId });
+  return requestJson<ZaloCallHealthResponse>(
+    `/api/all-platform/zalo/conversations/call-health?${params.toString()}`,
+    {
+      method: "GET",
+      headers: buildHeaders({ "X-User-ID": accountId }),
+    },
+    8000,
+  );
+}
+
+export function sendZaloVoiceMessage(
+  accountId: string,
+  conversationId: string,
+  audioBlob: Blob,
+  filename = "voice-note.m4a",
+  opts?: {
+    durationSec?: number;
+    threadType?: number;
+    staffName?: string;
+    staffAvatar?: string;
+  },
+): Promise<{ ok: boolean; conversation_id: string; message?: string }> {
+  const params = new URLSearchParams({ account_id: accountId });
+  const form = new FormData();
+  form.append("file", audioBlob, filename);
+  if (opts?.durationSec != null && Number.isFinite(opts.durationSec)) {
+    form.append("duration_sec", String(opts.durationSec));
+  }
+  if (opts?.threadType != null) {
+    form.append("thread_type", String(opts.threadType));
+  }
+  if (opts?.staffName) {
+    form.append("staff_name", opts.staffName);
+  }
+  if (opts?.staffAvatar) {
+    form.append("staff_avatar", opts.staffAvatar);
+  }
+  return requestJson<{ ok: boolean; conversation_id: string; message?: string }>(
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(conversationId)}/send-voice?${params.toString()}`,
+    {
+      method: "POST",
+      headers: buildHeaders({ "X-User-ID": accountId }, true),
+      body: form,
+    },
+    60000,
+  );
+}
+
 export function saveConversationPhone(
   convId: string,
   phone: string,
@@ -1431,13 +1493,19 @@ export function saveConversationPhone(
 }
 
 export function getConversationPhone(
-  convId: string
+  convId: string,
+  name?: string,
+  accountId?: string,
 ): Promise<{ success: boolean; phone: string | null; customer_name?: string }> {
+  const params = new URLSearchParams();
+  if (name) params.set("name", name);
+  if (accountId) params.set("account_id", accountId);
+  const qs = params.toString();
   return requestJson<{ success: boolean; phone: string | null; customer_name?: string }>(
-    `/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone`,
+    `/api/all-platform/zalo/conversations/${encodeURIComponent(convId)}/phone${qs ? `?${qs}` : ""}`,
     {
       method: "GET",
-      headers: buildHeaders(),
+      headers: buildHeaders(accountId ? { "X-User-ID": accountId } : undefined),
     }
   );
 }

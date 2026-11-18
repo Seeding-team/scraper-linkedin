@@ -728,3 +728,21 @@ async def send_zca_sticker(
         timeout_seconds=30,
     )
 
+
+async def send_zca_voice(
+    auth: Dict[str, Any],
+    thread_id: str,
+    file_path: str,
+    *,
+    voice_url: Optional[str] = None,
+    thread_type: int = 0,
+) -> Dict[str, Any]:
+    """Gửi tin nhắn thoại (Voice Note) trực tiếp vào hội thoại Zalo (msgType=3)."""
+    return await _run_zca_command(
+        "send-voice",
+        auth,
+        args=["--thread-id", thread_id, "--type", str(thread_type)],
+        payload={"file_path": file_path, "voice_url": voice_url or ""},
+        timeout_seconds=60,
+    )
+

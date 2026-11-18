@@ -1186,6 +1186,109 @@ async function main() {
     return;
   }
 
+  if (args.command === "send-sticker") {
+    const threadId = args["thread-id"] || input.thread_id || input.threadId;
+    const type = Number(args.type ?? input.type ?? ThreadType.Group) === 0 ? ThreadType.User : ThreadType.Group;
+    const id = input.id;
+    const cateId = input.cateId;
+    const stickerType = input.type || 1;
+    if (!threadId) throw new Error("Missing --thread-id");
+    if (id == null || cateId == null) throw new Error("Missing id/cateId in payload");
+    const response = await api.sendSticker(
+      { id: Number(id), cateId: Number(cateId), type: Number(stickerType || 1) },
+      String(threadId),
+      type,
+    );
+    emitAndExit({ ok: true, response }, 0);
+    return;
+  }
+
+  if (args.command === "recall-message") {
+    const threadId = args["thread-id"] || input.thread_id || input.threadId;
+    const type = Number(args.type ?? input.type ?? ThreadType.Group) === 0 ? ThreadType.User : ThreadType.Group;
+    const msgId = input.msg_id || input.msgId;
+    const cliMsgId = input.cli_msg_id || input.cliMsgId;
+    if (!threadId) throw new Error("Missing --thread-id");
+    if (!msgId || !cliMsgId) throw new Error("Missing msg_id/cli_msg_id in payload");
+    const response = await api.undo({ msgId: String(msgId), cliMsgId: String(cliMsgId) }, String(threadId), type);
+    emitAndExit({ ok: true, response }, 0);
+    return;
+  }
+
+  if (args.command === "add-reaction") {
+    const threadId = args["thread-id"] || input.thread_id || input.threadId;
+    const type = Number(args.type ?? input.type ?? ThreadType.Group) === 0 ? ThreadType.User : ThreadType.Group;
+    const msgId = input.msg_id || input.msgId;
+    const cliMsgId = input.cli_msg_id || input.cliMsgId;
+    const icon = input.icon;
+    if (!threadId || !msgId || !cliMsgId || !icon) throw new Error("Missing reaction parameters");
+    const { Reactions } = require("zca-js");
+    const iconKey = String(icon).toUpperCase();
+    if (!(iconKey in Reactions)) throw new Error(`Unknown reaction icon: ${icon}`);
+    const response = await api.addReaction(Reactions[iconKey], {
+      data: { msgId: String(msgId), cliMsgId: String(cliMsgId) },
+      threadId: String(threadId),
+      type,
+    });
+    emitAndExit({ ok: true, response }, 0);
+    return;
+  }
+
+  if (args.command === "send-voice") {
+    const threadId = args["thread-id"] || input.thread_id || input.threadId;
+    const type = Number(args.type ?? input.type ?? ThreadType.User) === 0 ? ThreadType.User : ThreadType.Group;
+    const filePath = input.file_path || input.filePath || "";
+    const fallbackVoiceUrl = input.voice_url || input.voiceUrl || "";
+    if (!threadId) throw new Error("Missing --thread-id");
+
+    let resolvedVoiceUrl = fallbackVoiceUrl;
+    let uploaded = null;
+    if (filePath && fs.existsSync(filePath)) {
+      const buffer = fs.readFileSync(filePath);
+      const baseName = path.basename(filePath) || "voice.m4a";
+      try {
+        if (typeof api.uploadAttachment === "function") {
+          const upRes = await api.uploadAttachment(
+            [{ data: buffer, filename: baseName, metadata: { totalSize: buffer.length } }],
+            String(threadId),
+            type,
+          );
+          const first = Array.isArray(upRes) ? upRes[0] : upRes;
+          if (first && (first.fileUrl || first.url || first.normalUrl)) {
+            resolvedVoiceUrl = first.fileUrl || first.url || first.normalUrl;
+            uploaded = first;
+          }
+        }
+      } catch (_upErr) {}
+    }
+
+    if (resolvedVoiceUrl && typeof api.sendVoice === "function") {
+      try {
+        const response = await api.sendVoice({ voiceUrl: resolvedVoiceUrl, ttl: 0 }, String(threadId), type);
+        emitAndExit({ ok: true, response, voice_url: resolvedVoiceUrl, mode: "native_voice", uploaded }, 0);
+        return;
+      } catch (_voiceErr) {
+        if (!filePath || !fs.existsSync(filePath)) throw _voiceErr;
+      }
+    }
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error("Missing valid voice_url or file_path for send-voice");
+    }
+    const buffer = fs.readFileSync(filePath);
+    const baseName = path.basename(filePath) || "voice.m4a";
+    const response = await api.sendMessage(
+      {
+        msg: "",
+        attachments: [{ data: buffer, filename: baseName, metadata: { totalSize: buffer.length } }],
+      },
+      String(threadId),
+      type,
+    );
+    emitAndExit({ ok: true, response, voice_url: resolvedVoiceUrl || null, mode: "attachment_fallback" }, 0);
+    return;
+  }
+
   throw new Error(`Unknown command: ${args.command}`);
 }
 

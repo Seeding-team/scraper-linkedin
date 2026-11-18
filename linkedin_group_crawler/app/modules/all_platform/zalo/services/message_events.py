@@ -31,8 +31,12 @@ Subscriber = Tuple[asyncio.Queue[str], Dict[str, str]]
 _subscribers: DefaultDict[str, List[Subscriber]] = defaultdict(list)
 
 # Map: account_id (normalized) → owner app_user_id (lowercase). Cập nhật mỗi lần
-# listener khởi động. Dùng để SSE endpoint check ownership nhanh (không query DB).
+# listener khởi động hoặc SSE mở. Dùng để SSE endpoint check ownership nhanh (không query DB).
 _account_owners: Dict[str, str] = {}
+
+# Set các account Zalo được chia sẻ toàn công ty (is_shared_with_all=True).
+# Mọi thành viên/leader/admin đã xác thực đều nhận realtime event của các account này.
+_shared_with_all_accounts: Set[str] = set()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Auth-expired event bus: khi ZCA listener phát hiện auth hết hạn,
@@ -123,8 +127,29 @@ def _normalize(value: Optional[str]) -> str:
 
 
 def register_account_owner(account_id: str, owner_id: str) -> None:
-    """Cache account_id → owner_id để filter SSE subscribers."""
-    _account_owners[_normalize(account_id)] = _normalize(owner_id)
+    """Cache account_id → owner_id để filter SSE subscribers.
+
+    Bảo vệ: không cho phép giá trị tự trỏ (owner_id == account_id, vd 'zl_...')
+    ghi đè mất UUID chủ sở hữu thật đã được đăng ký trước đó.
+    """
+    acc = _normalize(account_id)
+    own = _normalize(owner_id)
+    if acc == own and acc in _account_owners and _account_owners[acc] != acc:
+        return
+    _account_owners[acc] = own
+
+
+def register_shared_with_all(account_id: str, is_shared_all: bool = True) -> None:
+    """Đánh dấu hoặc gỡ đánh dấu tài khoản Zalo dùng chung toàn hệ thống."""
+    acc = _normalize(account_id)
+    if is_shared_all:
+        _shared_with_all_accounts.add(acc)
+    else:
+        _shared_with_all_accounts.discard(acc)
+
+
+def is_account_shared_with_all(account_id: str) -> bool:
+    return _normalize(account_id) in _shared_with_all_accounts
 
 
 def get_account_owner(account_id: str) -> Optional[str]:
@@ -132,7 +157,7 @@ def get_account_owner(account_id: str) -> Optional[str]:
 
 
 def get_known_account_ids() -> Set[str]:
-    return set(_account_owners.keys())
+    return set(_account_owners.keys()) | set(_shared_with_all_accounts)
 
 
 # ----------------------------------------------------------------------------
@@ -154,25 +179,27 @@ def can_view_account(
     """Quyết định caller có quyền nhận realtime event của account_id không.
 
     Quy tắc:
-        * ``admin`` / ``leader``           → xem mọi account có share=true.
-        * ``member`` / ``staff`` / khác    → chỉ xem account mình sở hữu
-                                             (kể cả khi chưa share).
+        * ``admin``                        → xem mọi account.
+        * account ``is_shared_with_all``   → mọi user hợp lệ đều xem được.
+        * ``leader``                       → xem account mình sở hữu hoặc được share.
+        * ``member`` / ``staff`` / khác    → xem account mình sở hữu.
         * Caller thiếu thông tin           → từ chối (fail-closed).
     """
     role = (caller_role or "").strip().lower() or "member"
     account = _normalize(account_id)
     caller = _normalize(caller_user_id)
 
-    # Admin: xem mọi account không cần share.
-    # Leader: chỉ xem account được share.
     if role == "admin":
         return True
 
-    # Leader: xem account được share.
+    if account in _shared_with_all_accounts:
+        return bool(caller and caller != "default") or bool(caller_email)
+
     if role == "leader":
+        if caller and caller != "default" and _account_owners.get(account) == caller:
+            return True
         return bool(is_shared)
 
-    # Staff/member: chỉ xem của mình, không quan tâm share.
     if not caller or caller == "default":
         return False
     return _account_owners.get(account) == caller
@@ -237,9 +264,14 @@ async def publish_zalo_message_event(
             if email and email not in allowed_viewer_emails:
                 continue
 
-        # Filter conversation share cho leader. Admin luôn nhận mọi event.
+        # Filter conversation share cho leader (trừ khi account được chia sẻ toàn công ty).
+        # Admin luôn nhận mọi event.
         role = str(meta.get("role") or "member").lower()
-        if role == "leader" and shared_conversation_ids is not None:
+        if (
+            role == "leader"
+            and shared_conversation_ids is not None
+            and account not in _shared_with_all_accounts
+        ):
             caller_id = meta.get("caller_id")
 
             # Neu leader chinh la chu so huu cua account nay, thi khong bi filter boi shared_conversation_ids
@@ -253,7 +285,7 @@ async def publish_zalo_message_event(
                 group_id = str(event.get("group_id") or "").strip()
                 if group_id and group_id not in shared_conversation_ids:
                     continue
-        # Admin: always receives all events, no filtering.
+        # Admin & shared-with-all accounts: always deliver without per-conversation filtering.
 
         try:
             queue.put_nowait(payload)

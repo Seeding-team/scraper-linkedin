@@ -816,6 +816,63 @@ const COMMANDS = {
   "search-stickers": cmdSearchStickers,
   "send-sticker": cmdSendSticker,
   "invite-to-group": cmdInviteToGroup,
+  "send-voice": async (api, args, payload) => {
+    const { "thread-id": threadId, type = "0" } = args;
+    if (!threadId) throw new Error("Missing --thread-id");
+    const filePath = (payload || {}).file_path || "";
+    const fallbackVoiceUrl = (payload || {}).voice_url || "";
+    const { ThreadType } = require("zca-js");
+    const fs = require("fs");
+    const path = require("path");
+    const threadType = Number(type) === 0 ? ThreadType.User : ThreadType.Group;
+
+    let resolvedVoiceUrl = fallbackVoiceUrl;
+    let uploaded = null;
+    if (filePath && fs.existsSync(filePath)) {
+      const buffer = fs.readFileSync(filePath);
+      const baseName = path.basename(filePath) || "voice.m4a";
+      try {
+        if (typeof api.uploadAttachment === "function") {
+          const upRes = await api.uploadAttachment(
+            [{ data: buffer, filename: baseName, metadata: { totalSize: buffer.length } }],
+            String(threadId),
+            threadType,
+          );
+          const first = Array.isArray(upRes) ? upRes[0] : upRes;
+          if (first && (first.fileUrl || first.url || first.normalUrl)) {
+            resolvedVoiceUrl = first.fileUrl || first.url || first.normalUrl;
+            uploaded = first;
+          }
+        }
+      } catch (_upErr) {
+        // Fallback sang fallbackVoiceUrl (Supabase public URL) hoac sendMessage attachment
+      }
+    }
+
+    if (resolvedVoiceUrl && typeof api.sendVoice === "function") {
+      try {
+        const response = await api.sendVoice({ voiceUrl: resolvedVoiceUrl, ttl: 0 }, String(threadId), threadType);
+        return { ok: true, response, voice_url: resolvedVoiceUrl, mode: "native_voice", uploaded };
+      } catch (_voiceErr) {
+        if (!filePath || !fs.existsSync(filePath)) throw _voiceErr;
+      }
+    }
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error("Missing valid voice_url or file_path for send-voice");
+    }
+    const buffer = fs.readFileSync(filePath);
+    const baseName = path.basename(filePath) || "voice.m4a";
+    const response = await api.sendMessage(
+      {
+        msg: "",
+        attachments: [{ data: buffer, filename: baseName, metadata: { totalSize: buffer.length } }],
+      },
+      String(threadId),
+      threadType,
+    );
+    return { ok: true, response, voice_url: resolvedVoiceUrl || null, mode: "attachment_fallback" };
+  },
   // sync-old-messages: complex (needs listener), keep using spawn-per-call via zca_api_bridge.js
 };
 

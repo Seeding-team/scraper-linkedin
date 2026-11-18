@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+import asyncio
 import mimetypes
 import posixpath
 import uuid
@@ -34,13 +35,43 @@ def _base_url() -> str:
     return settings.supabase_url.rstrip("/")
 
 
-def _http_client(*, timeout: int = 60, follow_redirects: bool = False) -> "httpx.AsyncClient":
-    """HTTP client dùng chung cho Supabase.
+_POOLED_CLIENTS: Dict[Tuple[int, bool], "httpx.AsyncClient"] = {}
+_POOL_LIMITS = httpx.Limits(
+    max_connections=100,
+    max_keepalive_connections=30,
+    keepalive_expiry=45.0,
+)
 
-    Mặc định verify SSL. Khi chạy local sau proxy/antivirus có SSL inspection
-    (self-signed cert) gây CERTIFICATE_VERIFY_FAILED, đặt SUPABASE_SSL_VERIFY=false
-    để bỏ qua verify. KHÔNG dùng false trên production công khai.
+
+def _get_pooled_http_client(*, follow_redirects: bool = False) -> "httpx.AsyncClient":
+    """Trả về httpx.AsyncClient tái sử dụng kết nối TCP/TLS theo từng event loop.
+
+    Loại bỏ chi phí tạo mới socket + TLS handshake (150-400ms) trên mỗi câu REST
+    Supabase, đồng thời tự tạo lại an toàn nếu event loop đổi (vd trong pytest).
     """
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = 0
+    key = (loop_id, bool(follow_redirects))
+    client = _POOLED_CLIENTS.get(key)
+    if client is None or client.is_closed:
+        if len(_POOLED_CLIENTS) > 12:
+            stale_keys = [k for k, c in list(_POOLED_CLIENTS.items()) if c.is_closed]
+            for sk in stale_keys:
+                _POOLED_CLIENTS.pop(sk, None)
+        client = httpx.AsyncClient(
+            timeout=60.0,
+            follow_redirects=follow_redirects,
+            verify=settings.supabase_ssl_verify,
+            limits=_POOL_LIMITS,
+        )
+        _POOLED_CLIENTS[key] = client
+    return client
+
+
+def _http_client(*, timeout: int = 60, follow_redirects: bool = False) -> "httpx.AsyncClient":
+    """HTTP client độc lập giữ tương thích ngược cho script bên ngoài (nếu có)."""
     return httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=follow_redirects,
@@ -71,8 +102,8 @@ async def _rest(
     _require_configured()
     headers = _headers({"Prefer": prefer} if prefer else None)
     url = f"{_base_url()}/rest/v1/{path.lstrip('/')}"
-    async with _http_client(timeout=60) as client:
-        response = await client.request(method, url, headers=headers, params=params, json=json)
+    client = _get_pooled_http_client(follow_redirects=False)
+    response = await client.request(method, url, headers=headers, params=params, json=json, timeout=60.0)
     if response.status_code >= 400:
         raise RuntimeError(f"Supabase {method} {path} failed: {response.status_code} {response.text}")
     if not response.content:
@@ -119,8 +150,8 @@ async def _rest_with_count(
     _require_configured()
     headers = _headers({"Prefer": "count=exact"})
     url = f"{_base_url()}/rest/v1/{path.lstrip('/')}"
-    async with _http_client(timeout=60) as client:
-        response = await client.get(url, headers=headers, params=params)
+    client = _get_pooled_http_client(follow_redirects=False)
+    response = await client.get(url, headers=headers, params=params, timeout=60.0)
     if response.status_code >= 400:
         raise RuntimeError(f"Supabase GET {path} failed: {response.status_code} {response.text}")
     content_range = response.headers.get("content-range", "")
@@ -143,8 +174,8 @@ async def upload_asset_bytes(path: str, content: bytes, content_type: str) -> st
             "x-upsert": "true",
         }
     )
-    async with _http_client(timeout=90) as client:
-        response = await client.put(url, headers=headers, content=content)
+    client = _get_pooled_http_client(follow_redirects=False)
+    response = await client.put(url, headers=headers, content=content, timeout=90.0)
     if response.status_code >= 400:
         raise RuntimeError(f"Supabase storage upload failed: {response.status_code} {response.text}")
     return f"{_base_url()}/storage/v1/object/public/{bucket}/{object_path}"
@@ -155,8 +186,8 @@ async def download_asset_bytes(path: str) -> Tuple[bytes, str, str]:
     bucket = quote(settings.supabase_storage_bucket.strip() or "zalo-assets", safe="")
     object_path = quote(path.lstrip("/"), safe="/")
     url = f"{_base_url()}/storage/v1/object/{bucket}/{object_path}"
-    async with _http_client(timeout=90, follow_redirects=True) as client:
-        response = await client.get(url, headers=_headers())
+    client = _get_pooled_http_client(follow_redirects=True)
+    response = await client.get(url, headers=_headers(), timeout=90.0)
     if response.status_code >= 400:
         raise RuntimeError(f"Supabase storage download failed: {response.status_code} {response.text}")
     content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"
@@ -171,13 +202,14 @@ async def delete_storage_objects(paths: List[str]) -> None:
     bucket = quote(settings.supabase_storage_bucket.strip() or "zalo-assets", safe="")
     url = f"{_base_url()}/storage/v1/object/{bucket}"
     headers = _headers()
-    async with _http_client(timeout=90) as client:
-        response = await client.request(
-            "DELETE",
-            url,
-            headers=headers,
-            json={"prefixes": paths},
-        )
+    client = _get_pooled_http_client(follow_redirects=False)
+    response = await client.request(
+        "DELETE",
+        url,
+        headers=headers,
+        json={"prefixes": paths},
+        timeout=90.0,
+    )
     if response.status_code >= 400:
         raise RuntimeError(f"Supabase storage delete failed: {response.status_code} {response.text}")
 
@@ -210,8 +242,8 @@ async def _download_image(source_url: str, filename_hint: Optional[str] = None) 
         ext = _guess_extension(content_type, filename_hint)
         return base64.b64decode(payload), content_type, ext
 
-    async with _http_client(timeout=60, follow_redirects=True) as client:
-        response = await client.get(source_url)
+    client = _get_pooled_http_client(follow_redirects=True)
+    response = await client.get(source_url, timeout=60.0)
     if response.status_code >= 400:
         raise RuntimeError(f"Image download failed: HTTP {response.status_code}")
     content_type = response.headers.get("content-type", "").split(";")[0].strip() or "application/octet-stream"

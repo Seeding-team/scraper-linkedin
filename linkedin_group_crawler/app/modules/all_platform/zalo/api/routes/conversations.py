@@ -57,6 +57,7 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     get_zca_group_members_full,
     get_zca_stickers_detail,
     send_zca_sticker,
+    send_zca_voice,
     add_zca_reaction,
     search_zca_stickers,
 )
@@ -93,9 +94,20 @@ _AUTH_USER_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
 _ACCOUNT_META_CACHE: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
 _PERM_CACHE: Dict[Tuple[str, str, str], Tuple[float, Optional[set[str]]]] = {}
 _MESSAGE_CACHE: Dict[Tuple[str, str, int, int], Tuple[float, Dict[str, Any]]] = {}
+_CONV_PHONE_CACHE: Dict[str, Tuple[float, Optional[str]]] = {}
 
 AUTH_CACHE_TTL = 60.0  # 60s cache cho app_user và zalo_account metadata
 MESSAGE_CACHE_TTL = 30.0  # 30s RAM accelerator cache cho tin nhắn hội thoại Zalo (tự động invalidate khi có tin mới/gửi/thu hồi)
+CONV_PHONE_CACHE_TTL = 60.0  # 60s cache SĐT hội thoại tránh query 7 bảng tuần tự mỗi lần click chat
+
+
+def invalidate_conversation_phone_cache(conversation_id: Optional[str] = None) -> None:
+    if not conversation_id:
+        _CONV_PHONE_CACHE.clear()
+        return
+    c_id = conversation_id.strip()
+    for k in [k for k in list(_CONV_PHONE_CACHE.keys()) if k.startswith(f"{c_id}:")]:
+        _CONV_PHONE_CACHE.pop(k, None)
 
 def invalidate_conversation_message_cache(user_id: str, conversation_id: Optional[str] = None) -> None:
     """Xoá cache tin nhắn khi có tin nhắn mới hoặc thao tác gửi/thu hồi."""
@@ -309,7 +321,8 @@ async def list_conversations_for_caller(
                 get_zalo_kpi_status_by_conversations,
             )
 
-            kpi_map = get_zalo_kpi_status_by_conversations(
+            kpi_map = await asyncio.to_thread(
+                get_zalo_kpi_status_by_conversations,
                 user_id,
                 [item["conversation_id"] for item in results if item.get("conversation_id")],
             )
@@ -362,6 +375,37 @@ async def get_conversations(
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Không thể tải danh sách hội thoại Zalo: {exc}")
+
+
+@router.get("/call-health")
+async def get_zalo_call_health(
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Đo độ trễ đường truyền (RTT/Jitter) & kiểm tra trạng thái kết nối phiên Zalo trước khi gọi."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    has_auth = False
+    try:
+        auth = await load_zca_auth(user_id)
+        has_auth = bool(auth)
+    except Exception:
+        has_auth = False
+
+    listener_info: Dict[str, Any] = {}
+    try:
+        listener_info = get_listener_status(user_id) or {}
+    except Exception:
+        listener_info = {}
+
+    return {
+        "ok": True,
+        "server_ts_ms": int(time.time() * 1000),
+        "account_id": user_id,
+        "has_auth": has_auth,
+        "listener_running": bool(listener_info.get("running")),
+        "listener_connected": bool(listener_info.get("connected")),
+        "auth_expired": bool(listener_info.get("auth_expired")),
+    }
 
 
 # SU CO THAT (2026-10-04): frontend (ZaloInboxAdminShell.tsx, luong "Xu ly"
@@ -1023,14 +1067,13 @@ class SendMessageResponse(BaseModel):
 async def _auto_track_zalo_conversation_sender(account_id: str, conversation_id: str, caller_email: Optional[str]) -> None:
     """Lưu vết quyền chia sẻ (sửa on_conflict đúng 4 cột) và ghi nhận KPI 2 chiều vào zalo_inbox_kpi.
 
-    - Bảng ``zalo_conversation_permissions`` giữ đúng vai trò chia sẻ hộp thoại cho leader/admin,
-      KHÔNG tự đánh dấu ``is_verify=True`` bừa bãi cho tin gửi 1 chiều.
-    - Bảng ``zalo_inbox_kpi`` kiểm tra điều kiện 2 chiều (chỉ confirm khi khách đã nhắn hoặc đã phản hồi)
-      và khóa chống trùng 30 ngày.
+    Chạy trong worker thread (asyncio.to_thread) để 4 câu lệnh Supabase sync không bao giờ
+    block event loop chính của FastAPI khi nhân viên gửi tin nhắn/ghi âm/file liên tục.
     """
     if not caller_email:
         return
-    try:
+
+    def _sync_track() -> None:
         from app.modules.all_platform.services.supabase_kpi_service import get_supabase_client
         from app.modules.all_platform.services.zalo_inbox_kpi_service import on_staff_reply_message
 
@@ -1079,8 +1122,42 @@ async def _auto_track_zalo_conversation_sender(account_id: str, conversation_id:
             upsert_rows,
             on_conflict="account_id,conversation_id,shared_role,id_leader",
         ).execute()
+
+    try:
+        await asyncio.to_thread(_sync_track)
     except Exception as exc:
         logger.warning(f"Could not auto-track zalo conversation sender ({caller_email}): {exc}")
+
+
+async def _run_post_send_side_effects(
+    user_id: str,
+    conversation_id: str,
+    caller_email: Optional[str],
+) -> None:
+    """Thực thi các tác vụ hậu kỳ sau khi gửi tin (tạm dừng bot, tính KPI 2 chiều, đánh thức listener)
+    mà không chặn response HTTP về trình duyệt.
+    """
+    try:
+        await note_staff_reply(user_id, conversation_id, caller_email)
+    except Exception as exc:
+        logger.debug(f"note_staff_reply failed for user={user_id}: {exc}")
+
+    await _auto_track_zalo_conversation_sender(user_id, conversation_id, caller_email)
+
+    try:
+        listener_info = get_listener_status(user_id)
+        if not listener_info.get("running") and not listener_info.get("auth_expired"):
+            await restart_listener(user_id)
+    except Exception:
+        pass
+
+
+def _schedule_post_send_side_effects(
+    user_id: str,
+    conversation_id: str,
+    caller_email: Optional[str],
+) -> None:
+    asyncio.create_task(_run_post_send_side_effects(user_id, conversation_id, caller_email))
 
 
 @router.post("/{conversation_id}/send", response_model=SendMessageResponse)
@@ -1193,18 +1270,8 @@ async def send_message_to_conversation(
         reply_to_id=body.reply_to.message_id.strip() if body.reply_to else None,
         raw_content_override=raw_staff_override,
     )
-    # Nhân viên vừa nhắn tay: tạm dừng Bot ở hội thoại này (nếu bật cấu hình tự tạm dừng).
-    await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
-    # Tự động lưu vết người gửi để tính KPI Inbox Zalo chuẩn xác
-    await _auto_track_zalo_conversation_sender(user_id, conversation_id.strip(), x_caller_email)
-
-    # Tự động kiểm tra và đánh thức listener nền nếu chưa chạy để nhận ngay tin nhắn trả lời
-    try:
-        listener_info = get_listener_status(user_id)
-        if not listener_info.get("running") and not listener_info.get("auth_expired"):
-            asyncio.create_task(restart_listener(user_id))
-    except Exception:
-        pass
+    # Chạy hậu kỳ (tạm dừng Bot + lưu vết KPI 2 chiều + đánh thức listener) bất đồng bộ để phản hồi tức thì
+    _schedule_post_send_side_effects(user_id, conversation_id.strip(), x_caller_email)
 
     return SendMessageResponse(
         ok=True,
@@ -1371,21 +1438,186 @@ async def send_media_to_conversation(
             uploaded_assets=uploaded_assets,
             raw_content_override=raw_staff_override,
         )
-        await note_staff_reply(user_id, conversation_id.strip(), x_caller_email)
-        await _auto_track_zalo_conversation_sender(user_id, conversation_id.strip(), x_caller_email)
-
-        # Tự động kiểm tra và đánh thức listener nền nếu chưa chạy để nhận ngay tin nhắn trả lời
-        try:
-            listener_info = get_listener_status(user_id)
-            if not listener_info.get("running") and not listener_info.get("auth_expired"):
-                asyncio.create_task(restart_listener(user_id))
-        except Exception:
-            pass
+        _schedule_post_send_side_effects(user_id, conversation_id.strip(), x_caller_email)
 
         return SendMessageResponse(
             ok=True,
             conversation_id=conversation_id,
             message=result.get("message") or "Đã gửi file thành công",
+        )
+    finally:
+        for path in temp_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+@router.post("/{conversation_id}/send-voice", response_model=SendMessageResponse)
+async def send_voice_to_conversation(
+    conversation_id: str,
+    thread_type: Optional[int] = Form(None),
+    staff_name: Optional[str] = Form(None),
+    staff_avatar: Optional[str] = Form(None),
+    duration_sec: Optional[float] = Form(None),
+    file: UploadFile = File(...),
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
+):
+    """Ghi âm và gửi tin nhắn thoại (Voice Note) chuẩn âm thanh trong trẻo trực tiếp vào hội thoại Zalo."""
+    user_id = _normalize_user_id(account_id or x_user_id)
+    allowed_conv_ids = await check_caller_conversation_access(user_id, x_caller_email)
+    if allowed_conv_ids is not None and conversation_id.strip() not in allowed_conv_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Cuộc trò chuyện này ở chế độ riêng tư và chưa được chia sẻ với bạn.",
+        )
+
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        raise HTTPException(
+            status_code=401,
+            detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.",
+        )
+
+    ttype = thread_type if thread_type is not None else await resolve_thread_type(user_id, conversation_id.strip())
+    temp_paths: List[str] = []
+    try:
+        orig_ext = (os.path.splitext(file.filename or "")[1] or ".m4a").lower()
+        if orig_ext not in {".m4a", ".mp4", ".aac", ".mp3", ".webm", ".ogg", ".wav"}:
+            orig_ext = ".m4a"
+
+        fd, raw_path = tempfile.mkstemp(prefix="zalo-voice-in-", suffix=orig_ext)
+        raw_bytes = await file.read()
+        if not raw_bytes:
+            raise HTTPException(status_code=400, detail="File ghi âm trống.")
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(raw_bytes)
+        temp_paths.append(raw_path)
+
+        send_path = raw_path
+        send_ext = orig_ext
+        # Chuẩn hóa sang AAC .m4a 48kHz mono nếu trình duyệt gửi .webm/.ogg/.wav và máy chủ có sẵn ffmpeg
+        if orig_ext in {".webm", ".ogg", ".wav"} and shutil.which("ffmpeg"):
+            fd_out, m4a_path = tempfile.mkstemp(prefix="zalo-voice-out-", suffix=".m4a")
+            os.close(fd_out)
+            temp_paths.append(m4a_path)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    raw_path,
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "48000",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "96k",
+                    "-movflags",
+                    "+faststart",
+                    m4a_path,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=15.0)
+                if proc.returncode == 0 and os.path.exists(m4a_path) and os.path.getsize(m4a_path) > 0:
+                    send_path = m4a_path
+                    send_ext = ".m4a"
+            except Exception as trans_exc:
+                logger.debug(f"ffmpeg voice transcode skipped ({trans_exc}); sending original audio")
+
+        with open(send_path, "rb") as vf:
+            final_bytes = vf.read()
+
+        storage_url: Optional[str] = None
+        uploaded_assets: List[Dict[str, str]] = []
+        try:
+            from app.modules.all_platform.zalo.services.supabase_service import upload_asset_bytes
+
+            mime_map = {
+                ".m4a": "audio/mp4",
+                ".mp4": "audio/mp4",
+                ".aac": "audio/aac",
+                ".mp3": "audio/mpeg",
+                ".ogg": "audio/ogg",
+                ".wav": "audio/wav",
+                ".webm": "audio/webm",
+            }
+            content_type = mime_map.get(send_ext, "audio/mp4")
+            storage_path = posixpath.join(user_id, "outgoing", f"voice-{uuid.uuid4().hex}{send_ext}")
+            storage_url = await upload_asset_bytes(storage_path, final_bytes, content_type)
+            uploaded_assets.append({
+                "source_url": storage_url,
+                "storage_path": storage_path,
+                "storage_url": storage_url,
+            })
+        except Exception as up_exc:
+            logger.warning(f"Could not upload voice backup to Supabase storage: {up_exc}")
+
+        try:
+            result = await send_zca_voice(
+                auth,
+                conversation_id.strip(),
+                send_path,
+                voice_url=storage_url,
+                thread_type=ttype,
+            )
+        except ZcaAuthExpiredError:
+            raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Không thể gửi ghi âm thoại Zalo: {exc}")
+
+        api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
+        zca_voice_url = (result.get("voice_url") if isinstance(result, dict) else None) or storage_url
+        playback_url = storage_url or zca_voice_url
+
+        resolved_staff_name = (
+            staff_name
+            or (caller_user.get("name") if caller_user else None)
+            or (x_caller_email.split("@")[0] if x_caller_email else None)
+        )
+        resolved_staff_email = x_caller_email or (caller_user.get("email") if caller_user else None)
+        resolved_staff_avatar = (
+            staff_avatar
+            or (caller_user.get("avatar_url") or caller_user.get("avatar") if caller_user else None)
+        )
+        dur_label = f" ({int(round(duration_sec))}s)" if duration_sec and duration_sec > 0 else ""
+        raw_staff_override: Dict[str, Any] = {
+            "staff_name": resolved_staff_name,
+            "staff_email": resolved_staff_email,
+            "staff_avatar": resolved_staff_avatar,
+            "sender_staff": {
+                "name": resolved_staff_name,
+                "email": resolved_staff_email,
+                "avatar": resolved_staff_avatar,
+            },
+            "voiceUrl": playback_url,
+            "m4aUrl": playback_url,
+            "duration_sec": round(float(duration_sec), 1) if duration_sec else None,
+        }
+
+        await _persist_outgoing_message(
+            user_id,
+            conversation_id.strip(),
+            api_payload,
+            content=f"[Tin nhắn thoại{dur_label}]",
+            message_type="chat.voice",
+            image_urls=[playback_url] if playback_url else None,
+            uploaded_assets=uploaded_assets if uploaded_assets else None,
+            raw_content_override=raw_staff_override,
+        )
+        _schedule_post_send_side_effects(user_id, conversation_id.strip(), x_caller_email)
+
+        return SendMessageResponse(
+            ok=True,
+            conversation_id=conversation_id,
+            message="Đã gửi tin nhắn thoại thành công",
         )
     finally:
         for path in temp_paths:
@@ -2144,20 +2376,21 @@ async def _persist_outgoing_message(
     try:
         from app.modules.all_platform.zalo.services.message_events import (
             publish_zalo_message_event,
-            register_account_owner,
         )
         from app.modules.all_platform.zalo.services.supabase_service import (
             list_shared_conversation_ids,
         )
 
-        register_account_owner(user_id, user_id)
         shared_ids = await list_shared_conversation_ids(user_id)
+        sse_msg = message.model_dump()
+        if safe_image_urls and not sse_msg.get("image_urls"):
+            sse_msg["image_urls"] = safe_image_urls
         event = {
             "type": "new_messages",
             "account_id": user_id,
             "group_id": conversation_id,
             "group_name": group_name,
-            "messages": [message.model_dump()],
+            "messages": [sse_msg],
         }
         await publish_zalo_message_event(
             user_id,
@@ -2558,7 +2791,7 @@ async def send_sticker_to_conversation(
             # {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
         #
     )
-    await note_staff_reply(user_id, conversation_id.strip(), None)
+    _schedule_post_send_side_effects(user_id, conversation_id.strip(), x_caller_email)
     return {"ok": True, "result": result}
 
 
@@ -2599,6 +2832,12 @@ async def get_conversation_phone(
         return {"success": False, "phone": None}
 
     clean_name = (name or "").strip()
+    cache_key = f"{conv_id}:{clean_name.lower()}"
+    now_ts = time.time()
+    cached_phone = _CONV_PHONE_CACHE.get(cache_key)
+    if cached_phone and (now_ts - cached_phone[0] < CONV_PHONE_CACHE_TTL):
+        return {"success": True, "phone": cached_phone[1]}
+
     phone: Optional[str] = None
 
     # 0. TẦNG ĐẦU TIÊN (ƯU TIÊN TUYỆT ĐỐI THEO CHỈ ĐẠO CỦA MASTER):
@@ -2771,7 +3010,7 @@ async def get_conversation_phone(
                 },
             )
             if msgs and isinstance(msgs, list):
-                phone_pattern = re.compile(r"(?:(?:+?84|0)[235789](?:[.s-]?d){8,9})")
+                phone_pattern = re.compile(r"(?:\+?84|0)[\s.\-]?[235789](?:[\s.\-]?\d){8,9}")
                 for m in msgs:
                     text = m.get("content") or ""
                     match = phone_pattern.search(text)
@@ -2812,7 +3051,7 @@ async def get_conversation_phone(
                                 await _rest(
                                     "POST",
                                     "customer_leads",
-                                    payload={
+                                    json={
                                         "customer_name": clean_name or f"Zalo User {clean_zca[-4:]}",
                                         "phone": clean_zca,
                                         "conv_id": conv_id,
@@ -2832,8 +3071,10 @@ async def get_conversation_phone(
         clean = re.sub(r"\D", "", str(phone))
         if clean.startswith("84") and len(clean) >= 10:
             clean = "0" + clean[2:]
+        _CONV_PHONE_CACHE[cache_key] = (now_ts, clean)
         return {"success": True, "phone": clean}
 
+    _CONV_PHONE_CACHE[cache_key] = (now_ts, None)
     return {"success": True, "phone": None}
 
 
@@ -2857,6 +3098,7 @@ async def save_conversation_phone(
     if not conv_id or not clean_digits:
         raise HTTPException(status_code=400, detail="Thiếu conversation_id hoặc phone")
 
+    invalidate_conversation_phone_cache(conv_id)
     clean_name = (payload.name or "").strip() or f"Zalo User {clean_digits[-4:]}"
 
     # 1. Kiểm tra xem đã có lead với conv_id này chưa

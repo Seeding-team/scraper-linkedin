@@ -1201,15 +1201,21 @@ class ZcaPersistentListenerManager:
             return
 
         try:
+            from app.modules.all_platform.zalo.api.routes.conversations import (
+                invalidate_conversation_message_cache,
+            )
+            invalidate_conversation_message_cache(state.user_id, group_id)
+        except Exception:
+            pass
+
+        try:
             from app.modules.all_platform.zalo.services.message_events import (
                 publish_zalo_message_event,
-                register_account_owner,
             )
             from app.modules.all_platform.zalo.services.supabase_service import (
                 list_shared_conversation_ids,
             )
 
-            register_account_owner(state.user_id, state.user_id)
             shared_ids = await list_shared_conversation_ids(state.user_id)
             await publish_zalo_message_event(
                 state.user_id,
@@ -1315,22 +1321,27 @@ class ZcaPersistentListenerManager:
                 )
                 continue
 
+            # Xoá ngay RAM cache tin nhắn của hội thoại trước khi bắn SSE để FE fetch không dính dữ liệu cũ 30s!
+            try:
+                from app.modules.all_platform.zalo.api.routes.conversations import (
+                    invalidate_conversation_message_cache,
+                )
+                invalidate_conversation_message_cache(state.user_id, group_id)
+            except Exception:
+                pass
+
             # ── Realtime push (additive, fail-soft) ─────────────────────────
             # Sau khi lưu DB thành công, đẩy event vào in-memory bus để FE nhận
             # qua SSE. Nếu lỗi thì log warning, KHÔNG ảnh hưởng listener loop.
             try:
                 from app.modules.all_platform.zalo.services.message_events import (
                     publish_zalo_message_event,
-                    register_account_owner,
                 )
                 from app.modules.all_platform.zalo.services.supabase_service import (
                     list_shared_conversation_ids,
                 )
 
-                # Cache owner để filter SSE subscribers.
-                register_account_owner(state.user_id, state.user_id)
-
-                # Lấy danh sách conversation đã share để filter cho admin/leader.
+                # Lấy danh sách conversation đã share để filter cho leader.
                 shared_ids = await list_shared_conversation_ids(state.user_id)
 
                 event = {

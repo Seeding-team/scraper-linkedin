@@ -30,6 +30,7 @@ from app.modules.all_platform.auth_deps import get_authenticated_caller_email
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 from app.modules.all_platform.zalo.services.message_events import (
     register_account_owner,
+    register_shared_with_all,
     subscribe_zalo_events,
 )
 from app.modules.all_platform.zalo.services.supabase_service import (
@@ -79,9 +80,11 @@ async def _resolve_accounts_for_caller(
         if not leader_id:
             return []
         member_ids = await get_team_member_ids(leader_id)
-        # Leader thấy accounts do chính mình VÀ các member trong team sở hữu.
-        owner_ids = {leader_id, *member_ids}
+        # Leader thấy accounts do chính mình, các member trong team sở hữu (cả id_member lẫn owner_id),
+        # VÀ các account is_shared_with_all=true.
+        owner_ids = list({leader_id, *(member_ids or [])})
         accounts: List[Dict[str, Any]] = []
+        accounts.extend(await list_zalo_accounts(id_member=owner_ids))
         for oid in owner_ids:
             accounts.extend(await list_zalo_accounts(owner_id=oid))
         # Dedup theo account_id.
@@ -94,26 +97,34 @@ async def _resolve_accounts_for_caller(
                 unique.append(acc)
         return unique
 
-    # Member/staff: chỉ accounts do chính caller sở hữu.
-    # Luu y: dung id_member thay vi owner_id vi owner_id la UUID column,
-    # va gia tri can query la app_users.id (UUID) - tuong thich voi id_member.
-    member_uuid = caller_user_id
-    if member_uuid and member_uuid.startswith("zl_"):
-        from app.modules.all_platform.zalo.services.supabase_service import get_zalo_account_by_id
-        acc = await get_zalo_account_by_id(member_uuid)
-        if acc:
-            return [acc]
-
+    # Member/staff: accounts do chính caller sở hữu + tài khoản dùng chung is_shared_with_all=true.
+    resolved_uuid: Optional[str] = None
     if caller_email:
-        resolved = await get_app_user_id_by_email(caller_email)
-        if resolved:
-            member_uuid = resolved
-    elif caller_user_id:
-        # Neu khong co email, thu resolve caller_user_id nhu email.
-        resolved = await get_app_user_id_by_email(caller_user_id)
-        if resolved:
-            member_uuid = resolved
-    return await list_zalo_accounts(id_member=member_uuid)
+        resolved_uuid = await get_app_user_id_by_email(caller_email)
+    elif caller_user_id and not caller_user_id.startswith("zl_"):
+        resolved_uuid = await get_app_user_id_by_email(caller_user_id)
+
+    member_uuid = resolved_uuid or caller_user_id
+    accounts_list: List[Dict[str, Any]] = []
+    if member_uuid and not member_uuid.startswith("zl_"):
+        accounts_list.extend(await list_zalo_accounts(id_member=member_uuid))
+        accounts_list.extend(await list_zalo_accounts(owner_id=member_uuid))
+    elif caller_user_id and caller_user_id.startswith("zl_"):
+        from app.modules.all_platform.zalo.services.supabase_service import get_zalo_account_by_id
+        acc = await get_zalo_account_by_id(caller_user_id)
+        if acc:
+            acc_owner = str(acc.get("id_member") or acc.get("owner_id") or "").strip()
+            if bool(acc.get("is_shared_with_all")) or (resolved_uuid and acc_owner == resolved_uuid) or not caller_email:
+                accounts_list.append(acc)
+
+    seen_member: set[str] = set()
+    unique_member: List[Dict[str, Any]] = []
+    for acc in accounts_list:
+        aid = str(acc.get("account_id") or "").strip()
+        if aid and aid not in seen_member:
+            seen_member.add(aid)
+            unique_member.append(acc)
+    return unique_member
 
 
 @router.get("/stream")
@@ -147,21 +158,27 @@ async def stream_zalo_events(
         if str(acc.get("account_id") or "").strip()
     ]
 
-    # Cache ownership để can_view_account() filter nhanh (không query DB).
+    # Cache ownership & cờ dùng chung toàn công ty để can_view_account() filter nhanh (0 DB query).
     for acc in accounts:
-        owner_id = str(acc.get("owner_id") or "").strip()
+        owner_id = str(acc.get("id_member") or acc.get("owner_id") or "").strip()
         aid = str(acc.get("account_id") or "").strip()
-        if aid and owner_id:
-            register_account_owner(aid, owner_id)
+        if aid:
+            register_shared_with_all(aid, bool(acc.get("is_shared_with_all")))
+            if owner_id:
+                register_account_owner(aid, owner_id)
 
-    # Preload share set cho từng account (admin/leader mới cần — member bỏ qua).
+    # Preload share set cho từng account (chỉ leader mới cần lọc share; admin xem toàn bộ).
     shared_by_account: Dict[str, set[str]] = {}
-    if caller_role in ("admin", "leader"):
-        for aid in account_ids:
-            shared_by_account[aid] = await list_shared_conversation_ids(aid)
+    if caller_role == "leader":
+        shared_results = await asyncio.gather(
+            *(list_shared_conversation_ids(aid) for aid in account_ids),
+            return_exceptions=True,
+        )
+        for aid, sres in zip(account_ids, shared_results):
+            shared_by_account[aid] = sres if isinstance(sres, set) else set()
     else:
         for aid in account_ids:
-            shared_by_account[aid] = set()  # member: luôn được xem conversation của mình
+            shared_by_account[aid] = set()
 
     logger.info(
         f"SSE stream open caller_id={caller_id} role={caller_role} "
@@ -181,20 +198,30 @@ async def stream_zalo_events(
     async def event_gen():
         yield f"event: ready\ndata: {json.dumps(initial_meta, ensure_ascii=False)}\n\n"
         try:
-            # Pre-compute owned/team account_id set để filter nhanh.
+            caller_app_id = (
+                await get_app_user_id_by_email(caller_email) if caller_email else None
+            )
+            # Pre-compute owned/team/shared-all account_id set để filter nhanh cho leader.
             owned_or_team_ids: set[str] = set()
-            if caller_role in ("admin", "leader"):
-                caller_app_id = (
-                    await get_app_user_id_by_email(caller_email) if caller_email else None
-                )
+            if caller_role == "admin":
+                owned_or_team_ids = set(account_ids)
+            elif caller_role == "leader":
+                owner_set: set[str] = set()
                 if caller_app_id:
                     team_ids = await get_team_member_ids(caller_app_id) or []
                     owner_set = {caller_app_id, *team_ids}
-                    for acc in accounts:
-                        if str(acc.get("owner_id") or "").strip() in owner_set:
-                            aid = str(acc.get("account_id") or "").strip()
-                            if aid:
-                                owned_or_team_ids.add(aid)
+                for acc in accounts:
+                    aid = str(acc.get("account_id") or "").strip()
+                    if not aid:
+                        continue
+                    acc_owner = str(acc.get("owner_id") or "").strip()
+                    acc_member = str(acc.get("id_member") or "").strip()
+                    if (
+                        bool(acc.get("is_shared_with_all"))
+                        or (acc_owner and acc_owner in owner_set)
+                        or (acc_member and acc_member in owner_set)
+                    ):
+                        owned_or_team_ids.add(aid)
             else:
                 owned_or_team_ids = set(account_ids)
 
@@ -202,15 +229,15 @@ async def stream_zalo_events(
                 account_ids,
                 role=caller_role,
                 email=caller_email,
-                caller_id=caller_id,
+                caller_id=caller_app_id or caller_id,
             ):
                 if await request.is_disconnected():
                     break
-                # Member/staff: pass through (đã filter ở subscribe).
-                if caller_role not in ("admin", "leader"):
+                # Admin và Member/staff: pass through ngay (admin toàn quyền, member đã lọc ở subscribe).
+                if caller_role != "leader":
                     yield event
                     continue
-                # Admin/leader: check share hoặc thuộc team.
+                # Leader: nhận nếu thuộc account team/của mình/shared_with_all hoặc hội thoại đã share.
                 try:
                     payload = json.loads(event.split("data: ", 1)[1].rstrip("\n"))
                 except Exception:
@@ -227,7 +254,6 @@ async def stream_zalo_events(
                 allowed = shared_by_account.get(account_id) or set()
                 if group_id in allowed:
                     yield event
-                # Ngược lại: bỏ qua (không share).
         except asyncio.CancelledError:
             raise
         except Exception as exc:

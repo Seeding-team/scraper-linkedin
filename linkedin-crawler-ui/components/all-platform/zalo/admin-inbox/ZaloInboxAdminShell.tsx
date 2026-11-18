@@ -31,6 +31,7 @@ import { ZaloStickerPicker } from "../centralized-shared/ZaloStickerPicker";
 import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shared/ZaloReactionPicker";
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
+import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
 import { ZaloSwipeableMessageItem } from "../centralized-shared/ZaloSwipeableMessageItem";
 import { ZaloNewChatModal } from "../dashboard/ZaloNewChatModal";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
@@ -79,6 +80,7 @@ import {
   UserCheck,
   Phone,
   Video,
+  Mic,
   MoreVertical,
   BarChart3,
   Download,
@@ -1178,6 +1180,8 @@ export function ZaloInboxAdminShell() {
   const [reactionPicker, setReactionPicker] = useState<{ id: string; openDown: boolean } | null>(null);
   const [messageMenu, setMessageMenu] = useState<{ id: string; openDown: boolean } | null>(null);
   const [showSearchPanel, setShowSearchPanel] = useState(false);
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [callModalMode, setCallModalMode] = useState<"voice" | "video">("voice");
 
   // Tính toán hướng mở (bung xuống dưới hay lên trên) dựa trên khoảng cách THỰC TẾ tới đỉnh khung cuộn chatScrollRef
   const computeMenuOpenDown = (el: HTMLElement): boolean => {
@@ -2649,15 +2653,19 @@ export function ZaloInboxAdminShell() {
                             <Pencil className="h-2.5 w-2.5 text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                           </button>
 
-                          {/* NÚT GỌI ĐIỆN THOẠI TRỰC TIẾP (CALL) CHO ĐỒNG ĐỘI/NHÂN SỰ */}
-                          <a
-                            href={`tel:${activeConvPhone.replace(/\D/g, "")}`}
-                            title={`Bấm để gọi ngay cho khách hàng: ${activeConvPhone}`}
+                          {/* NÚT GỌI ZALO CHUẨN HD & STUDIO KIỂM TRA MIC/LOA */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCallModalMode("voice");
+                              setCallModalOpen(true);
+                            }}
+                            title={`Mở Zalo Call Studio cho khách hàng: ${activeConvPhone}`}
                             className="inline-flex items-center gap-1 shrink-0 font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:scale-95 px-2.5 py-0.5 rounded-lg text-xs shadow-xs transition cursor-pointer"
                           >
                             <Phone className="h-3 w-3 fill-white" />
                             <span>Gọi ngay</span>
-                          </a>
+                          </button>
                         </div>
                       ) : (
                         <button
@@ -2748,6 +2756,20 @@ export function ZaloInboxAdminShell() {
             {/* Header Action Buttons (Merged Legacy Zalo + Omni + Toggle CRM) */}
             {inbox.openConv && (
               <div className="flex items-center gap-1.5 sm:gap-2 relative shrink-0">
+                {/* ZALO CALL STUDIO (Hoạt động cho cả khách chưa lộ SĐT qua Zalo UID + Ghi âm thoại) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCallModalMode("voice");
+                    setCallModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 sm:gap-1.5 rounded-xl border border-[#0068FF] bg-[#0068FF] hover:bg-[#0055D4] px-2.5 sm:px-3 py-1.5 text-xs font-bold text-white transition shadow-xs cursor-pointer"
+                  title="Gọi qua Zalo chuẩn HD, kiểm tra Mic/Loa chống lag, gửi ghi âm thoại & chốt +1 KPI Call"
+                >
+                  <Phone size={14} className="fill-white" />
+                  <span className="hidden sm:inline">Gọi Zalo</span>
+                </button>
+
                 {/* OMNI ACTION: Gán người */}
                 <button
                   type="button"
@@ -2830,6 +2852,28 @@ export function ZaloInboxAdminShell() {
                       <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                         THAO TÁC ZALO
                       </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCallModalMode("voice");
+                          setCallModalOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-blue-50 font-semibold text-[#0068FF]"
+                      >
+                        <Phone size={15} className="text-[#0068FF]" /> Gọi Zalo / Kiểm tra Mic & Loa
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCallModalMode("video");
+                          setCallModalOpen(true);
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-left rounded-xl hover:bg-emerald-50 font-semibold text-emerald-700"
+                      >
+                        <Video size={15} className="text-emerald-600" /> Video Call qua Zalo
+                      </button>
 
                       <button
                         type="button"
@@ -3495,6 +3539,19 @@ export function ZaloInboxAdminShell() {
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
               >
                 <Smile size={13} /> Emoji
+              </button>
+
+              <button
+                type="button"
+                disabled={!inbox.openConv || inbox.archiveReading}
+                onClick={() => {
+                  setCallModalMode("voice");
+                  setCallModalOpen(true);
+                }}
+                className="inline-flex items-center gap-1 rounded-lg border border-blue-200 bg-blue-50/70 px-2.5 py-1 text-[11px] font-semibold text-[#0068FF] hover:bg-blue-100 disabled:opacity-40 cursor-pointer"
+                title="Thu âm khử ồn gửi tin nhắn thoại trực tiếp hoặc gọi Zalo"
+              >
+                <Mic size={13} /> Thoại / Gọi
               </button>
 
               <button
@@ -4289,6 +4346,27 @@ export function ZaloInboxAdminShell() {
         message={forwardingMessage}
         conversations={inbox.conversations}
         onClose={() => setForwardingMessage(null)}
+      />
+
+      <ZaloCallModal
+        open={callModalOpen}
+        onClose={() => setCallModalOpen(false)}
+        accountId={inbox.selectedAccountId || "default"}
+        accountLabel={accountLabel}
+        conversationId={inbox.openConv || undefined}
+        customerName={selectedConv?.name || undefined}
+        phoneNumber={activeConvPhone || selectedConv?.zalo_kpi_phone || null}
+        isGroup={openConvIsGroup}
+        sourcePostId={(inbox.conversations.find((c) => c.conversation_id === inbox.openConv) as any)?.zalo_kpi_post_id || null}
+        sourcePlatform={selectedConv?.zalo_kpi_source ? selectedConv.zalo_kpi_source.replace(/^post_feed_/, "") : "zalo"}
+        initialMode={callModalMode}
+        onVoiceSendCustom={inbox.sendVoiceAction}
+        onPhoneSaved={(savedPhone) => {
+          const formatted = formatZaloPhoneDisplay(savedPhone);
+          if (formatted && inbox.openConv) {
+            setConvPhoneMap((prev) => ({ ...prev, [inbox.openConv]: formatted }));
+          }
+        }}
       />
 
       <ZaloNewChatModal

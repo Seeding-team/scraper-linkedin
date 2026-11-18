@@ -62,6 +62,7 @@ import {
   Undo2,
   MoreVertical,
 } from "lucide-react";
+import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
 import type {
   ZaloConversationSummary,
   ZaloLibraryMessage,
@@ -604,6 +605,8 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   // when the user switches groups faster than the API responds.
   const messagesRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [callModalMode, setCallModalMode] = useState<"voice" | "video">("voice");
 
   // Click outside listener for emoji picker & quick replies
   useEffect(() => {
@@ -2260,13 +2263,26 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   >
                     <MaterialIcon name="campaign" className="text-sm" />
                   </button>
-                  <button className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition" title="Tìm trong hội thoại">
-                    <MaterialIcon name="search" className="text-sm" />
-                  </button>
-                  <button className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition" title="Gọi thoại">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallModalMode("voice");
+                      setCallModalOpen(true);
+                    }}
+                    className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-blue-50 text-[#0068ff] transition cursor-pointer"
+                    title="Gọi thoại Zalo chuẩn HD & Kiểm tra Mic/Loa"
+                  >
                     <MaterialIcon name="call" className="text-sm" />
                   </button>
-                  <button className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-surface-container-low text-on-surface-variant transition" title="Video call">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallModalMode("video");
+                      setCallModalOpen(true);
+                    }}
+                    className="h-7 w-7 flex items-center justify-center rounded-full hover:bg-emerald-50 text-emerald-600 transition cursor-pointer"
+                    title="Video Call qua Zalo"
+                  >
                     <MaterialIcon name="videocam" className="text-sm" />
                   </button>
                 </div>
@@ -3521,6 +3537,23 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           </DialogContent>
         </Dialog>
       )}
+
+      <ZaloCallModal
+        open={callModalOpen}
+        onClose={() => setCallModalOpen(false)}
+        accountId={flow.userId || "default"}
+        accountLabel={selectedAccount?.label || flow.userId}
+        conversationId={selectedConversationId || undefined}
+        customerName={selectedConversation?.conversation_name || undefined}
+        phoneNumber={selectedConversation?.zalo_kpi_phone || null}
+        isGroup={selectedConversation ? !selectedConversation.is_friend && selectedConversation.thread_type === "group" : false}
+        initialMode={callModalMode}
+        onVoiceNoteSent={() => {
+          if (selectedConversationId) {
+            void loadLatestMessages(selectedConversationId, { silent: true });
+          }
+        }}
+      />
 
     </div>
   );
