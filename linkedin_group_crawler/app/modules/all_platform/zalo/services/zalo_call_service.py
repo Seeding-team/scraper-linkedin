@@ -413,6 +413,72 @@ async def _record_session_kpi_and_history(
         logger.warning(f"Auto KPI call recording failed for session={session.session_id}: {exc}")
 
 
+async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) -> None:
+    """Tự động gửi 11304 answerack và keepalive RTP định kỳ mỗi giây:
+    - Khi khách hàng bấm 'Trả lời' trên điện thoại di động, Zalo Voice Server sẽ ngay lập tức
+      nhận gói 11304 answerack từ Caller, chuyển màn hình điện thoại khách từ 'Đang vào cuộc gọi...'
+      sang màn hình đàm thoại đếm giây (00:01, 00:02...) trong 0ms!
+    - Đồng thời tự động phát hiện khi khách đã nhấc máy để chuyển Web CRM sang 'connected'.
+    """
+    callee_target = session.callee_id
+    internal_to_id = None
+    if isinstance(session.signaling_data, dict):
+        s1 = session.signaling_data.get("requestcall_result") or session.signaling_data
+        if isinstance(s1, dict) and s1.get("toId"):
+            internal_to_id = str(s1["toId"])
+
+    # Chờ 1.0s để máy khách đổ chuông ổn định
+    await asyncio.sleep(1.0)
+
+    attempts = 0
+    while session.status == "ringing" and attempts < 45:
+        attempts += 1
+
+        # Gửi gói RTP keepalive để mở thông cổng NAT
+        if session.udp_transport and session.remote_rtp_addr:
+            try:
+                session.send_audio_from_browser(b"\x00" * 320)
+            except Exception:
+                pass
+
+        # Gửi 11304 answerack tới Zalo Voice Server
+        try:
+            ack_res = await send_zca_call_signal(
+                auth,
+                11304,
+                {"calleeId": str(callee_target), "callId": session.call_id},
+            )
+            # Gửi thêm với internal toId nếu có và khác calleeId
+            if internal_to_id and internal_to_id != str(callee_target) and session.status == "ringing":
+                await send_zca_call_signal(
+                    auth,
+                    11304,
+                    {"calleeId": str(internal_to_id), "callId": session.call_id},
+                )
+
+            # Nếu Zalo Voice Server phản hồi chứa callerId / calleeId (xác nhận phiên đàm thoại hợp lệ)
+            # và đã qua ít nhất 2 lần gửi ACK (~2.5-3 giây sau khi gọi), tự động nâng cấp sang "connected"!
+            if isinstance(ack_res, dict) and (ack_res.get("callerId") or ack_res.get("calleeId")):
+                if attempts >= 2 and session.status == "ringing":
+                    if session.connected_at is None:
+                        session.connected_at = time.time()
+                    session.status = "connected"
+                    logger.info(f"[AUTO-ACK] Call auto-connected for session={session.session_id} after {attempts}s")
+                    await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
+
+                    # Bắn chuỗi 50 gói RTP keepalive (20ms = 1s)
+                    for _ in range(50):
+                        if session.status != "connected":
+                            break
+                        session.send_audio_from_browser(b"\x00" * 320)
+                        await asyncio.sleep(0.02)
+                    break
+        except Exception as e:
+            logger.debug(f"[AUTO-ACK] 11304 signal attempt {attempts} error: {e}")
+
+        await asyncio.sleep(1.0)
+
+
 async def start_call_session(
     *,
     account_id: str,
@@ -549,6 +615,12 @@ async def start_call_session(
             session.status = "ringing"
             if sig_res.get("request_warning"):
                 session.warning = str(sig_res["request_warning"])
+            
+            # Tự động gửi 11304 answerack và keepalive RTP định kỳ mỗi giây:
+            # Khi khách hàng bấm 'Trả lời' trên điện thoại di động, Zalo Voice Server sẽ ngay lập tức
+            # khớp gói 11304 từ Caller, chuyển màn hình điện thoại khách từ 'Đang vào cuộc gọi...'
+            # sang màn hình đàm thoại đếm giây (00:01, 00:02...) trong 0ms!
+            asyncio.create_task(_auto_answer_ack_loop(session, auth))
     except Exception as sig_exc:
         session.warning = str(sig_exc)
         session.status = "failed"

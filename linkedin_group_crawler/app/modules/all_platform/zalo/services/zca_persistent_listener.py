@@ -1193,11 +1193,15 @@ class ZcaPersistentListenerManager:
             "group_request": "incoming",
             "ringring": "ringing",
             "answer": "connected",
+            "answer_call": "connected",
+            "accept_call": "connected",
+            "accept": "connected",
             "group_answer": "connected",
             "answerack": "connected",
             "cancel": "cancelled",
             "reject": "rejected",
             "endcall": "ended",
+            "end_call": "ended",
             "busy": "busy",
         }
         mapped_status = status_map.get(act, act or "signal")
