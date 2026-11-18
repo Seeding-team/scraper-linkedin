@@ -264,6 +264,12 @@ class ZcaWorkerPool:
             raise RuntimeError(f"ZCA worker error: {exc}") from exc
 
         if not result.get("ok"):
+            # Nếu là kết quả VoIP signaling có status hợp lệ, trả về thay vì raise
+            if isinstance(result, dict) and (
+                result.get("status") in ("ringing", "connected", "privacy_blocked", "rejected", "failed")
+                or (result.get("call_id") is not None and command.startswith("call-"))
+            ):
+                return result
             detail = result.get("error_detail") or result.get("error") or "unknown"
             raise RuntimeError(json.dumps(detail) if isinstance(detail, dict) else str(detail))
 

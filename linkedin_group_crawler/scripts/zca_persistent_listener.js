@@ -555,7 +555,7 @@ async function main() {
     return;
   }
 
-  // Hook bảo đảm 100% bắt trọn sự kiện VoIP (cmd 601 act_type 'voip' -> answer, ringring, endcall...)
+  // Hook bảo đảm 100% bắt trọn sự kiện VoIP (cmd 601 + 602 act_type 'voip' -> answer, ringring, endcall...)
   function ensureVoipListenerHook(l) {
     if (!l || l.__voipHooked) return;
     l.__voipHooked = true;
@@ -578,16 +578,21 @@ async function main() {
             if (data && typeof data === "object" && Buffer.isBuffer(data) && data.length > 4 && this.cipherKey) {
               const header = data.subarray(0, 4);
               const cmd = (header[1] << 8) | header[2];
-              if (cmd === 601) {
+              if (cmd === 601 || cmd === 602) {
                 const text = new TextDecoder("utf-8").decode(data.subarray(4));
                 if (text) {
                   const json = JSON.parse(text);
-                  const utils = require("zca-js/dist/utils.js");
-                  if (typeof utils.decodeEventData === "function") {
-                    const dec = await utils.decodeEventData(json, this.cipherKey);
-                    const ctrls = (dec && dec.data && dec.data.controls) || [];
+                  const path = require("path");
+                  let decodeFunc = null;
+                  try {
+                    const utilsCjs = require(path.resolve(__dirname, "../node_modules/zca-js/dist/cjs/utils.cjs"));
+                    decodeFunc = utilsCjs.decodeEventData;
+                  } catch (_) {}
+                  if (typeof decodeFunc === "function") {
+                    const dec = await decodeFunc(json, this.cipherKey);
+                    const ctrls = (dec && dec.data && (dec.data.controls || dec.data.actions)) || [];
                     for (const c of ctrls) {
-                      const ct = c.content || {};
+                      const ct = c.content || c || {};
                       if (ct.act_type === "voip") {
                         let d = ct.data;
                         if (typeof d === "string") {

@@ -431,6 +431,8 @@ async def start_call_session(
     if not auth:
         raise RuntimeError("Chưa có phiên ZCA hợp lệ. Hãy đăng nhập Zalo qua Chrome Extension trước.")
 
+    logger.info(f"[CALL-START] Initiating direct call: account={account_id} callee={callee_id or conversation_id} phone={phone_number}")
+
     # Dọn dẹp/hủy các phiên gọi cũ còn treo của cùng tài khoản để tránh Zalo server báo bận / In-Call
     for existing_id, existing_s in list(_CALL_SESSIONS.items()):
         if existing_s.account_id == account_id and existing_s.status in ("dialing", "ringing", "connected"):
@@ -611,11 +613,19 @@ async def perform_call_action(
         if session.connected_at is None:
             session.connected_at = time.time()
         session.status = "connected"
-        try:
-            # Gửi gói tin keepalive mở cổng NAT UDP tới Zalo Relay
-            session.send_audio_from_browser(b"\x00" * 320)
-        except Exception:
-            pass
+        
+        # Bắn gói tin keepalive RTP liên tục (burst 50 gói x 20ms = 1 giây) để mở thông cổng NAT
+        async def _manual_burst() -> None:
+            try:
+                for _ in range(50):
+                    if session.status != "connected":
+                        break
+                    session.send_audio_from_browser(b"\x00" * 320)
+                    await asyncio.sleep(0.02)
+            except Exception:
+                pass
+        asyncio.create_task(_manual_burst())
+
         if auth and session.callee_id:
             try:
                 await send_zca_call_signal(
@@ -624,6 +634,14 @@ async def perform_call_action(
                     {"calleeId": session.callee_id, "callId": session.call_id},
                 )
                 logger.info(f"[VOIP] Manual 11304 answerack sent for session={session.session_id}")
+                if isinstance(session.signaling_data, dict):
+                    s1 = session.signaling_data.get("requestcall_result") or session.signaling_data
+                    if isinstance(s1, dict) and s1.get("toId") and str(s1["toId"]) != str(session.callee_id):
+                        await send_zca_call_signal(
+                            auth,
+                            11304,
+                            {"calleeId": str(s1["toId"]), "callId": session.call_id},
+                        )
             except Exception as exc:
                 logger.warning(f"Manual answer_ack signal failed: {exc}")
 
@@ -654,7 +672,15 @@ async def handle_incoming_voip_signal(
             matched = s
             break
 
+    # Fallback: nếu ID đối tác lệch giữa 32-bit toId và 64-bit UID, ghép nối ngay với phiên active duy nhất của tài khoản
     if not matched:
+        for s in reversed(list(_CALL_SESSIONS.values())):
+            if s.account_id.strip().lower() == acc and s.status in ("dialing", "ringing", "connected"):
+                matched = s
+                break
+
+    if not matched:
+        logger.info(f"[VOIP] No active session matched for user={account_id} act={act} call_id={call_id} partner_id={partner_id}")
         return None
 
     remote_rtp = (
@@ -674,15 +700,26 @@ async def handle_incoming_voip_signal(
             matched.connected_at = time.time()
         matched.status = "connected"
 
-        # Bắn gói tin keepalive để mở thông cổng NAT tới Zalo Relay ngay lập tức
-        try:
-            matched.send_audio_from_browser(b"\x00" * 320)
-        except Exception:
-            pass
+        # Bắn gói tin keepalive RTP liên tục (burst 50 gói x 20ms = 1 giây) để mở thông cổng NAT và đồng bộ media
+        async def _keepalive_burst() -> None:
+            try:
+                for _ in range(50):
+                    if matched.status != "connected":
+                        break
+                    matched.send_audio_from_browser(b"\x00" * 320)
+                    await asyncio.sleep(0.02)
+            except Exception as e:
+                logger.debug(f"[VOIP] Keepalive burst error: {e}")
+        asyncio.create_task(_keepalive_burst())
 
         # Tự động gửi ACK 11304 (answerack) giống Zalo PC
         target_callee = str(data.get("calleeId") or matched.callee_id or partner_id)
         effective_call_id = int(data.get("callId") or matched.call_id)
+        internal_to_id = None
+        if isinstance(matched.signaling_data, dict):
+            s1 = matched.signaling_data.get("requestcall_result") or matched.signaling_data
+            if isinstance(s1, dict) and s1.get("toId"):
+                internal_to_id = str(s1["toId"])
 
         async def _dispatch_answer_ack() -> None:
             try:
@@ -700,12 +737,20 @@ async def handle_incoming_voip_signal(
                 )
                 logger.info(f"[VOIP-ANSWERACK] Result: {ack_res}")
 
-                # Nếu matched.callee_id khác với target_callee, gửi thêm với matched.callee_id để bảo đảm 100%
+                # Nếu matched.callee_id khác với target_callee, gửi thêm với matched.callee_id
                 if matched.callee_id and str(matched.callee_id) != target_callee:
                     await send_zca_call_signal(
                         auth,
                         11304,
                         {"calleeId": str(matched.callee_id), "callId": effective_call_id},
+                    )
+
+                # Gửi thêm với internal toId 32-bit nếu có
+                if internal_to_id and internal_to_id not in (target_callee, str(matched.callee_id)):
+                    await send_zca_call_signal(
+                        auth,
+                        11304,
+                        {"calleeId": internal_to_id, "callId": effective_call_id},
                     )
             except Exception as ack_err:
                 logger.warning(f"[VOIP-ANSWERACK] Dispatch failed for session={matched.session_id}: {ack_err}")

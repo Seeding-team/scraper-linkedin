@@ -120,7 +120,7 @@ async function callZaloVoiceEndpoint(api, endpointPath, paramsObj) {
 }
 
 // 11300 (Signal 401): Khởi tạo phiên gọi
-async function zcallRequestCall(api, { calleeId, callId, codec = DEFAULT_VOIP_CODECS, typeRequest = 1 }) {
+async function zcallRequestCall(api, { calleeId, callId, codec = "[]", typeRequest = 1 }) {
   const resolvedCallId = Number(callId || generateZaloCallId());
   const data = await callZaloVoiceEndpoint(api, "/api/voicecall/requestcall", {
     calleeId: String(calleeId),
@@ -257,7 +257,7 @@ async function startDirectZaloCall(
     callType = 1,
     rtpAddress = "",
     rtcpAddress = "",
-    codec = DEFAULT_VOIP_CODECS,
+    codec = "[]",
     extendData = "",
   },
 ) {

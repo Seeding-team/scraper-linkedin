@@ -150,15 +150,33 @@ async def _run_via_spawn(
     if not lines:
         raise RuntimeError(f"ZCA API helper returned no output for {command}")
 
-    try:
-        result = json.loads(lines[-1])
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"ZCA API helper returned invalid JSON: {lines[-1][:500]}") from exc
+    result = None
+    for line in reversed(lines):
+        try:
+            parsed = json.loads(line)
+            if isinstance(parsed, dict) and ("ok" in parsed or "status" in parsed or "call_id" in parsed or "call_ok" in parsed):
+                result = parsed
+                break
+        except Exception:
+            continue
+
+    if result is None:
+        try:
+            result = json.loads(lines[-1])
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"ZCA API helper returned invalid JSON: {lines[-1][:500]}") from exc
+
+    # Nếu là kết quả VoIP signaling có status hợp lệ (kể cả ringing, connected, privacy_blocked, rejected, failed),
+    # hoặc ok=True, hoặc có call_id: trả về kết quả thay vì ném lỗi (tránh trường hợp Node cleanup làm returncode != 0)
+    is_telephony_result = isinstance(result, dict) and (
+        result.get("ok") is True
+        or result.get("status") in ("ringing", "connected", "privacy_blocked", "rejected", "failed")
+        or (result.get("call_id") is not None and command.startswith("call-"))
+    )
+    if is_telephony_result:
+        return result
 
     if proc.returncode != 0 or not result.get("ok"):
-        # Nếu là kết quả VoIP signaling có status nghiệp vụ (privacy_blocked / rejected / failed), trả về kết quả thay vì ném lỗi
-        if isinstance(result, dict) and result.get("status") in ("privacy_blocked", "rejected", "failed"):
-            return result
         detail = (
             result.get("error_detail")
             or result.get("error")
