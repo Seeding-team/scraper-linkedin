@@ -500,9 +500,35 @@ async def start_call_session(
             if parsed_remote:
                 session.remote_rtp_addr = parsed_remote
 
-        if sig_res.get("request_warning"):
-            session.warning = str(sig_res["request_warning"])
-        session.status = "ringing"
+            raw_status = req_res.get("status")
+            if raw_status is not None and int(raw_status) != 0:
+                if int(raw_status) == 7:
+                    session.status = "privacy_blocked"
+                    session.warning = str(req_res.get("msg") or "Đối phương hiện không nhận cuộc gọi từ người lạ (hoặc chưa kết bạn trên Zalo).")
+                else:
+                    session.status = "rejected"
+                    session.warning = str(req_res.get("msg") or f"Cuộc gọi bị từ chối từ Zalo (status: {raw_status}).")
+                session.ended_at = time.time()
+                session.close_media()
+            elif sig_res.get("ok") is False:
+                session.status = "failed"
+                session.warning = str(sig_res.get("request_warning") or "Không thể khởi tạo cuộc gọi.")
+                session.ended_at = time.time()
+                session.close_media()
+            else:
+                session.status = "ringing"
+                if sig_res.get("request_warning"):
+                    session.warning = str(sig_res["request_warning"])
+        else:
+            if sig_res.get("ok") is False:
+                session.status = "failed"
+                session.warning = str(sig_res.get("request_warning") or "Lỗi khởi tạo cuộc gọi")
+                session.ended_at = time.time()
+                session.close_media()
+            else:
+                session.status = "ringing"
+                if sig_res.get("request_warning"):
+                    session.warning = str(sig_res["request_warning"])
     except Exception as sig_exc:
         session.warning = str(sig_exc)
         session.status = "failed"

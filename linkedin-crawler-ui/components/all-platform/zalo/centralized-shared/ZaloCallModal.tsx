@@ -21,6 +21,7 @@ import {
   Clock,
   Sparkles,
   Radio,
+  UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ import {
   getConversationPhone,
   getZaloDirectCallStatus,
   saveConversationPhone,
+  sendZaloFriendRequest,
   sendZaloVoiceMessage,
   startZaloDirectCall,
   type ZaloDirectCallSession,
@@ -122,6 +124,8 @@ export function ZaloCallModal({
   const [startingDirectCall, setStartingDirectCall] = useState(false);
   const [endingDirectCall, setEndingDirectCall] = useState(false);
   const [isCallMuted, setIsCallMuted] = useState(false);
+  const [sendingFriendReq, setSendingFriendReq] = useState(false);
+  const [friendReqSent, setFriendReqSent] = useState(false);
 
   // ── Direct Web Voice Note Studio ───────────────────────────────────────────
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -265,6 +269,8 @@ export function ZaloCallModal({
       setStartingDirectCall(false);
       setEndingDirectCall(false);
       setIsCallMuted(false);
+      setSendingFriendReq(false);
+      setFriendReqSent(false);
       setSelectedCallResult("");
       if (recordedUrl) {
         URL.revokeObjectURL(recordedUrl);
@@ -637,7 +643,9 @@ export function ZaloCallModal({
               if (
                 res.session.status === "ended" ||
                 res.session.status === "cancelled" ||
-                res.session.status === "failed"
+                res.session.status === "failed" ||
+                res.session.status === "privacy_blocked" ||
+                res.session.status === "rejected"
               ) {
                 stopCallWsAndPolling();
                 if (callTimerRef.current) {
@@ -691,9 +699,19 @@ export function ZaloCallModal({
 
         await connectDirectCallAudioGateway(res.session);
 
-        if (res.session.status === "failed") {
+        if (res.session.status === "privacy_blocked") {
+          toast.error(
+            "Khách hàng đang bật chế độ 'Chặn cuộc gọi từ người lạ' trên Zalo di động (chỉ nhận cuộc gọi từ bạn bè). Hãy gửi tin nhắn thoại bên dưới hoặc kết bạn trước trên Zalo!",
+            { duration: 7000 },
+          );
+        } else if (res.session.status === "rejected") {
           toast.warning(
-            `Zalo VoIP Engine phản hồi: ${res.session.error || "Không thể cấp phát kênh VoIP"}. Bạn có thể dùng nút Mở bằng App Zalo PC hoặc gửi Tin nhắn thoại trực tiếp bên dưới.`,
+            res.session.warning || "Cuộc gọi bị Zalo từ chối hoặc khách đang bận.",
+            { duration: 5000 },
+          );
+        } else if (res.session.status === "failed") {
+          toast.warning(
+            `Zalo VoIP Engine phản hồi: ${res.session.warning || res.session.error || "Không thể cấp phát kênh VoIP"}. Bạn có thể dùng nút Mở bằng App Zalo PC hoặc gửi Tin nhắn thoại trực tiếp bên dưới.`,
           );
         } else {
           toast.success(
@@ -763,6 +781,34 @@ export function ZaloCallModal({
         callTimerRef.current = null;
       }
       setEndingDirectCall(false);
+    }
+  };
+
+  // ── Gửi lời mời kết bạn 1-click khi gặp lỗi privacy_blocked ────────────────
+  const handleSendFriendRequest = async () => {
+    const targetUid = activeCallSession?.callee_id || conversationId;
+    if (!targetUid || targetUid.startsWith("g_") || targetUid.startsWith("group_")) {
+      toast.error("Không tìm thấy Zalo UID của khách hàng để gửi lời mời kết bạn.");
+      return;
+    }
+    setSendingFriendReq(true);
+    try {
+      const res = await sendZaloFriendRequest(
+        accountId || "default",
+        targetUid,
+        "Xin chào! Mình liên hệ trao đổi công việc qua Zalo nhé.",
+      );
+      if (res?.ok) {
+        setFriendReqSent(true);
+        toast.success("Đã gửi lời mời kết bạn tới khách hàng thành công!");
+      } else {
+        toast.error("Không thể gửi kết bạn (khách đã chặn hoặc đã là bạn bè).");
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Lỗi gửi kết bạn Zalo";
+      toast.error(msg);
+    } finally {
+      setSendingFriendReq(false);
     }
   };
 
@@ -1208,9 +1254,12 @@ export function ZaloCallModal({
                               activeCallSession.status === "dialing" ||
                               activeCallSession.status === "initializing"
                             ? "bg-blue-100 text-blue-800 border-blue-300"
-                            : activeCallSession.status === "failed"
-                              ? "bg-amber-100 text-amber-800 border-amber-300"
-                              : "bg-slate-100 text-slate-700 border-slate-300",
+                            : activeCallSession.status === "privacy_blocked"
+                              ? "bg-rose-100 text-rose-800 border-rose-300"
+                              : activeCallSession.status === "failed" ||
+                                  activeCallSession.status === "rejected"
+                                ? "bg-amber-100 text-amber-800 border-amber-300"
+                                : "bg-slate-100 text-slate-700 border-slate-300",
                       )}
                     >
                       <Radio
@@ -1234,8 +1283,12 @@ export function ZaloCallModal({
                         "Đã kết thúc đàm thoại (11306/11311)"}
                       {activeCallSession.status === "cancelled" &&
                         "Đã hủy cuộc gọi (11305/11311)"}
+                      {activeCallSession.status === "privacy_blocked" &&
+                        "Khách chặn cuộc gọi người lạ (chưa kết bạn)"}
+                      {activeCallSession.status === "rejected" &&
+                        "Cuộc gọi bị đối phương từ chối"}
                       {activeCallSession.status === "failed" &&
-                        "Kênh VoIP bận hoặc khách chặn cuộc gọi lạ"}
+                        "Kênh VoIP bận hoặc không thể kết nối"}
                     </span>
                     <span className="text-[11px] font-mono font-semibold text-slate-500">
                       Call #{activeCallSession.call_id} • {activeCallSession.codec}
@@ -1287,6 +1340,42 @@ export function ZaloCallModal({
                     {activeCallSession.kpi_recorded ? " • Đã +1 KPI CALL" : ""}
                   </span>
                 </div>
+
+                {activeCallSession.status === "privacy_blocked" && (
+                  <div className="rounded-xl border border-rose-200 bg-rose-50/90 p-3 text-[12px] text-rose-800 space-y-2 shadow-xs">
+                    <div className="font-bold flex items-center gap-1.5 text-rose-900">
+                      <span>⚠️ Đối phương đang chặn cuộc gọi từ người lạ</span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed text-rose-700">
+                      Trên Zalo di động, khách hàng chưa bật quyền <strong>&quot;Cho phép người lạ gọi điện&quot;</strong> (chỉ nhận cuộc gọi từ bạn bè), nên Zalo tự động chuyển cuộc gọi thành <em>&quot;Cuộc gọi nhỡ&quot;</em>.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        disabled={sendingFriendReq || friendReqSent}
+                        onClick={() => void handleSendFriendRequest()}
+                        className={cn(
+                          "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold shadow-xs transition cursor-pointer",
+                          friendReqSent
+                            ? "bg-emerald-600 text-white cursor-default"
+                            : "bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50",
+                        )}
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                        <span>
+                          {friendReqSent
+                            ? "✓ Đã gửi lời mời kết bạn"
+                            : sendingFriendReq
+                              ? "Đang gửi kết bạn..."
+                              : "🤝 Gửi lời mời kết bạn ngay"}
+                        </span>
+                      </button>
+                      <span className="text-[11px] text-rose-800 font-medium">
+                        hoặc gửi <strong>Tin nhắn thoại trực tiếp</strong> bên dưới!
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

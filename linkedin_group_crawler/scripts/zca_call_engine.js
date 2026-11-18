@@ -308,28 +308,37 @@ async function startDirectZaloCall(
     s1Data.rtcp_address ||
     serverRtp;
 
+  // Nếu Step 1 bị từ chối (ví dụ status: 7: Chặn cuộc gọi từ người lạ / không muốn nhận cuộc gọi),
+  // KHÔNG gọi tiếp Step 2 (11301) vì máy chủ Zalo sẽ ném lỗi "Tham số không hợp lệ".
+  const isRejectedOrBusy = s1Data.status !== undefined && Number(s1Data.status) !== 0;
+
   let step2 = null;
   let step2Error = null;
-  try {
-    step2 = await zcallSendRequestCall(api, {
-      calleeId: targetUid,
-      rtcpAddress: serverRtcp,
-      rtpAddress: serverRtp,
-      codec: s1Data.codec || codec,
-      extendData: extendData || s1Data.extendData || "",
-      session: serverSession,
-      callId: effectiveCallId,
-    });
-  } catch (err) {
-    step2Error = err && err.message ? err.message : String(err);
+  if (!isRejectedOrBusy) {
+    try {
+      step2 = await zcallSendRequestCall(api, {
+        calleeId: targetUid,
+        rtcpAddress: serverRtcp,
+        rtpAddress: serverRtp,
+        codec: s1Data.codec || codec,
+        extendData: extendData || s1Data.extendData || "",
+        session: serverSession,
+        callId: effectiveCallId,
+      });
+    } catch (err) {
+      step2Error = err && err.message ? err.message : String(err);
+    }
+  } else {
+    step2Error = s1Data.msg || "Cuộc gọi bị từ chối do cài đặt quyền riêng tư của đối phương (chặn người lạ) hoặc đang bận.";
   }
 
   return {
-    ok: true,
+    ok: !isRejectedOrBusy,
     call_id: effectiveCallId,
     callee_id: targetUid,
     session: serverSession,
     call_type: Number(callType || 1),
+    status: isRejectedOrBusy ? (Number(s1Data.status) === 7 ? "privacy_blocked" : "rejected") : "ringing",
     profile: resolvedProfile,
     rtp_address: serverRtp,
     rtcp_address: serverRtcp,

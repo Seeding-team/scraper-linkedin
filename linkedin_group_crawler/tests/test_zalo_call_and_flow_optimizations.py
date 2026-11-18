@@ -221,6 +221,53 @@ def test_module1_zca_call_engine_crypto_and_signaling():
     # Two-phase dialer: 11300 (requestcall) + 11301 (request)
     assert out["callCount"] == 2
 
+    # Case 2: Callee privacy blocked (status: 7) -> Step 2 must be skipped, status is privacy_blocked
+    node_blocked_code = f"""
+    const engine = require("{script_path}");
+    (async () => {{
+      const calls = [];
+      const fakeBlockedApi = {{
+        zpwServiceMap: {{ voice_call: ["https://voicecall-wpa.chat.zalo.me"] }},
+        custom: function(name, fn) {{
+          this[name] = (props) => fn({{
+            ctx: {{ imei: "imei_test_01" }},
+            utils: {{
+              makeURL: (base, params) => base + "?" + new URLSearchParams(params).toString(),
+              encodeAES: (s) => "AES(" + s + ")",
+              request: async (url, opts) => {{ calls.push({{ url, opts }}); return {{ ok: true }}; }},
+              resolve: async () => ({{
+                status: 7,
+                msg: "Xin lỗi. Hiện tại tôi không muốn nhận cuộc gọi.",
+                id: 889900
+              }})
+            }},
+            props
+          }});
+        }}
+      }};
+      const res = await engine.startDirectZaloCall(fakeBlockedApi, {{
+        calleeId: "1234567890123456789",
+        callType: 1
+      }});
+      console.log(JSON.stringify({{ res, callCount: calls.length }}));
+    }})();
+    """
+    proc_b = subprocess.run(
+        ["node", "-e", node_blocked_code],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    out_b = json.loads(proc_b.stdout.strip().splitlines()[-1])
+    assert out_b["res"]["ok"] is False
+    assert out_b["res"]["status"] == "privacy_blocked"
+    assert (
+        "không muốn nhận cuộc gọi" in out_b["res"]["request_warning"]
+        or "chặn người lạ" in out_b["res"]["request_warning"]
+    )
+    # Step 2 was cleanly skipped (only 1 call to 11300)
+    assert out_b["callCount"] == 1
+
 
 def test_module2_3_4_voip_gateway_rtp_stun_websocket_and_auto_kpi():
     import struct

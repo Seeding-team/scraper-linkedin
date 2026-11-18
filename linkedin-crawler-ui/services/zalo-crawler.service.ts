@@ -1520,8 +1520,18 @@ export interface ZaloDirectCallSession {
   customer_name?: string | null;
   call_type: number;
   call_id: number;
-  status: "initializing" | "dialing" | "ringing" | "connected" | "ended" | "cancelled" | "failed";
+  status:
+    | "initializing"
+    | "dialing"
+    | "ringing"
+    | "connected"
+    | "ended"
+    | "cancelled"
+    | "failed"
+    | "privacy_blocked"
+    | "rejected";
   error?: string | null;
+  warning?: string | null;
   codec: string;
   rtp_port: number;
   public_ip?: string | null;
