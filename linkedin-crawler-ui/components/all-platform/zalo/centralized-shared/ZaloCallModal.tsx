@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   Phone,
+  PhoneOff,
   Video,
   Mic,
   MicOff,
@@ -19,14 +20,20 @@ import {
   ShieldCheck,
   Clock,
   Sparkles,
+  Radio,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {
+  buildZaloDirectCallWsUrl,
   checkZaloCallHealth,
+  controlZaloDirectCall,
   getConversationPhone,
+  getZaloDirectCallStatus,
   saveConversationPhone,
   sendZaloVoiceMessage,
+  startZaloDirectCall,
+  type ZaloDirectCallSession,
 } from "@/services/zaloCrawlerService";
 import { postCallResultService } from "@/services/all-platform.service";
 import {
@@ -107,10 +114,14 @@ export function ZaloCallModal({
   const [micError, setMicError] = useState<string | null>(null);
   const [playingTestTone, setPlayingTestTone] = useState(false);
 
-  // ── Active Call State & Timer ──────────────────────────────────────────────
+  // ── Active Call State & Timer (Hướng 3 — Direct Web Softphone Engine) ─────
   const [callMode, setCallMode] = useState<"voice" | "video">(initialMode);
   const [callLaunched, setCallLaunched] = useState(false);
   const [callElapsedSec, setCallElapsedSec] = useState(0);
+  const [activeCallSession, setActiveCallSession] = useState<ZaloDirectCallSession | null>(null);
+  const [startingDirectCall, setStartingDirectCall] = useState(false);
+  const [endingDirectCall, setEndingDirectCall] = useState(false);
+  const [isCallMuted, setIsCallMuted] = useState(false);
 
   // ── Direct Web Voice Note Studio ───────────────────────────────────────────
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -126,7 +137,7 @@ export function ZaloCallModal({
   const [savingCallResult, setSavingCallResult] = useState(false);
   const [loggedAttempts, setLoggedAttempts] = useState<number>(0);
 
-  // ── Hardware Refs (Explicitly released before launching native ZaloCall.exe) ─
+  // ── Hardware & Web Softphone Gateway Refs ─────────────────────────────────
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef<number | null>(null);
@@ -134,6 +145,10 @@ export function ZaloCallModal({
   const recordChunksRef = useRef<BlobPart[]>([]);
   const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callWsRef = useRef<WebSocket | null>(null);
+  const callStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const callProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const isCallMutedRef = useRef<boolean>(false);
 
   useEffect(() => {
     setMounted(true);
@@ -143,13 +158,58 @@ export function ZaloCallModal({
     setCallMode(initialMode);
   }, [initialMode, open]);
 
+  useEffect(() => {
+    isCallMutedRef.current = isCallMuted;
+  }, [isCallMuted]);
+
+  const stopCallWsAndPolling = useCallback(() => {
+    if (callStatusPollRef.current) {
+      clearInterval(callStatusPollRef.current);
+      callStatusPollRef.current = null;
+    }
+    if (callProcessorRef.current) {
+      try {
+        callProcessorRef.current.disconnect();
+      } catch {
+        /* ignore */
+      }
+      callProcessorRef.current = null;
+    }
+    if (callWsRef.current) {
+      try {
+        callWsRef.current.close();
+      } catch {
+        /* ignore */
+      }
+      callWsRef.current = null;
+    }
+  }, []);
+
   /**
-   * GIẢI PHÓNG HOÀN TOÀN PHẦN CỨNG ÂM THANH TRÌNH DUYỆT (Anti-WASAPI Exclusive Lock):
-   * Khi gọi qua App Zalo PC (ZaloCall.exe), nếu Chrome vẫn giữ MediaStreamTrack mở,
-   * driver âm thanh Windows có thể bị xung đột làm mất tiếng mic, rè hoặc đứt quãng.
-   * Gọi hàm này TRƯỚC khi bắn URI `zalo://` đảm bảo Zalo nhận 100% phần cứng Mic/Loa sạch!
+   * Giải phóng đồng bộ (0ms) các MediaStreamTrack trước khi mở liên kết ngoài `zalo://`
+   * để KHÔNG làm mất Transient User Activation của Chrome và nhả ngay khóa WASAPI.
    */
+  const releaseMicTracksSync = useCallback(() => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      mediaStreamRef.current = null;
+    }
+    setTestingMic(false);
+    setMicLevel(0);
+  }, []);
+
   const releaseBrowserAudioHardware = useCallback(async () => {
+    stopCallWsAndPolling();
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -189,7 +249,7 @@ export function ZaloCallModal({
     setTestingMic(false);
     setIsRecordingVoice(false);
     setMicLevel(0);
-  }, []);
+  }, [stopCallWsAndPolling]);
 
   // Dọn dẹp triệt để khi đóng modal
   useEffect(() => {
@@ -201,6 +261,10 @@ export function ZaloCallModal({
       }
       setCallLaunched(false);
       setCallElapsedSec(0);
+      setActiveCallSession(null);
+      setStartingDirectCall(false);
+      setEndingDirectCall(false);
+      setIsCallMuted(false);
       setSelectedCallResult("");
       if (recordedUrl) {
         URL.revokeObjectURL(recordedUrl);
@@ -447,53 +511,259 @@ export function ZaloCallModal({
     }
   };
 
-  // ── Kích hoạt Gọi qua Zalo Native (Opus VoIP chống lag + tự nhả Mic Chrome) ─
-  const handleLaunchZaloCall = async (mode: "voice" | "video") => {
-    setCallMode(mode);
-    // Bước 1: Giải phóng ngay mọi MediaStream/AudioContext của trình duyệt để ZaloCall.exe độc quyền phần cứng sạch
-    await releaseBrowserAudioHardware();
-
-    // Bước 2: Tạo chuẩn URI `zalo://conversation?...` khớp 100% bộ xử lý z-uri-open-conv của Zalo PC/App
-    let deepLink = "";
+  // ── Đường dẫn DeepLink đồng bộ cho nút phụ [Mở bằng App Zalo PC] ───────────
+  const nativeZaloDeepLink = useMemo(() => {
     if (cleanPhone.length >= 9) {
-      deepLink = `zalo://conversation?phone=${encodeURIComponent(cleanPhone)}`;
-    } else if (conversationId && !isGroup) {
-      deepLink = `zalo://conversation?id=${encodeURIComponent(conversationId.trim())}`;
-    } else {
-      toast.error("Cần số điện thoại hoặc hội thoại cá nhân 1-1 để mở cuộc gọi Zalo.");
+      return `zalo://conversation?phone=${encodeURIComponent(cleanPhone)}`;
+    }
+    if (conversationId && !isGroup) {
+      return `zalo://conversation?id=${encodeURIComponent(conversationId.trim())}`;
+    }
+    return "";
+  }, [cleanPhone, conversationId, isGroup]);
+
+  // ── Kết nối WebAudio <-> WebSocket /call-ws/{session_id} <-> UDP RTP Gateway ─
+  const connectDirectCallAudioGateway = useCallback(
+    async (session: ZaloDirectCallSession) => {
+      stopCallWsAndPolling();
+      try {
+        const wsUrl = buildZaloDirectCallWsUrl(session.session_id);
+        const ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
+        callWsRef.current = ws;
+
+        ws.onmessage = (ev) => {
+          if (typeof ev.data === "string") {
+            try {
+              const msg = JSON.parse(ev.data) as {
+                type?: string;
+                session?: ZaloDirectCallSession;
+              };
+              if (msg.session) {
+                setActiveCallSession(msg.session);
+                if (msg.session.kpi_recorded) {
+                  setLoggedAttempts((prev) => Math.max(1, prev));
+                  if (typeof window !== "undefined") {
+                    window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+                  }
+                }
+              }
+            } catch {
+              /* ignore malformed JSON frame */
+            }
+            return;
+          }
+
+          // Binary PCM16 / audio frame từ Zalo UDP RTP Gateway đẩy về trình duyệt
+          if (ev.data instanceof ArrayBuffer && audioCtxRef.current && ev.data.byteLength >= 4) {
+            try {
+              const ctx = audioCtxRef.current;
+              const pcm16 = new Int16Array(ev.data);
+              if (pcm16.length > 0) {
+                const audioBuf = ctx.createBuffer(1, pcm16.length, 16000);
+                const channel = audioBuf.getChannelData(0);
+                for (let i = 0; i < pcm16.length; i++) {
+                  channel[i] = pcm16[i] / 32768;
+                }
+                const src = ctx.createBufferSource();
+                src.buffer = audioBuf;
+                src.connect(ctx.destination);
+                src.start();
+              }
+            } catch {
+              /* ignore frame decode error */
+            }
+          }
+        };
+
+        // Mở luồng Mic (AEC + NS + AGC) truyền thẳng PCM16 qua WebSocket sang UDP RTP Gateway
+        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              ...(selectedMicId ? { deviceId: { exact: selectedMicId } } : {}),
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              channelCount: 1,
+              sampleRate: 16000,
+            },
+          });
+          mediaStreamRef.current = stream;
+
+          const AudioCtx =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          const ctx = new AudioCtx({ sampleRate: 16000 });
+          audioCtxRef.current = ctx;
+
+          const source = ctx.createMediaStreamSource(stream);
+          const processor = ctx.createScriptProcessor(1024, 1, 1);
+          callProcessorRef.current = processor;
+
+          processor.onaudioprocess = (audioEv) => {
+            const input = audioEv.inputBuffer.getChannelData(0);
+            let sumSq = 0;
+            const pcm16 = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+              const s = Math.max(-1, Math.min(1, input[i]));
+              sumSq += s * s;
+              pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+            }
+            const rms = Math.sqrt(sumSq / input.length);
+            setMicLevel(isCallMutedRef.current ? 0 : Math.min(100, Math.round(rms * 320)));
+
+            if (
+              !isCallMutedRef.current &&
+              callWsRef.current &&
+              callWsRef.current.readyState === WebSocket.OPEN
+            ) {
+              callWsRef.current.send(pcm16.buffer);
+            }
+          };
+
+          const zeroGain = ctx.createGain();
+          zeroGain.gain.value = 0;
+          source.connect(processor);
+          processor.connect(zeroGain);
+          zeroGain.connect(ctx.destination);
+        }
+
+        // Đồng bộ trạng thái Signaling định kỳ (11300 -> 11301 -> 11302 -> 11303 -> 11306)
+        callStatusPollRef.current = setInterval(async () => {
+          try {
+            const res = await getZaloDirectCallStatus(session.session_id, accountId || "default");
+            if (res?.session) {
+              setActiveCallSession(res.session);
+              if (
+                res.session.status === "ended" ||
+                res.session.status === "cancelled" ||
+                res.session.status === "failed"
+              ) {
+                stopCallWsAndPolling();
+                if (callTimerRef.current) {
+                  clearInterval(callTimerRef.current);
+                  callTimerRef.current = null;
+                }
+              }
+            }
+          } catch {
+            /* ignore transient poll error */
+          }
+        }, 2000);
+      } catch {
+        /* ignore audio gateway setup error */
+      }
+    },
+    [accountId, selectedMicId, stopCallWsAndPolling],
+  );
+
+  // ── Kích hoạt Gọi Trực Tiếp Trên Web CRM Qua Zalo VoIP Engine (Hướng 3) ────
+  const handleStartDirectZaloCall = async (mode: "voice" | "video") => {
+    if (!canOpenZaloDirect) {
+      toast.error("Cần số điện thoại hoặc hội thoại cá nhân 1-1 để khởi tạo cuộc gọi Zalo.");
       return;
     }
+    setCallMode(mode);
+    setStartingDirectCall(true);
+    setIsCallMuted(false);
 
-    // Bước 3: Mở giao thức zalo:// qua hidden iframe để KHÔNG ngắt kết nối SSE/WebSocket của trang hiện tại
     try {
-      const iframe = document.createElement("iframe");
-      iframe.style.display = "none";
-      iframe.src = deepLink;
-      document.body.appendChild(iframe);
-      window.setTimeout(() => {
-        try {
-          document.body.removeChild(iframe);
-        } catch {
-          /* ignore */
+      await releaseBrowserAudioHardware();
+      const res = await startZaloDirectCall({
+        account_id: accountId || "default",
+        conversation_id: conversationId || "",
+        callee_id: !isGroup && conversationId ? conversationId : "",
+        phone_number: cleanPhone || undefined,
+        customer_name: customerName || undefined,
+        call_type: mode === "video" ? 2 : 1,
+        source_post_id: sourcePostId,
+        source_platform: sourcePlatform,
+      });
+
+      if (res?.session) {
+        setActiveCallSession(res.session);
+        setCallLaunched(true);
+        if (callTimerRef.current) clearInterval(callTimerRef.current);
+        setCallElapsedSec(0);
+        callTimerRef.current = setInterval(() => {
+          setCallElapsedSec((prev) => prev + 1);
+        }, 1000);
+
+        await connectDirectCallAudioGateway(res.session);
+
+        if (res.session.status === "failed") {
+          toast.warning(
+            `Zalo VoIP Engine phản hồi: ${res.session.error || "Không thể cấp phát kênh VoIP"}. Bạn có thể dùng nút Mở bằng App Zalo PC hoặc gửi Tin nhắn thoại trực tiếp bên dưới.`,
+          );
+        } else {
+          toast.success(
+            `Đã phát lệnh gọi Zalo VoIP #${res.session.call_id} (11300/11301) từ nick "${accountLabel || accountId}" tới ${customerName || cleanPhone || conversationId}!`,
+          );
         }
-      }, 2500);
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error
+          ? `Không thể khởi tạo Zalo VoIP Engine: ${err.message}`
+          : "Lỗi kết nối tới Zalo VoIP Call Engine trên máy chủ.",
+      );
+    } finally {
+      setStartingDirectCall(false);
+    }
+  };
+
+  // ── Kết thúc / Hủy cuộc gọi Web Softphone (11305/11306 + 11311 + Auto +1 KPI) ─
+  const handleEndDirectCall = async () => {
+    if (!activeCallSession) return;
+    setEndingDirectCall(true);
+    try {
+      const action =
+        activeCallSession.status === "connected" ? "end" : "cancel";
+      const resultCode = selectedCallResult || "called";
+      const res = await controlZaloDirectCall(
+        activeCallSession.session_id,
+        action,
+        resultCode,
+        accountId || "default",
+      );
+      if (res?.session) {
+        setActiveCallSession(res.session);
+        if (res.session.kpi_recorded) {
+          const nextAttempts = Math.max(1, loggedAttempts + 1);
+          setLoggedAttempts(nextAttempts);
+          if (!selectedCallResult) setSelectedCallResult(resultCode);
+          if (typeof window !== "undefined") {
+            const targetKey =
+              (sourcePostId && sourcePostId.trim()) ||
+              `zalo:${accountId || "default"}:${conversationId || cleanPhone || "unknown"}`;
+            const targetPlatform =
+              sourcePostId && sourcePlatform ? sourcePlatform : "zalo";
+            window.dispatchEvent(
+              new CustomEvent("seeding_post_call_updated", {
+                detail: {
+                  postId: targetKey,
+                  platform: targetPlatform,
+                  resultCode,
+                  attempts: nextAttempts,
+                  lastCallAt: new Date().toISOString(),
+                },
+              }),
+            );
+            window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
+          }
+        }
+      }
+      toast.success("Đã kết thúc cuộc gọi Zalo & tự động ghi nhận +1 KPI CALL!");
     } catch {
-      window.location.href = deepLink;
+      toast.error("Đã đóng phiên âm thanh cục bộ.");
+    } finally {
+      await releaseBrowserAudioHardware();
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
+      }
+      setEndingDirectCall(false);
     }
-
-    setCallLaunched(true);
-    if (!callTimerRef.current) {
-      setCallElapsedSec(0);
-      callTimerRef.current = setInterval(() => {
-        setCallElapsedSec((prev) => prev + 1);
-      }, 1000);
-    }
-
-    toast.success(
-      mode === "video"
-        ? "Đã chuyển sang App Zalo (đã giải phóng Mic trình duyệt) — Bấm biểu tượng Video góc phải Zalo để bắt đầu!"
-        : "Đã mở hộp thoại trên App Zalo (Mic & Loa sạch 100%) — Bấm nút Gọi trên Zalo để đàm thoại chuẩn HD!",
-    );
   };
 
   // ── Ghi âm & Gửi Voice Note trực tiếp qua ZCA API (Không cần Zalo PC!) ─────
@@ -892,61 +1162,172 @@ export function ZaloCallModal({
             )}
           </div>
 
-          {/* ── 3. Cụm Nút Gọi Zalo Chính & Kênh Dự Phòng ─────────────────── */}
+          {/* ── 3. Cụm Nút Gọi Zalo Chính (Hướng 3 — Direct Web VoIP Engine) ── */}
           <div className="space-y-2.5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <button
                 type="button"
-                disabled={!canOpenZaloDirect}
-                onClick={() => void handleLaunchZaloCall("voice")}
+                disabled={!canOpenZaloDirect || startingDirectCall}
+                onClick={() => void handleStartDirectZaloCall("voice")}
                 className="flex items-center justify-center gap-2 rounded-xl bg-[#0068FF] hover:bg-[#0055D4] active:scale-[0.99] px-4 py-3 text-xs sm:text-sm font-bold text-white shadow-md shadow-blue-600/20 transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Phone className="h-4 w-4 fill-white" />
-                <span>Gọi Thoại Qua Zalo</span>
+                <span>
+                  {startingDirectCall && callMode === "voice"
+                    ? "Đang quay số VoIP (11300)..."
+                    : "Gọi Thoại Qua Zalo (Web)"}
+                </span>
               </button>
 
               <button
                 type="button"
-                disabled={!canOpenZaloDirect}
-                onClick={() => void handleLaunchZaloCall("video")}
+                disabled={!canOpenZaloDirect || startingDirectCall}
+                onClick={() => void handleStartDirectZaloCall("video")}
                 className="flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] px-4 py-3 text-xs sm:text-sm font-bold text-white shadow-md shadow-emerald-600/20 transition cursor-pointer disabled:opacity-50 disabled:pointer-events-none"
               >
                 <Video className="h-4 w-4" />
-                <span>Video Call Qua Zalo</span>
+                <span>
+                  {startingDirectCall && callMode === "video"
+                    ? "Đang kết nối Video VoIP..."
+                    : "Video Call Qua Zalo (Web)"}
+                </span>
               </button>
             </div>
 
-            {cleanPhone.length >= 9 && (
-              <div className="grid grid-cols-2 gap-2">
-                <a
-                  href={`https://zalo.me/${cleanPhone}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={() => void releaseBrowserAudioHardware()}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition"
-                >
-                  <ExternalLink className="h-3.5 w-3.5 text-[#0068FF]" />
-                  <span>Mở Zalo.me ({cleanPhone})</span>
-                </a>
-                <a
-                  href={`tel:${cleanPhone}`}
-                  onClick={() => void releaseBrowserAudioHardware()}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition"
-                >
-                  <Smartphone className="h-3.5 w-3.5 text-emerald-600" />
-                  <span>Gọi SIM di động</span>
-                </a>
+            {/* ── Bảng Điều Khiển Web Softphone (ZCA VoIP 11300..11311 + UDP RTP) ── */}
+            {activeCallSession && (
+              <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50/90 via-white to-indigo-50/70 p-3.5 space-y-2.5 shadow-xs">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold border",
+                        activeCallSession.status === "connected"
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          : activeCallSession.status === "ringing" ||
+                              activeCallSession.status === "dialing" ||
+                              activeCallSession.status === "initializing"
+                            ? "bg-blue-100 text-blue-800 border-blue-300"
+                            : activeCallSession.status === "failed"
+                              ? "bg-amber-100 text-amber-800 border-amber-300"
+                              : "bg-slate-100 text-slate-700 border-slate-300",
+                      )}
+                    >
+                      <Radio
+                        className={cn(
+                          "h-3 w-3",
+                          (activeCallSession.status === "connected" ||
+                            activeCallSession.status === "ringing" ||
+                            activeCallSession.status === "dialing") &&
+                            "animate-pulse",
+                        )}
+                      />
+                      {activeCallSession.status === "initializing" &&
+                        "Đang cấp phát Signaling (11300 requestcall)..."}
+                      {activeCallSession.status === "dialing" &&
+                        "Đang phát lệnh gọi tới Zalo khách (11301 request)..."}
+                      {activeCallSession.status === "ringing" &&
+                        "Đang đổ chuông trên Zalo khách hàng (11302 ringring)..."}
+                      {activeCallSession.status === "connected" &&
+                        `Đang đàm thoại 2 chiều (${formatDuration(callElapsedSec)})`}
+                      {activeCallSession.status === "ended" &&
+                        "Đã kết thúc đàm thoại (11306/11311)"}
+                      {activeCallSession.status === "cancelled" &&
+                        "Đã hủy cuộc gọi (11305/11311)"}
+                      {activeCallSession.status === "failed" &&
+                        "Kênh VoIP bận hoặc khách chặn cuộc gọi lạ"}
+                    </span>
+                    <span className="text-[11px] font-mono font-semibold text-slate-500">
+                      Call #{activeCallSession.call_id} • {activeCallSession.codec}
+                    </span>
+                  </div>
+
+                  {(activeCallSession.status === "initializing" ||
+                    activeCallSession.status === "dialing" ||
+                    activeCallSession.status === "ringing" ||
+                    activeCallSession.status === "connected") && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setIsCallMuted((m) => !m)}
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer",
+                          isCallMuted
+                            ? "border-amber-300 bg-amber-100 text-amber-800"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100",
+                        )}
+                      >
+                        {isCallMuted ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5 text-emerald-600" />}
+                        <span>{isCallMuted ? "Đã tắt Mic" : "Mic đang bật"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={endingDirectCall}
+                        onClick={() => void handleEndDirectCall()}
+                        className="inline-flex items-center gap-1 rounded-lg bg-rose-600 hover:bg-rose-700 px-2.5 py-1 text-[11px] font-bold text-white transition cursor-pointer disabled:opacity-50"
+                      >
+                        <PhoneOff className="h-3.5 w-3.5" />
+                        <span>{endingDirectCall ? "Đang ngắt..." : "Kết thúc"}</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-[10.5px] font-mono text-slate-500 flex-wrap gap-2">
+                  <span>
+                    UDP RTP Port: <strong>{activeCallSession.rtp_port || "auto"}</strong>
+                    {activeCallSession.public_ip
+                      ? ` • STUN: ${activeCallSession.public_ip}:${activeCallSession.public_port}`
+                      : ""}
+                  </span>
+                  <span>
+                    RTP Tx: <strong>{activeCallSession.packets_sent}</strong> • Rx:{" "}
+                    <strong>{activeCallSession.packets_received}</strong>
+                    {activeCallSession.kpi_recorded ? " • Đã +1 KPI CALL" : ""}
+                  </span>
+                </div>
               </div>
             )}
 
-            {callLaunched && (
-              <div className="rounded-xl border border-blue-200 bg-blue-50/80 px-3.5 py-2.5 text-xs text-blue-900 flex items-center justify-between gap-2">
-                <span>
-                  Đã mở đúng hội thoại trên <strong>App Zalo</strong> (đã nhả khóa Mic trình duyệt). Bấm biểu tượng{" "}
-                  <strong>{callMode === "video" ? "📹 Video" : "📞 Gọi thoại"}</strong> góc phải cửa sổ Zalo để bắt đầu!
-                </span>
-              </div>
-            )}
+            {/* ── Kênh mở nhanh App Zalo PC đồng bộ (0ms User Gesture) & SIM ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {nativeZaloDeepLink && (
+                <a
+                  href={nativeZaloDeepLink}
+                  onClick={() => {
+                    releaseMicTracksSync();
+                    setCallLaunched(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/60 hover:bg-blue-100/70 px-3 py-2 text-xs font-bold text-[#0068FF] transition"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Mở bằng App Zalo PC</span>
+                </a>
+              )}
+              {cleanPhone.length >= 9 && (
+                <>
+                  <a
+                    href={`https://zalo.me/${cleanPhone}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => releaseMicTracksSync()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 text-[#0068FF]" />
+                    <span>Mở Zalo.me ({cleanPhone})</span>
+                  </a>
+                  <a
+                    href={`tel:${cleanPhone}`}
+                    onClick={() => releaseMicTracksSync()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 transition"
+                  >
+                    <Smartphone className="h-3.5 w-3.5 text-emerald-600" />
+                    <span>Gọi SIM di động</span>
+                  </a>
+                </>
+              )}
+            </div>
           </div>
 
           {/* ── 4. Gửi Ghi Âm Thoại Trực Tiếp Vào Hộp Thoại Zalo (Web Voice Note) ─ */}

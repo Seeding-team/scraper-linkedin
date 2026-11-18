@@ -1509,3 +1509,105 @@ export function getConversationPhone(
     }
   );
 }
+
+// ── Direct Self-Built Zalo VoIP Call Engine (Hướng 3 — Web Softphone) ─────────
+export interface ZaloDirectCallSession {
+  session_id: string;
+  account_id: string;
+  conversation_id: string;
+  callee_id: string;
+  phone_number?: string | null;
+  customer_name?: string | null;
+  call_type: number;
+  call_id: number;
+  status: "initializing" | "dialing" | "ringing" | "connected" | "ended" | "cancelled" | "failed";
+  error?: string | null;
+  codec: string;
+  rtp_port: number;
+  public_ip?: string | null;
+  public_port?: number | null;
+  relay_host?: string | null;
+  relay_port?: number | null;
+  duration_sec: number;
+  packets_sent: number;
+  packets_received: number;
+  kpi_recorded: boolean;
+  source_post_id?: string | null;
+  source_platform?: string | null;
+  created_at_ms: number;
+  connected_at_ms?: number | null;
+  ended_at_ms?: number | null;
+  signaling?: Record<string, unknown>;
+}
+
+export interface ZaloDirectCallStartRequest {
+  account_id?: string;
+  conversation_id?: string;
+  callee_id?: string;
+  phone_number?: string;
+  customer_name?: string;
+  call_type?: number;
+  source_post_id?: string | null;
+  source_platform?: string | null;
+}
+
+export function startZaloDirectCall(
+  payload: ZaloDirectCallStartRequest,
+): Promise<{ ok: boolean; session: ZaloDirectCallSession }> {
+  const accountId = payload.account_id || "default";
+  return requestJson<{ ok: boolean; session: ZaloDirectCallSession }>(
+    "/api/all-platform/zalo/conversations/call/start",
+    {
+      method: "POST",
+      headers: buildHeaders({ "X-User-ID": accountId }),
+      body: JSON.stringify(payload),
+    },
+    30000,
+  );
+}
+
+export function getZaloDirectCallStatus(
+  sessionId: string,
+  accountId = "default",
+): Promise<{ ok: boolean; session: ZaloDirectCallSession }> {
+  return requestJson<{ ok: boolean; session: ZaloDirectCallSession }>(
+    `/api/all-platform/zalo/conversations/call/${encodeURIComponent(sessionId)}/status`,
+    {
+      method: "GET",
+      headers: buildHeaders({ "X-User-ID": accountId }),
+    },
+    10000,
+  );
+}
+
+export function controlZaloDirectCall(
+  sessionId: string,
+  action: "cancel" | "end" | "mark_connected",
+  resultCode = "called",
+  accountId = "default",
+): Promise<{ ok: boolean; session: ZaloDirectCallSession }> {
+  return requestJson<{ ok: boolean; session: ZaloDirectCallSession }>(
+    `/api/all-platform/zalo/conversations/call/${encodeURIComponent(sessionId)}/action`,
+    {
+      method: "POST",
+      headers: buildHeaders({ "X-User-ID": accountId }),
+      body: JSON.stringify({ action, result_code: resultCode }),
+    },
+    15000,
+  );
+}
+
+export function buildZaloDirectCallWsUrl(sessionId: string): string {
+  const path = `/api/all-platform/zalo/conversations/call-ws/${encodeURIComponent(sessionId)}`;
+  if (typeof window !== "undefined") {
+    const base = (API_BASE_URL || "").trim();
+    if (base && (base.startsWith("http://") || base.startsWith("https://"))) {
+      const wsBase = base.replace(/^http:\/\//i, "ws://").replace(/^https:\/\//i, "wss://").replace(/\/+$/, "");
+      return `${wsBase}${path}`;
+    }
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${path}`;
+  }
+  return `ws://localhost:8000${path}`;
+}
+

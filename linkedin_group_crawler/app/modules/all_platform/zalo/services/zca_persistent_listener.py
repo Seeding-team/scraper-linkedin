@@ -1167,6 +1167,77 @@ class ZcaPersistentListenerManager:
             state.connected = True
             await self._handle_reaction(state, event.get("reaction") or {})
             return
+        if event_name == "voip":
+            state.connected = True
+            await self._handle_voip_event(state, event.get("voip") or {})
+            return
+
+    async def _handle_voip_event(self, state: ListenerState, voip: Dict[str, Any]) -> None:
+        """Nhận sự kiện cuộc gọi VoIP thời gian thực từ WebSocket Zalo (act_type='voip')
+        và đồng bộ sang cả Call Session Manager lẫn SSE Event Bus cho Web Softphone."""
+        act = str(voip.get("act") or "").strip().lower()
+        data = voip.get("data") if isinstance(voip.get("data"), dict) else {}
+        call_id = data.get("callId") or data.get("call_id") or data.get("id")
+        partner_id = str(
+            data.get("callerId")
+            or data.get("calleeId")
+            or data.get("uidFrom")
+            or data.get("uidTo")
+            or data.get("uidN")
+            or data.get("partnerId")
+            or ""
+        ).strip()
+
+        status_map = {
+            "request": "incoming",
+            "group_request": "incoming",
+            "ringring": "ringing",
+            "answer": "connected",
+            "group_answer": "connected",
+            "answerack": "connected",
+            "cancel": "cancelled",
+            "reject": "rejected",
+            "endcall": "ended",
+            "busy": "busy",
+        }
+        mapped_status = status_map.get(act, act or "signal")
+
+        try:
+            from app.modules.all_platform.zalo.services.zalo_call_service import (
+                handle_incoming_voip_signal,
+            )
+
+            await handle_incoming_voip_signal(
+                account_id=state.user_id,
+                act=act,
+                mapped_status=mapped_status,
+                call_id=call_id,
+                partner_id=partner_id,
+                data=data,
+            )
+        except Exception as exc:
+            logger.debug(f"handle_incoming_voip_signal skipped for user={state.user_id}: {exc}")
+
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_zalo_message_event,
+            )
+
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "voip_signal",
+                    "account_id": state.user_id,
+                    "group_id": partner_id,
+                    "act": act,
+                    "status": mapped_status,
+                    "call_id": call_id,
+                    "partner_id": partner_id,
+                    "data": data,
+                },
+            )
+        except Exception as exc:
+            logger.debug(f"Publish voip_signal SSE failed for user={state.user_id}: {exc}")
 
     async def _handle_reaction(self, state: ListenerState, reaction: Dict[str, Any]) -> None:
         """Lưu cảm xúc (thả/đổi/bỏ) vào cột `reactions` của tin nhắn tương ứng.

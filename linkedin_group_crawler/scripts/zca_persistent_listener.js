@@ -641,6 +641,13 @@ async function main() {
       debugLog("reaction_dropped", { reason: "missing_ids", ...normalized });
     }
   });
+  listener.on("voip", (voipEvent) => {
+    emit({
+      event: "voip",
+      user_id: userId,
+      voip: voipEvent || {},
+    });
+  });
   listener.on("old_messages", (messages, type) => {
     totalOldMessageEvents += 1;
     const numericType = Number(type);

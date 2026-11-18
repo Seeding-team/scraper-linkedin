@@ -746,3 +746,88 @@ async def send_zca_voice(
         timeout_seconds=60,
     )
 
+
+async def start_zca_voice_call(
+    auth: Dict[str, Any],
+    *,
+    callee_id: Optional[str] = None,
+    phone: Optional[str] = None,
+    call_id: Optional[int] = None,
+    call_type: int = 1,
+    rtp_address: str = "",
+    rtcp_address: str = "",
+    codec: Optional[str] = None,
+    extend_data: str = "",
+) -> Dict[str, Any]:
+    """Khởi tạo cuộc gọi trực tiếp qua Zalo VoIP Signaling (11300 requestcall + 11301 request)."""
+    payload: Dict[str, Any] = {
+        "calleeId": callee_id or "",
+        "phone": phone or "",
+        "callType": int(call_type),
+        "rtpAddress": rtp_address,
+        "rtcpAddress": rtcp_address or rtp_address,
+        "extendData": extend_data,
+    }
+    if call_id is not None:
+        payload["callId"] = int(call_id)
+    if codec is not None:
+        payload["codec"] = codec
+    return await _run_zca_command("call-start", auth, payload=payload, timeout_seconds=30)
+
+
+async def cancel_zca_voice_call(
+    auth: Dict[str, Any],
+    *,
+    to_id: str,
+    call_id: int,
+    call_type: int = 1,
+) -> Dict[str, Any]:
+    """Hủy cuộc gọi Zalo khi khách chưa bắt máy (11305 /api/voicecall/cancel)."""
+    return await _run_zca_command(
+        "call-cancel",
+        auth,
+        payload={"toId": to_id, "callerId": to_id, "callId": int(call_id), "callType": int(call_type)},
+        timeout_seconds=20,
+    )
+
+
+async def end_zca_voice_call(
+    auth: Dict[str, Any],
+    *,
+    uid_to: str,
+    call_id: int,
+    duration: int = 0,
+    status: int = 3,
+    role: int = 1,
+    log_end: bool = True,
+) -> Dict[str, Any]:
+    """Kết thúc cuộc gọi Zalo (11306 endcall + 11311 logendcall)."""
+    return await _run_zca_command(
+        "call-end",
+        auth,
+        payload={
+            "uidTo": uid_to,
+            "partnerId": uid_to,
+            "callId": int(call_id),
+            "duration": int(duration),
+            "status": int(status),
+            "role": int(role),
+            "log_end": bool(log_end),
+        },
+        timeout_seconds=20,
+    )
+
+
+async def send_zca_call_signal(
+    auth: Dict[str, Any],
+    signal_code: int,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Gửi tín hiệu điều khiển bất kỳ trong bộ 11300..11311 của Zalo VoIP."""
+    return await _run_zca_command(
+        "call-signal",
+        auth,
+        payload={"signal_code": int(signal_code), **(payload or {})},
+        timeout_seconds=25,
+    )
+

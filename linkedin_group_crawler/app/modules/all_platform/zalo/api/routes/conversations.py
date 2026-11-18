@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import posixpath
 import tempfile
@@ -10,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import re
 from loguru import logger
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
 from app.modules.all_platform.auth_deps import get_authenticated_caller_email, get_authenticated_caller_user
@@ -406,6 +407,134 @@ async def get_zalo_call_health(
         "listener_connected": bool(listener_info.get("connected")),
         "auth_expired": bool(listener_info.get("auth_expired")),
     }
+
+
+class StartZaloDirectCallRequest(BaseModel):
+    account_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    callee_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    customer_name: Optional[str] = None
+    call_type: int = Field(1, description="1 = Gọi thoại (Voice), 3 = Gọi video (Video)")
+    source_post_id: Optional[str] = None
+    source_platform: Optional[str] = None
+
+
+class ZaloCallActionRequest(BaseModel):
+    action: str = Field(..., description="cancel | end | mark_connected")
+    result_code: Optional[str] = None
+
+
+@router.post("/call/start")
+async def start_zalo_direct_call_endpoint(
+    body: StartZaloDirectCallRequest,
+    account_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+    caller_user: Optional[dict[str, Any]] = Depends(get_authenticated_caller_user),
+):
+    """Khởi tạo cuộc gọi trực tiếp qua Zalo VoIP Engine (Hướng 3: 11300 requestcall + 11301 request + UDP RTP)."""
+    from app.modules.all_platform.zalo.services.zalo_call_service import start_call_session
+
+    user_id = _normalize_user_id(body.account_id or account_id or x_user_id)
+    try:
+        session = await start_call_session(
+            account_id=user_id,
+            conversation_id=body.conversation_id,
+            callee_id=body.callee_id,
+            phone_number=body.phone_number,
+            customer_name=body.customer_name,
+            call_type=body.call_type,
+            source_post_id=body.source_post_id,
+            source_platform=body.source_platform,
+            caller_email=x_caller_email,
+            caller_user=caller_user,
+        )
+        return {"ok": True, "session": session.to_dict()}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Không thể khởi tạo cuộc gọi Zalo: {exc}")
+
+
+@router.get("/call/{session_id}/status")
+async def get_zalo_direct_call_status_endpoint(session_id: str):
+    """Lấy trạng thái thời gian thực của phiên gọi Zalo."""
+    from app.modules.all_platform.zalo.services.zalo_call_service import get_call_session
+
+    session = get_call_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên gọi Zalo.")
+    return {"ok": True, "session": session.to_dict()}
+
+
+@router.post("/call/{session_id}/action")
+async def control_zalo_direct_call_endpoint(
+    session_id: str,
+    body: ZaloCallActionRequest,
+):
+    """Điều khiển phiên gọi Zalo: hủy chuông (11305), kết thúc (11306+11311) & tự động cộng +1 KPI CALL."""
+    from app.modules.all_platform.zalo.services.zalo_call_service import perform_call_action
+
+    try:
+        session = await perform_call_action(
+            session_id,
+            body.action,
+            result_code=body.result_code,
+        )
+        return {"ok": True, "session": session.to_dict()}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Lỗi điều khiển cuộc gọi Zalo: {exc}")
+
+
+@router.websocket("/call-ws/{session_id}")
+async def zalo_direct_call_audio_websocket(websocket: WebSocket, session_id: str):
+    """Kênh WebSocket 2 chiều truyền khung âm thanh PCM/Opus và trạng thái cuộc gọi thời gian thực."""
+    from app.modules.all_platform.zalo.services.zalo_call_service import (
+        get_call_session,
+        perform_call_action,
+    )
+
+    await websocket.accept()
+    session = get_call_session(session_id)
+    if not session:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Session not found"}))
+        await websocket.close(code=1008)
+        return
+
+    session.ws_clients.add(websocket)
+    try:
+        await websocket.send_text(
+            json.dumps({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
+        )
+        while True:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if "bytes" in msg and msg["bytes"]:
+                session.send_audio_from_browser(msg["bytes"])
+            elif "text" in msg and msg["text"]:
+                try:
+                    data = json.loads(msg["text"])
+                except Exception:
+                    continue
+                cmd = str(data.get("type") or data.get("action") or "").lower()
+                if cmd == "ping":
+                    await websocket.send_text(
+                        json.dumps({"type": "pong", "ts": int(time.time() * 1000)})
+                    )
+                elif cmd in ("cancel", "end", "hangup", "mark_connected"):
+                    await perform_call_action(
+                        session_id,
+                        cmd,
+                        result_code=data.get("result_code"),
+                    )
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.debug(f"Call WebSocket closed for session={session_id}: {exc}")
+    finally:
+        session.ws_clients.discard(websocket)
 
 
 # SU CO THAT (2026-10-04): frontend (ZaloInboxAdminShell.tsx, luong "Xu ly"

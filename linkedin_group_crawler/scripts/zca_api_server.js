@@ -816,6 +816,77 @@ const COMMANDS = {
   "search-stickers": cmdSearchStickers,
   "send-sticker": cmdSendSticker,
   "invite-to-group": cmdInviteToGroup,
+  "call-start": async (api, _args, payload) => {
+    const { startDirectZaloCall } = require("./zca_call_engine");
+    return startDirectZaloCall(api, payload || {});
+  },
+  "call-cancel": async (api, _args, payload) => {
+    const { zcallSendCancelCall } = require("./zca_call_engine");
+    const response = await zcallSendCancelCall(api, payload || {});
+    return { ok: true, response };
+  },
+  "call-end": async (api, _args, payload) => {
+    const { zcallSendEndCall, zcallSendLogEndCall } = require("./zca_call_engine");
+    const p = payload || {};
+    const endResponse = await zcallSendEndCall(api, p);
+    let logResponse = null;
+    if (p.log_end !== false) {
+      try {
+        logResponse = await zcallSendLogEndCall(api, {
+          callId: p.callId,
+          partnerId: p.partnerId || p.uidTo,
+          status: p.status ?? 3,
+          duration: p.duration ?? 0,
+          role: p.role ?? 1,
+          logdata: p.logdata || "{}",
+        });
+      } catch (_logErr) {}
+    }
+    return { ok: true, response: endResponse, log_response: logResponse };
+  },
+  "call-signal": async (api, _args, payload) => {
+    const engine = require("./zca_call_engine");
+    const p = payload || {};
+    const code = Number(p.signal_code || p.command || 0);
+    let response;
+    switch (code) {
+      case 401:
+      case 11300:
+        response = await engine.zcallRequestCall(api, p);
+        break;
+      case 416:
+      case 11301:
+        response = await engine.zcallSendRequestCall(api, p);
+        break;
+      case 407:
+      case 11302:
+        response = await engine.zcallSendRingRing(api, p);
+        break;
+      case 402:
+      case 11303:
+        response = await engine.zcallSendAnswerCall(api, p);
+        break;
+      case 408:
+      case 11304:
+        response = await engine.zcallSendAnswerAck(api, p);
+        break;
+      case 405:
+      case 11305:
+        response = await engine.zcallSendCancelCall(api, p);
+        break;
+      case 409:
+      case 11306:
+        response = await engine.zcallSendEndCall(api, p);
+        break;
+      case 406:
+      case 11311:
+        response = await engine.zcallSendLogEndCall(api, p);
+        break;
+      default:
+        throw new Error(`Unsupported call signal_code: ${code}`);
+    }
+    return { ok: true, signal_code: code, response };
+  },
   "send-voice": async (api, args, payload) => {
     const { "thread-id": threadId, type = "0" } = args;
     if (!threadId) throw new Error("Missing --thread-id");

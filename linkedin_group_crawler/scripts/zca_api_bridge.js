@@ -1289,6 +1289,86 @@ async function main() {
     return;
   }
 
+  if (args.command === "call-start") {
+    const { startDirectZaloCall } = require("./zca_call_engine");
+    const result = await startDirectZaloCall(api, input || {});
+    emitAndExit(result, 0);
+    return;
+  }
+
+  if (args.command === "call-cancel") {
+    const { zcallSendCancelCall } = require("./zca_call_engine");
+    const response = await zcallSendCancelCall(api, input || {});
+    emitAndExit({ ok: true, response }, 0);
+    return;
+  }
+
+  if (args.command === "call-end") {
+    const { zcallSendEndCall, zcallSendLogEndCall } = require("./zca_call_engine");
+    const p = input || {};
+    const endResponse = await zcallSendEndCall(api, p);
+    let logResponse = null;
+    if (p.log_end !== false) {
+      try {
+        logResponse = await zcallSendLogEndCall(api, {
+          callId: p.callId,
+          partnerId: p.partnerId || p.uidTo,
+          status: p.status ?? 3,
+          duration: p.duration ?? 0,
+          role: p.role ?? 1,
+          logdata: p.logdata || "{}",
+        });
+      } catch (_logErr) {}
+    }
+    emitAndExit({ ok: true, response: endResponse, log_response: logResponse }, 0);
+    return;
+  }
+
+  if (args.command === "call-signal") {
+    const engine = require("./zca_call_engine");
+    const p = input || {};
+    const code = Number(p.signal_code || p.command || 0);
+    let response;
+    switch (code) {
+      case 401:
+      case 11300:
+        response = await engine.zcallRequestCall(api, p);
+        break;
+      case 416:
+      case 11301:
+        response = await engine.zcallSendRequestCall(api, p);
+        break;
+      case 407:
+      case 11302:
+        response = await engine.zcallSendRingRing(api, p);
+        break;
+      case 402:
+      case 11303:
+        response = await engine.zcallSendAnswerCall(api, p);
+        break;
+      case 408:
+      case 11304:
+        response = await engine.zcallSendAnswerAck(api, p);
+        break;
+      case 405:
+      case 11305:
+        response = await engine.zcallSendCancelCall(api, p);
+        break;
+      case 409:
+      case 11306:
+        response = await engine.zcallSendEndCall(api, p);
+        break;
+      case 406:
+      case 11311:
+        response = await engine.zcallSendLogEndCall(api, p);
+        break;
+      default:
+        throw new Error(`Unsupported call signal_code: ${code}`);
+    }
+    emitAndExit({ ok: true, signal_code: code, response }, 0);
+    return;
+  }
+
   throw new Error(`Unknown command: ${args.command}`);
 }
 

@@ -263,6 +263,21 @@ export class Listener extends EventEmitter {
                                 continue;
                             this.emit("friend_event", friendEvent);
                         }
+                        else if (control.content.act_type == "voip" || control.content.act_type == "call") {
+                            let voipData = control.content.data;
+                            if (typeof voipData == "string") {
+                                try {
+                                    voipData = JSON.parse(voipData);
+                                }
+                                catch (_) { }
+                            }
+                            this.emit("voip", {
+                                act_type: control.content.act_type,
+                                act: control.content.act,
+                                data: voipData,
+                                raw: control.content,
+                            });
+                        }
                     }
                 }
                 if (cmd == 612) {
@@ -318,6 +333,26 @@ export class Listener extends EventEmitter {
                                 const typingObject = new GroupTyping(data);
                                 this.emit("typing", typingObject);
                             }
+                        }
+                        else if (action.act_type == "voip" || action.act_type == "call") {
+                            let voipData = action.data;
+                            if (typeof voipData == "string") {
+                                try {
+                                    voipData = JSON.parse(voipData);
+                                }
+                                catch (_) {
+                                    try {
+                                        voipData = JSON.parse(`{${voipData}}`);
+                                    }
+                                    catch (_2) { }
+                                }
+                            }
+                            this.emit("voip", {
+                                act_type: action.act_type,
+                                act: action.act,
+                                data: voipData,
+                                raw: action,
+                            });
                         }
                     }
                 }
