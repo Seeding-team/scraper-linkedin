@@ -31,21 +31,35 @@ jobs:
 
       - name: 4. Backend Container Logs
         run: |
-          echo "=== LAST 150 LINES OF BACKEND LOGS ==="
-          docker logs --tail 150 seeding-backend || true
+          echo "=== ZALO VOIP & CALL LOGS IN LAST 1000 LINES ==="
+          docker logs --tail 1000 seeding-backend 2>&1 | grep -i -C 3 -E "call|voice|1130|zcall|requestcall|start_call" || true
+          echo "=== LAST 200 LINES OF BACKEND RAW LOGS ==="
+          docker logs --tail 200 seeding-backend || true
 
       - name: 5. Router (Nginx) Logs
         run: |
           echo "=== LAST 50 LINES OF ROUTER LOGS ==="
           docker logs --tail 50 seeding-router || true
 
-      - name: 6. Attempt Restart if Backend is Exited or Failing
+      - name: 6. Test Direct Call Signaling in Container
         run: |
-          echo "=== RESTARTING BACKEND & ROUTER SAFELY ==="
-          docker compose restart backend
-          sleep 5
-          docker compose restart router
-          sleep 3
-          echo "=== VERIFY STATUS AFTER RESTART ==="
-          docker ps | grep seeding
-          curl -sf http://localhost:8080/api/all-platform/auth/me || echo "auth/me tested"
+          echo "=== TESTING DIRECT CALL SIGNALING IN BACKEND CONTAINER ==="
+          docker exec -i seeding-backend python -c '
+          import asyncio, json
+          from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
+          from app.modules.all_platform.zalo.services.zca_api_bridge import _run_zca_command
+
+          async def test():
+              auth = await load_zca_auth("zl_f2c46742")
+              print("AUTH_FOUND:", bool(auth))
+              res = await _run_zca_command("call-start", auth, payload={
+                  "calleeId": "9011830205009724195",
+                  "callId": 999111222,
+                  "callType": 1,
+                  "rtpAddress": "127.0.0.1:50000",
+                  "rtcpAddress": "127.0.0.1:50001",
+              })
+              print("DIRECT_CALL_START_RESPONSE:", json.dumps(res, ensure_ascii=False))
+
+          asyncio.run(test())
+          ' || true
