@@ -138,7 +138,7 @@ async function zcallSendRequestCall(
     calleeId,
     rtcpAddress = "",
     rtpAddress = "",
-    codec = DEFAULT_VOIP_CODECS,
+    codec = "[]",
     extendData = "",
     session,
     callId,
@@ -149,8 +149,8 @@ async function zcallSendRequestCall(
     calleeId: String(calleeId),
     rtcpAddress: String(rtcpAddress || rtpAddress || ""),
     rtpAddress: String(rtpAddress || ""),
-    codec: typeof codec === "string" ? codec : JSON.stringify(codec || []),
-    session: Number(session || resolvedCallId),
+    codec: typeof codec === "string" ? codec : "[]",
+    session: session != null ? session : resolvedCallId,
     callId: resolvedCallId,
   };
   if (extendData) {
@@ -293,19 +293,21 @@ async function startDirectZaloCall(
   });
 
   const s1Data = (step1 && step1.data) || {};
-  const effectiveCallId = Number(s1Data.callId || s1Data.call_id || finalCallId);
+  const effectiveCallId = Number(s1Data.id || s1Data.callId || s1Data.call_id || finalCallId);
   const serverSession =
-    s1Data.session || s1Data.session_id || s1Data.sessionId || effectiveCallId;
+    s1Data.sessId || s1Data.session || s1Data.session_id || s1Data.sessionId || effectiveCallId;
   const serverRtp =
-    rtpAddress ||
+    s1Data.rtpIP ||
     s1Data.rtpAddress ||
     s1Data.rtp_address ||
     s1Data.relayAddress ||
-    "0.0.0.0:0";
+    rtpAddress ||
+    "171.244.25.121:4200";
   const serverRtcp =
-    rtcpAddress ||
+    s1Data.rtcpIP ||
     s1Data.rtcpAddress ||
     s1Data.rtcp_address ||
+    rtcpAddress ||
     serverRtp;
 
   // Nếu Step 1 bị từ chối (ví dụ status: 7: Chặn cuộc gọi từ người lạ / không muốn nhận cuộc gọi),
@@ -320,8 +322,7 @@ async function startDirectZaloCall(
         calleeId: targetUid,
         rtcpAddress: serverRtcp,
         rtpAddress: serverRtp,
-        codec: s1Data.codec || codec,
-        extendData: extendData || s1Data.extendData || "",
+        codec: "[]",
         session: serverSession,
         callId: effectiveCallId,
       });

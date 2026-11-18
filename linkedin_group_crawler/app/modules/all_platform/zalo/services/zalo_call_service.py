@@ -494,7 +494,8 @@ async def start_call_session(
         raw_status = None
         if isinstance(req_res, dict):
             remote_candidate = (
-                req_res.get("rtpAddress")
+                req_res.get("rtpIP")
+                or req_res.get("rtpAddress")
                 or req_res.get("rtp_address")
                 or req_res.get("relayAddress")
             )
