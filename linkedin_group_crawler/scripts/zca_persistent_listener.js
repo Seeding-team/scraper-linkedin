@@ -554,6 +554,64 @@ async function main() {
     setTimeout(() => process.exit(3), 250).unref();
     return;
   }
+
+  // Hook bảo đảm 100% bắt trọn sự kiện VoIP (cmd 601 act_type 'voip' -> answer, ringring, endcall...)
+  function ensureVoipListenerHook(l) {
+    if (!l || l.__voipHooked) return;
+    l.__voipHooked = true;
+    const origStart = l.start.bind(l);
+    l.start = function (opts) {
+      const res = origStart(opts);
+      if (this.ws && !this.ws.__voipHooked) {
+        this.ws.__voipHooked = true;
+        const prevOnMessage = this.ws.onmessage;
+        this.ws.onmessage = async (event) => {
+          if (prevOnMessage) {
+            try {
+              await prevOnMessage.call(this.ws, event);
+            } catch (err) {
+              debugLog("prev_onmessage_error", { error: String(err) });
+            }
+          }
+          try {
+            const { data } = event;
+            if (data && typeof data === "object" && Buffer.isBuffer(data) && data.length > 4 && this.cipherKey) {
+              const header = data.subarray(0, 4);
+              const cmd = (header[1] << 8) | header[2];
+              if (cmd === 601) {
+                const text = new TextDecoder("utf-8").decode(data.subarray(4));
+                if (text) {
+                  const json = JSON.parse(text);
+                  const utils = require("zca-js/dist/utils.js");
+                  if (typeof utils.decodeEventData === "function") {
+                    const dec = await utils.decodeEventData(json, this.cipherKey);
+                    const ctrls = (dec && dec.data && dec.data.controls) || [];
+                    for (const c of ctrls) {
+                      const ct = c.content || {};
+                      if (ct.act_type === "voip") {
+                        let d = ct.data;
+                        if (typeof d === "string") {
+                          try { d = JSON.parse(d); } catch (_) {}
+                        }
+                        l.emit("voip", {
+                          act: ct.act,
+                          act_type: ct.act_type,
+                          data: d || {},
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+        };
+      }
+      return res;
+    };
+  }
+  ensureVoipListenerHook(listener);
+
   emit({ event: "listener_ready", user_id: userId, own_id: ownId });
 
   let stopping = false;

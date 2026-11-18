@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   Phone,
+  PhoneCall,
   PhoneOff,
   Video,
   Mic,
@@ -541,13 +542,11 @@ export function ZaloCallModal({
         ws.onmessage = (ev) => {
           if (typeof ev.data === "string") {
             try {
-              const msg = JSON.parse(ev.data) as {
-                type?: string;
-                session?: ZaloDirectCallSession;
-              };
-              if (msg.session) {
-                setActiveCallSession(msg.session);
-                if (msg.session.kpi_recorded) {
+              const raw = JSON.parse(ev.data) as Record<string, unknown>;
+              const parsed = (raw.session || (raw.session_id ? raw : null)) as ZaloDirectCallSession | null;
+              if (parsed) {
+                setActiveCallSession(parsed);
+                if (parsed.kpi_recorded) {
                   setLoggedAttempts((prev) => Math.max(1, prev));
                   if (typeof window !== "undefined") {
                     window.dispatchEvent(new CustomEvent("zalo-kpi-updated"));
@@ -1300,6 +1299,31 @@ export function ZaloCallModal({
                     activeCallSession.status === "ringing" ||
                     activeCallSession.status === "connected") && (
                     <div className="flex items-center gap-1.5">
+                      {activeCallSession.status === "ringing" && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const res = await controlZaloDirectCall(
+                                activeCallSession.session_id,
+                                "mark_connected",
+                                undefined,
+                                accountId || "default",
+                              );
+                              if (res?.session) setActiveCallSession(res.session);
+                              toast.success("Đã xác nhận kết nối và gửi 11304 AnswerACK!");
+                            } catch (e) {
+                              toast.error("Không thể gửi ACK: " + (e instanceof Error ? e.message : String(e)));
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-emerald-400 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 px-2.5 py-1 text-[11px] font-bold transition cursor-pointer"
+                          title="Nếu khách hàng trên điện thoại đã bấm nhấc máy, bấm vào đây để kích hoạt đàm thoại ngay lập tức"
+                        >
+                          <PhoneCall className="h-3.5 w-3.5 text-emerald-600 animate-bounce" />
+                          <span>⚡ Khách đã nhấc máy? Vào đàm thoại</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => setIsCallMuted((m) => !m)}

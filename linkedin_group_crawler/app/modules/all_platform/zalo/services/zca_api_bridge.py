@@ -156,8 +156,8 @@ async def _run_via_spawn(
         raise RuntimeError(f"ZCA API helper returned invalid JSON: {lines[-1][:500]}") from exc
 
     if proc.returncode != 0 or not result.get("ok"):
-        # Nếu là kết quả VoIP signaling có status nghiệp vụ (privacy_blocked / rejected), trả về kết quả thay vì ném lỗi
-        if isinstance(result, dict) and result.get("status") in ("privacy_blocked", "rejected"):
+        # Nếu là kết quả VoIP signaling có status nghiệp vụ (privacy_blocked / rejected / failed), trả về kết quả thay vì ném lỗi
+        if isinstance(result, dict) and result.get("status") in ("privacy_blocked", "rejected", "failed"):
             return result
         detail = (
             result.get("error_detail")
@@ -230,7 +230,7 @@ async def _run_zca_command(
         )
         # Kiểm tra auth expired từ kết quả pool
         if not result.get("ok"):
-            if isinstance(result, dict) and result.get("status") in ("privacy_blocked", "rejected"):
+            if isinstance(result, dict) and result.get("status") in ("privacy_blocked", "rejected", "failed"):
                 return result
             detail_text = str(result.get("error") or "")
             if _looks_like_auth_expired(detail_text):

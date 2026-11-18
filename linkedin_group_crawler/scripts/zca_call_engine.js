@@ -285,12 +285,25 @@ async function startDirectZaloCall(
   }
 
   const finalCallId = Number(callId || generateZaloCallId());
-  const step1 = await zcallRequestCall(api, {
-    calleeId: targetUid,
-    callId: finalCallId,
-    codec,
-    typeRequest: Number(callType || 1),
-  });
+  let step1 = null;
+  try {
+    step1 = await zcallRequestCall(api, {
+      calleeId: targetUid,
+      callId: finalCallId,
+      codec,
+      typeRequest: Number(callType || 1),
+    });
+  } catch (err) {
+    const errMsg = err && err.message ? err.message : String(err);
+    return {
+      ok: true,
+      call_ok: false,
+      call_id: finalCallId,
+      callee_id: targetUid,
+      status: "failed",
+      request_warning: `Lỗi khởi tạo cuộc gọi Zalo (11300): ${errMsg}`,
+    };
+  }
 
   const s1Data = (step1 && step1.data) || {};
   const effectiveCallId = Number(s1Data.id || s1Data.callId || s1Data.call_id || finalCallId);
