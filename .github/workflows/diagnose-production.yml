@@ -47,19 +47,43 @@ jobs:
           docker exec -i seeding-backend python -c '
           import asyncio, json
           from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
-          from app.modules.all_platform.zalo.services.zca_api_bridge import _run_zca_command
+          from app.modules.all_platform.zalo.services.zca_api_bridge import (
+              _run_zca_command,
+              get_zca_user_info,
+              get_zca_friend_status,
+          )
 
           async def test():
-              auth = await load_zca_auth("zl_f2c46742")
-              print("AUTH_FOUND:", bool(auth))
-              res = await _run_zca_command("call-start", auth, payload={
-                  "calleeId": "9011830205009724195",
-                  "callId": 999111222,
-                  "callType": 1,
-                  "rtpAddress": "127.0.0.1:50000",
-                  "rtcpAddress": "127.0.0.1:50001",
-              })
-              print("DIRECT_CALL_START_RESPONSE:", json.dumps(res, ensure_ascii=False))
+              for acc in ["zl_f2c46742", "zl_9d67ca5d"]:
+                  auth = await load_zca_auth(acc)
+                  print(f"=== CHECKING ACCOUNT {acc} (AUTH: {bool(auth)}) ===")
+                  if not auth:
+                      continue
+                  for target_id in ["6363678867120121443", "6761472073330942737", "9011830205009724195"]:
+                      print(f"\n--- Target: {target_id} from {acc} ---")
+                      try:
+                          uinfo = await get_zca_user_info(auth, target_id)
+                          print(f"USER_INFO for {target_id}:", json.dumps(uinfo, ensure_ascii=False)[:300])
+                      except Exception as e:
+                          print(f"USER_INFO_ERR for {target_id}:", e)
+
+                      try:
+                          fstatus = await get_zca_friend_status(auth, target_id)
+                          print(f"FRIEND_STATUS for {target_id}:", json.dumps(fstatus, ensure_ascii=False))
+                      except Exception as e:
+                          print(f"FRIEND_STATUS_ERR for {target_id}:", e)
+
+                      try:
+                          res = await _run_zca_command("call-start", auth, payload={
+                              "calleeId": target_id,
+                              "callId": 888777111,
+                              "callType": 1,
+                              "rtpAddress": "127.0.0.1:50000",
+                              "rtcpAddress": "127.0.0.1:50001",
+                          })
+                          print(f"CALL_START_RESPONSE for {target_id}:", json.dumps(res, ensure_ascii=False))
+                      except Exception as e:
+                          print(f"CALL_START_ERR for {target_id}:", e)
 
           asyncio.run(test())
           ' || true
