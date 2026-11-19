@@ -1432,9 +1432,22 @@ export function GroupManagementContent() {
 
   const currentGroups = platform === "facebook" ? filteredFb : filteredLi;
   const hasLeadStatsError = currentGroups.some((g) => (g as any).lead_stats_error);
-  const totalItems = currentGroups.length;
+
+  // Sort theo cột "Cần liên hệ" khi người dùng bấm header — chỉ sort ở client vì
+  // dữ liệu đã load hết 1 lần (không phân trang ở server), giữ nguyên thứ tự mặc định
+  // (nhóm điểm AI cao lên đầu) khi chưa bấm sort.
+  const [canLienHeSortDir, setCanLienHeSortDir] = useState<"asc" | "desc" | null>(null);
+  const sortedGroups = useMemo(() => {
+    if (!canLienHeSortDir) return currentGroups;
+    const dir = canLienHeSortDir === "asc" ? 1 : -1;
+    return [...currentGroups].sort(
+      (a, b) => dir * ((Number((a as any).can_lien_he_post_count) || 0) - (Number((b as any).can_lien_he_post_count) || 0)),
+    );
+  }, [currentGroups, canLienHeSortDir]);
+
+  const totalItems = sortedGroups.length;
   const totalPages = Math.ceil(totalItems / pageSize);
-  const paginatedGroups = currentGroups.slice((page - 1) * pageSize, page * pageSize);
+  const paginatedGroups = sortedGroups.slice((page - 1) * pageSize, page * pageSize);
 
   // Reset page when filters change
   useEffect(() => {
@@ -1903,6 +1916,18 @@ export function GroupManagementContent() {
                     </th>
                   </>
                 )}
+                <th
+                  className="text-center px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[110px] cursor-pointer select-none hover:text-primary transition-all duration-150 ease-out"
+                  onClick={() => setCanLienHeSortDir((d) => (d === "desc" ? "asc" : d === "asc" ? null : "desc"))}
+                  title="Bấm để sắp xếp theo số bài Cần liên hệ"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Cần liên hệ
+                    <span className="material-symbols-outlined text-[12px]">
+                      {canLienHeSortDir === "asc" ? "arrow_upward" : canLienHeSortDir === "desc" ? "arrow_downward" : "unfold_more"}
+                    </span>
+                  </span>
+                </th>
                 <th className="text-right px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[120px]">
                   Hành động
                 </th>
@@ -2043,6 +2068,27 @@ export function GroupManagementContent() {
                         </td>
                       </>
                     )}
+                    <td className="px-4 py-3 text-center">
+                      {(g as any).can_lien_he_stats_error ? (
+                        <span
+                          title="Không tính được số bài Cần liên hệ lúc này — danh sách nhóm vẫn đầy đủ, không phải thật sự 0 bài"
+                          className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-50 text-amber-600 border border-amber-200"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">warning</span>
+                        </span>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            Number((g as any).can_lien_he_post_count) > 0
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-surface-container-highest text-on-surface-variant"
+                          }`}
+                          title="Số bài trong nhóm đã đánh giá 'Cần liên hệ'"
+                        >
+                          {Number((g as any).can_lien_he_post_count) || 0}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">
                         <button
