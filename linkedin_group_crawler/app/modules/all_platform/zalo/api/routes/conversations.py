@@ -398,6 +398,10 @@ async def get_zalo_call_health(
     except Exception:
         listener_info = {}
 
+    from app.modules.all_platform.zalo.services.zalo_call_service import (
+        is_zrtc_worker_connected,
+    )
+
     return {
         "ok": True,
         "server_ts_ms": int(time.time() * 1000),
@@ -406,6 +410,7 @@ async def get_zalo_call_health(
         "listener_running": bool(listener_info.get("running")),
         "listener_connected": bool(listener_info.get("connected")),
         "auth_expired": bool(listener_info.get("auth_expired")),
+        "zrtc_worker_connected": is_zrtc_worker_connected(),
     }
 
 
@@ -535,6 +540,51 @@ async def zalo_direct_call_audio_websocket(websocket: WebSocket, session_id: str
         logger.debug(f"Call WebSocket closed for session={session_id}: {exc}")
     finally:
         session.ws_clients.discard(websocket)
+
+
+@router.websocket("/zrtc-worker-ws")
+async def zalo_zrtc_media_worker_websocket(websocket: WebSocket):
+    """Kênh WebSocket chuyên dụng cho ZRTC Media Worker (Windows/Wine zcall_ia32.node)
+    đăng ký nhận lệnh Signaling (start_call/update_caller_info/end_call) và pipe audio PCM16 2 chiều."""
+    import os
+    from app.core.config import settings
+    from app.modules.all_platform.zalo.services.zalo_call_service import (
+        handle_zrtc_worker_binary,
+        handle_zrtc_worker_text,
+        register_zrtc_worker,
+        unregister_zrtc_worker,
+    )
+
+    expected_token = (
+        os.getenv("ZRTC_WORKER_TOKEN")
+        or os.getenv("JWT_SECRET_KEY")
+        or getattr(settings, "JWT_SECRET_KEY", "")
+        or ""
+    ).strip()
+    provided_token = (websocket.query_params.get("token") or "").strip()
+    if expected_token and provided_token != expected_token:
+        await websocket.close(code=1008)
+        return
+
+    worker_id = (websocket.query_params.get("worker_id") or f"zrtc_{int(time.time() * 1000)}").strip()
+    await websocket.accept()
+    register_zrtc_worker(worker_id, websocket)
+    try:
+        await websocket.send_text(json.dumps({"type": "worker_ready", "worker_id": worker_id}))
+        while True:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if "bytes" in msg and msg["bytes"]:
+                await handle_zrtc_worker_binary(worker_id, msg["bytes"])
+            elif "text" in msg and msg["text"]:
+                await handle_zrtc_worker_text(worker_id, msg["text"])
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.debug(f"[ZRTC-WORKER] WS closed for worker={worker_id}: {exc}")
+    finally:
+        unregister_zrtc_worker(worker_id)
 
 
 # SU CO THAT (2026-10-04): frontend (ZaloInboxAdminShell.tsx, luong "Xu ly"

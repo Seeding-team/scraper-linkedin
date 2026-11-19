@@ -1361,9 +1361,16 @@ export function ZaloCallModal({
                   <span>
                     RTP Tx: <strong>{activeCallSession.packets_sent}</strong> • Rx:{" "}
                     <strong>{activeCallSession.packets_received}</strong>
+                    {activeCallSession.zrtc_worker_connected ? " • ZRTC Worker: ON" : ""}
                     {activeCallSession.kpi_recorded ? " • Đã +1 KPI CALL" : ""}
                   </span>
                 </div>
+
+                {activeCallSession.warning && activeCallSession.status !== "privacy_blocked" && (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/90 px-3 py-2 text-[11.5px] font-medium text-amber-800">
+                    ⚠️ {activeCallSession.warning}
+                  </div>
+                )}
 
                 {activeCallSession.status === "privacy_blocked" && (
                   <div className="rounded-xl border border-rose-200 bg-rose-50/90 p-3 text-[12px] text-rose-800 space-y-2 shadow-xs">

@@ -1541,6 +1541,8 @@ export interface ZaloDirectCallSession {
   duration_sec: number;
   packets_sent: number;
   packets_received: number;
+  zrtc_worker_id?: string | null;
+  zrtc_worker_connected?: boolean;
   kpi_recorded: boolean;
   source_post_id?: string | null;
   source_platform?: string | null;

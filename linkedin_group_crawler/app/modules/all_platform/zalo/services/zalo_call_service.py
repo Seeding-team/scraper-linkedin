@@ -186,12 +186,13 @@ class ZaloCallSession:
     kpi_attempts: int = 0
     kpi_result_code: Optional[str] = None
 
-    # RTP state
+    # RTP / ZRTC Worker state
     ssrc: int = field(default_factory=lambda: random.randint(100000, 0x7FFFFFFF))
     seq: int = 0
     rtp_timestamp: int = 0
     packets_sent: int = 0
     packets_received: int = 0
+    zrtc_worker_id: Optional[str] = None
     udp_transport: Optional[asyncio.DatagramTransport] = None
     ws_clients: Set[WebSocket] = field(default_factory=set)
 
@@ -237,6 +238,8 @@ class ZaloCallSession:
             ),
             "packets_sent": self.packets_sent,
             "packets_received": self.packets_received,
+            "zrtc_worker_id": self.zrtc_worker_id,
+            "zrtc_worker_connected": bool(self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS) or is_zrtc_worker_connected(),
             "kpi_recorded": self.kpi_recorded,
             "kpi_attempts": self.kpi_attempts,
             "kpi_result_code": self.kpi_result_code,
@@ -266,10 +269,13 @@ class ZaloCallSession:
             self.ws_clients.discard(ws)
 
     def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = 111) -> None:
-        """Nhận khung âm thanh từ trình duyệt nhân viên -> đóng gói RTP 12-byte -> gửi UDP tới Zalo."""
+        """Nhận khung âm thanh PCM16 từ trình duyệt Sale -> đẩy qua ZRTC Media Worker (nếu kết nối) hoặc UDP RTP."""
         self.seq = (self.seq + 1) & 0xFFFF
         self.rtp_timestamp = (self.rtp_timestamp + 960) & 0xFFFFFFFF
         self.packets_sent += 1
+        if self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS and audio_frame:
+            _schedule_zrtc_worker_audio(self.zrtc_worker_id, self.session_id, audio_frame)
+            return
         if self.udp_transport and self.remote_rtp_addr:
             pkt = build_rtp_packet(
                 audio_frame,
@@ -295,6 +301,175 @@ class ZaloCallSession:
 # ── In-Memory Registry ────────────────────────────────────────────────────────
 
 _CALL_SESSIONS: Dict[str, ZaloCallSession] = {}
+
+
+# ── ZRTC Media Worker Hub (Hướng A: Server-Side Native ZRTC Bridge) ──────────
+
+@dataclass
+class _ZrtcWorkerConn:
+    worker_id: str
+    ws: WebSocket
+    connected_at: float = field(default_factory=time.time)
+    last_seen_at: float = field(default_factory=time.time)
+    capabilities: Dict[str, Any] = field(default_factory=dict)
+    pending_rpcs: Dict[str, asyncio.Future] = field(default_factory=dict)
+
+
+_ZRTC_WORKERS: Dict[str, _ZrtcWorkerConn] = {}
+
+
+def is_zrtc_worker_connected() -> bool:
+    return len(_ZRTC_WORKERS) > 0
+
+
+def get_active_zrtc_worker() -> Optional[_ZrtcWorkerConn]:
+    if not _ZRTC_WORKERS:
+        return None
+    # Chọn worker hoạt động gần nhất
+    return max(_ZRTC_WORKERS.values(), key=lambda w: w.last_seen_at)
+
+
+def register_zrtc_worker(worker_id: str, ws: WebSocket, capabilities: Optional[Dict[str, Any]] = None) -> _ZrtcWorkerConn:
+    conn = _ZrtcWorkerConn(
+        worker_id=worker_id,
+        ws=ws,
+        capabilities=capabilities or {},
+    )
+    _ZRTC_WORKERS[worker_id] = conn
+    logger.info(f"[ZRTC-WORKER] Registered worker={worker_id} total={len(_ZRTC_WORKERS)}")
+    return conn
+
+
+def unregister_zrtc_worker(worker_id: str) -> None:
+    conn = _ZRTC_WORKERS.pop(worker_id, None)
+    if conn:
+        for fut in conn.pending_rpcs.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError("ZRTC worker disconnected"))
+        conn.pending_rpcs.clear()
+        logger.info(f"[ZRTC-WORKER] Unregistered worker={worker_id} remaining={len(_ZRTC_WORKERS)}")
+
+
+def _schedule_zrtc_worker_audio(worker_id: str, session_id: str, pcm_bytes: bytes) -> None:
+    conn = _ZRTC_WORKERS.get(worker_id)
+    if not conn:
+        return
+    sid_b = session_id.encode("utf-8")[:255]
+    frame = b"ZPCM" + bytes([len(sid_b)]) + sid_b + pcm_bytes
+
+    async def _send() -> None:
+        try:
+            await conn.ws.send_bytes(frame)
+        except Exception:
+            pass
+
+    try:
+        asyncio.get_running_loop().create_task(_send())
+    except RuntimeError:
+        pass
+
+
+async def dispatch_zrtc_worker_rpc(
+    worker_id: str,
+    msg_type: str,
+    payload: Dict[str, Any],
+    timeout_sec: float = 6.0,
+) -> Dict[str, Any]:
+    conn = _ZRTC_WORKERS.get(worker_id)
+    if not conn:
+        raise RuntimeError(f"ZRTC worker {worker_id} is not connected")
+    req_id = f"rpc_{uuid.uuid4().hex[:12]}"
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future = loop.create_future()
+    conn.pending_rpcs[req_id] = fut
+    try:
+        await conn.ws.send_text(json.dumps({"type": msg_type, "req_id": req_id, **payload}, ensure_ascii=False))
+        return await asyncio.wait_for(fut, timeout=timeout_sec)
+    finally:
+        conn.pending_rpcs.pop(req_id, None)
+
+
+async def notify_zrtc_worker_event(worker_id: Optional[str], msg_type: str, payload: Dict[str, Any]) -> None:
+    if not worker_id:
+        return
+    conn = _ZRTC_WORKERS.get(worker_id)
+    if not conn:
+        return
+    try:
+        await conn.ws.send_text(json.dumps({"type": msg_type, **payload}, ensure_ascii=False))
+    except Exception as exc:
+        logger.debug(f"[ZRTC-WORKER] Failed to send {msg_type} to worker={worker_id}: {exc}")
+
+
+async def handle_zrtc_worker_text(worker_id: str, text: str) -> None:
+    conn = _ZRTC_WORKERS.get(worker_id)
+    if not conn:
+        return
+    conn.last_seen_at = time.time()
+    try:
+        data = json.loads(text)
+    except Exception:
+        return
+    msg_type = str(data.get("type") or "").lower()
+    if msg_type == "ping":
+        try:
+            await conn.ws.send_text(json.dumps({"type": "pong", "ts": int(time.time() * 1000)}))
+        except Exception:
+            pass
+        return
+    if msg_type == "rpc_result":
+        req_id = str(data.get("req_id") or "")
+        fut = conn.pending_rpcs.get(req_id)
+        if fut and not fut.done():
+            fut.set_result(data)
+        return
+    if msg_type == "worker_call_event":
+        sid = str(data.get("session_id") or "")
+        session = _CALL_SESSIONS.get(sid)
+        if not session:
+            return
+        ev = str(data.get("event") or "").lower()
+        detail = data.get("detail")
+        if detail:
+            session.warning = str(detail)
+        if ev in ("ended", "failed", "rejected") and session.status in ("dialing", "ringing", "connected"):
+            session.status = ev
+            session.ended_at = time.time()
+            session.close_media()
+            await _record_session_kpi_and_history(session)
+        await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
+
+
+async def handle_zrtc_worker_binary(worker_id: str, frame: bytes) -> None:
+    conn = _ZRTC_WORKERS.get(worker_id)
+    if conn:
+        conn.last_seen_at = time.time()
+    if not frame or len(frame) < 6 or frame[:4] != b"ZPCM":
+        return
+    sid_len = frame[4]
+    if len(frame) < 5 + sid_len:
+        return
+    sid = frame[5 : 5 + sid_len].decode("utf-8", errors="ignore")
+    pcm = frame[5 + sid_len :]
+    session = _CALL_SESSIONS.get(sid)
+    if not session or not pcm or session.status not in ("ringing", "connected"):
+        return
+    session.packets_received += 1
+    await session.broadcast_audio_to_browsers(pcm)
+
+
+async def _media_watchdog_loop(session: ZaloCallSession) -> None:
+    """Kiểm tra sau 4 giây kể từ khi connected: nếu không có ZRTC Worker và 0 gói audio nhận về,
+    báo rõ warning lên UI thay vì để Sale tưởng đang đàm thoại 2 chiều bình thường."""
+    await asyncio.sleep(4.0)
+    if session.status != "connected":
+        return
+    if session.packets_received == 0 and not (session.zrtc_worker_id and session.zrtc_worker_id in _ZRTC_WORKERS):
+        session.warning = (
+            "Chưa có ZRTC Media Worker kết nối nên không truyền được âm thanh 2 chiều "
+            "(Zalo trên máy khách có thể tự ngắt báo cuộc gọi nhỡ)."
+        )
+        await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
 
 
 def get_call_session(session_id: str) -> Optional[ZaloCallSession]:
@@ -583,17 +758,99 @@ async def start_call_session(
         logger.warning(f"Could not allocate UDP RTP socket ({udp_exc}); continuing with signaling")
 
     # Bước 2: Phát lệnh 11300 (/api/voicecall/requestcall) + 11301 (/api/voicecall/request)
+    # Nếu có ZRTC Media Worker đang online -> lấy extendData ZRTC thật từ Worker trước khi phát 11301!
     try:
-        sig_res = await start_zca_voice_call(
-            auth,
-            callee_id=initial_callee,
-            phone=phone_number,
-            call_id=session.call_id,
-            call_type=session.call_type,
-            rtp_address=session.local_rtp_address,
-            rtcp_address=session.local_rtcp_address,
-            codec=_DEFAULT_ZRTC_CODECS_JSON,
-        )
+        worker_extend_data = ""
+        active_worker = get_active_zrtc_worker()
+        pre_s1_data: Optional[Dict[str, Any]] = None
+        if active_worker and initial_callee and len(initial_callee) >= 5:
+            try:
+                s1_resp = await send_zca_call_signal(
+                    auth,
+                    11300,
+                    {
+                        "calleeId": initial_callee,
+                        "callId": session.call_id,
+                        "codec": _DEFAULT_ZRTC_CODECS_JSON,
+                        "typeRequest": session.call_type,
+                    },
+                )
+                if isinstance(s1_resp, dict) and isinstance(s1_resp.get("response"), dict):
+                    pre_s1_data = s1_resp["response"]
+                    if pre_s1_data.get("status") in (None, 0):
+                        rpc_res = await dispatch_zrtc_worker_rpc(
+                            active_worker.worker_id,
+                            "start_call",
+                            {
+                                "session_id": session.session_id,
+                                "call_id": session.call_id,
+                                "callee_id": initial_callee,
+                                "call_type": session.call_type,
+                                "s1_data": pre_s1_data,
+                            },
+                            timeout_sec=6.0,
+                        )
+                        if rpc_res.get("ok") and rpc_res.get("extend_data"):
+                            worker_extend_data = str(rpc_res["extend_data"])
+                            session.zrtc_worker_id = active_worker.worker_id
+                            logger.info(
+                                f"[ZRTC-WORKER] Attached worker={active_worker.worker_id} "
+                                f"to session={session.session_id} extendData_len={len(worker_extend_data)}"
+                            )
+            except Exception as w_exc:
+                logger.warning(f"[ZRTC-WORKER] Pre-call attach failed, falling back to signaling-only: {w_exc}")
+
+        if pre_s1_data is not None and worker_extend_data:
+            # Đã chạy 11300 và lấy extendData từ ZRTC Worker -> gửi thẳng 11301
+            relay_rtp = (
+                pre_s1_data.get("rtpIP")
+                or pre_s1_data.get("rtpAddress")
+                or pre_s1_data.get("rtp_address")
+                or pre_s1_data.get("relayAddress")
+                or "171.244.25.121:4200"
+            )
+            relay_rtcp = pre_s1_data.get("rtcpIP") or pre_s1_data.get("rtcpAddress") or relay_rtp
+            server_sess = pre_s1_data.get("sessId") or pre_s1_data.get("session") or session.call_id
+            s2_resp = await send_zca_call_signal(
+                auth,
+                11301,
+                {
+                    "calleeId": initial_callee,
+                    "rtcpAddress": relay_rtcp,
+                    "rtpAddress": relay_rtp,
+                    "codec": _DEFAULT_ZRTC_CODECS_JSON,
+                    "extendData": worker_extend_data,
+                    "session": server_sess,
+                    "callId": int(pre_s1_data.get("id") or pre_s1_data.get("callId") or session.call_id),
+                },
+            )
+            sig_res = {
+                "ok": True,
+                "call_ok": True,
+                "call_id": int(pre_s1_data.get("id") or pre_s1_data.get("callId") or session.call_id),
+                "callee_id": initial_callee,
+                "session": server_sess,
+                "call_type": session.call_type,
+                "status": "ringing",
+                "rtp_address": relay_rtp,
+                "rtcp_address": relay_rtcp,
+                "relay_servers": pre_s1_data.get("servers") or [],
+                "requestcall_result": pre_s1_data,
+                "request_result": s2_resp.get("response") if isinstance(s2_resp, dict) else s2_resp,
+                "request_warning": None,
+            }
+        else:
+            sig_res = await start_zca_voice_call(
+                auth,
+                callee_id=initial_callee,
+                phone=phone_number,
+                call_id=session.call_id,
+                call_type=session.call_type,
+                rtp_address=session.local_rtp_address,
+                rtcp_address=session.local_rtcp_address,
+                codec=_DEFAULT_ZRTC_CODECS_JSON,
+                extend_data=worker_extend_data,
+            )
         session.signaling_data = sig_res or {}
         if sig_res.get("call_id"):
             session.call_id = int(sig_res["call_id"])
@@ -697,6 +954,7 @@ async def perform_call_action(
         session.status = "cancelled"
         session.ended_at = time.time()
         session.close_media()
+        asyncio.create_task(notify_zrtc_worker_event(session.zrtc_worker_id, "end_call", {"session_id": session.session_id}))
         if auth and session.callee_id:
             try:
                 await cancel_zca_voice_call(
@@ -714,6 +972,7 @@ async def perform_call_action(
         session.ended_at = time.time()
         dur = session.duration_sec
         session.close_media()
+        asyncio.create_task(notify_zrtc_worker_event(session.zrtc_worker_id, "end_call", {"session_id": session.session_id}))
         if auth and session.callee_id:
             try:
                 await end_zca_voice_call(
@@ -754,14 +1013,6 @@ async def perform_call_action(
                     {"calleeId": session.callee_id, "callId": session.call_id},
                 )
                 logger.info(f"[VOIP] Manual 11304 answerack sent for session={session.session_id}")
-                if isinstance(session.signaling_data, dict):
-                    s1 = session.signaling_data.get("requestcall_result") or session.signaling_data
-                    if isinstance(s1, dict) and s1.get("toId") and str(s1["toId"]) != str(session.callee_id):
-                        await send_zca_call_signal(
-                            auth,
-                            11304,
-                            {"calleeId": str(s1["toId"]), "callId": session.call_id},
-                        )
             except Exception as exc:
                 logger.warning(f"Manual answer_ack signal failed: {exc}")
 
@@ -820,6 +1071,33 @@ async def handle_incoming_voip_signal(
             matched.connected_at = time.time()
         matched.status = "connected"
 
+        # Nếu phiên gọi có gắn ZRTC Media Worker, chuyển ngay codec & extendData của máy khách vào Worker
+        if matched.zrtc_worker_id:
+            params_obj: Dict[str, Any] = {}
+            raw_params = data.get("params")
+            if isinstance(raw_params, str) and raw_params.strip():
+                try:
+                    params_obj = json.loads(raw_params)
+                except Exception:
+                    params_obj = {}
+            elif isinstance(raw_params, dict):
+                params_obj = raw_params
+            callee_codec = data.get("codec") or params_obj.get("codec") or _DEFAULT_ZRTC_CODECS_JSON
+            callee_extend = data.get("extendData") or params_obj.get("extendData") or ""
+            asyncio.create_task(
+                notify_zrtc_worker_event(
+                    matched.zrtc_worker_id,
+                    "update_caller_info",
+                    {
+                        "session_id": matched.session_id,
+                        "codec": callee_codec if isinstance(callee_codec, str) else json.dumps(callee_codec),
+                        "extend_data": callee_extend if isinstance(callee_extend, str) else json.dumps(callee_extend),
+                    },
+                )
+            )
+        else:
+            asyncio.create_task(_media_watchdog_loop(matched))
+
         # Bắn gói tin keepalive RTP liên tục (burst 50 gói x 20ms = 1 giây) để mở thông cổng NAT và đồng bộ media
         async def _keepalive_burst() -> None:
             try:
@@ -835,11 +1113,6 @@ async def handle_incoming_voip_signal(
         # Tự động gửi ACK 11304 (answerack) giống Zalo PC
         target_callee = str(data.get("calleeId") or matched.callee_id or partner_id)
         effective_call_id = int(data.get("callId") or matched.call_id)
-        internal_to_id = None
-        if isinstance(matched.signaling_data, dict):
-            s1 = matched.signaling_data.get("requestcall_result") or matched.signaling_data
-            if isinstance(s1, dict) and s1.get("toId"):
-                internal_to_id = str(s1["toId"])
 
         async def _dispatch_answer_ack() -> None:
             try:
@@ -857,20 +1130,11 @@ async def handle_incoming_voip_signal(
                 )
                 logger.info(f"[VOIP-ANSWERACK] Result: {ack_res}")
 
-                # Nếu matched.callee_id khác với target_callee, gửi thêm với matched.callee_id
                 if matched.callee_id and str(matched.callee_id) != target_callee:
                     await send_zca_call_signal(
                         auth,
                         11304,
                         {"calleeId": str(matched.callee_id), "callId": effective_call_id},
-                    )
-
-                # Gửi thêm với internal toId 32-bit nếu có
-                if internal_to_id and internal_to_id not in (target_callee, str(matched.callee_id)):
-                    await send_zca_call_signal(
-                        auth,
-                        11304,
-                        {"calleeId": internal_to_id, "callId": effective_call_id},
                     )
             except Exception as ack_err:
                 logger.warning(f"[VOIP-ANSWERACK] Dispatch failed for session={matched.session_id}: {ack_err}")
@@ -880,6 +1144,7 @@ async def handle_incoming_voip_signal(
         matched.status = mapped_status
         matched.ended_at = time.time()
         matched.close_media()
+        asyncio.create_task(notify_zrtc_worker_event(matched.zrtc_worker_id, "end_call", {"session_id": matched.session_id}))
         await _record_session_kpi_and_history(matched)
 
     await matched.broadcast_json(
