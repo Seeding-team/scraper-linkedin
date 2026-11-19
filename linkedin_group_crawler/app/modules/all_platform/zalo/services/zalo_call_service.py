@@ -142,13 +142,17 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                     fut.set_result(parsed_stun)
                     return
 
-        # Gói tin RTP âm thanh từ máy chủ Zalo Relay -> Giải mã & đẩy về WebSocket trình duyệt
-        parsed = parse_rtp_packet(data)
-        if parsed and parsed.get("payload"):
+        # Mọi gói tin UDP hợp lệ (không phải STUN) từ Zalo Relay khi đang gọi
+        if self.session.status in ("dialing", "ringing", "connected") and len(data) >= 4:
             self.session.packets_received += 1
             if not self.session.remote_rtp_addr:
                 self.session.remote_rtp_addr = addr
-            asyncio.create_task(self.session.broadcast_audio_to_browsers(parsed["payload"]))
+            if self.session.status == "ringing":
+                asyncio.create_task(_promote_connected_from_media(self.session))
+
+            parsed = parse_rtp_packet(data)
+            if parsed and parsed.get("payload"):
+                asyncio.create_task(self.session.broadcast_audio_to_browsers(parsed["payload"]))
 
 
 # ── Active Call Session Model ─────────────────────────────────────────────────
@@ -170,6 +174,7 @@ class ZaloCallSession:
     local_rtp_address: str = "0.0.0.0:0"
     local_rtcp_address: str = "0.0.0.0:0"
     remote_rtp_addr: Optional[Tuple[str, int]] = None
+    relay_servers: List[Tuple[str, int]] = field(default_factory=list)
     signaling_data: Dict[str, Any] = field(default_factory=dict)
     warning: Optional[str] = None
     source_post_id: Optional[str] = None
@@ -413,12 +418,60 @@ async def _record_session_kpi_and_history(
         logger.warning(f"Auto KPI call recording failed for session={session.session_id}: {exc}")
 
 
+_DEFAULT_ZRTC_CODECS_JSON = json.dumps(
+    [{"name": "opus/16000/1", "payload": 111, "frmPtime": 20, "dynamicFptime": 0}],
+    separators=(",", ":"),
+)
+
+
+async def _promote_connected_from_media(session: ZaloCallSession) -> None:
+    """Chuyển phiên gọi sang connected khi thực sự nhận được gói UDP từ Relay (hoặc tín hiệu answer)."""
+    if session.status != "ringing":
+        return
+    if session.connected_at is None:
+        session.connected_at = time.time()
+    session.status = "connected"
+    logger.info(
+        f"[VOIP-MEDIA] Call connected via Relay UDP packets for session={session.session_id} "
+        f"packets_received={session.packets_received}"
+    )
+    await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
+
+
+def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
+    """Bắn gói UDP keepalive tới Relay chính và các Relay dự phòng để giữ thông lỗ NAT."""
+    if not session.udp_transport:
+        return
+    targets: List[Tuple[str, int]] = []
+    if session.remote_rtp_addr:
+        targets.append(session.remote_rtp_addr)
+    for srv in session.relay_servers[:2]:
+        if srv not in targets:
+            targets.append(srv)
+    if not targets:
+        return
+
+    session.seq = (session.seq + 1) & 0xFFFF
+    session.rtp_timestamp = (session.rtp_timestamp + 320) & 0xFFFFFFFF
+    pkt = build_rtp_packet(
+        b"\x00" * 160,
+        seq=session.seq,
+        timestamp=session.rtp_timestamp,
+        ssrc=session.ssrc,
+        payload_type=111,
+    )
+    for addr in targets:
+        try:
+            session.udp_transport.sendto(pkt, addr)
+        except Exception:
+            pass
+
+
 async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) -> None:
-    """Tự động gửi 11304 answerack và keepalive RTP định kỳ mỗi giây:
-    - Khi khách hàng bấm 'Trả lời' trên điện thoại di động, Zalo Voice Server sẽ ngay lập tức
-      nhận gói 11304 answerack từ Caller, chuyển màn hình điện thoại khách từ 'Đang vào cuộc gọi...'
-      sang màn hình đàm thoại đếm giây (00:01, 00:02...) trong 0ms!
-    - Đồng thời tự động phát hiện khi khách đã nhấc máy để chuyển Web CRM sang 'connected'.
+    """Duy trì lỗ thông NAT UDP & phát 11304 answerack định kỳ trong suốt thời gian đổ chuông:
+    - KHÔNG tự ý nâng cấp status='connected' khi 11304 chỉ trả về callerId/calleeId (vì 11304
+      luôn trả 2 trường này cả lúc chuông chưa nhấc!).
+    - Chỉ dừng vòng lặp khi cuộc gọi thực sự chuyển sang connected/ended/cancelled/rejected.
     """
     callee_target = session.callee_id
     internal_to_id = None
@@ -427,56 +480,40 @@ async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) 
         if isinstance(s1, dict) and s1.get("toId"):
             internal_to_id = str(s1["toId"])
 
-    # Chờ 1.0s để máy khách đổ chuông ổn định
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(0.5)
 
     attempts = 0
     while session.status == "ringing" and attempts < 45:
         attempts += 1
 
-        # Gửi gói RTP keepalive để mở thông cổng NAT
-        if session.udp_transport and session.remote_rtp_addr:
-            try:
-                session.send_audio_from_browser(b"\x00" * 320)
-            except Exception:
-                pass
+        # Bắn 4 nhịp UDP keepalive (mỗi 250ms = 1s) để giữ thông NAT & kích hoạt nhận gói Relay
+        for _ in range(4):
+            if session.status != "ringing":
+                break
+            _send_udp_keepalive_tick(session)
+            await asyncio.sleep(0.25)
 
-        # Gửi 11304 answerack tới Zalo Voice Server
+        if session.status != "ringing":
+            break
+
+        # Phát 11304 answerack đều đặn mỗi 1s để ngay khi khách bấm Nghe (11303)
+        # máy chủ Zalo Voice lập tức khớp ACK (Signal 408) cho điện thoại khách.
         try:
-            ack_res = await send_zca_call_signal(
+            await send_zca_call_signal(
                 auth,
                 11304,
                 {"calleeId": str(callee_target), "callId": session.call_id},
             )
-            # Gửi thêm với internal toId nếu có và khác calleeId
             if internal_to_id and internal_to_id != str(callee_target) and session.status == "ringing":
                 await send_zca_call_signal(
                     auth,
                     11304,
                     {"calleeId": str(internal_to_id), "callId": session.call_id},
                 )
-
-            # Nếu Zalo Voice Server phản hồi chứa callerId / calleeId (xác nhận phiên đàm thoại hợp lệ)
-            # và đã qua ít nhất 2 lần gửi ACK (~2.5-3 giây sau khi gọi), tự động nâng cấp sang "connected"!
-            if isinstance(ack_res, dict) and (ack_res.get("callerId") or ack_res.get("calleeId")):
-                if attempts >= 2 and session.status == "ringing":
-                    if session.connected_at is None:
-                        session.connected_at = time.time()
-                    session.status = "connected"
-                    logger.info(f"[AUTO-ACK] Call auto-connected for session={session.session_id} after {attempts}s")
-                    await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
-
-                    # Bắn chuỗi 50 gói RTP keepalive (20ms = 1s)
-                    for _ in range(50):
-                        if session.status != "connected":
-                            break
-                        session.send_audio_from_browser(b"\x00" * 320)
-                        await asyncio.sleep(0.02)
-                    break
         except Exception as e:
             logger.debug(f"[AUTO-ACK] 11304 signal attempt {attempts} error: {e}")
 
-        await asyncio.sleep(1.0)
+    logger.info(f"[AUTO-ACK] Loop exited for session={session.session_id} status={session.status} attempts={attempts}")
 
 
 async def start_call_session(
@@ -561,6 +598,7 @@ async def start_call_session(
             call_type=session.call_type,
             rtp_address=session.local_rtp_address,
             rtcp_address=session.local_rtcp_address,
+            codec=_DEFAULT_ZRTC_CODECS_JSON,
         )
         session.signaling_data = sig_res or {}
         if sig_res.get("call_id"):
@@ -582,11 +620,27 @@ async def start_call_session(
                 or req_res.get("rtpAddress")
                 or req_res.get("rtp_address")
                 or req_res.get("relayAddress")
+                or sig_res.get("rtp_address")
             )
             parsed_remote = _parse_host_port(remote_candidate)
             if parsed_remote:
                 session.remote_rtp_addr = parsed_remote
+            for srv_item in req_res.get("servers") or sig_res.get("relay_servers") or []:
+                if isinstance(srv_item, dict):
+                    srv_addr = _parse_host_port(srv_item.get("rtpaddr") or srv_item.get("rtcpaddr"))
+                    if srv_addr and srv_addr not in session.relay_servers:
+                        session.relay_servers.append(srv_addr)
             raw_status = req_res.get("status")
+        elif sig_res.get("rtp_address"):
+            parsed_remote = _parse_host_port(sig_res.get("rtp_address"))
+            if parsed_remote:
+                session.remote_rtp_addr = parsed_remote
+
+        logger.info(
+            f"[CALL-START] Signaling result: session={session.session_id} call_id={session.call_id} "
+            f"status={sig_status} raw_status={raw_status} remote_rtp={session.remote_rtp_addr} "
+            f"relays={len(session.relay_servers)} warning={sig_res.get('request_warning')}"
+        )
 
         if sig_status == "privacy_blocked" or (raw_status is not None and int(raw_status) == 7):
             session.status = "privacy_blocked"

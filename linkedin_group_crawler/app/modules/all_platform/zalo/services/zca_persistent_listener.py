@@ -1205,6 +1205,10 @@ class ZcaPersistentListenerManager:
             "busy": "busy",
         }
         mapped_status = status_map.get(act, act or "signal")
+        logger.info(
+            f"[VOIP-WS] Incoming event user={state.user_id} act={act} mapped={mapped_status} "
+            f"call_id={call_id} partner_id={partner_id}"
+        )
 
         try:
             from app.modules.all_platform.zalo.services.zalo_call_service import (

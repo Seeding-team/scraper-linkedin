@@ -20,17 +20,10 @@ const CALL_V2_ZERO_IV = Buffer.from("0".repeat(32), "hex");
 
 const DEFAULT_VOIP_CODECS = JSON.stringify([
   {
-    id: 111,
-    name: "opus",
-    clockrate: 48000,
-    channels: 1,
-    fmtp: "minptime=10;useinbandfec=1",
-  },
-  {
-    id: 0,
-    name: "PCMU",
-    clockrate: 8000,
-    channels: 1,
+    name: "opus/16000/1",
+    payload: 111,
+    frmPtime: 20,
+    dynamicFptime: 0,
   },
 ]);
 
@@ -120,12 +113,18 @@ async function callZaloVoiceEndpoint(api, endpointPath, paramsObj) {
 }
 
 // 11300 (Signal 401): Khởi tạo phiên gọi
-async function zcallRequestCall(api, { calleeId, callId, codec = "[]", typeRequest = 1 }) {
+async function zcallRequestCall(api, { calleeId, callId, codec = DEFAULT_VOIP_CODECS, typeRequest = 1 }) {
   const resolvedCallId = Number(callId || generateZaloCallId());
+  const resolvedCodec =
+    codec != null && String(codec).trim() !== "" && String(codec).trim() !== "[]"
+      ? typeof codec === "string"
+        ? codec
+        : JSON.stringify(codec)
+      : DEFAULT_VOIP_CODECS;
   const data = await callZaloVoiceEndpoint(api, "/api/voicecall/requestcall", {
     calleeId: String(calleeId),
     callId: resolvedCallId,
-    codec: codec != null ? (typeof codec === "string" ? codec : JSON.stringify(codec)) : "[]",
+    codec: resolvedCodec,
     typeRequest: Number(typeRequest || 1),
   });
   return { callId: resolvedCallId, data };
@@ -138,18 +137,24 @@ async function zcallSendRequestCall(
     calleeId,
     rtcpAddress = "",
     rtpAddress = "",
-    codec = "[]",
+    codec = DEFAULT_VOIP_CODECS,
     extendData = "",
     session,
     callId,
   },
 ) {
   const resolvedCallId = Number(callId || generateZaloCallId());
+  const resolvedCodec =
+    codec != null && String(codec).trim() !== "" && String(codec).trim() !== "[]"
+      ? typeof codec === "string"
+        ? codec
+        : JSON.stringify(codec)
+      : DEFAULT_VOIP_CODECS;
   const payload = {
     calleeId: String(calleeId),
     rtcpAddress: String(rtcpAddress || rtpAddress || ""),
     rtpAddress: String(rtpAddress || ""),
-    codec: typeof codec === "string" ? codec : "[]",
+    codec: resolvedCodec,
     session: session != null ? session : resolvedCallId,
     callId: resolvedCallId,
   };
@@ -257,7 +262,7 @@ async function startDirectZaloCall(
     callType = 1,
     rtpAddress = "",
     rtcpAddress = "",
-    codec = "[]",
+    codec = DEFAULT_VOIP_CODECS,
     extendData = "",
   },
 ) {
@@ -284,13 +289,20 @@ async function startDirectZaloCall(
     throw new Error("Không tìm thấy Zalo UID của khách hàng để khởi tạo cuộc gọi.");
   }
 
+  const resolvedCodec =
+    codec != null && String(codec).trim() !== "" && String(codec).trim() !== "[]"
+      ? typeof codec === "string"
+        ? codec
+        : JSON.stringify(codec)
+      : DEFAULT_VOIP_CODECS;
+
   const finalCallId = Number(callId || generateZaloCallId());
   let step1 = null;
   try {
     step1 = await zcallRequestCall(api, {
       calleeId: targetUid,
       callId: finalCallId,
-      codec,
+      codec: resolvedCodec,
       typeRequest: Number(callType || 1),
     });
   } catch (err) {
@@ -309,19 +321,20 @@ async function startDirectZaloCall(
   const effectiveCallId = Number(s1Data.id || s1Data.callId || s1Data.call_id || finalCallId);
   const serverSession =
     s1Data.sessId || s1Data.session || s1Data.session_id || s1Data.sessionId || effectiveCallId;
-  const serverRtp =
+  const relayRtp =
     s1Data.rtpIP ||
     s1Data.rtpAddress ||
     s1Data.rtp_address ||
     s1Data.relayAddress ||
-    rtpAddress ||
     "171.244.25.121:4200";
-  const serverRtcp =
-    s1Data.rtcpIP ||
-    s1Data.rtcpAddress ||
-    s1Data.rtcp_address ||
-    rtcpAddress ||
-    serverRtp;
+  const hasValidStunRtp =
+    rtpAddress &&
+    !String(rtpAddress).startsWith("127.0.0.1") &&
+    !String(rtpAddress).startsWith("0.0.0.0");
+  const serverRtp = hasValidStunRtp ? String(rtpAddress) : relayRtp;
+  const serverRtcp = hasValidStunRtp
+    ? String(rtcpAddress || rtpAddress)
+    : s1Data.rtcpIP || s1Data.rtcpAddress || s1Data.rtcp_address || relayRtp;
 
   // Nếu Step 1 bị từ chối (ví dụ status: 7: Chặn cuộc gọi từ người lạ / không muốn nhận cuộc gọi),
   // KHÔNG gọi tiếp Step 2 (11301) vì máy chủ Zalo sẽ ném lỗi "Tham số không hợp lệ".
@@ -335,7 +348,8 @@ async function startDirectZaloCall(
         calleeId: targetUid,
         rtcpAddress: serverRtcp,
         rtpAddress: serverRtp,
-        codec: "[]",
+        codec: resolvedCodec,
+        extendData,
         session: serverSession,
         callId: effectiveCallId,
       });
@@ -355,8 +369,10 @@ async function startDirectZaloCall(
     call_type: Number(callType || 1),
     status: isRejectedOrBusy ? (Number(s1Data.status) === 7 ? "privacy_blocked" : "rejected") : "ringing",
     profile: resolvedProfile,
-    rtp_address: serverRtp,
-    rtcp_address: serverRtcp,
+    rtp_address: relayRtp,
+    rtcp_address: s1Data.rtcpIP || relayRtp,
+    local_rtp_address: serverRtp,
+    relay_servers: Array.isArray(s1Data.servers) ? s1Data.servers : [],
     requestcall_result: s1Data,
     request_result: step2 ? step2.data : null,
     request_warning: step2Error,
