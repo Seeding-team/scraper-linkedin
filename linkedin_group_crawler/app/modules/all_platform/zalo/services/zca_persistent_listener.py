@@ -1207,7 +1207,7 @@ class ZcaPersistentListenerManager:
         mapped_status = status_map.get(act, act or "signal")
         logger.info(
             f"[VOIP-WS] Incoming event user={state.user_id} act={act} mapped={mapped_status} "
-            f"call_id={call_id} partner_id={partner_id}"
+            f"call_id={call_id} partner_id={partner_id} data={json.dumps(data, ensure_ascii=False)[:1500]}"
         )
 
         try:

@@ -20,10 +20,10 @@ const CALL_V2_ZERO_IV = Buffer.from("0".repeat(32), "hex");
 
 const DEFAULT_VOIP_CODECS = JSON.stringify([
   {
-    name: "opus/16000/1",
-    payload: 111,
-    frmPtime: 20,
     dynamicFptime: 0,
+    frmPtime: 20,
+    name: "opus/48000/2",
+    payload: 113,
   },
 ]);
 
@@ -327,14 +327,64 @@ async function startDirectZaloCall(
     s1Data.rtp_address ||
     s1Data.relayAddress ||
     "171.244.25.121:4200";
+  const relayRtcp =
+    s1Data.rtcpIP || s1Data.rtcpAddress || s1Data.rtcp_address || relayRtp;
   const hasValidStunRtp =
     rtpAddress &&
     !String(rtpAddress).startsWith("127.0.0.1") &&
     !String(rtpAddress).startsWith("0.0.0.0");
-  const serverRtp = hasValidStunRtp ? String(rtpAddress) : relayRtp;
-  const serverRtcp = hasValidStunRtp
-    ? String(rtcpAddress || rtpAddress)
-    : s1Data.rtcpIP || s1Data.rtcpAddress || s1Data.rtcp_address || relayRtp;
+
+  // Trong giao thức Zalo Call (xác thực từ gói answer/request thật):
+  // - rtpAddress & rtcpAddress của 11301 là địa chỉ Relay Server (:4200)
+  // - Địa chỉ STUN public của caller nằm trong extendData.p2p (type: 1)
+  // - extendData chứa serverAddr, newZrtc=1, packetMode=2, platform=1, gcc*... kèm subCommand=3
+  const serverAddrList = (
+    Array.isArray(s1Data.servers) && s1Data.servers.length > 0
+      ? s1Data.servers
+      : [{ rtpaddr: relayRtp, rtcpaddr: relayRtcp, bonus: 0.0 }]
+  ).map((srv) => ({
+    bonus: Number(srv.bonus || 0),
+    rtcp: String(srv.rtcpaddr || srv.rtcp || relayRtcp),
+    ...(srv.rtcpIPv6 ? { rtcpIPv6: String(srv.rtcpIPv6) } : {}),
+    rtp: String(srv.rtpaddr || srv.rtp || relayRtp),
+    ...(srv.rtpIPv6 ? { rtpIPv6: String(srv.rtpIPv6) } : {}),
+  }));
+
+  const p2pList = [];
+  if (hasValidStunRtp) {
+    const rtpStr = String(rtpAddress);
+    const lastColon = rtpStr.lastIndexOf(":");
+    if (lastColon > 0) {
+      const stunIp = rtpStr.slice(0, lastColon);
+      const stunPort = Number(rtpStr.slice(lastColon + 1));
+      if (stunIp && stunPort > 0) {
+        p2pList.push({ ip: stunIp, port: stunPort, type: 1 });
+      }
+    }
+  }
+
+  const resolvedExtendData =
+    extendData && String(extendData).trim() !== ""
+      ? String(extendData)
+      : JSON.stringify({
+          callType: Number(callType || 1) === 2 ? 1 : 0,
+          fromNoti: 1,
+          gccAudio: 1,
+          gccMode: 1,
+          gccSVLR: 1,
+          maxFT: 60,
+          negoVidQual: 1,
+          newZrtc: 1,
+          p2p: p2pList,
+          packetMode: 2,
+          platform: 1,
+          sP2P: 1,
+          select2side: 1,
+          serverAddr: serverAddrList,
+        });
+
+  const serverRtp = relayRtp;
+  const serverRtcp = relayRtcp;
 
   // Nếu Step 1 bị từ chối (ví dụ status: 7: Chặn cuộc gọi từ người lạ / không muốn nhận cuộc gọi),
   // KHÔNG gọi tiếp Step 2 (11301) vì máy chủ Zalo sẽ ném lỗi "Tham số không hợp lệ".
@@ -349,7 +399,7 @@ async function startDirectZaloCall(
         rtcpAddress: serverRtcp,
         rtpAddress: serverRtp,
         codec: resolvedCodec,
-        extendData,
+        extendData: resolvedExtendData,
         session: serverSession,
         callId: effectiveCallId,
       });

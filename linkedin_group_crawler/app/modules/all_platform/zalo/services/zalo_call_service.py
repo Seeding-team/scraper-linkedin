@@ -419,7 +419,7 @@ async def _record_session_kpi_and_history(
 
 
 _DEFAULT_ZRTC_CODECS_JSON = json.dumps(
-    [{"name": "opus/16000/1", "payload": 111, "frmPtime": 20, "dynamicFptime": 0}],
+    [{"dynamicFptime": 0, "frmPtime": 20, "name": "opus/48000/2", "payload": 113}],
     separators=(",", ":"),
 )
 
@@ -496,7 +496,7 @@ async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) 
         if session.status != "ringing":
             break
 
-        # Phát 11304 answerack đều đặn mỗi 1s để ngay khi khách bấm Nghe (11303)
+        # Phát 11304 answerack đều đặn mỗi 1s với calleeId 64-bit chuẩn để ngay khi khách bấm Nghe (11303)
         # máy chủ Zalo Voice lập tức khớp ACK (Signal 408) cho điện thoại khách.
         try:
             await send_zca_call_signal(
@@ -504,12 +504,6 @@ async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) 
                 11304,
                 {"calleeId": str(callee_target), "callId": session.call_id},
             )
-            if internal_to_id and internal_to_id != str(callee_target) and session.status == "ringing":
-                await send_zca_call_signal(
-                    auth,
-                    11304,
-                    {"calleeId": str(internal_to_id), "callId": session.call_id},
-                )
         except Exception as e:
             logger.debug(f"[AUTO-ACK] 11304 signal attempt {attempts} error: {e}")
 
