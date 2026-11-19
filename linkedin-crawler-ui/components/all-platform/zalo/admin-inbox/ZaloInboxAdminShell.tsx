@@ -18,7 +18,7 @@ import { isZaloGroupConversationId, zaloThreadIdFromConversationId } from "@/lib
 import { ZaloAccountsModal } from "../chat/ZaloAccountsModal";
 import { CrmCustomerModal } from "@/components/all-platform/components/CrmCustomerModal";
 import { SalesAssetPickerModal } from "@/components/all-platform/sales-assets/SalesAssetPickerModal";
-import { useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { allPlatformQuickInboxService } from "@/services/all-platform.service";
 import type { QuickInboxTemplate } from "@/types/unified.types";
@@ -977,20 +977,62 @@ export function ZaloInboxAdminShell() {
   const documentInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
   const jumpToConvRef = useRef<string | null>(null);
   const jumpToAccountRef = useRef<string | null>(null);
+  const pendingUrlAccountRef = useRef<string | null>(null);
   const jumpToPhoneRef = useRef<string | null>(null);
 
+  const selectedAccountIdRef = useRef(inbox.selectedAccountId);
+  selectedAccountIdRef.current = inbox.selectedAccountId;
+
+  const handleSelectAccount = useCallback(
+    (accountId: string) => {
+      inbox.onSelectAccount(accountId);
+      const currentAccountParam = searchParams.get("account") || "";
+      const currentConvParam = searchParams.get("conv") || "";
+      if (currentAccountParam !== accountId || (currentConvParam && currentAccountParam !== accountId)) {
+        pendingUrlAccountRef.current = accountId;
+        const nextParams = new URLSearchParams(searchParams.toString());
+        if (accountId) {
+          nextParams.set("account", accountId);
+        } else {
+          nextParams.delete("account");
+        }
+        if (currentConvParam && currentAccountParam !== accountId) {
+          nextParams.delete("conv");
+        }
+        const qs = nextParams.toString();
+        router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+      }
+    },
+    [inbox.onSelectAccount, pathname, router, searchParams]
+  );
+
+  const urlAccount = searchParams.get("account");
+
   useEffect(() => {
-    const targetAccount = searchParams.get("account");
-    if (!targetAccount) return;
-    if (inbox.selectedAccountId !== targetAccount) {
-      jumpToAccountRef.current = targetAccount;
-      inbox.onSelectAccount(targetAccount);
+    const normalizedUrlAccount = urlAccount || "";
+    if (pendingUrlAccountRef.current !== null) {
+      if (normalizedUrlAccount !== pendingUrlAccountRef.current) {
+        return;
+      }
+      pendingUrlAccountRef.current = null;
+      jumpToAccountRef.current = urlAccount;
+      return;
     }
-  }, [searchParams, inbox.selectedAccountId, inbox.onSelectAccount]);
+    if (!urlAccount) {
+      jumpToAccountRef.current = null;
+      return;
+    }
+    if (jumpToAccountRef.current === urlAccount) return;
+    jumpToAccountRef.current = urlAccount;
+    if (selectedAccountIdRef.current !== urlAccount) {
+      inbox.onSelectAccount(urlAccount);
+    }
+  }, [urlAccount, inbox.onSelectAccount]);
 
   useEffect(() => {
     const targetConv = searchParams.get("conv");
@@ -1916,7 +1958,7 @@ export function ZaloInboxAdminShell() {
         try {
           await deleteZaloAccount(inbox.selectedAccountId, false);
           inbox.showToast("Đã ẩn tài khoản Zalo", true);
-          inbox.onSelectAccount("");
+          handleSelectAccount("");
           void inbox.refreshAccounts();
         } catch (e) {
           inbox.showToast("Lỗi khi ẩn tài khoản Zalo", false);
@@ -1937,7 +1979,7 @@ export function ZaloInboxAdminShell() {
         try {
           await deleteZaloAccountFull(inbox.selectedAccountId, inbox.selectedOwnerId);
           inbox.showToast("Đã xoá hoàn toàn tài khoản Zalo", true);
-          inbox.onSelectAccount("");
+          handleSelectAccount("");
           void inbox.refreshAccounts();
         } catch (e) {
           inbox.showToast("Lỗi khi xoá hoàn toàn tài khoản", false);
@@ -2115,7 +2157,7 @@ export function ZaloInboxAdminShell() {
               ownerNames={inbox.ownerNames}
               teams={inbox.teams}
               selectedAcc={inbox.selectedAccountId}
-              onSelect={inbox.onSelectAccount}
+              onSelect={handleSelectAccount}
               role={inbox.role}
               owner={inbox.leaderEmail}
               onManageAccounts={() => setShowAccountsModal(true)}
@@ -2204,7 +2246,7 @@ export function ZaloInboxAdminShell() {
                   type="button"
                   onClick={() => {
                     if (!inbox.selectedAccountId && inbox.sessions.length > 0) {
-                      inbox.onSelectAccount(inbox.sessions[0].account_id);
+                      handleSelectAccount(inbox.sessions[0].account_id);
                     }
                     setPhoneSearchQuery(inbox.searchQuery.trim() || undefined);
                     setNewChatModalOpen(true);
