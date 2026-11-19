@@ -532,6 +532,12 @@ export interface FacebookGroup {
   /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
    * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
   lead_stats_error?: boolean;
+  /** Số bài trong nhóm đã đánh giá post_quick_review.evaluation_code='can-lien-he' —
+   * tính on-the-fly cùng cơ chế với high_lead_post_count. */
+  can_lien_he_post_count?: number;
+  /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
+   * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
+  can_lien_he_stats_error?: boolean;
   /** Cờ Public 4G Zero-Account Crawler (migration 224) */
   visibility?: "public" | "private";
   public_crawl_enabled?: boolean;
@@ -583,6 +589,12 @@ export interface LinkedInGroup {
   /** true nếu backend không tính được thống kê điểm AI cho nhóm (lỗi tạm thời) — nhóm vẫn
    * hiển thị đầy đủ, chỉ là chưa có badge điểm. */
   lead_stats_error?: boolean;
+  /** Số bài trong nhóm đã đánh giá post_quick_review.evaluation_code='can-lien-he' —
+   * tính on-the-fly cùng cơ chế với high_lead_post_count. */
+  can_lien_he_post_count?: number;
+  /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
+   * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
+  can_lien_he_stats_error?: boolean;
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────

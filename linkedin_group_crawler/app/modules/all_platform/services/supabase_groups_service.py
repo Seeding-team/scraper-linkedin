@@ -19,31 +19,37 @@ _MIN_SCORED_FOR_WARNING = 5
 
 
 def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: str, group_fk: str) -> list[dict]:
-    """Gắn high_lead_post_count/avg_lead_score/scored_post_count cho mỗi nhóm (đếm/trung bình
-    điểm AI các bài thuộc nhóm đó), rồi sắp xếp nhóm nào nhiều bài điểm cao lên đầu (yêu cầu
-    2026-10-02). Không lưu cột riêng trên bảng groups — tính on-the-fly.
+    """Gắn high_lead_post_count/avg_lead_score/scored_post_count + can_lien_he_post_count cho
+    mỗi nhóm (đếm/trung bình điểm AI và đếm bài đã đánh giá "Cần liên hệ" thuộc nhóm đó), rồi
+    sắp xếp nhóm nào nhiều bài điểm cao lên đầu (yêu cầu 2026-10-02). Không lưu cột riêng trên
+    bảng groups — tính on-the-fly.
 
     AN TOÀN (yêu cầu 2026-10-02): nhóm KHÔNG BAO GIỜ được tự động xoá/ẩn chỉ vì ít/không có
     bài điểm cao - chỉ gắn cờ `lead_stats_warning` để FE hiển thị cảnh báo cho người dùng tự
     quyết định. Hàm này cũng KHÔNG ĐƯỢC PHÉP làm sập cả danh sách nhóm nếu truy vấn thống kê
     lỗi (vd trước đây dùng `.in_(group_fk, group_ids)` với >100 id làm URL quá dài, bị gateway
     self-host trả 502 -> cả API /groups báo "0 nhóm" dù dữ liệu KHÔNG hề mất) - mọi lỗi ở đây
-    chỉ log + gắn cờ `lead_stats_error`, không raise.
+    chỉ log + gắn cờ `lead_stats_error`/`can_lien_he_stats_error`, không raise.
     """
+    platform_name = "facebook" if posts_table == "facebook_posts" else "linkedin"
+
     stats: dict[str, dict[str, float]] = {}
+    post_group_map: dict[str, str] = {}
     stats_error = False
     try:
         # KHÔNG lọc theo group_id bằng .in_() - với nhiều nhóm, URL quá dài có thể bị gateway
-        # self-host từ chối (502). Bảng bài đã được giữ gọn nhờ auto-xoá bài điểm thấp nên
-        # quét toàn bộ bài đã chấm điểm của bảng này vẫn nhẹ.
+        # self-host từ chối (502). Lấy thêm cột "id" trong CÙNG 1 lượt quét (không thêm round
+        # trip riêng) để xây post_group_map dùng chung cho thống kê "Cần liên hệ" bên dưới.
         posts_res = (
             supabase.table(posts_table)
-            .select(f"{group_fk}, lead_score")
-            .not_.is_("lead_score", "null")
+            .select(f"id, {group_fk}, lead_score")
             .execute()
         )
         for p in posts_res.data or []:
+            pid = p.get("id")
             gid = p.get(group_fk)
+            if pid and gid:
+                post_group_map[pid] = gid
             score = p.get("lead_score")
             if not gid or score is None:
                 continue
@@ -59,6 +65,33 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
         )
         stats_error = True
 
+    # Đếm bài đánh giá "Cần liên hệ" (post_quick_review.evaluation_code='can-lien-he') theo
+    # nhóm. post_quick_review không có cột group - map qua post_group_map vừa xây ở trên
+    # (post_id -> group_id), KHÔNG JOIN SQL thật (Supabase REST không hỗ trợ).
+    can_lien_he_counts: dict[str, int] = {}
+    can_lien_he_error = False
+    try:
+        cr_res = (
+            supabase.table("post_quick_review")
+            .select("post_id, platform")
+            .eq("evaluation_code", "can-lien-he")
+            .eq("platform", platform_name)
+            .execute()
+        )
+        for r in cr_res.data or []:
+            gid = post_group_map.get(r.get("post_id"))
+            if gid:
+                can_lien_he_counts[gid] = can_lien_he_counts.get(gid, 0) + 1
+    except Exception as e:
+        logger.warning(
+            f"[GROUP-CAN-LIEN-HE-STATS] Lỗi đếm bài 'Cần liên hệ' cho nhóm ({posts_table}), "
+            f"bỏ qua thống kê, KHÔNG xoá/ẩn nhóm nào: {e}"
+        )
+        can_lien_he_error = True
+    # Nếu quét posts_table ở trên đã lỗi thì post_group_map rỗng -> không map được post_id sang
+    # group dù post_quick_review đọc thành công -> số đếm ra 0 cho tất cả, phải coi là lỗi.
+    can_lien_he_error = can_lien_he_error or stats_error
+
     for r in rows:
         s = stats.get(r.get("id"), {"count": 0, "high_count": 0, "sum": 0})
         r["high_lead_post_count"] = int(s["high_count"])
@@ -69,6 +102,9 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
         )
         if stats_error:
             r["lead_stats_error"] = True
+        r["can_lien_he_post_count"] = int(can_lien_he_counts.get(r.get("id"), 0))
+        if can_lien_he_error:
+            r["can_lien_he_stats_error"] = True
 
     if not stats_error:
         rows.sort(key=lambda r: (r.get("high_lead_post_count") or 0, r.get("avg_lead_score") or 0), reverse=True)
