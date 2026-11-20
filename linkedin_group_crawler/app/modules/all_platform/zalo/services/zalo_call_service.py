@@ -220,6 +220,19 @@ class ZaloCallSession:
     zrtc_worker_id: Optional[str] = None
     udp_transport: Optional[asyncio.DatagramTransport] = None
     ws_clients: Set[WebSocket] = field(default_factory=set)
+    p2p_target: Optional[Tuple[str, int]] = None
+
+    @property
+    def zalo_sess_id(self) -> str:
+        req_res = self.signaling_data.get("requestcall_result") or {}
+        if isinstance(req_res, dict):
+            s = req_res.get("sessId") or req_res.get("session")
+            if s:
+                return str(s)
+        s2 = self.signaling_data.get("session")
+        if s2:
+            return str(s2)
+        return str(self.call_id)
 
     @property
     def duration_sec(self) -> int:
@@ -259,6 +272,11 @@ class ZaloCallSession:
             "remote_rtp_address": (
                 f"{self.remote_rtp_addr[0]}:{self.remote_rtp_addr[1]}"
                 if self.remote_rtp_addr
+                else None
+            ),
+            "p2p_target": (
+                f"{self.p2p_target[0]}:{self.p2p_target[1]}"
+                if self.p2p_target
                 else None
             ),
             "packets_sent": self.packets_sent,
@@ -301,7 +319,7 @@ class ZaloCallSession:
         if self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS and audio_frame:
             _schedule_zrtc_worker_audio(self.zrtc_worker_id, self.session_id, audio_frame)
             return
-        if self.udp_transport and self.remote_rtp_addr:
+        if self.udp_transport and (self.remote_rtp_addr or self.p2p_target):
             pkt = build_rtp_packet(
                 audio_frame or OPUS_SILENCE_FRAME,
                 seq=self.seq,
@@ -309,10 +327,16 @@ class ZaloCallSession:
                 ssrc=self.ssrc,
                 payload_type=payload_type,
             )
-            try:
-                self.udp_transport.sendto(pkt, self.remote_rtp_addr)
-            except Exception as exc:
-                logger.debug(f"UDP RTP sendto failed for session={self.session_id}: {exc}")
+            if self.remote_rtp_addr:
+                try:
+                    self.udp_transport.sendto(pkt, self.remote_rtp_addr)
+                except Exception as exc:
+                    logger.debug(f"UDP RTP sendto failed for session={self.session_id}: {exc}")
+            if self.p2p_target:
+                try:
+                    self.udp_transport.sendto(pkt, self.p2p_target)
+                except Exception as exc:
+                    logger.debug(f"UDP RTP sendto P2P failed for session={self.session_id}: {exc}")
 
     def close_media(self) -> None:
         if self.udp_transport is not None:
@@ -484,15 +508,14 @@ async def handle_zrtc_worker_binary(worker_id: str, frame: bytes) -> None:
 
 
 async def _media_watchdog_loop(session: ZaloCallSession) -> None:
-    """Kiểm tra sau 4 giây kể từ khi connected: nếu không có ZRTC Worker và 0 gói audio nhận về,
-    báo rõ warning lên UI thay vì để Sale tưởng đang đàm thoại 2 chiều bình thường."""
-    await asyncio.sleep(4.0)
+    """Kiểm tra sau 5 giây kể từ khi connected: nếu 0 gói audio nhận về, cập nhật cảnh báo nhẹ."""
+    await asyncio.sleep(5.0)
     if session.status != "connected":
         return
     if session.packets_received == 0 and not (session.zrtc_worker_id and session.zrtc_worker_id in _ZRTC_WORKERS):
         session.warning = (
-            "Chưa có ZRTC Media Worker kết nối nên không truyền được âm thanh 2 chiều "
-            "(Zalo trên máy khách có thể tự ngắt báo cuộc gọi nhỡ)."
+            "Chưa nhận được tín hiệu âm thanh từ máy khách qua Relay Zalo. "
+            "Đang tiếp tục giữ thông luồng UDP RTP."
         )
         await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
 
@@ -652,26 +675,28 @@ async def _promote_connected_from_media(session: ZaloCallSession) -> None:
 
 
 def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
-    """Bắn gói UDP keepalive tới Relay chính và các Relay dự phòng để giữ thông lỗ NAT."""
+    """Bắn gói UDP keepalive tới Relay chính, P2P target và các Relay dự phòng để giữ thông lỗ NAT."""
     if not session.udp_transport:
         return
     targets: List[Tuple[str, int]] = []
     if session.remote_rtp_addr:
         targets.append(session.remote_rtp_addr)
+    if session.p2p_target and session.p2p_target not in targets:
+        targets.append(session.p2p_target)
     for srv in session.relay_servers[:2]:
         if srv not in targets:
             targets.append(srv)
     if not targets:
         return
 
-    # Gói tin bắt tay AES Transport Frame 49$ gửi mỗi 5 gói để Relay :4200 duy trì route
+    # Gói tin bắt tay AES Transport Frame 49$ gửi mỗi 5 gói để Relay :4200 và P2P duy trì route
     if session.packets_sent % 5 == 0:
         try:
             handshake = encrypt_zcall_transport_frame(
                 "49",
                 {
                     "callId": session.call_id,
-                    "sessId": str(session.call_id),
+                    "sessId": session.zalo_sess_id,
                     "userId": session.account_id,
                     "toId": session.callee_id,
                     "status": 0,
@@ -968,7 +993,7 @@ async def start_call_session(
                         "49",
                         {
                             "callId": session.call_id,
-                            "sessId": str(session.call_id),
+                            "sessId": session.zalo_sess_id,
                             "userId": session.account_id,
                             "toId": session.callee_id,
                             "status": 0,
@@ -1147,13 +1172,14 @@ async def handle_incoming_voip_signal(
                 p2p_first = p2p_list[0]
                 if isinstance(p2p_first, dict) and p2p_first.get("ip") and p2p_first.get("port"):
                     p2p_addr = (str(p2p_first["ip"]), int(p2p_first["port"]))
+                    matched.p2p_target = p2p_addr
                     if matched.udp_transport:
                         try:
                             hs = encrypt_zcall_transport_frame(
                                 "49",
                                 {
                                     "callId": matched.call_id,
-                                    "sessId": str(matched.call_id),
+                                    "sessId": matched.zalo_sess_id,
                                     "userId": matched.account_id,
                                     "toId": matched.callee_id,
                                     "status": 0,
