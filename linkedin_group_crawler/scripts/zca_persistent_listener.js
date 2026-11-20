@@ -704,7 +704,19 @@ async function main() {
       debugLog("reaction_dropped", { reason: "missing_ids", ...normalized });
     }
   });
+  let callGateway = null;
+  try {
+    callGateway = require("./zalo_call_gateway");
+  } catch (_) {}
+
   listener.on("voip", (voipEvent) => {
+    if (callGateway && typeof callGateway.handleVoipEvent === "function") {
+      try {
+        callGateway.handleVoipEvent(voipEvent);
+      } catch (gwErr) {
+        debugLog("gateway_voip_error", { error: String(gwErr) });
+      }
+    }
     emit({
       event: "voip",
       user_id: userId,

@@ -22,6 +22,31 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
 )
 from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
 
+import base64
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+
+CALL_V2_TRANSPORT_AES_KEY = "yjAF9oqMWl6XfXYJn9mA7w=="
+CALL_V2_ZERO_IV = b"\x00" * 16
+
+# Chuẩn Opus ZRTC 48kHz Stereo 20ms
+OPUS_PAYLOAD_TYPE = 113
+OPUS_TIMESTAMP_STEP = 960  # 48000 Hz * 0.02s
+OPUS_SILENCE_FRAME = bytes([0xF8, 0xFF, 0xFE])
+
+
+def encrypt_zcall_transport_frame(header: str, payload: dict) -> bytes:
+    """Mã hóa AES-128-CBC ZCall Transport Frame gửi tới máy chủ Relay :4200."""
+    key_bytes = base64.b64decode(CALL_V2_TRANSPORT_AES_KEY)
+    json_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(json_bytes) + padder.finalize()
+    cipher = Cipher(algorithms.AES(key_bytes), modes.CBC(CALL_V2_ZERO_IV))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(padded_data) + encryptor.finalize()
+    return f"{header}${ct.hex()}$".encode("utf-8")
+
+
 # ── RFC 3550 RTP Packet Builder & Parser ──────────────────────────────────────
 
 def build_rtp_packet(
@@ -30,10 +55,10 @@ def build_rtp_packet(
     seq: int,
     timestamp: int,
     ssrc: int,
-    payload_type: int = 111,
+    payload_type: int = OPUS_PAYLOAD_TYPE,
     marker: bool = False,
 ) -> bytes:
-    """Đóng gói khung âm thanh (Opus PT=111 hoặc PCMU PT=0) vào gói tin RTP 12-byte chuẩn RFC 3550."""
+    """Đóng gói khung âm thanh Opus PT=113 vào gói tin RTP 12-byte chuẩn RFC 3550."""
     b0 = 0x80  # Version 2, P=0, X=0, CC=0
     b1 = (0x80 if marker else 0x00) | (payload_type & 0x7F)
     header = struct.pack(
@@ -268,17 +293,17 @@ class ZaloCallSession:
         for ws in dead:
             self.ws_clients.discard(ws)
 
-    def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = 111) -> None:
-        """Nhận khung âm thanh PCM16 từ trình duyệt Sale -> đẩy qua ZRTC Media Worker (nếu kết nối) hoặc UDP RTP."""
+    def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = OPUS_PAYLOAD_TYPE) -> None:
+        """Nhận khung âm thanh PCM16/Opus từ trình duyệt Sale -> đẩy qua ZRTC Media Worker (nếu kết nối) hoặc UDP RTP."""
         self.seq = (self.seq + 1) & 0xFFFF
-        self.rtp_timestamp = (self.rtp_timestamp + 960) & 0xFFFFFFFF
+        self.rtp_timestamp = (self.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
         self.packets_sent += 1
         if self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS and audio_frame:
             _schedule_zrtc_worker_audio(self.zrtc_worker_id, self.session_id, audio_frame)
             return
         if self.udp_transport and self.remote_rtp_addr:
             pkt = build_rtp_packet(
-                audio_frame,
+                audio_frame or OPUS_SILENCE_FRAME,
                 seq=self.seq,
                 timestamp=self.rtp_timestamp,
                 ssrc=self.ssrc,
@@ -626,14 +651,34 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
     if not targets:
         return
 
+    # Gói tin bắt tay AES Transport Frame 49$ gửi mỗi 5 gói để Relay :4200 duy trì route
+    if session.packets_sent % 5 == 0:
+        try:
+            handshake = encrypt_zcall_transport_frame(
+                "49",
+                {
+                    "callId": session.call_id,
+                    "sessId": str(session.call_id),
+                    "userId": session.account_id,
+                    "toId": session.callee_id,
+                    "status": 0,
+                    "ts": int(time.time() * 1000),
+                },
+            )
+            for addr in targets:
+                session.udp_transport.sendto(handshake, addr)
+        except Exception as hs_exc:
+            logger.debug(f"[VOIP-HANDSHAKE] Transport frame error: {hs_exc}")
+
     session.seq = (session.seq + 1) & 0xFFFF
-    session.rtp_timestamp = (session.rtp_timestamp + 320) & 0xFFFFFFFF
+    session.rtp_timestamp = (session.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
+    session.packets_sent += 1
     pkt = build_rtp_packet(
-        b"\x00" * 160,
+        OPUS_SILENCE_FRAME,
         seq=session.seq,
         timestamp=session.rtp_timestamp,
         ssrc=session.ssrc,
-        payload_type=111,
+        payload_type=OPUS_PAYLOAD_TYPE,
     )
     for addr in targets:
         try:
@@ -920,6 +965,27 @@ async def start_call_session(
             session.status = "ringing"
             if sig_res.get("request_warning"):
                 session.warning = str(sig_res["request_warning"])
+
+            # Gửi gói bắt tay AES Transport Frame 49$ đầu tiên tới Relay :4200
+            if session.udp_transport and session.remote_rtp_addr:
+                try:
+                    initial_handshake = encrypt_zcall_transport_frame(
+                        "49",
+                        {
+                            "callId": session.call_id,
+                            "sessId": str(session.call_id),
+                            "userId": session.account_id,
+                            "toId": session.callee_id,
+                            "status": 0,
+                            "ts": int(time.time() * 1000),
+                        },
+                    )
+                    session.udp_transport.sendto(initial_handshake, session.remote_rtp_addr)
+                    for srv in session.relay_servers[:2]:
+                        session.udp_transport.sendto(initial_handshake, srv)
+                    logger.info(f"[VOIP-HANDSHAKE] Initial AES frame sent to relay {session.remote_rtp_addr}")
+                except Exception as hs_err:
+                    logger.debug(f"[VOIP-HANDSHAKE] Initial frame error: {hs_err}")
             
             # Tự động gửi 11304 answerack và keepalive RTP định kỳ mỗi giây:
             # Khi khách hàng bấm 'Trả lời' trên điện thoại di động, Zalo Voice Server sẽ ngay lập tức
@@ -999,7 +1065,7 @@ async def perform_call_action(
                 for _ in range(50):
                     if session.status != "connected":
                         break
-                    session.send_audio_from_browser(b"\x00" * 320)
+                    session.send_audio_from_browser(OPUS_SILENCE_FRAME, payload_type=OPUS_PAYLOAD_TYPE)
                     await asyncio.sleep(0.02)
             except Exception:
                 pass
@@ -1104,7 +1170,7 @@ async def handle_incoming_voip_signal(
                 for _ in range(50):
                     if matched.status != "connected":
                         break
-                    matched.send_audio_from_browser(b"\x00" * 320)
+                    matched.send_audio_from_browser(OPUS_SILENCE_FRAME, payload_type=OPUS_PAYLOAD_TYPE)
                     await asyncio.sleep(0.02)
             except Exception as e:
                 logger.debug(f"[VOIP] Keepalive burst error: {e}")

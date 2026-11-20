@@ -803,6 +803,24 @@ async def start_zca_voice_call(
     return await _run_zca_command("call-start", auth, payload=payload, timeout_seconds=30)
 
 
+async def start_zca_gateway_call(
+    auth: Dict[str, Any],
+    *,
+    account_id: str,
+    callee_id: Optional[str] = None,
+    phone: Optional[str] = None,
+    call_type: int = 1,
+) -> Dict[str, Any]:
+    """Khởi tạo cuộc gọi qua Unified Node.js Zalo Call Gateway."""
+    payload = {
+        "accountId": account_id,
+        "calleeId": callee_id or "",
+        "phone": phone or "",
+        "callType": int(call_type),
+    }
+    return await _run_zca_command("gateway-call-start", auth, payload=payload, timeout_seconds=30)
+
+
 async def cancel_zca_voice_call(
     auth: Dict[str, Any],
     *,

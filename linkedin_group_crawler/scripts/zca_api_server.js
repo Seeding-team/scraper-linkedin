@@ -816,6 +816,22 @@ const COMMANDS = {
   "search-stickers": cmdSearchStickers,
   "send-sticker": cmdSendSticker,
   "invite-to-group": cmdInviteToGroup,
+  "gateway-call-start": async (api, _args, payload) => {
+    const { initiateGatewayCall } = require("./zalo_call_gateway");
+    return initiateGatewayCall(api, payload || {});
+  },
+  "gateway-call-action": async (api, _args, payload) => {
+    const { performGatewayCallAction } = require("./zalo_call_gateway");
+    return performGatewayCallAction(api, payload || {});
+  },
+  "gateway-call-status": async (_api, _args, payload) => {
+    const { getGatewayCallStatus } = require("./zalo_call_gateway");
+    return getGatewayCallStatus(payload || {});
+  },
+  "gateway-call-audio": async (_api, _args, payload) => {
+    const { sendGatewayCallAudio } = require("./zalo_call_gateway");
+    return sendGatewayCallAudio(payload || {});
+  },
   "call-start": async (api, _args, payload) => {
     const { startDirectZaloCall } = require("./zca_call_engine");
     return startDirectZaloCall(api, payload || {});
