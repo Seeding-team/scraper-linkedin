@@ -1,6 +1,7 @@
 """Offline regressions for premature AnswerAck and stale VoIP events."""
 import asyncio
-from unittest.mock import AsyncMock, patch
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.modules.all_platform.zalo.services import zalo_call_service as calls
 
@@ -91,3 +92,73 @@ def test_confirmed_answer_sends_one_ack_even_if_repeated():
             signal.assert_awaited_once_with({"test":True}, 11304, {"calleeId":"customer", "callId":123})
             session.status = "ended"
     asyncio.run(run())
+
+
+def test_send_audio_from_browser_strictly_gated_to_connected_state():
+    session = calls.ZaloCallSession(
+        session_id="test_gate",
+        account_id="acc",
+        call_id=456,
+        callee_id="callee",
+        status="ringing",
+        remote_rtp_addr=("127.0.0.1", 4200),
+    )
+    mock_transport = MagicMock()
+    session.udp_transport = mock_transport
+
+    # Khi đang ringing -> tuyệt đối không gửi
+    session.send_audio_from_browser(b"dummy_pcm16_data")
+    assert session.packets_sent == 0
+    mock_transport.sendto.assert_not_called()
+
+    # Chỉ khi chuyển sang connected -> mới gửi
+    session.status = "connected"
+    session.send_audio_from_browser(b"dummy_pcm16_data")
+    assert session.packets_sent == 1
+    mock_transport.sendto.assert_called_once()
+    session.status = "ended"
+
+
+def test_answerack_and_negotiation_status_5_cannot_prematurely_promote_ringing():
+    async def run():
+        session = calls.ZaloCallSession(
+            session_id="test_nego",
+            account_id="acc",
+            call_id=789,
+            callee_id="callee",
+            status="ringing",
+            remote_rtp_addr=("127.0.0.1", 4200),
+        )
+        calls._CALL_SESSIONS["test_nego"] = session
+
+        with patch("app.modules.all_platform.zalo.services.zalo_call_service.send_zca_call_signal", new_callable=AsyncMock) as signal, \
+             patch("app.modules.all_platform.zalo.services.zalo_call_service.load_zca_auth", new_callable=AsyncMock, return_value={"test": True}):
+            
+            # Case 1: act=answerack khi đang ringing -> phải giữ ringing
+            await calls.handle_incoming_voip_signal(
+                account_id="acc",
+                act="answerack",
+                mapped_status="connected",
+                call_id=789,
+                partner_id="callee",
+                data={"status": 0},
+            )
+            assert session.status == "ringing"
+            signal.assert_not_called()
+
+            # Case 2: act=answer với status=5 trong params -> phải giữ ringing, không gửi 11304
+            await calls.handle_incoming_voip_signal(
+                account_id="acc",
+                act="answer",
+                mapped_status="connected",
+                call_id=789,
+                partner_id="callee",
+                data={"params": json.dumps({"status": 5, "callId": 789})},
+            )
+            assert session.status == "ringing"
+            signal.assert_not_called()
+
+            session.status = "ended"
+
+    asyncio.run(run())
+

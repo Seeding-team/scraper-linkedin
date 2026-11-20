@@ -331,6 +331,8 @@ class ZaloCallSession:
 
     def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = OPUS_PAYLOAD_TYPE) -> None:
         """Nhận khung âm thanh PCM16/Opus từ trình duyệt Sale -> đẩy qua ZRTC Media Worker (nếu kết nối) hoặc UDP RTP."""
+        if self.status != "connected":
+            return
         self.seq = (self.seq + 1) & 0xFFFF
         self.rtp_timestamp = (self.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
         self.packets_sent += 1
@@ -1243,6 +1245,20 @@ async def handle_incoming_voip_signal(
         if matched.status != "connected":
             matched.status = "ringing"
     elif mapped_status == "connected":
+        # CHỐT CHẶN: Chỉ chấp nhận chuyển sang connected khi:
+        # 1. Khách hàng thực sự bấm nghe: act == "answer" VÀ raw_status == "0"
+        # 2. Hoặc có lệnh thao tác chủ động: act in ("mark_connected", "accept_call", "accept")
+        # Tuyệt đối không cho phép answerack kích hoạt connected ảo khi máy khách chưa từng nhấc máy!
+        if act == "answerack" and matched.status != "connected":
+            logger.info(f"[VOIP] Ignoring premature answerack for session={matched.session_id} while status={matched.status}")
+            return matched
+        if act == "answer" and raw_status != "0":
+            logger.info(f"[VOIP] Ignoring answer with non-zero status={raw_status!r} for session={matched.session_id}")
+            if matched.status != "connected":
+                matched.status = "ringing"
+            await matched.broadcast_json({"type": "call_state", "session": matched.to_dict(), **matched.to_dict()})
+            return matched
+
         if matched.status == "connected":
             return matched
         if matched.connected_at is None:
