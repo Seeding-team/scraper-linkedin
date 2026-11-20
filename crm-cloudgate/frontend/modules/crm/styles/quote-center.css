@@ -2676,12 +2676,17 @@
   background: #fbfbfd;
 }
 .qc-workspace-items-table--unified {
-  /* Tong PX co dinh cua <colgroup> (QuoteWorkspaceModal.tsx, A1 + fix lech cot
-   * Hạng mục phien sau): 330 (Hạng mục, tang tu 210 - xem comment o colgroup)
-   * + 300 (Mô tả) + 92 (ĐVT) + 64 (SL) + 104 (Giá vốn/ĐV) + 104 (Cost tổng)
-   * + 96 (Markup) + 104 (Giá khách/ĐV) + 104 (Thành tiền) + 82 (Margin) + 88
-   * (TỶ TRỌNG, cot C) + 44 (Thao tác) = ~1712px. */
-  min-width: 1782px;
+  /* Tong PX co dinh cua <colgroup> (QuoteWorkspaceModal.tsx) - comment cu o
+   * day da STALE (tinh tu truoc khi co 2 cot Giảm giá/VAT (%), khien tong
+   * thuc te > min-width, table-layout:fixed chia ty le NHO HON px da khai
+   * bao cho MOI cot -> cot "Giảm giá" bi cat chu "đ", xem fix 2026-11-20).
+   * Dem lai DUNG theo <colgroup> hien tai (gom ca 2 cot tuy chon Chu ky/Thao
+   * tac o truong hop toi da): 390 (Hạng mục) + 260 (Mô tả) + 84 (ĐVT) + 64
+   * (SL) + 104 (Giá vốn/ĐV) + 104 (Cost tổng) + 96 (Markup) + 112 (Chu kỳ,
+   * tuy chon) + 104 (Giá khách) + 110 (Giảm giá) + 92 (VAT, tang tu 70 -
+   * fix "2 chấm đen" spinner input[type=number] bi ep sat) + 104 (Thành
+   * tiền) + 82 (Margin) + 84 (Tỷ trọng) + 36 (Thao tác, tuy chon) = 1826px. */
+  min-width: 1850px;
 }
 .qc-workspace-items-card--fullscreen .qc-table-wrap.qc-workspace-items-scroll {
   max-height: none;
@@ -3039,6 +3044,18 @@
   font: inherit;
   font-weight: 700;
   text-align: right;
+}
+/* Fix (2026-11-20, "2 chấm đen phía sau" ở cột VAT (%)): input[type=number]
+ * tu them 2 nut spinner len/xuong cua trinh duyet - cot qua hep nen nhin
+ * giong 2 cham den dinh vao sau %. An han spinner, chi con so + nut tang/
+ * giam bang scroll/keyboard van dung binh thuong, khong doi hanh vi nhap. */
+.qc-percent-input input[type='number']::-webkit-outer-spin-button,
+.qc-percent-input input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.qc-percent-input input[type='number'] {
+  -moz-appearance: textfield;
 }
 .qc-percent-input-suffix {
   color: #dc2626;

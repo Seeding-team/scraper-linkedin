@@ -25,7 +25,10 @@ export function emptyProductForm(parentId?: string): ServiceCatalogItemInput {
     defaultUnitPriceVnd: 0,
     defaultDiscountPercent: 0,
     defaultVatRate: null,
-    defaultCostVatRate: null,
+    // "VAT giá vốn" (2026-10-13 -> bỏ hẳn 2026-11-20, xem comment trong
+    // QuickAddProductModal.tsx) - KHÔNG set key này nữa (không gửi null) để
+    // emptyProductForm() không vô tình xoá default_cost_vat_rate cũ của sản
+    // phẩm khác đang dùng (xem thao/CRM_KNOWN_BUGS_FIXED.md #67).
     customerVisible: true,
     quoteDisplayName: '',
     quoteDescription: '',

@@ -1110,6 +1110,14 @@ def update_service_catalog_item(item_id: str, payload: dict, actor_id: str | Non
         "monthly_price_vnd", "annual_commit_monthly_price_vnd", "annual_total_price_vnd",
         "max_sale_discount_percent", "target_gross_margin_percent", "quota_user_count", "quota_connected_channels",
         "quota_messages_per_month",
+        # BUG THAT DA GAP (feedback 2026-11-20, "Đối tượng thuộc kiểu Decimal
+        # không thể được tuần tự hóa thành JSON" luc Luu sua san pham da co
+        # VAT giá vốn) - field nay la Decimal (schemas/service_catalog.py) nhung
+        # thieu trong danh sach convert float o day -> gui thang Decimal cho
+        # postgrest-py, lib nay tu json.dumps() request body va crash vi Decimal
+        # khong serialize duoc. create_service_catalog_item() da convert dung
+        # (float(payload["default_cost_vat_rate"])), chi update thieu.
+        "default_cost_vat_rate",
     ):
         if numeric_key in update_data:
             update_data[numeric_key] = _float_or_none(update_data[numeric_key])

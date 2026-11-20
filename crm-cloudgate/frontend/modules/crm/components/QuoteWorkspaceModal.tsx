@@ -7079,8 +7079,23 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '96px' }} />
                     {hasAnyBillingCycleItem ? <col style={{ width: '112px' }} /> : null}
                     <col style={{ width: '104px' }} />
-                    <col style={{ width: '76px' }} />
-                    <col style={{ width: '70px' }} />
+                    {/* Fix (2026-11-20, "ô chữ đ bị khuất"): 76px vua du cho
+                     * input %+nut doi che do khi hien "%", nhung khi item o
+                     * che do 'amount' nut doi che do hien chu "đ" (shortCurrencyLabel)
+                     * bi cat mat phan duoi do khong con du cho - tang len 110px
+                     * (96px van bi cat - min-width tong cua table (xem
+                     * .qc-workspace-items-table--unified) dang STALE, nho hon
+                     * tong thuc te cac <col>, khien table-layout:fixed chia ty
+                     * le NHO HON px khai bao - da dong bo lai min-width o CSS). */}
+                    <col style={{ width: '110px' }} />
+                    {/* Fix (2026-11-20, "2 chấm đen phía sau %" o cot VAT):
+                     * nut spin len/xuong mac dinh cua input[type=number] bi ep
+                     * sat o cot 70px qua hep - thu an bang CSS
+                     * (-webkit-appearance:none) khong an dinh (van hien tren
+                     * Chromium thuc te du rule co trong bundle), nen doi sang
+                     * cach chac an da kiem chung o cot Giảm giá: tang do rong
+                     * cot len 92px. */}
+                    <col style={{ width: '92px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
                     <col style={{ width: '84px' }} />
