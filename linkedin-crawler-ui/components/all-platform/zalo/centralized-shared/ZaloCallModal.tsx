@@ -282,6 +282,26 @@ export function ZaloCallModal({
     }
   }, [open, releaseBrowserAudioHardware, recordedUrl]);
 
+  // ── Quản lý bộ đếm thời gian đàm thoại (Chỉ chạy khi trạng thái là "connected") ──
+  useEffect(() => {
+    if (activeCallSession?.status === "connected") {
+      if (!callTimerRef.current) {
+        setCallElapsedSec(0);
+        callTimerRef.current = setInterval(() => {
+          setCallElapsedSec((prev) => prev + 1);
+        }, 1000);
+      }
+    } else {
+      if (callTimerRef.current) {
+        clearInterval(callTimerRef.current);
+        callTimerRef.current = null;
+      }
+      if (!activeCallSession || activeCallSession.status === "dialing" || activeCallSession.status === "ringing") {
+        setCallElapsedSec(0);
+      }
+    }
+  }, [activeCallSession?.status]);
+
   // Nạp SĐT + danh mục kết quả cuộc gọi + đo chất lượng đường truyền khi mở modal
   const runNetworkDiagnostics = useCallback(async () => {
     setCheckingNet(true);
@@ -690,11 +710,11 @@ export function ZaloCallModal({
       if (res?.session) {
         setActiveCallSession(res.session);
         setCallLaunched(true);
-        if (callTimerRef.current) clearInterval(callTimerRef.current);
+        if (callTimerRef.current) {
+          clearInterval(callTimerRef.current);
+          callTimerRef.current = null;
+        }
         setCallElapsedSec(0);
-        callTimerRef.current = setInterval(() => {
-          setCallElapsedSec((prev) => prev + 1);
-        }, 1000);
 
         await connectDirectCallAudioGateway(res.session);
 
@@ -1043,12 +1063,21 @@ export function ZaloCallModal({
                 <h3 className="truncate text-sm sm:text-base font-bold">
                   Zalo Call Studio • {customerName || "Khách hàng Zalo"}
                 </h3>
-                {callLaunched && (
+                {callLaunched && activeCallSession?.status === "connected" && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-400/25 border border-emerald-300/40 px-2 py-0.5 text-[11px] font-mono font-bold text-emerald-50">
                     <Clock className="h-3 w-3 animate-pulse" />
                     {formatDuration(callElapsedSec)}
                   </span>
                 )}
+                {callLaunched &&
+                  (activeCallSession?.status === "ringing" ||
+                    activeCallSession?.status === "dialing" ||
+                    activeCallSession?.status === "initializing") && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-400/25 border border-amber-300/40 px-2.5 py-0.5 text-[11px] font-bold text-amber-100 animate-pulse">
+                      <Radio className="h-3 w-3" />
+                      Đang đổ chuông...
+                    </span>
+                  )}
               </div>
               <p className="truncate text-[11.5px] text-blue-100">
                 Nick trực: <span className="font-semibold text-white">{accountLabel || accountId}</span>
@@ -1275,7 +1304,7 @@ export function ZaloCallModal({
                       {activeCallSession.status === "dialing" &&
                         "Đang phát lệnh gọi tới Zalo khách (11301 request)..."}
                       {activeCallSession.status === "ringing" &&
-                        "Đang đổ chuông trên Zalo khách hàng (11302 ringring)..."}
+                        "Đang đổ chuông trên Zalo khách hàng (11302 ringring) — Chờ khách nhấc máy..."}
                       {activeCallSession.status === "connected" &&
                         `Đang đàm thoại 2 chiều (${formatDuration(callElapsedSec)})`}
                       {activeCallSession.status === "ended" &&

@@ -363,25 +363,13 @@ async function startDirectZaloCall(
     }
   }
 
+  // TUYỆT ĐỐI KHÔNG tự bịa extendData với newZrtc=1 và sP2P=1 khi không có ZRTC Media Worker native!
+  // Khi không có ZRTC Worker native, 11301 request gửi sạch (không kèm extendData/subCommand=3)
+  // để Zalo di động của khách chạy chế độ Relay cuộc gọi chuẩn, không bị lỗi gãy ICE P2P làm ngắt chuông sau 1 tiếng.
   const resolvedExtendData =
     extendData && String(extendData).trim() !== ""
       ? String(extendData)
-      : JSON.stringify({
-          callType: Number(callType || 1) === 2 ? 1 : 0,
-          fromNoti: 1,
-          gccAudio: 1,
-          gccMode: 1,
-          gccSVLR: 1,
-          maxFT: 60,
-          negoVidQual: 1,
-          newZrtc: 1,
-          p2p: p2pList,
-          packetMode: 2,
-          platform: 1,
-          sP2P: 1,
-          select2side: 1,
-          serverAddr: serverAddrList,
-        });
+      : "";
 
   const serverRtp = relayRtp;
   const serverRtcp = relayRtcp;

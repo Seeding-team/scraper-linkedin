@@ -317,9 +317,8 @@ class ZaloCallGatewaySession {
     } catch (_) {}
 
     if (this.status !== "connected") this.status = "ringing";
-    if (this.p2pTarget) {
-      this.sendHandshakeFrame();
-    }
+    // TUYỆT ĐỐI KHÔNG bắn gói tin 49$ hay RTP tới p2pTarget trong giai đoạn đổ chuông sớm!
+    // Gói tin không phải STUN Binding Request gửi tới candidate P2P của điện thoại khách sẽ làm vỡ state machine ICE.
     this.broadcastJson({ type: "call_state", session: this.toDict() });
   }
 

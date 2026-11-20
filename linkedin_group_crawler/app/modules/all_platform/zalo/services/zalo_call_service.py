@@ -699,7 +699,9 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
     targets: List[Tuple[str, int]] = []
     if session.remote_rtp_addr:
         targets.append(session.remote_rtp_addr)
-    if session.p2p_target and session.p2p_target not in targets:
+    # Trong giai đoạn đổ chuông (ringing), TUYỆT ĐỐI KHÔNG bắn gói tin tới p2p_target của điện thoại khách!
+    # Gói tin non-STUN sẽ làm sụp state machine ICE WebRTC trên điện thoại và gây cúp máy ngay lập tức.
+    if session.status == "connected" and session.p2p_target and session.p2p_target not in targets:
         targets.append(session.p2p_target)
     for srv in session.relay_servers[:2]:
         if srv not in targets:
@@ -1206,23 +1208,8 @@ async def handle_incoming_voip_signal(
                 if isinstance(p2p_first, dict) and p2p_first.get("ip") and p2p_first.get("port"):
                     p2p_addr = (str(p2p_first["ip"]), int(p2p_first["port"]))
                     matched.p2p_target = p2p_addr
-                    if matched.udp_transport:
-                        try:
-                            hs = encrypt_zcall_transport_frame(
-                                "49",
-                                {
-                                    "callId": matched.call_id,
-                                    "sessId": matched.zalo_sess_id,
-                                    "userId": matched.account_id,
-                                    "toId": matched.callee_id,
-                                    "status": 0,
-                                    "ts": int(time.time() * 1000),
-                                },
-                            )
-                            matched.udp_transport.sendto(hs, p2p_addr)
-                            logger.info(f"[VOIP-P2P] Sent 49$ handshake to callee P2P: {p2p_addr}")
-                        except Exception as p2p_err:
-                            logger.debug(f"[VOIP-P2P] Pinhole error: {p2p_err}")
+                    # Lưu lại candidate p2p_target nhưng KHÔNG gửi gói tin nhị phân/49$ vào lúc này.
+                    # Điện thoại khách đang đổ chuông chỉ chấp nhận STUN Binding Request theo chuẩn WebRTC/ICE.
         except Exception:
             pass
 
