@@ -69,13 +69,19 @@ function parseRtpPacket(buf) {
     if (buf.length < offset) return null;
   }
 
+  let end = buf.length;
+  if (b0 & 0x20) {
+    const padding = buf[end - 1];
+    if (!padding || padding > end - offset) return null;
+    end -= padding;
+  }
   return {
     version,
     payloadType,
     seq,
     timestamp,
     ssrc,
-    payload: buf.subarray(offset),
+    payload: buf.subarray(offset, end),
   };
 }
 
@@ -185,6 +191,11 @@ class ZaloCallGatewaySession {
     }
 
     this.udpSocket.on("message", (msg, rinfo) => {
+      if (!["dialing", "ringing", "connected"].includes(this.status)) return;
+      const parsed = parseRtpPacket(msg);
+      if (!parsed || parsed.payloadType !== OPUS_PAYLOAD_TYPE || !parsed.payload.length || parsed.ssrc === this.ssrc) return;
+      const sources = [this.remoteRelay, this.p2pTarget, ...this.relayServers].filter(Boolean);
+      if (!sources.some(s => s.host === rinfo.address && s.port === rinfo.port)) return;
       this.packetsReceived += 1;
       if (this.status === "ringing") {
         this.status = "connected";
@@ -197,7 +208,6 @@ class ZaloCallGatewaySession {
         this.broadcastJson({ type: "call_state", session: this.toDict() });
       }
 
-      const parsed = parseRtpPacket(msg);
       if (parsed && parsed.payload && parsed.payload.length > 0) {
         this.broadcastAudio(parsed.payload);
       }
@@ -306,7 +316,7 @@ class ZaloCallGatewaySession {
       }
     } catch (_) {}
 
-    this.status = "ringing";
+    if (this.status !== "connected") this.status = "ringing";
     if (this.p2pTarget) {
       this.sendHandshakeFrame();
     }
@@ -317,6 +327,7 @@ class ZaloCallGatewaySession {
    * Xử lý khi khách hàng bắt máy (act: answer)
    */
   async handleAnswerEvent(data) {
+    if (!["dialing", "ringing"].includes(this.status)) return;
     if (this.connectedAt === null) {
       this.connectedAt = Date.now();
     }
@@ -414,29 +425,27 @@ function handleVoipEvent(voipEvent) {
   const callId = data.callId || params.callId || (data.id ? data.id : null);
   const calleeId = data.calleeId || data.fromId || data.toId || params.calleeId;
 
-  let session = findGatewaySession({ callId, calleeId });
-  if (!session) {
-    // Nếu không match chính xác ID, gán cho session active gần nhất
-    for (const s of sessions.values()) {
-      if (["dialing", "ringing", "connected"].includes(s.status)) {
-        session = s;
-        break;
-      }
-    }
+  let session = callId ? sessionsByCallId.get(String(callId)) : findGatewaySession({ calleeId });
+  if (!session && !callId && !calleeId) {
+    const active = [...sessions.values()].filter(s => ["dialing", "ringing", "connected"].includes(s.status));
+    if (active.length === 1) session = active[0];
   }
   if (!session) return null;
+  if (!["dialing", "ringing", "connected"].includes(session.status)) return session;
 
-  const rawStatus = String(data.status || params.status || "").trim();
+  const rawStatus = String(data.status ?? params.status ?? "").trim();
   if (act === "answer") {
     if (rawStatus === "5") {
       // Gói đàm phán sớm P2P / SDP Offer khi máy khách đổ chuông (status 5)
       session.handleEarlyNegotiation(data, params);
-    } else {
+    } else if (rawStatus === "0") {
       // Khách hàng thực sự bấm nghe máy (status 0 hoặc accept)
       session.handleAnswerEvent(data);
     }
+  } else if (act === "accept") {
+    session.handleAnswerEvent(data);
   } else if (act === "ring_ring") {
-    session.status = "ringing";
+    if (session.status !== "connected") session.status = "ringing";
     session.broadcastJson({ type: "call_state", session: session.toDict() });
   } else if (["cancel", "endcall", "end_call", "reject", "busy"].includes(act)) {
     session.status = act === "endcall" || act === "end_call" ? "ended" : act;

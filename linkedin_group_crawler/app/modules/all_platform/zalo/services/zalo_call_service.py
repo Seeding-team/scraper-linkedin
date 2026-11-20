@@ -96,6 +96,13 @@ def parse_rtp_packet(packet: bytes) -> Optional[Dict[str, Any]]:
         if len(packet) < offset:
             return None
 
+    end = len(packet)
+    if b0 & 0x20:
+        padding_size = packet[-1]
+        if padding_size == 0 or padding_size > end - offset:
+            return None
+        end -= padding_size
+
     return {
         "version": version,
         "marker": marker,
@@ -103,7 +110,7 @@ def parse_rtp_packet(packet: bytes) -> Optional[Dict[str, Any]]:
         "seq": seq,
         "timestamp": ts,
         "ssrc": ssrc,
-        "payload": packet[offset:],
+        "payload": packet[offset:end],
     }
 
 
@@ -167,7 +174,20 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                     fut.set_result(parsed_stun)
                     return
 
-        # Mọi gói tin UDP hợp lệ (không phải STUN) từ Zalo Relay khi đang gọi
+        # Transport/STUN/RTCP replies are not evidence that the callee answered.
+        parsed = parse_rtp_packet(data)
+        if not parsed or parsed["payload_type"] != OPUS_PAYLOAD_TYPE or not parsed["payload"]:
+            return
+        if parsed["ssrc"] == self.session.ssrc:
+            return  # Ignore our own RTP reflected by the relay.
+        allowed_sources = set(self.session.relay_servers)
+        if self.session.remote_rtp_addr:
+            allowed_sources.add(self.session.remote_rtp_addr)
+        if self.session.p2p_target:
+            allowed_sources.add(self.session.p2p_target)
+        if addr not in allowed_sources:
+            return
+
         if self.session.status in ("dialing", "ringing", "connected") and len(data) >= 4:
             self.session.packets_received += 1
             if not self.session.remote_rtp_addr:
@@ -175,9 +195,7 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
             if self.session.status == "ringing":
                 asyncio.create_task(_promote_connected_from_media(self.session))
 
-            parsed = parse_rtp_packet(data)
-            if parsed and parsed.get("payload"):
-                asyncio.create_task(self.session.broadcast_audio_to_browsers(parsed["payload"]))
+            asyncio.create_task(self.session.broadcast_audio_to_browsers(parsed["payload"]))
 
 
 # ── Active Call Session Model ─────────────────────────────────────────────────
@@ -1118,6 +1136,14 @@ async def handle_incoming_voip_signal(
     """Đồng bộ tín hiệu VoIP từ WebSocket listener vào phiên gọi đang mở (Module 2 -> Module 3/4)."""
     acc = (account_id or "").strip().lower()
     matched: Optional[ZaloCallSession] = None
+    signal_params = data.get("params") or {}
+    if isinstance(signal_params, str):
+        try:
+            signal_params = json.loads(signal_params)
+        except (ValueError, TypeError):
+            signal_params = {}
+    if isinstance(signal_params, dict) and call_id is None:
+        call_id = signal_params.get("callId") or signal_params.get("call_id")
 
     for s in reversed(list(_CALL_SESSIONS.values())):
         if s.account_id.strip().lower() != acc:
@@ -1125,20 +1151,23 @@ async def handle_incoming_voip_signal(
         if call_id is not None and str(s.call_id) == str(call_id):
             matched = s
             break
-        if partner_id and s.callee_id == partner_id and s.status in ("dialing", "ringing", "connected"):
+        if call_id is None and partner_id and s.callee_id == partner_id and s.status in ("dialing", "ringing", "connected"):
             matched = s
             break
 
-    # Fallback: nếu ID đối tác lệch giữa 32-bit toId và 64-bit UID, ghép nối ngay với phiên active duy nhất của tài khoản
-    if not matched:
-        for s in reversed(list(_CALL_SESSIONS.values())):
-            if s.account_id.strip().lower() == acc and s.status in ("dialing", "ringing", "connected"):
-                matched = s
-                break
+    # Only use the sole active session when the signal carries no identity.
+    if not matched and call_id is None and not partner_id:
+        candidates = [s for s in _CALL_SESSIONS.values()
+                      if s.account_id.strip().lower() == acc and s.status in ("dialing", "ringing", "connected")]
+        if len(candidates) == 1:
+            matched = candidates[0]
 
     if not matched:
         logger.info(f"[VOIP] No active session matched for user={account_id} act={act} call_id={call_id} partner_id={partner_id}")
         return None
+
+    if matched.status not in ("dialing", "ringing", "connected"):
+        return matched
 
     remote_rtp = (
         data.get("rtpAddress")
@@ -1150,9 +1179,6 @@ async def handle_incoming_voip_signal(
     if parsed_addr:
         matched.remote_rtp_addr = parsed_addr
 
-    raw_status = str(data.get("status") if isinstance(data, dict) else "").strip()
-    is_early_negotiation = (act == "answer" and raw_status == "5")
-
     # Bóc tách và cập nhật candidate P2P từ Callee nếu có
     params_obj: Dict[str, Any] = {}
     raw_params = data.get("params")
@@ -1163,6 +1189,13 @@ async def handle_incoming_voip_signal(
             params_obj = {}
     elif isinstance(raw_params, dict):
         params_obj = raw_params
+    if not isinstance(params_obj, dict):
+        params_obj = {}
+    raw_status = str(data.get("status") if data.get("status") is not None else params_obj.get("status", "")).strip()
+    is_early_negotiation = act == "answer" and raw_status == "5"
+    if act == "answer" and raw_status not in ("0", "5"):
+        logger.info(f"[VOIP] Ignoring unconfirmed answer status={raw_status!r} call_id={matched.call_id}")
+        return matched
     callee_extend = data.get("extendData") or params_obj.get("extendData") or ""
     if isinstance(callee_extend, str) and callee_extend.strip():
         try:
@@ -1210,7 +1243,8 @@ async def handle_incoming_voip_signal(
 
     if is_early_negotiation:
         # Gói đàm phán sớm P2P khi máy khách bắt đầu đổ chuông, TUYỆT ĐỐI KHÔNG chuyển connected và KHÔNG gửi 11304 sớm!
-        matched.status = "ringing"
+        if matched.status != "connected":
+            matched.status = "ringing"
         logger.info(
             f"[VOIP-NEGOTIATE] Callee P2P/SDP negotiation received (status=5) for session={matched.session_id}. "
             f"Keeping ringing, NOT dispatching premature 11304 AnswerAck."
@@ -1219,8 +1253,11 @@ async def handle_incoming_voip_signal(
         return matched
 
     if mapped_status in ("ringing", "ring_ring"):
-        matched.status = "ringing"
+        if matched.status != "connected":
+            matched.status = "ringing"
     elif mapped_status == "connected":
+        if matched.status == "connected":
+            return matched
         if matched.connected_at is None:
             matched.connected_at = time.time()
         matched.status = "connected"
