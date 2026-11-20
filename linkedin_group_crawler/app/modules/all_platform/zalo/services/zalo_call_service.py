@@ -635,6 +635,19 @@ async def _promote_connected_from_media(session: ZaloCallSession) -> None:
         f"[VOIP-MEDIA] Call connected via Relay UDP packets for session={session.session_id} "
         f"packets_received={session.packets_received}"
     )
+    # Gửi 11304 AnswerAck tới Zalo Voice Server để xác nhận khớp kết nối
+    try:
+        auth = await load_zca_auth(session.account_id)
+        if auth and session.callee_id:
+            await send_zca_call_signal(
+                auth,
+                11304,
+                {"calleeId": session.callee_id, "callId": session.call_id},
+            )
+            logger.info(f"[VOIP-MEDIA] 11304 AnswerAck dispatched on media receive for session={session.session_id}")
+    except Exception as ack_err:
+        logger.debug(f"[VOIP-MEDIA] AnswerAck on media error: {ack_err}")
+
     await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
 
 
@@ -688,18 +701,11 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
 
 
 async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) -> None:
-    """Duy trì lỗ thông NAT UDP & phát 11304 answerack định kỳ trong suốt thời gian đổ chuông:
-    - KHÔNG tự ý nâng cấp status='connected' khi 11304 chỉ trả về callerId/calleeId (vì 11304
-      luôn trả 2 trường này cả lúc chuông chưa nhấc!).
+    """Duy trì lỗ thông NAT UDP định kỳ trong suốt thời gian đổ chuông:
+    - Bắn nhịp UDP keepalive (Opus silence + 49$ AES transport frame) tới Relay để giữ thông NAT.
+    - TUYỆT ĐỐI KHÔNG gửi 11304 answerack khi chuông chưa nhấc máy để tránh làm điện thoại khách văng lỗi ngắt cuộc gọi nhỡ.
     - Chỉ dừng vòng lặp khi cuộc gọi thực sự chuyển sang connected/ended/cancelled/rejected.
     """
-    callee_target = session.callee_id
-    internal_to_id = None
-    if isinstance(session.signaling_data, dict):
-        s1 = session.signaling_data.get("requestcall_result") or session.signaling_data
-        if isinstance(s1, dict) and s1.get("toId"):
-            internal_to_id = str(s1["toId"])
-
     await asyncio.sleep(0.5)
 
     attempts = 0
@@ -716,18 +722,7 @@ async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) 
         if session.status != "ringing":
             break
 
-        # Phát 11304 answerack đều đặn mỗi 1s với calleeId 64-bit chuẩn để ngay khi khách bấm Nghe (11303)
-        # máy chủ Zalo Voice lập tức khớp ACK (Signal 408) cho điện thoại khách.
-        try:
-            await send_zca_call_signal(
-                auth,
-                11304,
-                {"calleeId": str(callee_target), "callId": session.call_id},
-            )
-        except Exception as e:
-            logger.debug(f"[AUTO-ACK] 11304 signal attempt {attempts} error: {e}")
-
-    logger.info(f"[AUTO-ACK] Loop exited for session={session.session_id} status={session.status} attempts={attempts}")
+    logger.info(f"[NAT-KEEPALIVE] Loop exited for session={session.session_id} status={session.status} attempts={attempts}")
 
 
 async def start_call_session(
@@ -1130,38 +1125,81 @@ async def handle_incoming_voip_signal(
     if parsed_addr:
         matched.remote_rtp_addr = parsed_addr
 
-    if mapped_status == "ringing" and matched.status == "dialing":
+    raw_status = str(data.get("status") if isinstance(data, dict) else "").strip()
+    is_early_negotiation = (act == "answer" and raw_status == "5")
+
+    # Bóc tách và cập nhật candidate P2P từ Callee nếu có
+    params_obj: Dict[str, Any] = {}
+    raw_params = data.get("params")
+    if isinstance(raw_params, str) and raw_params.strip():
+        try:
+            params_obj = json.loads(raw_params)
+        except Exception:
+            params_obj = {}
+    elif isinstance(raw_params, dict):
+        params_obj = raw_params
+    callee_extend = data.get("extendData") or params_obj.get("extendData") or ""
+    if isinstance(callee_extend, str) and callee_extend.strip():
+        try:
+            ext_json = json.loads(callee_extend)
+            p2p_list = ext_json.get("p2p") or []
+            if isinstance(p2p_list, list) and len(p2p_list) > 0:
+                p2p_first = p2p_list[0]
+                if isinstance(p2p_first, dict) and p2p_first.get("ip") and p2p_first.get("port"):
+                    p2p_addr = (str(p2p_first["ip"]), int(p2p_first["port"]))
+                    if matched.udp_transport:
+                        try:
+                            hs = encrypt_zcall_transport_frame(
+                                "49",
+                                {
+                                    "callId": matched.call_id,
+                                    "sessId": str(matched.call_id),
+                                    "userId": matched.account_id,
+                                    "toId": matched.callee_id,
+                                    "status": 0,
+                                    "ts": int(time.time() * 1000),
+                                },
+                            )
+                            matched.udp_transport.sendto(hs, p2p_addr)
+                            logger.info(f"[VOIP-P2P] Sent 49$ handshake to callee P2P: {p2p_addr}")
+                        except Exception as p2p_err:
+                            logger.debug(f"[VOIP-P2P] Pinhole error: {p2p_err}")
+        except Exception:
+            pass
+
+    # Nếu có ZRTC Media Worker, chuyển ngay codec & extendData của máy khách vào Worker
+    if matched.zrtc_worker_id and (data.get("codec") or callee_extend):
+        callee_codec = data.get("codec") or params_obj.get("codec") or _DEFAULT_ZRTC_CODECS_JSON
+        asyncio.create_task(
+            notify_zrtc_worker_event(
+                matched.zrtc_worker_id,
+                "update_caller_info",
+                {
+                    "session_id": matched.session_id,
+                    "codec": callee_codec if isinstance(callee_codec, str) else json.dumps(callee_codec),
+                    "extend_data": callee_extend if isinstance(callee_extend, str) else json.dumps(callee_extend),
+                },
+            )
+        )
+
+    if is_early_negotiation:
+        # Gói đàm phán sớm P2P khi máy khách bắt đầu đổ chuông, TUYỆT ĐỐI KHÔNG chuyển connected và KHÔNG gửi 11304 sớm!
+        matched.status = "ringing"
+        logger.info(
+            f"[VOIP-NEGOTIATE] Callee P2P/SDP negotiation received (status=5) for session={matched.session_id}. "
+            f"Keeping ringing, NOT dispatching premature 11304 AnswerAck."
+        )
+        await matched.broadcast_json({"type": "call_state", "session": matched.to_dict(), **matched.to_dict()})
+        return matched
+
+    if mapped_status in ("ringing", "ring_ring"):
         matched.status = "ringing"
     elif mapped_status == "connected":
         if matched.connected_at is None:
             matched.connected_at = time.time()
         matched.status = "connected"
 
-        # Nếu phiên gọi có gắn ZRTC Media Worker, chuyển ngay codec & extendData của máy khách vào Worker
-        if matched.zrtc_worker_id:
-            params_obj: Dict[str, Any] = {}
-            raw_params = data.get("params")
-            if isinstance(raw_params, str) and raw_params.strip():
-                try:
-                    params_obj = json.loads(raw_params)
-                except Exception:
-                    params_obj = {}
-            elif isinstance(raw_params, dict):
-                params_obj = raw_params
-            callee_codec = data.get("codec") or params_obj.get("codec") or _DEFAULT_ZRTC_CODECS_JSON
-            callee_extend = data.get("extendData") or params_obj.get("extendData") or ""
-            asyncio.create_task(
-                notify_zrtc_worker_event(
-                    matched.zrtc_worker_id,
-                    "update_caller_info",
-                    {
-                        "session_id": matched.session_id,
-                        "codec": callee_codec if isinstance(callee_codec, str) else json.dumps(callee_codec),
-                        "extend_data": callee_extend if isinstance(callee_extend, str) else json.dumps(callee_extend),
-                    },
-                )
-            )
-        else:
+        if not matched.zrtc_worker_id:
             asyncio.create_task(_media_watchdog_loop(matched))
 
         # Bắn gói tin keepalive RTP liên tục (burst 50 gói x 20ms = 1 giây) để mở thông cổng NAT và đồng bộ media

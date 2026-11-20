@@ -189,6 +189,11 @@ class ZaloCallGatewaySession {
       if (this.status === "ringing") {
         this.status = "connected";
         this.connectedAt = this.connectedAt || Date.now();
+        // Nhận được audio packet thực từ khách -> gửi ngay 11304 answerack
+        zcallSendAnswerAck(this.api, {
+          calleeId: this.calleeId,
+          callId: this.callId,
+        }).catch(() => {});
         this.broadcastJson({ type: "call_state", session: this.toDict() });
       }
 
@@ -277,6 +282,35 @@ class ZaloCallGatewaySession {
     if (this.p2pTarget) {
       this.udpSocket.send(pkt, this.p2pTarget.port, this.p2pTarget.host);
     }
+  }
+
+  /**
+   * Xử lý gói đàm phán sớm P2P / SDP Offer từ Callee khi máy khách bắt đầu đổ chuông (act: answer, status: 5)
+   * Tuyệt đối KHÔNG chuyển sang connected và KHÔNG gửi 11304 answerack sớm gây drop cuộc gọi!
+   */
+  handleEarlyNegotiation(data, params = {}) {
+    try {
+      const p = typeof data.params === "string" ? JSON.parse(data.params) : data.params || params || {};
+      const ext = typeof p.extendData === "string" ? JSON.parse(p.extendData) : p.extendData || {};
+      if (Array.isArray(ext.p2p) && ext.p2p.length > 0) {
+        const bestP2p = ext.p2p[0];
+        if (bestP2p.ip && bestP2p.port) {
+          this.p2pTarget = { host: String(bestP2p.ip), port: Number(bestP2p.port) };
+        }
+      }
+      if (p.rtpSerIp && typeof p.rtpSerIp === "string") {
+        const [h, portStr] = p.rtpSerIp.split(":");
+        if (h && portStr) {
+          this.remoteRelay = { host: h, port: Number(portStr) };
+        }
+      }
+    } catch (_) {}
+
+    this.status = "ringing";
+    if (this.p2pTarget) {
+      this.sendHandshakeFrame();
+    }
+    this.broadcastJson({ type: "call_state", session: this.toDict() });
   }
 
   /**
@@ -392,13 +426,20 @@ function handleVoipEvent(voipEvent) {
   }
   if (!session) return null;
 
+  const rawStatus = String(data.status || params.status || "").trim();
   if (act === "answer") {
-    session.handleAnswerEvent(data);
+    if (rawStatus === "5") {
+      // Gói đàm phán sớm P2P / SDP Offer khi máy khách đổ chuông (status 5)
+      session.handleEarlyNegotiation(data, params);
+    } else {
+      // Khách hàng thực sự bấm nghe máy (status 0 hoặc accept)
+      session.handleAnswerEvent(data);
+    }
   } else if (act === "ring_ring") {
     session.status = "ringing";
     session.broadcastJson({ type: "call_state", session: session.toDict() });
-  } else if (["cancel", "endcall", "reject", "busy"].includes(act)) {
-    session.status = act === "endcall" ? "ended" : act;
+  } else if (["cancel", "endcall", "end_call", "reject", "busy"].includes(act)) {
+    session.status = act === "endcall" || act === "end_call" ? "ended" : act;
     session.close();
   }
   return session;

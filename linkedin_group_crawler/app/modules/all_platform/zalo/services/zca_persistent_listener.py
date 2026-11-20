@@ -1204,7 +1204,11 @@ class ZcaPersistentListenerManager:
             "end_call": "ended",
             "busy": "busy",
         }
-        mapped_status = status_map.get(act, act or "signal")
+        raw_status = str(data.get("status") if isinstance(data, dict) else "").strip()
+        if act == "answer" and raw_status == "5":
+            mapped_status = "ringing"
+        else:
+            mapped_status = status_map.get(act, act or "signal")
         logger.info(
             f"[VOIP-WS] Incoming event user={state.user_id} act={act} mapped={mapped_status} "
             f"call_id={call_id} partner_id={partner_id} data={json.dumps(data, ensure_ascii=False)[:1500]}"
