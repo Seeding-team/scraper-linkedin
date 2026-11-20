@@ -154,6 +154,11 @@ export function ZaloCallModal({
   const callStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const isCallMutedRef = useRef<boolean>(false);
+  const activeCallSessionRef = useRef<ZaloDirectCallSession | null>(null);
+
+  useEffect(() => {
+    activeCallSessionRef.current = activeCallSession;
+  }, [activeCallSession]);
 
   useEffect(() => {
     setMounted(true);
@@ -637,7 +642,10 @@ export function ZaloCallModal({
             const rms = Math.sqrt(sumSq / input.length);
             setMicLevel(isCallMutedRef.current ? 0 : Math.min(100, Math.round(rms * 320)));
 
+            // CHỐT CHẶN BẢO VỆ: Chỉ gửi âm thanh qua WebSocket khi cuộc gọi ĐÃ KẾT NỐI (connected).
+            // Tuyệt đối không gửi gói âm thanh khi đang dialing/ringing vì sẽ làm rách gói ZRTC của khách gây ngắt chuông tức thì!
             if (
+              activeCallSessionRef.current?.status === "connected" &&
               !isCallMutedRef.current &&
               callWsRef.current &&
               callWsRef.current.readyState === WebSocket.OPEN

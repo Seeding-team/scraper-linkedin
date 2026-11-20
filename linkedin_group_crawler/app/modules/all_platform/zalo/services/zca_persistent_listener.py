@@ -1204,8 +1204,28 @@ class ZcaPersistentListenerManager:
             "end_call": "ended",
             "busy": "busy",
         }
-        raw_status = str(data.get("status") if isinstance(data, dict) else "").strip()
-        if act == "answer" and raw_status == "5":
+        raw_status = ""
+        params_obj = {}
+        if isinstance(data, dict):
+            if data.get("status") is not None:
+                raw_status = str(data.get("status")).strip()
+            raw_params = data.get("params")
+            if isinstance(raw_params, str) and raw_params.strip():
+                try:
+                    params_obj = json.loads(raw_params)
+                except Exception:
+                    params_obj = {}
+            elif isinstance(raw_params, dict):
+                params_obj = raw_params
+            if not raw_status and isinstance(params_obj, dict) and params_obj.get("status") is not None:
+                raw_status = str(params_obj.get("status")).strip()
+
+        if act == "answer":
+            if raw_status == "0":
+                mapped_status = "connected"
+            else:
+                mapped_status = "ringing"
+        elif act == "answerack":
             mapped_status = "ringing"
         else:
             mapped_status = status_map.get(act, act or "signal")

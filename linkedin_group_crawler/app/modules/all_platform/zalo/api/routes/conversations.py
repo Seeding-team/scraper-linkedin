@@ -517,7 +517,8 @@ async def zalo_direct_call_audio_websocket(websocket: WebSocket, session_id: str
             if msg.get("type") == "websocket.disconnect":
                 break
             if "bytes" in msg and msg["bytes"]:
-                session.send_audio_from_browser(msg["bytes"])
+                if session.status == "connected":
+                    session.send_audio_from_browser(msg["bytes"])
             elif "text" in msg and msg["text"]:
                 try:
                     data = json.loads(msg["text"])
