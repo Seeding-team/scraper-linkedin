@@ -885,10 +885,16 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
             )}
 
             {/* Đánh giá và Kết quả liên hệ. Việc 4: className flex-1 min-w-0 chỉ áp dụng
-                dưới sm (mobile) để 2 dropdown chia đều phần còn lại cạnh pill 👍/💬 trên
+                dưới sm (mobile) để dropdown đánh giá chia đều phần còn lại cạnh pill 👍/💬 trên
                 cùng 1 hàng flex-wrap; từ sm trở lên quay về kích thước tự nhiên như cũ. */}
             <EvaluationDropdown post={post} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
-            <PostCallResultDropdown post={post} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
+            {/* Fix vỡ dọc trên mobile: PostCallResultDropdown chứa cả hàng pill ghim (nhiều
+                pill + "..." + icon ghi chú + badge + avatar) — nếu dùng flex-1 min-w-0 như
+                EvaluationDropdown, nó bị ép vào 1 cột hẹp chia sẻ hàng với pill 👍/💬/dropdown
+                đánh giá, khiến flex-wrap NỘI BỘ của nó bẻ dọc thành cột thay vì chảy ngang.
+                w-full (mobile) buộc nó chiếm trọn hàng flex-wrap ngoài → tự xuống dòng riêng,
+                full-width; sm:w-auto trả lại kích thước tự nhiên như cũ ở desktop. */}
+            <PostCallResultDropdown post={post} className="w-full sm:w-auto sm:flex-none sm:min-w-0" />
 
             {/* Tên người đăng bài post gốc (hoặc Ẩn danh) */}
             {(() => {
