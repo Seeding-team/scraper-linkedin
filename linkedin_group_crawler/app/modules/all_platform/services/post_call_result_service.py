@@ -15,8 +15,18 @@ logger = logging.getLogger(__name__)
 
 _UNREACHABLE_ID = "00000000-0000-0000-0000-000000000000"
 
+# Card "Tổng bài" (widget Kết quả liên hệ) — đếm bài crawl theo `crawl_date` (NOT NULL,
+# có index ở cả 4 bảng), KHÔNG lọc theo member/role (bài dùng chung để seeding, giống
+# đúng tiền lệ "totalPostsToday/totalPosts" ở unified_posts_service._fetch_stats).
+_POST_TABLE_BY_PLATFORM = {
+    "facebook": "facebook_posts",
+    "linkedin": "linkedin_posts",
+    "threads": "threads_posts",
+    "youtube": "youtube_posts",
+}
+
 POST_CALL_RESULT_COLUMNS = (
-    "id, post_id, platform, result_code, attempts, last_call_at, updated_by, created_at, updated_at, "
+    "id, post_id, platform, result_code, attempts, last_call_at, note, updated_by, created_at, updated_at, "
     "updated_by_user:app_users!updated_by(id, name, email)"
 )
 
@@ -123,6 +133,32 @@ def update_call_result(
         next_attempts,
     )
     return saved_result
+
+
+def update_call_result_note(
+    post_id: str,
+    platform: str,
+    note: Optional[str],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Việc 3 (BƯỚC 2/3): cập nhật riêng cột `note` của 1 bài — KHÔNG đổi result_code, KHÔNG
+    tăng attempts/last_call_at, KHÔNG tạo bản ghi mới. Bài phải đã có kết quả liên hệ từ
+    trước (post_call_results là upsert theo post_id+platform ở `update_call_result`, note chỉ
+    đi kèm 1 dòng đã tồn tại — không có gì để UPDATE nếu dòng đó chưa được tạo)."""
+    supabase = get_supabase_client()
+    existing = get_call_result(post_id, platform)
+    if not existing:
+        raise ValueError("Bài viết chưa có kết quả liên hệ nào để ghi chú.")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    execute_supabase_query(
+        lambda: supabase.table("post_call_results")
+        .update({"note": (note or "").strip() or None, "updated_by": user.get("id"), "updated_at": now_iso})
+        .eq("post_id", str(post_id))
+        .eq("platform", str(platform))
+        .execute()
+    )
+    return get_call_result(post_id, platform) or existing
 
 
 def _team_roster(team_id: str) -> list[str]:
@@ -330,6 +366,26 @@ def get_call_result_stats(
     comment_count = _count_seeding_comments(start_utc, end_utc)
     comment_count_prev = _count_seeding_comments(prev_start_utc, prev_end_utc)
 
+    def _count_crawled_posts(gte_utc: str, lte_utc: str) -> int:
+        tables = [_POST_TABLE_BY_PLATFORM[platform]] if platform in _POST_TABLE_BY_PLATFORM else list(_POST_TABLE_BY_PLATFORM.values())
+        total_count = 0
+        for table in tables:
+            try:
+                res = execute_supabase_query(
+                    lambda t=table: supabase.table(t)
+                    .select("id", count="exact")
+                    .gte("crawl_date", gte_utc)
+                    .lte("crawl_date", lte_utc)
+                    .execute()
+                )
+                total_count += res.count or 0
+            except Exception as exc:
+                logger.warning(f"get_call_result_stats: lỗi đếm bài crawl ở bảng {table}: {exc}")
+        return total_count
+
+    total_posts_count = _count_crawled_posts(start_utc, end_utc)
+    total_posts_count_prev = _count_crawled_posts(prev_start_utc, prev_end_utc)
+
     return {
         "by_type": by_type,
         "by_member": by_member,
@@ -337,6 +393,8 @@ def get_call_result_stats(
         "total": total,
         "comment_count": comment_count,
         "comment_count_prev": comment_count_prev,
+        "total_posts_count": total_posts_count,
+        "total_posts_count_prev": total_posts_count_prev,
         "range": {"start": start_d.isoformat(), "end": end_d.isoformat()},
     }
 

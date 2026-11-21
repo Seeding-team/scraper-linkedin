@@ -492,7 +492,7 @@ def get_activity_log(
         query = (
             sb.table("post_call_results")
             .select(
-                "post_id, platform, result_code, updated_by, updated_at, last_call_at, "
+                "post_id, platform, result_code, note, updated_by, updated_at, last_call_at, "
                 "updated_by_user:app_users!updated_by(id, name, email)"
             )
             .gte("updated_at", start_utc)
@@ -513,6 +513,10 @@ def get_activity_log(
                 "action_type": "call",
                 "member_id": row.get("updated_by"),
                 "member_name": info.get("name") or info.get("email"),
+                # Việc 4: post_call_results chỉ có 1 dòng/post (latest-state, không phải lịch
+                # sử) — note ở đây LUÔN là ghi chú của LẦN GỌI GẦN NHẤT, không gắn riêng được
+                # cho từng dòng log quá khứ của cùng 1 post (xem docstring đầu file).
+                "note": row.get("note"),
                 "post_label": row.get("post_id"),
                 "result_label": (type_meta.get(code) or {}).get("name") or code or "—",
                 "_result_code": code,

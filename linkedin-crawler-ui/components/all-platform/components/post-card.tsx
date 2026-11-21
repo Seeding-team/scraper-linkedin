@@ -10,12 +10,7 @@ import { ChevronDown, ChevronUp, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UnifiedPost, FeedPlatform } from "@/types/unified.types";
 import { EvaluationDropdown } from "@/components/all-platform/posts/EvaluationDropdown";
-import {
-  PostCallResultDropdown,
-  FALLBACK_CALL_OPTIONS,
-  loadCallResultOptions,
-  type CallResultOption,
-} from "@/components/all-platform/posts/PostCallResultDropdown";
+import { PostCallResultDropdown } from "@/components/all-platform/posts/PostCallResultDropdown";
 import { ProposeKeywordModal } from "@/components/all-platform/posts/ProposeKeywordModal";
 import { useQuickInboxLibrary, composeQuickInboxMessage, type QuickInboxLibraryEntry } from "./use-quick-inbox-library";
 import { useQuickCommentLibrary } from "./use-quick-comment-library";
@@ -31,7 +26,6 @@ import { LeadFormDrawer } from "@/modules/crm/components/LeadFormDrawer";
 import type { CrmLeadRow } from "@/modules/crm/types";
 import { toast } from "sonner";
 import { PostAssigneeDropdown, type PostMemberItem } from "./PostAssigneeDropdown";
-import { postCallResultService } from "@/services/all-platform.service";
 
 interface PostCardProps {
   post: UnifiedPost;
@@ -164,26 +158,6 @@ function formatRelativeTimeVi(dateStr?: string | null, nowMs: number = Date.now(
   return null;
 }
 
-// Pill "đề xuất nhanh" cho Kết quả liên hệ trên mobile — 3 code hay dùng nhất, ghim cứng
-// ở đây để dễ đổi sau này. Các code còn lại rơi vào popover "..." cạnh hàng pill.
-const PINNED_CALL_RESULT_CODES = ["interested", "noanswer", "refused"];
-
-// Nhóm thành công/thất bại để tô màu pill — khớp đúng statusCategory đang dùng trong
-// thống kê Kết quả liên hệ (call-result-stats-widget.tsx / TabContactResults.tsx).
-const SUCCESS_CALL_RESULT_CODES = ["interested", "callback", "consulting", "waiting"];
-
-function getCallResultPillClass(code: string, isActive: boolean): string {
-  const isSuccess = SUCCESS_CALL_RESULT_CODES.includes(code);
-  const base = isSuccess
-    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-    : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100";
-  return cn(
-    "rounded-full border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
-    base,
-    isActive && "ring-2 ring-offset-1 ring-current font-extrabold"
-  );
-}
-
 export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSeeding, onSchedule, onViewDetail, onDelete, onViewSeedingRoster, onComment, seeded, verifyStatus, teamMembers }: PostCardProps) {
   const { user: currentUser } = useAppAuth();
   const isYouTube = post.platform === "youtube";
@@ -203,36 +177,6 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
     const id = setInterval(() => setNowTick(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-
-  // Việc 3: pill "đề xuất nhanh" Kết quả liên hệ trên mobile — dùng lại đúng
-  // loadCallResultOptions()/postCallResultService.updateCallResult() của
-  // PostCallResultDropdown (cache module-level nên gọi lại ở đây không tốn thêm request).
-  const [mobileCallOptions, setMobileCallOptions] = useState<CallResultOption[]>(FALLBACK_CALL_OPTIONS);
-  const [mobileCallResultCode, setMobileCallResultCode] = useState<string>(post.call_result_code || "");
-  const [mobileCallResultSavingCode, setMobileCallResultSavingCode] = useState<string | null>(null);
-  const [isCallResultOverflowOpen, setIsCallResultOverflowOpen] = useState(false);
-  // Override bất biến (không mutate post) để PostCallResultDropdown (đứng cùng hàng) đồng
-  // bộ ngay sau khi lưu qua pill, thay vì gán đè trực tiếp lên object post.
-  const [mobileCallResultOverride, setMobileCallResultOverride] = useState<Pick<
-    UnifiedPost,
-    "call_result_code" | "call_attempts" | "last_call_at" | "updated_by_user"
-  > | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-    loadCallResultOptions().then((loaded) => {
-      if (mounted && loaded && loaded.length > 0) setMobileCallOptions(loaded);
-    });
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (post.call_result_code !== undefined) {
-      setMobileCallResultCode(post.call_result_code || "");
-    }
-  }, [post.call_result_code]);
 
   const [localZaloStatus, setLocalZaloStatus] = useState<string | null>(
     post.auto_seeding_comment?.zalo_status || (post as any).zalo_status || null
@@ -503,58 +447,6 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
   }, [effectiveSeeding, post, verifyStatus]);
 
   const showSeedingRosterBtn = userRole !== "member" && !!onViewSeedingRoster && !!post.id;
-
-  // Việc 3: chia danh sách code Kết quả liên hệ thành ghim (pill nổi) / còn lại (popover
-  // "...") theo PINNED_CALL_RESULT_CODES, giữ đúng thứ tự ghim đã khai báo.
-  const pinnedCallOptions = useMemo(
-    () =>
-      PINNED_CALL_RESULT_CODES.map((code) => mobileCallOptions.find((opt) => opt.code === code)).filter(
-        (opt): opt is CallResultOption => !!opt
-      ),
-    [mobileCallOptions]
-  );
-  const overflowCallOptions = useMemo(
-    () => mobileCallOptions.filter((opt) => !PINNED_CALL_RESULT_CODES.includes(opt.code)),
-    [mobileCallOptions]
-  );
-
-  const handleMobileCallResultSelect = async (opt: CallResultOption) => {
-    const prevCode = mobileCallResultCode;
-    setMobileCallResultSavingCode(opt.code);
-    setMobileCallResultCode(opt.code); // optimistic, giống PostCallResultDropdown
-    setIsCallResultOverflowOpen(false);
-    try {
-      const res = await postCallResultService.updateCallResult(post.id, {
-        result_code: opt.code,
-        platform: post.platform || "facebook",
-      });
-      if (!res.success) {
-        setMobileCallResultCode(prevCode);
-        toast.error(res.message || "Không thể lưu kết quả liên hệ.");
-        return;
-      }
-      // Không mutate post (immutable) — gộp qua postForCallResultDropdown để
-      // PostCallResultDropdown (đứng cùng hàng, luôn hiển thị) tự đồng bộ qua useEffect
-      // theo dõi post.call_result_code/call_attempts/last_call_at/updated_by_user sẵn có.
-      setMobileCallResultOverride({
-        call_result_code: opt.code,
-        call_attempts: (post.call_attempts || 0) + 1,
-        last_call_at: res.data?.last_call_at || new Date().toISOString(),
-        updated_by_user: res.data?.updated_by_user || post.updated_by_user,
-      });
-      toast.success(`✓ Đã lưu kết quả liên hệ: ${opt.label}`);
-    } catch {
-      setMobileCallResultCode(prevCode);
-      toast.error("Lỗi kết nối khi lưu kết quả liên hệ.");
-    } finally {
-      setMobileCallResultSavingCode(null);
-    }
-  };
-
-  const postForCallResultDropdown = useMemo(
-    () => (mobileCallResultOverride ? { ...post, ...mobileCallResultOverride } : post),
-    [post, mobileCallResultOverride]
-  );
 
   return (
     <div
@@ -996,60 +888,7 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
                 dưới sm (mobile) để 2 dropdown chia đều phần còn lại cạnh pill 👍/💬 trên
                 cùng 1 hàng flex-wrap; từ sm trở lên quay về kích thước tự nhiên như cũ. */}
             <EvaluationDropdown post={post} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
-            <PostCallResultDropdown post={postForCallResultDropdown} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
-
-            {/* Việc 3 (mobile): hàng pill "đề xuất nhanh" cho Kết quả liên hệ, ngay dưới
-                2 dropdown trên (w-full ép flex-wrap xuống hàng mới). Chỉ hiện ở mobile,
-                desktop vẫn dùng mỗi PostCallResultDropdown như cũ. */}
-            <div className="w-full flex flex-wrap items-center gap-1.5 sm:hidden">
-              {pinnedCallOptions.map((opt) => (
-                <button
-                  key={opt.code}
-                  type="button"
-                  disabled={!!mobileCallResultSavingCode}
-                  onClick={() => handleMobileCallResultSelect(opt)}
-                  className={getCallResultPillClass(opt.code, mobileCallResultCode === opt.code)}
-                  title={`Lưu nhanh kết quả liên hệ: ${opt.label}`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-
-              {overflowCallOptions.length > 0 && (
-                <div className="relative">
-                  <button
-                    type="button"
-                    disabled={!!mobileCallResultSavingCode}
-                    onClick={() => setIsCallResultOverflowOpen((v) => !v)}
-                    className="inline-flex items-center justify-center w-7 h-7 rounded-full border border-border bg-card text-muted-foreground hover:bg-muted disabled:opacity-50 cursor-pointer"
-                    aria-label="Xem thêm kết quả liên hệ"
-                    title="Xem thêm kết quả liên hệ"
-                  >
-                    <span className="material-symbols-outlined text-[16px] leading-none block">more_horiz</span>
-                  </button>
-
-                  {isCallResultOverflowOpen && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setIsCallResultOverflowOpen(false)} />
-                      <div className="absolute left-0 top-full mt-1 z-50 grid grid-cols-2 gap-1.5 w-56 p-2 rounded-xl border border-border bg-card shadow-xl">
-                        {overflowCallOptions.map((opt) => (
-                          <button
-                            key={opt.code}
-                            type="button"
-                            disabled={!!mobileCallResultSavingCode}
-                            onClick={() => handleMobileCallResultSelect(opt)}
-                            className={getCallResultPillClass(opt.code, mobileCallResultCode === opt.code)}
-                            title={`Lưu nhanh kết quả liên hệ: ${opt.label}`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
+            <PostCallResultDropdown post={post} className="flex-1 min-w-0 sm:flex-none sm:min-w-0" />
 
             {/* Tên người đăng bài post gốc (hoặc Ẩn danh) */}
             {(() => {

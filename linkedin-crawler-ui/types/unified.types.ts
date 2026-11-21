@@ -836,6 +836,8 @@ export interface UnifiedPost {
   call_result_code?: string;
   call_attempts?: number;
   last_call_at?: string;
+  /** Việc 3: ghi chú lý do của LẦN GỌI GẦN NHẤT (post_call_results chỉ có 1 dòng/post). */
+  call_result_note?: string | null;
   evaluated_by_user?: EvaluatorUser | null;
   evaluated_at?: string | null;
   updated_by_user?: EvaluatorUser | null;
@@ -850,6 +852,7 @@ export interface PostCallResult {
   result_code: string;
   attempts: number;
   last_call_at?: string;
+  note?: string | null;
   updated_by?: string;
   updated_by_user?: EvaluatorUser | null;
   created_at?: string;

@@ -3051,6 +3051,10 @@ export interface CallResultStats {
   comment_count: number;
   /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — dùng tính xu hướng "+N"/"-N". */
   comment_count_prev: number;
+  /** Card "Tổng bài": số bài crawl (crawl_date) trong kỳ đang chọn, không lọc theo member. */
+  total_posts_count: number;
+  /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — dùng tính % tăng/giảm. */
+  total_posts_count_prev: number;
   range: { start: string; end: string };
 }
 
@@ -3067,6 +3071,20 @@ export const postCallResultService = {
     }
   ): Promise<ApiResponse<any>> => {
     return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** Việc 3: cập nhật riêng ghi chú lý do — không đổi result_code, không tạo bản ghi mới. */
+  updateCallResultNote: (
+    postId: string,
+    payload: {
+      note: string;
+      platform?: string;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return requestJson(`${BASE}/posts/${encodeURIComponent(postId)}/call-result-note`, {
       method: "PATCH",
       body: JSON.stringify(payload),
     });
@@ -3183,6 +3201,9 @@ export interface ActivityLogItem {
   member_name: string | null;
   post_label: string | null;
   result_label: string;
+  /** Việc 4: chỉ có ở sự kiện action_type="call" — ghi chú của LẦN GỌI GẦN NHẤT của post đó
+   * (post_call_results chỉ lưu 1 dòng/post, không phải lịch sử từng lần gọi). */
+  note?: string | null;
 }
 
 export interface ActivityLogResponse {
