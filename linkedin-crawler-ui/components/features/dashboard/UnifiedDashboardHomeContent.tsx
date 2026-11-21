@@ -1301,6 +1301,26 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [teams],
   );
 
+  // Việc 2 (gộp hàng pill trạng thái vào dropdown FilterBar) — cùng state/logic lọc cũ
+  // (seedingStatusFilter), chỉ đổi UI nút pill sang option dropdown, kèm số đếm trong ngoặc.
+  const leadStatusDropdownOptions = useMemo(
+    () => [
+      { value: "all", label: "Tất cả bài viết", count: seedingMetrics.all },
+      { value: "todo", label: "Cần liên hệ", count: seedingMetrics.todo },
+      { value: "doing", label: "Đang liên hệ", count: seedingMetrics.doing },
+      { value: "done", label: "Đã liên hệ", count: seedingMetrics.done },
+      { value: "skip", label: "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
+    ],
+    [seedingMetrics],
+  );
+
+  // Việc 2 (gộp hàng tab team thật vào dropdown FilterBar) — cùng state/logic lọc cũ
+  // (serviceArea/matchesServiceArea), chỉ đổi UI tab sang option dropdown.
+  const teamTabDropdownOptions = useMemo(
+    () => serviceAreaTabs.map((t) => ({ value: t.key, label: t.label })),
+    [serviceAreaTabs],
+  );
+
   // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
   // (chuyen Facebook/LinkedIn/Threads), khong phai trang tri. Bug da gap: khi nhung
   // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
@@ -1450,133 +1470,10 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           )}
           {/* SeedingExtensionPanel đã được gỡ bỏ - cào Public 4G No-Acc tự động */}
 
-          {/* Filter Pills Trạng Thái Seeding Tinh Gọn (Thay thế 5 Card cồng kềnh - Phẳng, Hiện đại) */}
-          <div className="flex flex-wrap items-center gap-2 mb-3 bg-white border border-gray-200/80 p-2 sm:p-2.5 rounded-2xl shadow-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("all");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "all"
-                  ? "bg-slate-900 text-white shadow-xs ring-2 ring-slate-900/10"
-                  : "bg-gray-100/80 text-gray-700 hover:bg-gray-200/80"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-[#6078eb]" />
-              <span>Tất cả bài viết</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "all" ? "bg-white/20 text-white" : "bg-white text-gray-800 shadow-2xs"
-              )}>
-                {seedingMetrics.all}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("todo");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "todo"
-                  ? "bg-amber-500 text-white shadow-xs ring-2 ring-amber-500/20"
-                  : "bg-amber-50 text-amber-800 border border-amber-200/60 hover:bg-amber-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              <span>Cần liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "todo" ? "bg-white/20 text-white" : "bg-amber-200/60 text-amber-900"
-              )}>
-                {seedingMetrics.todo}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("doing");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "doing"
-                  ? "bg-blue-600 text-white shadow-xs ring-2 ring-blue-600/20"
-                  : "bg-blue-50 text-blue-800 border border-blue-200/60 hover:bg-blue-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-blue-400" />
-              <span>Đang liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "doing" ? "bg-white/20 text-white" : "bg-blue-200/60 text-blue-900"
-              )}>
-                {seedingMetrics.doing}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("done");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "done"
-                  ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
-                  : "bg-emerald-50 text-emerald-800 border border-emerald-200/60 hover:bg-emerald-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Đã liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "done" ? "bg-white/20 text-white" : "bg-emerald-200/60 text-emerald-900"
-              )}>
-                {seedingMetrics.done}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("skip");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "skip"
-                  ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
-                  : "bg-rose-50 text-rose-800 border border-rose-200/60 hover:bg-rose-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-400" />
-              <span>Chưa phù hợp (Bỏ qua)</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "skip" ? "bg-white/20 text-white" : "bg-rose-200/60 text-rose-900"
-              )}>
-                {seedingMetrics.skip}
-              </span>
-            </button>
-          </div>
+          {/* Việc 2 (2026-11-21): hàng pill "Trạng thái liên hệ" (Tất cả bài viết/Cần liên
+              hệ/Đang liên hệ/Đã liên hệ/Chưa phù hợp) đã gộp thành dropdown trong FilterBar
+              bên dưới (leadStatusOptions/leadStatusValue/onLeadStatusChange) — cùng state
+              seedingStatusFilter, không đổi logic lọc. */}
 
           {/* Filter Chips cho Kết Quả Cuộc Gọi (chỉ hiện khi đang xem "Cần liên hệ") */}
           {seedingStatusFilter === "todo" && (
@@ -1615,25 +1512,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </div>
           )}
 
-          {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ
-              thống, xem ghi chú serviceAreaTabs/matchesServiceArea ở trên. */}
-          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-            {serviceAreaTabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => { setServiceArea(tab.key); setPage(1); setClientPage(1); }}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-                  serviceArea === tab.key
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
+          {/* Việc 2 (2026-11-21): hàng tab TEAM (2026-09-30) đã gộp thành dropdown trong
+              FilterBar bên dưới (teamTabOptions/teamTabValue/onTeamTabChange) — cùng state
+              serviceArea/matchesServiceArea, không đổi logic lọc. */}
 
           {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
           <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
@@ -1713,6 +1594,21 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             productSeedings={productSeedings}
             onFilter={handleFilter}
             isLoading={isLoadingPosts}
+            leadStatusOptions={leadStatusDropdownOptions}
+            leadStatusValue={seedingStatusFilter}
+            onLeadStatusChange={(value) => {
+              setSeedingStatusFilter(value);
+              setCallFilter("all");
+              setPage(1);
+              setClientPage(1);
+            }}
+            teamTabOptions={teamTabDropdownOptions}
+            teamTabValue={serviceArea}
+            onTeamTabChange={(value) => {
+              setServiceArea(value);
+              setPage(1);
+              setClientPage(1);
+            }}
           />
 
           <CallResultStatsWidget

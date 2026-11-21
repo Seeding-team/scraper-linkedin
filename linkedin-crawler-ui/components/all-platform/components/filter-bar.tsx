@@ -9,6 +9,20 @@ export type SortOption = "lead_score_high" | "latest" | "score_high" | "score_lo
 
 export type SeedingStatusFilter = "all" | "seeded" | "verified" | "pending" | "rejected";
 
+/** Option cho dropdown "Trạng thái liên hệ" (gộp từ hàng pill cũ) — count hiện kèm trong ngoặc. */
+export interface LeadStatusOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/** Option cho dropdown "Team" (gộp từ hàng tab team thật cũ — serviceArea, KHÁC với dropdown
+ * "Tất cả Team" (prop `teams`) vốn là danh mục Category chung, không liên quan 2 khái niệm này). */
+export interface TeamTabOption {
+  value: string;
+  label: string;
+}
+
 interface FilterBarProps {
   intents: Category[];
   industries: Category[];
@@ -20,6 +34,15 @@ interface FilterBarProps {
   members?: { id: string; name: string; code?: string }[];
   onFilter: (filters: FilterState) => void;
   isLoading?: boolean;
+  /** Dropdown "Trạng thái liên hệ" — chỉ hiện khi truyền đủ 3 prop này (trang khác dùng
+   * FilterBar không truyền thì không đổi gì). */
+  leadStatusOptions?: LeadStatusOption[];
+  leadStatusValue?: string;
+  onLeadStatusChange?: (value: string) => void;
+  /** Dropdown "Team" (tab team thật trước đây) — chỉ hiện khi truyền đủ 3 prop này. */
+  teamTabOptions?: TeamTabOption[];
+  teamTabValue?: string;
+  onTeamTabChange?: (value: string) => void;
 }
 
 export interface FilterState {
@@ -66,7 +89,24 @@ const SEEDING_STATUS_OPTIONS: { value: SeedingStatusFilter; label: string; color
   { value: "rejected", label: "Bị từ chối", color: "red" },
 ];
 
-export function FilterBar({ intents, industries, teams, tiers, icps, contentTypes = [], productSeedings = [], members = [], onFilter, isLoading }: FilterBarProps) {
+export function FilterBar({
+  intents,
+  industries,
+  teams,
+  tiers,
+  icps,
+  contentTypes = [],
+  productSeedings = [],
+  members = [],
+  onFilter,
+  isLoading,
+  leadStatusOptions,
+  leadStatusValue,
+  onLeadStatusChange,
+  teamTabOptions,
+  teamTabValue,
+  onTeamTabChange,
+}: FilterBarProps) {
   const [search, setSearch] = useState("");
   const [intent, setIntent] = useState("");
   const [industry, setIndustry] = useState("");
@@ -155,6 +195,41 @@ export function FilterBar({ intents, industries, teams, tiers, icps, contentType
           className="w-full border border-[#333333] bg-[#FFFFFF] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl pl-9 pr-4 py-2 text-xs font-semibold text-[#1A1A1A] outline-none transition shadow-sm"
         />
       </div>
+
+      {/* Dropdown "Trạng thái liên hệ" — gộp từ hàng pill Tất cả bài viết/Cần liên hệ/Đang
+          liên hệ/Đã liên hệ/Chưa phù hợp cũ. State/logic lọc underneath không đổi, chỉ đổi
+          UI chọn (xem UnifiedDashboardHomeContent.tsx — leadStatusValue = seedingStatusFilter). */}
+      {leadStatusOptions && leadStatusOptions.length > 0 && (
+        <select
+          value={leadStatusValue}
+          onChange={(e) => onLeadStatusChange?.(e.target.value)}
+          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[170px]"
+          title="Lọc theo trạng thái liên hệ"
+        >
+          {leadStatusOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label} ({o.count})
+            </option>
+          ))}
+        </select>
+      )}
+
+      {/* Dropdown "Team" — gộp từ hàng tab team thật cũ (serviceArea). KHÁC với dropdown
+          "Tất cả Team" bên dưới (prop `teams`, danh mục Category chung). */}
+      {teamTabOptions && teamTabOptions.length > 0 && (
+        <select
+          value={teamTabValue}
+          onChange={(e) => onTeamTabChange?.(e.target.value)}
+          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[140px]"
+          title="Lọc theo team"
+        >
+          {teamTabOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      )}
 
       <select
         value={dateRange}
