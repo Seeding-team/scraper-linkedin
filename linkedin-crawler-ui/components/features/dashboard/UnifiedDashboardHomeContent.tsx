@@ -10,6 +10,7 @@ import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { usePageHeaderSlot } from "@/components/all-platform/layout/AllPlatformShell";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
@@ -124,7 +125,18 @@ const INITIAL_FILTERS: FilterState = {
   seeding_status: "all",
 };
 
-export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boolean }) {
+export function UnifiedDashboardHomeContent({
+  hideHeader,
+  showHeaderBreadcrumb,
+}: {
+  hideHeader?: boolean;
+  /** Việc 1 (2026-11-21): CHỈ trang /all-platform/post-feed truyền true — thay tiêu đề mặc định
+   * ("Marketing Agents") ở topbar bằng breadcrumb 3 cấp + 3 nút hành động (Review Nhanh/Lọc sạch
+   * bài đối thủ/Từ khóa loại trừ), qua usePageHeaderSlot (AllPlatformShell.tsx). Component này
+   * còn dùng chung ở /all-platform/internal-engagement nên KHÔNG tự bật mặc định — tránh ảnh
+   * hưởng topbar của trang đó. */
+  showHeaderBreadcrumb?: boolean;
+}) {
   // Việc 1 (2026-11-21): heading đã bỏ nên hideHeader không còn điều khiển gì ở component
   // này nữa, nhưng vẫn giữ nguyên trong props vì DashboardHomeContent.tsx vẫn truyền vào.
   void hideHeader;
@@ -212,33 +224,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [verifyModalPost, setVerifyModalPost] = useState<UnifiedPost | null>(null);
   // YouTube: modal gõ comment -> extension mở video + điền sẵn, tính KPI khi nhân viên bấm Bình luận.
   const [youtubeCommentPost, setYoutubeCommentPost] = useState<UnifiedPost | null>(null);
-
-  const handleCleanFeed = async () => {
-    setIsCleaningFeed(true);
-    try {
-      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (data.success) {
-        const total = data.data?.total_deleted || 0;
-        toast.success(
-          total > 0
-            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
-            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
-        );
-        fetchPosts();
-      } else {
-        toast.error(data.message || "Không thể dọn dẹp bài viết");
-      }
-    } catch (e: any) {
-      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
-    } finally {
-      setIsCleaningFeed(false);
-    }
-  };
 
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
@@ -645,7 +630,36 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     }
   }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode, contactMemberId]);
 
-  
+  // Việc 1 (2026-11-21): chuyển xuống dưới `fetchPosts` (vốn ở ngay trên) + bọc useCallback —
+  // trước đây là hàm thường (tạo mới mỗi lần render), không vấn đề gì vì JSX gọi nó chỉ render
+  // inline. Giờ headerBreadcrumbNode (useMemo bên dưới) cần nó làm dependency ổn định, nếu
+  // không sẽ tự tính lại mỗi lần render dù không có gì đổi.
+  const handleCleanFeed = useCallback(async () => {
+    setIsCleaningFeed(true);
+    try {
+      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.success) {
+        const total = data.data?.total_deleted || 0;
+        toast.success(
+          total > 0
+            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
+            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
+        );
+        fetchPosts();
+      } else {
+        toast.error(data.message || "Không thể dọn dẹp bài viết");
+      }
+    } catch (e: any) {
+      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
+    } finally {
+      setIsCleaningFeed(false);
+    }
+  }, [fetchPosts]);
 
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
@@ -1078,13 +1092,16 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   // (seedingStatusFilter), chỉ đổi UI nút pill sang option dropdown, kèm số đếm trong ngoặc.
   // Việc A (2026-11-21): thêm lại option "pending" (Chưa đánh giá) — mặc định khi vào trang
   // nhưng trước đây không chọn lại được vì thiếu option này trong dropdown.
+  // Việc (2026-11-21, rút gọn dropdown): bỏ hẳn 2 option "doing"/"done" khỏi dropdown này — KHÔNG
+  // đổi logic phân loại gốc (seedingStatusFilter/getPostRatingAndCall), 2 bucket đó vẫn tồn tại
+  // trong code/dữ liệu, chỉ là không còn chọn riêng qua dropdown được nữa (bài thuộc doing/done
+  // vẫn hiện bình thường khi chọn "Tất cả"). Đánh đổi đã chốt: mất khả năng lọc riêng 2 bucket
+  // này qua mọi đường trên UI (dropdown/sidebar/widget's chip).
   const leadStatusDropdownOptions = useMemo(
     () => [
       { value: "all", label: "Tất cả bài viết", count: seedingMetrics.all },
       { value: "pending", label: postEvaluationLabels["chua-danh-gia"] || "Chưa đánh giá", count: seedingMetrics.pending },
       { value: "todo", label: postEvaluationLabels["can-lien-he"] || "Cần liên hệ", count: seedingMetrics.todo },
-      { value: "doing", label: "Đang liên hệ", count: seedingMetrics.doing },
-      { value: "done", label: "Đã liên hệ", count: seedingMetrics.done },
       { value: "skip", label: postEvaluationLabels["khong-phu-hop"] || "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
     ],
     [seedingMetrics, postEvaluationLabels],
@@ -1142,6 +1159,91 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     { key: "library" as const, label: "Kho thư viện Group", icon: "folder_open" },
     { key: "queue" as const, label: "Lịch crawl & Hàng đợi", icon: "schedule" },
   ];
+
+  // Việc 1 (2026-11-21): breadcrumb topbar cho trang post-feed — cấp cuối đọc CHUNG
+  // `leadStatusDropdownOptions` (đã build cho dropdown "Trạng thái liên hệ" ở trên), không viết
+  // logic đồng bộ riêng. 3 nút hành động dời nguyên xi từ hàng filter lên đây (giữ nguyên style/
+  // màu/icon/logic, chỉ đổi vị trí).
+  const currentLeadStatusLabel =
+    leadStatusDropdownOptions.find((o) => o.value === seedingStatusFilter)?.label || "Chưa đánh giá";
+  const headerBreadcrumbNode = useMemo(
+    () => (
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-foreground truncate">
+          Seeding bên ngoài <span className="text-muted-foreground font-normal mx-1">›</span> Hoạt động seeding{" "}
+          <span className="text-muted-foreground font-normal mx-1">›</span> {currentLeadStatusLabel}
+        </span>
+        <div className="flex items-center gap-2 ml-auto">
+          <QuickReviewToolbar
+            posts={displayPosts}
+            onBatchRejectSuccess={(affectedIds) => {
+              setPosts((prev) =>
+                prev.map((p) =>
+                  affectedIds.includes(p.id)
+                    ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
+                    : p
+                )
+              );
+              setEvaluationsMap((prev) => {
+                const updated = { ...prev };
+                affectedIds.forEach((id) => {
+                  updated[id] = "khong-phu-hop";
+                });
+                return updated;
+              });
+            }}
+            onUndoSuccess={() => {
+              void fetchPosts();
+            }}
+            hasNextPage={currentPage < effectiveTotalPages}
+            onNextPage={() => handlePageChange(currentPage + 1)}
+          />
+
+          <button
+            type="button"
+            onClick={handleCleanFeed}
+            disabled={isCleaningFeed}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
+            title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
+          >
+            <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
+              {isCleaningFeed ? "sync" : "mop"}
+            </span>
+            {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
+          </button>
+
+          {(user?.role === "admin" || user?.role === "leader") && (
+            <button
+              type="button"
+              onClick={() => setShowKeywordsPanel((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
+                showKeywordsPanel
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card hover:bg-muted text-foreground border-border"
+              }`}
+              title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+            >
+              <span className="material-symbols-outlined text-[16px]">filter_alt</span>
+              <span>Từ khóa loại trừ</span>
+            </button>
+          )}
+        </div>
+      </div>
+    ),
+    [
+      currentLeadStatusLabel,
+      displayPosts,
+      currentPage,
+      effectiveTotalPages,
+      handlePageChange,
+      handleCleanFeed,
+      isCleaningFeed,
+      showKeywordsPanel,
+      user?.role,
+      fetchPosts,
+    ],
+  );
+  usePageHeaderSlot(showHeaderBreadcrumb ? headerBreadcrumbNode : null);
 
   return (
     <div className="w-full space-y-6">
@@ -1250,10 +1352,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           )}
 
           {/* Việc 2 (2026-11-21): gộp FilterBar (ô tìm kiếm + 2 dropdown ghim + "Thêm bộ lọc" +
-              "Xóa lọc") và toolbar hành động (Review Nhanh/Lọc sạch bài đối thủ/Từ khóa loại
-              trừ) còn 1 hàng flex-wrap duy nhất — toolbar đẩy sang phải bằng ml-auto. Giữ
-              nguyên y hệt style/màu/icon/logic của platform tabs và 3 nút hành động, chỉ đổi
-              vị trí. flex-wrap (không hardcode số filter ghim) để dễ thêm/bớt sau này. */}
+              "Xóa lọc") thành 1 hàng flex-wrap. Việc 1 (tiếp, 2026-11-21): 3 nút hành động
+              (Review Nhanh/Lọc sạch bài đối thủ/Từ khóa loại trừ) đã DỜI lên breadcrumb ở
+              topbar (headerBreadcrumbNode, usePageHeaderSlot) — hàng này không còn 3 nút đó. */}
           <div className="bg-[#F5F5F5]/50 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E5E5E5] p-4 shadow-[0_4px_20px_rgba(0,0,0,0.015)]">
             <FilterBar
               intents={intents}
@@ -1280,62 +1381,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                 setClientPage(1);
               }}
             />
-
-            <div className="flex items-center gap-2 ml-auto">
-              <QuickReviewToolbar
-                posts={displayPosts}
-                onBatchRejectSuccess={(affectedIds) => {
-                  setPosts((prev) =>
-                    prev.map((p) =>
-                      affectedIds.includes(p.id)
-                        ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
-                        : p
-                    )
-                  );
-                  setEvaluationsMap((prev) => {
-                    const updated = { ...prev };
-                    affectedIds.forEach((id) => {
-                      updated[id] = "khong-phu-hop";
-                    });
-                    return updated;
-                  });
-                }}
-                onUndoSuccess={() => {
-                  void fetchPosts();
-                }}
-                hasNextPage={currentPage < effectiveTotalPages}
-                onNextPage={() => handlePageChange(currentPage + 1)}
-              />
-
-              <button
-                type="button"
-                onClick={handleCleanFeed}
-                disabled={isCleaningFeed}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
-                title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
-              >
-                <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
-                  {isCleaningFeed ? "sync" : "mop"}
-                </span>
-                {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
-              </button>
-
-              {(user?.role === "admin" || user?.role === "leader") && (
-                <button
-                  type="button"
-                  onClick={() => setShowKeywordsPanel((prev) => !prev)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
-                    showKeywordsPanel
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card hover:bg-muted text-foreground border-border"
-                  }`}
-                  title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
-                >
-                  <span className="material-symbols-outlined text-[16px]">filter_alt</span>
-                  <span>Từ khóa loại trừ</span>
-                </button>
-              )}
-            </div>
           </div>
 
           <CallResultStatsWidget
