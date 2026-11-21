@@ -244,6 +244,33 @@ export async function exportQuoteToExcel(input: ExportQuoteToExcelInput): Promis
     });
   }
 
+  function writeItemRow(child: QuoteItem) {
+    itemCounter += 1;
+    const discountPercent = child.discountType === 'amount'
+      ? 0
+      : Number(child.discountPercent || 0);
+    const discountLabel = calculateItemDiscount(child, currency, priceMode) > 0 ? discountPercent : '–';
+    const vatLabel = child.vatRate ? child.vatRate : '–';
+    writeDataRow([
+      String(itemCounter).padStart(2, '0'),
+      child.serviceDescription || '',
+      child.description || '',
+      child.unit || '',
+      child.quantity ?? '',
+      child.unitPrice ?? 0,
+      discountLabel,
+      vatLabel,
+      calculateItemTotal(child, currency, priceMode),
+    ]);
+    row += 1;
+  }
+
+  // BUG THAT DA GAP (feedback CloudGate 2026-11-21, "tải excel về k thấy tt
+  // hạng mục sp"): vong lap truoc day CHI xu ly node.rowType==='section',
+  // bo qua hoan toan hang muc nam THANG O GOC (khong co Muc cha bao quanh) -
+  // bao gia Markee test truoc do tinh co MOI hang muc deu nam trong 1 trong
+  // 3 Section nen khong lo ra. Them nhanh else de ghi hang muc goc binh
+  // thuong (khong Muc cha, khong roman numeral).
   for (const node of input.quoteItems) {
     if (node.rowType === 'section') {
       sectionCounter += 1;
@@ -265,25 +292,10 @@ export async function exportQuoteToExcel(input: ExportQuoteToExcelInput): Promis
       }
       row += 1;
       for (const child of node.children || []) {
-        itemCounter += 1;
-        const discountPercent = child.discountType === 'amount'
-          ? 0
-          : Number(child.discountPercent || 0);
-        const discountLabel = calculateItemDiscount(child, currency, priceMode) > 0 ? discountPercent : '–';
-        const vatLabel = child.vatRate ? child.vatRate : '–';
-        writeDataRow([
-          String(itemCounter).padStart(2, '0'),
-          child.serviceDescription || '',
-          child.description || '',
-          child.unit || '',
-          child.quantity ?? '',
-          child.unitPrice ?? 0,
-          discountLabel,
-          vatLabel,
-          calculateItemTotal(child, currency, priceMode),
-        ]);
-        row += 1;
+        writeItemRow(child);
       }
+    } else {
+      writeItemRow(node);
     }
   }
 
