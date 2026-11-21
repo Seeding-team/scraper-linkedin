@@ -315,6 +315,9 @@ class Settings:
     # X-Web-Intake-Key; backend chạy dưới user WEB_INTAKE_USER_ID (nên là user riêng, quyền tối thiểu). Để trống = tắt.
     web_intake_api_key: str = os.getenv("WEB_INTAKE_API_KEY", "")
     web_intake_user_id: str = os.getenv("WEB_INTAKE_USER_ID", "")
+    # Read-only service-to-service key for the product catalog snapshot consumed
+    # by Tech Support. Static, non-expiring; rotate only if compromised.
+    product_sync_api_key: str = os.getenv("PRODUCT_SYNC_API_KEY", "")
     render_api_key: str = os.getenv("RENDER_API_KEY", "")
 
     # ── MSC → CRM Product Sync (migration 175) ──────────────────────────────

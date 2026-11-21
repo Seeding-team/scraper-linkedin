@@ -60,6 +60,7 @@ from app.modules.all_platform.routers.progress import progress_router
 from app.modules.all_platform.routers.contract_template import contract_templates_router
 from app.modules.all_platform.routers.service_catalog import router as service_catalog_router
 from app.modules.all_platform.routers.msc_sync import router as msc_sync_router
+from app.modules.all_platform.routers.product_sync import router as product_sync_router
 from app.modules.all_platform.routers.sales_asset import router as sales_asset_router
 from app.modules.all_platform.routers.kpi_reward import router as kpi_reward_router
 from app.modules.all_platform.routers.kpi_setup import router as kpi_setup_router
@@ -489,6 +490,13 @@ all_platform_router.include_router(
     msc_sync_router,
     prefix="/msc-sync",
     tags=["All-Platform MSC Sync"],
+)
+
+# ── Read-only product catalog snapshot cho he thong ngoai (Tech Support) ─────
+all_platform_router.include_router(
+    product_sync_router,
+    prefix="/sync",
+    tags=["All-Platform Product Sync"],
 )
 
 all_platform_router.include_router(

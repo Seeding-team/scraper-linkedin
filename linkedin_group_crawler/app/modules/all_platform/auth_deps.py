@@ -97,6 +97,25 @@ def resolve_web_intake_user(request: Request) -> dict[str, Any] | None:
     return user
 
 
+def require_product_sync_api_key(
+    x_sync_api_key: str | None = Header(default=None, alias="X-Sync-Api-Key"),
+) -> str:
+    """Auth rieng cho GET /sync/products (Tech Support PULL danh muc san pham).
+
+    Khoa static, khong het han, KHONG dung JWT app_users: day la call
+    he-thong-toi-he-thong chay dinh ky, khong phu thuoc vong doi phien dang
+    nhap cua mot nhan vien. Tra 503 khi chua cau hinh (fail ro rang) va 401
+    khi sai/thieu khoa.
+    """
+    expected = (getattr(settings, "product_sync_api_key", "") or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="PRODUCT_SYNC_API_KEY chua duoc cau hinh")
+    sent = (x_sync_api_key or "").strip()
+    if not sent or not hmac.compare_digest(sent.encode(), expected.encode()):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Sync-Api-Key")
+    return sent
+
+
 def get_current_user(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Xác thực người gọi qua JWT (cookie hoặc header Bearer) hoặc khoá web-intake. 401 nếu không hợp lệ."""
     intake_user = resolve_web_intake_user(request)
