@@ -27,8 +27,8 @@ import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/K
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, allPlatformKpiService, type TeamMember } from "@/services/all-platform.service";
-import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
+import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, type TeamMember } from "@/services/all-platform.service";
+import type { UnifiedPost, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function fetchWithRetry<T>(
@@ -95,127 +95,6 @@ const getDatePart = (dateInput?: Date | string | null) => {
     return "";
   }
 };
-
-// â”€â”€â”€ Stats Card (Redesigned & Premium & Softer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-interface StatCardProps {
-  icon: string;
-  label: string;
-  value: string | number;
-  sub?: string;
-  accent?: "blue" | "green" | "amber" | "indigo" | string;
-  progress?: { value: number; label: string };
-  trend?: { value: number; isUp: boolean; label: string };
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  sub,
-  accent,
-  progress,
-  trend,
-}: StatCardProps) {
-  const [coords, setCoords] = useState({ x: 0, y: 0 });
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const card = e.currentTarget;
-    const rect = card.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const rotateX = (y - centerY) / 25;
-    const rotateY = (centerX - x) / 25;
-    setCoords({ x: rotateY, y: rotateX });
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-    setCoords({ x: 0, y: 0 });
-  };
-
-  const transformStyle = isHovered
-    ? {
-        transform: `perspective(1000px) rotateX(${coords.y}deg) rotateY(${coords.x}deg)`,
-        transition: "transform 0.05s ease",
-      }
-    : {
-        transform: "perspective(1000px) rotateX(0deg) rotateY(0deg)",
-        transition: "transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)",
-      };
-
-  let iconCls = "bg-muted text-muted-foreground";
-  let barColor = "bg-muted-foreground/60";
-
-  if (accent === "blue") {
-    iconCls = "bg-blue-50/80 text-blue-500 dark:bg-blue-950/20 dark:text-blue-400";
-    barColor = "bg-blue-500";
-  } else if (accent === "green") {
-    iconCls = "bg-emerald-50/80 text-emerald-500 dark:bg-emerald-950/20 dark:text-emerald-400";
-    barColor = "bg-emerald-500";
-  } else if (accent === "amber") {
-    iconCls = "bg-amber-50/80 text-amber-500 dark:bg-amber-950/20 dark:text-amber-400";
-    barColor = "bg-amber-500";
-  } else if (accent === "indigo") {
-    iconCls = "bg-indigo-50/80 text-indigo-500 dark:bg-indigo-950/20 dark:text-indigo-400";
-    barColor = "bg-indigo-500";
-  }
-
-  return (
-    <div
-      className="bg-card border border-border p-4 rounded-xl shadow-none flex flex-col justify-between relative overflow-hidden group select-none"
-    >
-      <div className="flex justify-between items-start">
-        <div className="space-y-1">
-          <p className="text-[10px] font-bold text-muted-foreground capitalize">{label}</p>
-          <h3 className="text-xl font-bold text-foreground tracking-tight mt-1">
-            {typeof value === "number" ? value.toLocaleString("vi-VN") : value}
-          </h3>
-        </div>
-        <div
-          className={cn(
-            "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-105",
-            iconCls,
-          )}
-        >
-          <span className="material-symbols-outlined text-[20px]">{icon}</span>
-        </div>
-      </div>
-
-      <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between">
-        {trend ? (
-          <span
-            className={cn(
-              "text-[11px] font-bold flex items-center gap-1",
-              trend.isUp ? "text-emerald-500" : "text-amber-500",
-            )}
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              {trend.isUp ? "arrow_upward" : "arrow_downward"}
-            </span>
-            {trend.label}
-          </span>
-        ) : progress ? (
-          <div className="flex-1 max-w-[140px]">
-            <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
-              <div
-                className={cn("h-full rounded-full transition-all duration-500", barColor)}
-                style={{ width: `${progress.value}%` }}
-              />
-            </div>
-            <span className="text-[9px] font-semibold text-muted-foreground mt-1 block leading-none">
-              {progress.label}
-            </span>
-          </div>
-        ) : sub ? (
-          <span className="text-[10px] text-muted-foreground font-medium leading-none">{sub}</span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 // â”€â”€â”€ Menu doc lap theo TEAM (2026-09-30, sua tu ban cu loc theo mang dich vu) â”€â”€
 // Truoc day loc theo "industry" (CNTT rieng, luu tru/hotel rieng) bang so khop
@@ -617,70 +496,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   }, [posts]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
-  const [stats, setStats] = useState<UnifiedStats>({
-    totalPostsToday: 0,
-    postsYesterday: 0,
-    highScoreCount: 0,
-    highScorePercent: 0,
-    seededToday: 0,
-    kpiProgress: 0,
-    kpiTarget: 0,
-    kpiProgressPercent: 0,
-  });
-
-  // 4 Chỉ số StatCards cốt lõi theo yêu cầu của Master
-  const [newPostsCount, setNewPostsCount] = useState<number>(0);
-  const [inboxTodayCount, setInboxTodayCount] = useState<number>(0);
-
-  // Tính số bài mới kể từ lần cuối user vào trang (lưu timestamp trong localStorage)
-  useEffect(() => {
-    if (typeof window === "undefined" || !CURRENT_USER_EMAIL) return;
-    const storageKey = `markee_last_visit_${CURRENT_USER_EMAIL.replace(/[^a-zA-Z0-9]/g, "_")}`;
-    const rawLastVisit = localStorage.getItem(storageKey);
-    const lastVisitTs = rawLastVisit ? parseInt(rawLastVisit, 10) : 0;
-
-    if (posts && posts.length > 0) {
-      if (lastVisitTs > 0) {
-        const count = posts.filter((p) => {
-          const postTime = new Date(p.created_at || p.crawl_date || p.post_time || 0).getTime();
-          return postTime > lastVisitTs;
-        }).length;
-        setNewPostsCount(count);
-      } else {
-        setNewPostsCount(stats.totalPostsToday || posts.length);
-      }
-    }
-
-    // Đếm số bài đã nhắn tin (inbox Zalo) hôm nay từ mảng posts
-    const inboxInPosts = posts.filter((p) => {
-      return !!(p as any).zalo_sent_by || (p as any).status === "contacted" || p.verify_status === "yes";
-    }).length;
-    setInboxTodayCount((prev) => Math.max(prev, inboxInPosts));
-
-    // Cập nhật timestamp lần truy cập (sau khi người dùng đã nhìn thấy số liệu)
-    const timer = setTimeout(() => {
-      localStorage.setItem(storageKey, Date.now().toString());
-    }, 4000);
-
-    return () => clearTimeout(timer);
-  }, [posts, CURRENT_USER_EMAIL, stats.totalPostsToday]);
-
-  // Lấy thêm số lượng inbox hoàn thành từ API KPI của user để đảm bảo số liệu thực tế nhất
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    allPlatformKpiService
-      .getByEmail(CURRENT_USER_EMAIL)
-      .then((res) => {
-        if (res?.success && res.data) {
-          const data = res.data as any;
-          const currentInbox = Number(data.kpi_inbox_current || 0);
-          if (currentInbox > 0) {
-            setInboxTodayCount((prev) => Math.max(prev, currentInbox));
-          }
-        }
-      })
-      .catch(() => {});
-  }, [CURRENT_USER_EMAIL]);
   // Mac dinh true (khong phai false): luc moi mount, user/CURRENT_USER_EMAIL tu
   // AppAuthContext chua kip load xong nen fetchPosts() se return som (guard
   // !CURRENT_USER_EMAIL) va KHONG bao gio set isLoadingPosts=true - neu khoi
@@ -731,21 +546,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } catch {}
   }, []);
 
-  // Fetch Stats
-  const fetchStats = useCallback(async () => {
-    if (!CURRENT_USER_EMAIL) return;
-    try {
-      const res = await allPlatformPostsService.getStats({
-        email: CURRENT_USER_EMAIL,
-        platform: feedPlatform,
-      });
-      if (res.success && res.data) {
-        setStats(res.data as UnifiedStats);
-      }
-    } catch {}
-  }, [CURRENT_USER_EMAIL, feedPlatform]);
-
-  // Fetch Posts (Phase 6: dùng luôn quick_stats từ response, tiết kiệm 1 round-trip)
+  // Fetch Posts
 
   const fetchPosts = useCallback(async () => {
     // Tránh stuck spinner khi auth chưa load xong / user không có email.
@@ -850,13 +651,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         setTotalCount(res.data.total || 0);
         // Khi filter seeding: totalPages = 1 vì FE-side filter không có pagination thực
         setTotalPages(filters.seeding_status && filters.seeding_status !== "all" ? 1 : res.data.total_pages || 1);
-        // Phase 6: ưu tiên quick_stats từ response (1 round-trip), fallback /stats nếu thiếu
-        if (res.data.quick_stats) {
-          setStats(res.data.quick_stats as UnifiedStats);
-        } else {
-          // Backend cũ chưa trả quick_stats → gọi /unified/stats riêng
-          fetchStats();
-        }
       } else {
         setPostsError(res.message || "Không thể tải bài viết.");
       }
@@ -874,12 +668,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     fetchPosts();
   }, [fetchPosts]);
 
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    fetchStats();
-  }, [fetchStats]);
-
-  
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
     fetchCategories();
@@ -955,15 +743,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     platform: "all",
   }));
 
-  const fbDiff = stats.totalPostsToday - stats.postsYesterday;
-
   // Extension báo về sau khi nhân viên đã bấm "Bình luận" trên tab YouTube.
   useYouTubeCommentResults((result) => {
     if (result.success) {
       toast.success(result.message || "Đã ghi nhận comment YouTube và tính KPI.");
       fetchPosts();
-      fetchStats();
-      
     } else {
       toast.error(result.message || "Comment YouTube chưa được tính KPI.");
     }
@@ -1405,48 +1189,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
       
       <>
-          {/* 4 StatCard cốt lõi theo yêu cầu Master:
-              1. Tổng bài viết hôm nay
-              2. Bài viết mới (so với lần cuối vào của người đó)
-              3. Số bài viết đã bình luận trong ngày
-              4. Số bài viết đã được nhắn tin trong ngày */}
-          <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 mb-4 shadow-xs">
-            <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-              <StatCard
-                icon="description"
-                label="Tổng bài hôm nay"
-                value={stats.totalPostsToday || 0}
-                trend={{
-                  value: Math.abs(fbDiff),
-                  isUp: fbDiff >= 0,
-                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
-                }}
-                sub="Cào về trong ngày hôm nay"
-                accent="blue"
-              />
-              <StatCard
-                icon="auto_awesome"
-                label="Bài viết mới"
-                value={newPostsCount}
-                sub={newPostsCount > 0 ? "Kể từ lần cuối bạn truy cập" : "Bạn đã xem hết bài mới"}
-                accent="amber"
-              />
-              <StatCard
-                icon="chat_bubble"
-                label="Đã bình luận hôm nay"
-                value={stats.seededToday || 0}
-                sub="Bài viết đã comment tương tác"
-                accent="green"
-              />
-              <StatCard
-                icon="send"
-                label="Đã nhắn tin hôm nay"
-                value={inboxTodayCount}
-                sub="Hội thoại Zalo & inbox kết nối"
-                accent="indigo"
-              />
-            </div>
-          </div>
+          {/* Việc (2026-11-21): hàng 4 StatCard tổng quan (Tổng bài hôm nay/Bài viết mới/Đã
+              bình luận hôm nay/Đã nhắn tin hôm nay) đã bị xoá hẳn — 2 card sau trùng ý nghĩa
+              với cột Comment/Zalo trong widget "Kết quả liên hệ" bên dưới (đã có, chi tiết
+              hơn, lọc được theo kỳ); 2 card đầu bỏ theo yêu cầu, không giữ lại. Cùng xoá state
+              stats/newPostsCount/inboxTodayCount, 2 effect tính riêng, fetchStats() và nhánh
+              quick_stats trong fetchPosts(), component StatCard — không còn chỗ nào dùng. */}
 
           {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
           {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
@@ -1652,7 +1400,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                         // dung ngay (khong doi F5 tay), giong het pattern onCommentDone cua
                         // SeedingExtensionPanel o tren.
                         fetchPosts();
-                        fetchStats();
                       }}
                       onVerify={() => {}}
                       onSchedule={post.platform === "threads" || post.platform === "youtube" ? undefined : (post) => setScheduleModalPost(post)}
