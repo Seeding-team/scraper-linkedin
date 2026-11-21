@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FaSearch } from "react-icons/fa";
 import { cn } from "@/lib/utils";
 import type { Category } from "@/types/unified.types";
@@ -16,8 +16,9 @@ export interface LeadStatusOption {
   count: number;
 }
 
-/** Option cho dropdown "Team" (gộp từ hàng tab team thật cũ — serviceArea, KHÁC với dropdown
- * "Tất cả Team" (prop `teams`) vốn là danh mục Category chung, không liên quan 2 khái niệm này). */
+/** Option cho dropdown "Team" (gộp từ hàng tab team thật cũ — serviceArea). Đây là dropdown
+ * Team DUY NHẤT còn lại — dropdown "Tất cả Team" (Category, lọc server-side theo id_team của
+ * group) đã bị xoá hẳn khỏi UI (2026-11-21), xem UnifiedDashboardHomeContent.tsx. */
 export interface TeamTabOption {
   value: string;
   label: string;
@@ -26,7 +27,6 @@ export interface TeamTabOption {
 interface FilterBarProps {
   intents: Category[];
   industries: Category[];
-  teams: Category[];
   tiers: Category[];
   icps: Category[];
   contentTypes?: Category[];
@@ -34,29 +34,26 @@ interface FilterBarProps {
   members?: { id: string; name: string; code?: string }[];
   onFilter: (filters: FilterState) => void;
   isLoading?: boolean;
-  /** Dropdown "Trạng thái liên hệ" — chỉ hiện khi truyền đủ 3 prop này (trang khác dùng
-   * FilterBar không truyền thì không đổi gì). */
-  leadStatusOptions?: LeadStatusOption[];
-  leadStatusValue?: string;
-  onLeadStatusChange?: (value: string) => void;
-  /** Dropdown "Team" (tab team thật trước đây) — chỉ hiện khi truyền đủ 3 prop này. */
-  teamTabOptions?: TeamTabOption[];
-  teamTabValue?: string;
-  onTeamTabChange?: (value: string) => void;
+  /** Dropdown "Trạng thái liên hệ" — ghim ngoài hàng filter chính. */
+  leadStatusOptions: LeadStatusOption[];
+  leadStatusValue: string;
+  onLeadStatusChange: (value: string) => void;
+  /** Dropdown "Team" (tab team thật) — ghim ngoài hàng filter chính. */
+  teamTabOptions: TeamTabOption[];
+  teamTabValue: string;
+  onTeamTabChange: (value: string) => void;
 }
 
 export interface FilterState {
   search: string;
   intent: string;
   industry: string;
-  team: string;
   tier: string;
   icp: string;
   content_type: string;
   product_seeding: string;
   member: string;
   sort: SortOption;
-  dateRange: string;
   /** Phase 6: filter posts by seeding status (admin/leader) */
   seeding_status: SeedingStatusFilter;
 }
@@ -73,14 +70,6 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "verified_first", label: "Verified nhiều nhất" },
 ];
 
-const DATE_OPTIONS = [
-  { value: "", label: "Tất cả" },
-  { value: "today", label: "Hôm nay" },
-  { value: "yesterday", label: "Hôm qua" },
-  { value: "7days", label: "7 ngày" },
-  { value: "30days", label: "30 ngày" },
-];
-
 const SEEDING_STATUS_OPTIONS: { value: SeedingStatusFilter; label: string; color: string }[] = [
   { value: "all", label: "Tất cả", color: "slate" },
   { value: "seeded", label: "Đã seeding", color: "emerald" },
@@ -89,10 +78,12 @@ const SEEDING_STATUS_OPTIONS: { value: SeedingStatusFilter; label: string; color
   { value: "rejected", label: "Bị từ chối", color: "red" },
 ];
 
+const selectCls =
+  "border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm";
+
 export function FilterBar({
   intents,
   industries,
-  teams,
   tiers,
   icps,
   contentTypes = [],
@@ -110,43 +101,64 @@ export function FilterBar({
   const [search, setSearch] = useState("");
   const [intent, setIntent] = useState("");
   const [industry, setIndustry] = useState("");
-  const [team, setTeam] = useState("");
   const [tier, setTier] = useState("");
   const [icp, setIcp] = useState("");
   const [contentType, setContentType] = useState("");
   const [productSeeding, setProductSeeding] = useState("");
   const [member, setMember] = useState("");
   const [sort, setSort] = useState<SortOption>("lead_score_high");
-  const [dateRange, setDateRange] = useState("");
   // Phase 6: seeding status filter (admin/leader)
   const [seedingStatus, setSeedingStatus] = useState<SeedingStatusFilter>("all");
+
+  // Việc 2 (2026-11-21): 9 filter ít dùng hơn gom vào popover "Thêm bộ lọc" (lưới 2 cột) —
+  // state/logic lọc underneath giữ nguyên, chỉ đổi UI từ hiện sẵn sang ẩn trong popover.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [moreOpen]);
+
+  const hasMoreFilterActive =
+    sort !== "lead_score_high" ||
+    seedingStatus !== "all" ||
+    !!intent ||
+    !!industry ||
+    !!tier ||
+    !!icp ||
+    !!contentType ||
+    !!productSeeding ||
+    !!member;
 
   const handleChange = (updates: Partial<FilterState>) => {
     const s = updates.search !== undefined ? updates.search : search;
     const i = updates.intent !== undefined ? updates.intent : intent;
     const ind = updates.industry !== undefined ? updates.industry : industry;
-    const t = updates.team !== undefined ? updates.team : team;
     const ti = updates.tier !== undefined ? updates.tier : tier;
     const ic = updates.icp !== undefined ? updates.icp : icp;
     const ct = updates.content_type !== undefined ? updates.content_type : contentType;
     const ps = updates.product_seeding !== undefined ? updates.product_seeding : productSeeding;
     const m = updates.member !== undefined ? updates.member : member;
     const so = updates.sort !== undefined ? updates.sort : sort;
-    const dr = updates.dateRange !== undefined ? updates.dateRange : dateRange;
     const ss = updates.seeding_status !== undefined ? updates.seeding_status : seedingStatus;
 
     onFilter({
       search: s,
       intent: i,
       industry: ind,
-      team: t,
       tier: ti,
       icp: ic,
       content_type: ct,
       product_seeding: ps,
       member: m,
       sort: so,
-      dateRange: dr,
       seeding_status: ss,
     });
   };
@@ -155,34 +167,30 @@ export function FilterBar({
     setSearch("");
     setIntent("");
     setIndustry("");
-    setTeam("");
     setTier("");
     setIcp("");
     setContentType("");
     setProductSeeding("");
     setMember("");
     setSort("lead_score_high");
-    setDateRange("");
     setSeedingStatus("all");
     onFilter({
       search: "",
       intent: "",
       industry: "",
-      team: "",
       tier: "",
       icp: "",
       content_type: "",
       product_seeding: "",
       member: "",
       sort: "lead_score_high",
-      dateRange: "",
       seeding_status: "all",
     });
   };
 
   return (
-    <div className="bg-[#F5F5F5]/50 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E5E5E5] p-4 shadow-[0_4px_20px_rgba(0,0,0,0.015)]">
-      <div className="relative min-w-[200px] flex-1">
+    <>
+      <div className="relative w-[200px] sm:w-[220px] shrink-0">
         <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A0A0A0] text-sm" />
         <input
           type="text"
@@ -197,233 +205,223 @@ export function FilterBar({
       </div>
 
       {/* Dropdown "Trạng thái liên hệ" — gộp từ hàng pill Tất cả bài viết/Cần liên hệ/Đang
-          liên hệ/Đã liên hệ/Chưa phù hợp cũ. State/logic lọc underneath không đổi, chỉ đổi
-          UI chọn (xem UnifiedDashboardHomeContent.tsx — leadStatusValue = seedingStatusFilter). */}
-      {leadStatusOptions && leadStatusOptions.length > 0 && (
-        <select
-          value={leadStatusValue}
-          onChange={(e) => onLeadStatusChange?.(e.target.value)}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[170px]"
-          title="Lọc theo trạng thái liên hệ"
-        >
-          {leadStatusOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label} ({o.count})
-            </option>
-          ))}
-        </select>
-      )}
-
-      {/* Dropdown "Team" — gộp từ hàng tab team thật cũ (serviceArea). KHÁC với dropdown
-          "Tất cả Team" bên dưới (prop `teams`, danh mục Category chung). */}
-      {teamTabOptions && teamTabOptions.length > 0 && (
-        <select
-          value={teamTabValue}
-          onChange={(e) => onTeamTabChange?.(e.target.value)}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[140px]"
-          title="Lọc theo team"
-        >
-          {teamTabOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      )}
-
+          liên hệ/Đã liên hệ/Chưa phù hợp cũ. */}
       <select
-        value={dateRange}
-        onChange={(e) => {
-          setDateRange(e.target.value);
-          handleChange({ dateRange: e.target.value });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[110px]"
+        value={leadStatusValue}
+        onChange={(e) => onLeadStatusChange(e.target.value)}
+        className={cn(selectCls, "min-w-[170px]")}
+        title="Lọc theo trạng thái liên hệ"
       >
-        {DATE_OPTIONS.map((o) => (
+        {leadStatusOptions.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label} ({o.count})
+          </option>
+        ))}
+      </select>
+
+      {/* Dropdown "Team" — gộp từ hàng tab team thật cũ (serviceArea). Dropdown Team duy nhất
+          còn lại (dropdown Category team theo id_team đã xoá hẳn — xem ghi chú ở trên). */}
+      <select
+        value={teamTabValue}
+        onChange={(e) => onTeamTabChange(e.target.value)}
+        className={cn(selectCls, "min-w-[140px]")}
+        title="Lọc theo team"
+      >
+        {teamTabOptions.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
       </select>
 
-      <select
-        value={sort}
-        onChange={(e) => {
-          setSort(e.target.value as SortOption);
-          handleChange({ sort: e.target.value as SortOption });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[130px]"
-      >
-        {SORT_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-
-      {/* Phase 6: seeding status filter */}
-      <select
-        value={seedingStatus}
-        onChange={(e) => {
-          const val = e.target.value as SeedingStatusFilter;
-          setSeedingStatus(val);
-          handleChange({ seeding_status: val });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[130px]"
-        title="Lọc theo trạng thái seeding"
-      >
-        {SEEDING_STATUS_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-
-      <select
-        value={intent}
-        onChange={(e) => {
-          setIntent(e.target.value);
-          handleChange({ intent: e.target.value });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[120px]"
-      >
-        <option value="">Tất cả Lĩnh vực</option>
-        {intents.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name || i.code}
-          </option>
-        ))}
-      </select>
-
-      <select
-        value={industry}
-        onChange={(e) => {
-          setIndustry(e.target.value);
-          handleChange({ industry: e.target.value });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[120px]"
-      >
-        <option value="">Tất cả Ngành</option>
-        {industries.map((i) => (
-          <option key={i.id} value={i.id}>
-            {i.name || i.code}
-          </option>
-        ))}
-      </select>
-
-      <select
-        value={team}
-        onChange={(e) => {
-          setTeam(e.target.value);
-          handleChange({ team: e.target.value });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[120px]"
-      >
-        <option value="">Tất cả Team</option>
-        {teams.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name || t.code}
-          </option>
-        ))}
-      </select>
-
-      <select
-        value={tier}
-        onChange={(e) => {
-          setTier(e.target.value);
-          handleChange({ tier: e.target.value });
-        }}
-        className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[110px]"
-      >
-        <option value="">Tất cả Tier</option>
-        {tiers.map((t) => (
-          <option key={t.id} value={t.id}>
-            {t.name || t.code}
-          </option>
-        ))}
-      </select>
-
-      {icps.length > 0 && (
-        <select
-          value={icp}
-          onChange={(e) => {
-            setIcp(e.target.value);
-            handleChange({ icp: e.target.value });
-          }}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[110px]"
+      {/* "Thêm bộ lọc" — popover lưới 2 cột chứa 9 filter còn lại. */}
+      <div className="relative" ref={moreRef}>
+        <button
+          type="button"
+          onClick={() => setMoreOpen((v) => !v)}
+          aria-expanded={moreOpen}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition cursor-pointer shadow-sm border",
+            moreOpen || hasMoreFilterActive
+              ? "border-[#E3000F]/40 bg-[#E3000F]/5 text-[#E3000F]"
+              : "border-[#E5E5E5] bg-white text-[#1A1A1A] hover:bg-[#F5F5F5]"
+          )}
         >
-          <option value="">Tất cả ICP</option>
-          {icps.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name || c.code}
-            </option>
-          ))}
-        </select>
-      )}
+          <span className="material-symbols-outlined text-[16px]">tune</span>
+          Thêm bộ lọc
+        </button>
 
-      {contentTypes.length > 0 && (
-        <select
-          value={contentType}
-          onChange={(e) => {
-            setContentType(e.target.value);
-            handleChange({ content_type: e.target.value });
-          }}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[120px]"
-        >
-          <option value="">Loại nội dung</option>
-          {contentTypes.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name || c.code}
-            </option>
-          ))}
-        </select>
-      )}
+        {moreOpen && (
+          <div
+            className="absolute left-0 top-full mt-1.5 z-50 w-[min(560px,90vw)] p-3 rounded-2xl border border-[#E5E5E5] bg-white shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <select
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value as SortOption);
+                  handleChange({ sort: e.target.value as SortOption });
+                }}
+                className={cn(selectCls, "w-full")}
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
 
-      {productSeedings.length > 0 && (
-        <select
-          value={productSeeding}
-          onChange={(e) => {
-            setProductSeeding(e.target.value);
-            handleChange({ product_seeding: e.target.value });
-          }}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[130px]"
-        >
-          <option value="">Sản phẩm Seeding</option>
-          {productSeedings.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name || c.code}
-            </option>
-          ))}
-        </select>
-      )}
+              <select
+                value={seedingStatus}
+                onChange={(e) => {
+                  const val = e.target.value as SeedingStatusFilter;
+                  setSeedingStatus(val);
+                  handleChange({ seeding_status: val });
+                }}
+                className={cn(selectCls, "w-full")}
+                title="Lọc theo trạng thái seeding"
+              >
+                {SEEDING_STATUS_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
 
-      {members && members.length > 0 && (
-        <select
-          value={member}
-          onChange={(e) => {
-            setMember(e.target.value);
-            handleChange({ member: e.target.value });
-          }}
-          className="border border-[#E5E5E5] bg-[#FFFFFF] hover:bg-[#F5F5F5] focus:border-[#E3000F] focus:ring-2 focus:ring-[#E3000F]/20 rounded-xl px-3 py-2 text-xs font-bold text-[#1A1A1A] outline-none transition cursor-pointer shadow-sm min-w-[130px]"
-        >
-          <option value="">Tất cả Thành viên</option>
-          {members.map((m) => (
-            <option key={m.id} value={m.id}>
-              {m.name || m.code}
-            </option>
-          ))}
-        </select>
-      )}
+              <select
+                value={intent}
+                onChange={(e) => {
+                  setIntent(e.target.value);
+                  handleChange({ intent: e.target.value });
+                }}
+                className={cn(selectCls, "w-full")}
+              >
+                <option value="">Tất cả Lĩnh vực</option>
+                {intents.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name || i.code}
+                  </option>
+                ))}
+              </select>
 
-      {/* Cụm Xóa Lọc */}
+              <select
+                value={industry}
+                onChange={(e) => {
+                  setIndustry(e.target.value);
+                  handleChange({ industry: e.target.value });
+                }}
+                className={cn(selectCls, "w-full")}
+              >
+                <option value="">Tất cả Ngành</option>
+                {industries.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name || i.code}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={tier}
+                onChange={(e) => {
+                  setTier(e.target.value);
+                  handleChange({ tier: e.target.value });
+                }}
+                className={cn(selectCls, "w-full")}
+              >
+                <option value="">Tất cả Tier</option>
+                {tiers.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name || t.code}
+                  </option>
+                ))}
+              </select>
+
+              {icps.length > 0 && (
+                <select
+                  value={icp}
+                  onChange={(e) => {
+                    setIcp(e.target.value);
+                    handleChange({ icp: e.target.value });
+                  }}
+                  className={cn(selectCls, "w-full")}
+                >
+                  <option value="">Tất cả ICP</option>
+                  {icps.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.code}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {contentTypes.length > 0 && (
+                <select
+                  value={contentType}
+                  onChange={(e) => {
+                    setContentType(e.target.value);
+                    handleChange({ content_type: e.target.value });
+                  }}
+                  className={cn(selectCls, "w-full")}
+                >
+                  <option value="">Loại nội dung</option>
+                  {contentTypes.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.code}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {productSeedings.length > 0 && (
+                <select
+                  value={productSeeding}
+                  onChange={(e) => {
+                    setProductSeeding(e.target.value);
+                    handleChange({ product_seeding: e.target.value });
+                  }}
+                  className={cn(selectCls, "w-full")}
+                >
+                  <option value="">Sản phẩm Seeding</option>
+                  {productSeedings.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name || c.code}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {members.length > 0 && (
+                <select
+                  value={member}
+                  onChange={(e) => {
+                    setMember(e.target.value);
+                    handleChange({ member: e.target.value });
+                  }}
+                  className={cn(selectCls, "w-full")}
+                >
+                  <option value="">Tất cả Thành viên</option>
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name || m.code}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* "Xóa lọc" — text link, không viền (Việc 2: đổi từ nút viền sang link chữ). */}
       <button
         type="button"
         onClick={clearFilters}
         disabled={isLoading}
-        className="ml-auto rounded-xl bg-white border border-[#E5E5E5] px-4 py-2 text-xs font-bold text-[#E3000F] hover:bg-[#E3000F]/5 hover:border-[#E3000F]/30 transition shadow-sm cursor-pointer disabled:opacity-50"
+        className="text-xs font-bold text-[#E3000F] hover:underline cursor-pointer disabled:opacity-50 shrink-0"
       >
         Xóa lọc
       </button>
-    </div>
+    </>
   );
 }

@@ -115,14 +115,12 @@ const INITIAL_FILTERS: FilterState = {
   search: "",
   intent: "",
   industry: "",
-  team: "",
   tier: "",
   icp: "",
   content_type: "",
   product_seeding: "",
   member: "",
   sort: "lead_score_high",
-  dateRange: "",
   seeding_status: "all",
 };
 
@@ -561,20 +559,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     setIsLoadingPosts(true);
     setPostsError(null);
     try {
-      let dateFrom: string | undefined;
-      let dateTo: string | undefined;
-
-      if (filters.dateRange === "today") {
-        dateFrom = getVietnamDateOffsetStr(0);
-      } else if (filters.dateRange === "yesterday") {
-        dateFrom = getVietnamDateOffsetStr(-1);
-        dateTo = dateFrom;
-      } else if (filters.dateRange === "7days") {
-        dateFrom = getVietnamDateOffsetStr(-7);
-      } else if (filters.dateRange === "30days") {
-        dateFrom = getVietnamDateOffsetStr(-30);
-      }
-
       // Mac dinh nap 50 bai/lan de luon co du du lieu san trong bo nho cho cac tab con
       // Backend da duoc toi uu batching 25 IDs nen 50-100 bai load chi ton ~1s.
       const requestPage = page;
@@ -584,11 +568,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         allPlatformPostsService.filter({
           email: CURRENT_USER_EMAIL,
           platform: feedPlatform,
-          date_from: dateFrom,
-          date_to: dateTo,
           intent: filters.intent || undefined,
           industry: filters.industry || undefined,
-          team: filters.team || undefined,
           tier: filters.tier || undefined,
           icp: filters.icp || undefined,
           content_type: filters.content_type || undefined,
@@ -692,9 +673,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (f.search) params.set("q", f.search);
         if (f.intent) params.set("intent", f.intent);
         if (f.industry) params.set("industry", f.industry);
-        if (f.team) params.set("team", f.team);
         if (f.sort !== "lead_score_high") params.set("sort", f.sort);
-        if (f.dateRange) params.set("date", f.dateRange);
         if (f.seeding_status && f.seeding_status !== "all")
           params.set("seeding", f.seeding_status);
         const newUrl = params.toString()
@@ -722,9 +701,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       search: params.get("q") || "",
       intent: params.get("intent") || "",
       industry: params.get("industry") || "",
-      team: params.get("team") || "",
       sort: (params.get("sort") as typeof prev.sort) || "lead_score_high",
-      dateRange: params.get("date") || "",
       seeding_status: (params.get("seeding") as typeof prev.seeding_status) || "all",
     }));
   }, []);
@@ -735,13 +712,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const icps = categories.filter((c) => c.category_type === "icp");
   const contentTypes = categories.filter((c) => c.category_type === "content_type");
   const productSeedings = categories.filter((c) => c.category_type === "product_seeding");
-  const teamCategories: Category[] = teams.map((t) => ({
-    id: t.id,
-    code: t.name,
-    name: t.name,
-    category_type: "team",
-    platform: "all",
-  }));
 
   // Extension báo về sau khi nhân viên đã bấm "Bình luận" trên tab YouTube.
   useYouTubeCommentResults((result) => {
@@ -1141,14 +1111,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     </div>
   );
 
-  const platformHint =
-    feedPlatform === "youtube"
-      ? "Đang xem YouTube — tìm video theo từ khoá hoặc dán link, comment tính KPI theo kênh đã liên kết."
-      : feedPlatform === "threads"
-      ? "Đang xem Threads — tìm bài theo từ khoá."
-      : feedPlatform === "linkedin"
-        ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
-        : "Đang xem Facebook — cào theo nhóm đã thêm.";
+  // Việc 1 (2026-11-21): bỏ hẳn platformHint ("Đang xem...") theo yêu cầu, không hiện ở đâu nữa.
 
   const isLeaderOrAdmin = user?.role === "admin" || user?.role === "leader";
   const SUB_TABS = [
@@ -1160,34 +1123,30 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
 
   return (
     <div className="w-full space-y-6">
-      {!hideHeader ? (
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-xs">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-              <span className="material-symbols-outlined text-[28px] text-[#be123c]">bolt</span>
-              Hoạt động Seeding bên ngoài
-            </h1>
-            <p className="text-xs text-gray-500 font-medium">
-              Quản lý và tương tác bài viết đa nền tảng (Facebook, LinkedIn, Threads, YouTube), hỗ trợ cào bài và comment tự động.
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
-          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
-
-      
-        {/* Chọn nền tảng */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-1">
+      {/* Việc 1 (2026-11-21): gộp tiêu đề + "Chọn nền tảng" + "Lịch comment" (fold → popover,
+          xem ScheduledCommentsPanel.tsx) còn 1 hàng ngang — bỏ dòng mô tả dài (lặp ý tên
+          trang) và bỏ hẳn ghi chú "Đang xem..." (platformHint, không hiện ở đâu nữa). "Markee
+          Seeding Extension" không còn tồn tại trong trang này (đã gỡ, thay bằng Public 4G
+          No-Acc tự động — xem comment dưới), nên không có gì để gộp thêm. */}
+      <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-xs">
+        {!hideHeader && (
+          <h1 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2 shrink-0">
+            <span className="material-symbols-outlined text-[22px] text-[#be123c]">bolt</span>
+            Hoạt động Seeding bên ngoài
+          </h1>
+        )}
         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
           Chọn nền tảng
         </span>
         {platformTabs}
-        <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
+        {CURRENT_USER_EMAIL && (
+          <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
+        )}
       </div>
 
-      
+      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
+          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
+
       <>
           {/* Việc (2026-11-21): hàng 4 StatCard tổng quan (Tổng bài hôm nay/Bài viết mới/Đã
               bình luận hôm nay/Đã nhắn tin hôm nay) đã bị xoá hẳn — 2 card sau trùng ý nghĩa
@@ -1213,9 +1172,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             <MemberKpiRewardOverview />
           )}
 
-          {CURRENT_USER_EMAIL && (
-            <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
-          )}
+          {/* ScheduledCommentsPanel đã dời lên hàng header gộp phía trên (Việc 1). */}
           {/* SeedingExtensionPanel đã được gỡ bỏ - cào Public 4G No-Acc tự động */}
 
           {/* Việc 2 (2026-11-21): hàng pill "Trạng thái liên hệ" (Tất cả bài viết/Cần liên
@@ -1264,34 +1221,73 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               FilterBar bên dưới (teamTabOptions/teamTabValue/onTeamTabChange) — cùng state
               serviceArea/matchesServiceArea, không đổi logic lọc. */}
 
-          {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-            <QuickReviewToolbar
-              posts={displayPosts}
-              onBatchRejectSuccess={(affectedIds) => {
-                setPosts((prev) =>
-                  prev.map((p) =>
-                    affectedIds.includes(p.id)
-                      ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
-                      : p
-                  )
-                );
-                setEvaluationsMap((prev) => {
-                  const updated = { ...prev };
-                  affectedIds.forEach((id) => {
-                    updated[id] = "khong-phu-hop";
-                  });
-                  return updated;
-                });
-              }}
-              onUndoSuccess={() => {
+          {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
+            <PendingKeywordsPanel
+              onClose={() => setShowKeywordsPanel(false)}
+              onKeywordUpdated={() => {
                 void fetchPosts();
               }}
-              hasNextPage={currentPage < effectiveTotalPages}
-              onNextPage={() => handlePageChange(currentPage + 1)}
+            />
+          )}
+
+          {/* Việc 2 (2026-11-21): gộp FilterBar (ô tìm kiếm + 2 dropdown ghim + "Thêm bộ lọc" +
+              "Xóa lọc") và toolbar hành động (Review Nhanh/Lọc sạch bài đối thủ/Từ khóa loại
+              trừ) còn 1 hàng flex-wrap duy nhất — toolbar đẩy sang phải bằng ml-auto. Giữ
+              nguyên y hệt style/màu/icon/logic của platform tabs và 3 nút hành động, chỉ đổi
+              vị trí. flex-wrap (không hardcode số filter ghim) để dễ thêm/bớt sau này. */}
+          <div className="bg-[#F5F5F5]/50 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E5E5E5] p-4 shadow-[0_4px_20px_rgba(0,0,0,0.015)]">
+            <FilterBar
+              intents={intents}
+              industries={industries}
+              tiers={tiers}
+              icps={icps}
+              contentTypes={contentTypes}
+              productSeedings={productSeedings}
+              onFilter={handleFilter}
+              isLoading={isLoadingPosts}
+              leadStatusOptions={leadStatusDropdownOptions}
+              leadStatusValue={seedingStatusFilter}
+              onLeadStatusChange={(value) => {
+                setSeedingStatusFilter(value);
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              teamTabOptions={teamTabDropdownOptions}
+              teamTabValue={serviceArea}
+              onTeamTabChange={(value) => {
+                setServiceArea(value);
+                setPage(1);
+                setClientPage(1);
+              }}
             />
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 ml-auto">
+              <QuickReviewToolbar
+                posts={displayPosts}
+                onBatchRejectSuccess={(affectedIds) => {
+                  setPosts((prev) =>
+                    prev.map((p) =>
+                      affectedIds.includes(p.id)
+                        ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
+                        : p
+                    )
+                  );
+                  setEvaluationsMap((prev) => {
+                    const updated = { ...prev };
+                    affectedIds.forEach((id) => {
+                      updated[id] = "khong-phu-hop";
+                    });
+                    return updated;
+                  });
+                }}
+                onUndoSuccess={() => {
+                  void fetchPosts();
+                }}
+                hasNextPage={currentPage < effectiveTotalPages}
+                onNextPage={() => handlePageChange(currentPage + 1)}
+              />
+
               <button
                 type="button"
                 onClick={handleCleanFeed}
@@ -1322,42 +1318,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
               )}
             </div>
           </div>
-
-          {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
-            <PendingKeywordsPanel
-              onClose={() => setShowKeywordsPanel(false)}
-              onKeywordUpdated={() => {
-                void fetchPosts();
-              }}
-            />
-          )}
-
-          <FilterBar
-            intents={intents}
-            industries={industries}
-            teams={teamCategories}
-            tiers={tiers}
-            icps={icps}
-            contentTypes={contentTypes}
-            productSeedings={productSeedings}
-            onFilter={handleFilter}
-            isLoading={isLoadingPosts}
-            leadStatusOptions={leadStatusDropdownOptions}
-            leadStatusValue={seedingStatusFilter}
-            onLeadStatusChange={(value) => {
-              setSeedingStatusFilter(value);
-              setCallFilter("all");
-              setPage(1);
-              setClientPage(1);
-            }}
-            teamTabOptions={teamTabDropdownOptions}
-            teamTabValue={serviceArea}
-            onTeamTabChange={(value) => {
-              setServiceArea(value);
-              setPage(1);
-              setClientPage(1);
-            }}
-          />
 
           <CallResultStatsWidget
             selectedCode={selectedCallResultCode}

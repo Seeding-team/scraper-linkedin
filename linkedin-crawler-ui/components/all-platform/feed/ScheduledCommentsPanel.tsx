@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
 import { scheduledCommentService } from "@/services/scheduled-comment.service";
 import type { ScheduledComment } from "@/types/unified.types";
+import { cn } from "@/lib/utils";
 
 interface ScheduledCommentsPanelProps {
   refreshKey?: number;
@@ -30,6 +31,20 @@ export function ScheduledCommentsPanel({ refreshKey }: ScheduledCommentsPanelPro
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cancelId, setCancelId] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Việc 1 (2026-11-21): đổi từ khối fold full-width sang nút nhỏ + popover nổi, đóng khi
+  // click ngoài — giữ nguyên toàn bộ state/logic fetch/cancel bên trên, chỉ đổi cách hiển thị.
+  useEffect(() => {
+    if (!expanded) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setExpanded(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [expanded]);
 
   const fetchComments = useCallback(async () => {
     setLoading(true);
@@ -65,22 +80,27 @@ export function ScheduledCommentsPanel({ refreshKey }: ScheduledCommentsPanelPro
   const hasItems = comments.length > 0;
 
   return (
-    <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+    <div ref={containerRef} className="relative shrink-0">
       <button
         type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-5 py-3 hover:bg-muted/50 transition cursor-pointer"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className={cn(
+          "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-bold transition cursor-pointer",
+          expanded || pendingCount > 0
+            ? "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+            : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground"
+        )}
       >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-foreground">Lịch comment</span>
-          {pendingCount > 0 && (
-            <span className="rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 border border-amber-200">
-              {pendingCount} chờ
-            </span>
-          )}
-        </div>
+        <span className="material-symbols-outlined text-[16px]">schedule</span>
+        <span>Lịch comment</span>
+        {pendingCount > 0 && (
+          <span className="rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold px-1.5 py-0.5 border border-amber-200">
+            {pendingCount}
+          </span>
+        )}
         <svg
-          className={`h-4 w-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`}
+          className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -90,7 +110,10 @@ export function ScheduledCommentsPanel({ refreshKey }: ScheduledCommentsPanelPro
       </button>
 
       {expanded && (
-        <div className="border-t border-border">
+        <div
+          className="absolute left-0 top-full mt-1.5 z-50 w-80 sm:w-96 rounded-xl border border-border bg-card shadow-xl overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
           {loading ? (
             <div className="px-5 py-6 text-center text-sm text-muted-foreground">
               Đang tải...
