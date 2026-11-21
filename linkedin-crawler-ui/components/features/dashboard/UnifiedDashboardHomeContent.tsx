@@ -125,6 +125,9 @@ const INITIAL_FILTERS: FilterState = {
 };
 
 export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boolean }) {
+  // Việc 1 (2026-11-21): heading đã bỏ nên hideHeader không còn điều khiển gì ở component
+  // này nữa, nhưng vẫn giữ nguyên trong props vì DashboardHomeContent.tsx vẫn truyền vào.
+  void hideHeader;
   const { user } = useAppAuth();
   const CURRENT_USER_EMAIL = user?.email || "";
 
@@ -1055,17 +1058,36 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [teams],
   );
 
+  // Việc B (2026-11-21): label của 3 option dựa trên evaluation_code (pending/todo/skip —
+  // chua-danh-gia/can-lien-he/khong-phu-hop) lấy động từ categories thật (category_type=
+  // "post_evaluation", is_active) thay vì hardcode — khớp đúng tên đã cấu hình ở trang quản lý
+  // category (/all-platform/seeding-config). doing/done dựa trên call_result_code, không map
+  // tới category_type này nên vẫn giữ label cứng. Fallback về chữ cứng cũ nếu categories chưa
+  // tải xong hoặc thiếu dòng tương ứng (an toàn, không hiện label rỗng).
+  const postEvaluationLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    categories
+      .filter((c) => c.category_type === "post_evaluation" && c.is_active)
+      .forEach((c) => {
+        map[c.code] = c.name || c.code;
+      });
+    return map;
+  }, [categories]);
+
   // Việc 2 (gộp hàng pill trạng thái vào dropdown FilterBar) — cùng state/logic lọc cũ
   // (seedingStatusFilter), chỉ đổi UI nút pill sang option dropdown, kèm số đếm trong ngoặc.
+  // Việc A (2026-11-21): thêm lại option "pending" (Chưa đánh giá) — mặc định khi vào trang
+  // nhưng trước đây không chọn lại được vì thiếu option này trong dropdown.
   const leadStatusDropdownOptions = useMemo(
     () => [
       { value: "all", label: "Tất cả bài viết", count: seedingMetrics.all },
-      { value: "todo", label: "Cần liên hệ", count: seedingMetrics.todo },
+      { value: "pending", label: postEvaluationLabels["chua-danh-gia"] || "Chưa đánh giá", count: seedingMetrics.pending },
+      { value: "todo", label: postEvaluationLabels["can-lien-he"] || "Cần liên hệ", count: seedingMetrics.todo },
       { value: "doing", label: "Đang liên hệ", count: seedingMetrics.doing },
       { value: "done", label: "Đã liên hệ", count: seedingMetrics.done },
-      { value: "skip", label: "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
+      { value: "skip", label: postEvaluationLabels["khong-phu-hop"] || "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
     ],
-    [seedingMetrics],
+    [seedingMetrics, postEvaluationLabels],
   );
 
   // Việc 2 (gộp hàng tab team thật vào dropdown FilterBar) — cùng state/logic lọc cũ
@@ -1127,14 +1149,11 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
           xem ScheduledCommentsPanel.tsx) còn 1 hàng ngang — bỏ dòng mô tả dài (lặp ý tên
           trang) và bỏ hẳn ghi chú "Đang xem..." (platformHint, không hiện ở đâu nữa). "Markee
           Seeding Extension" không còn tồn tại trong trang này (đã gỡ, thay bằng Public 4G
-          No-Acc tự động — xem comment dưới), nên không có gì để gộp thêm. */}
+          No-Acc tự động — xem comment dưới), nên không có gì để gộp thêm. Việc 1 (tiếp,
+          2026-11-21): bỏ hẳn heading "Hoạt động Seeding bên ngoài" — breadcrumb ở hàng trên
+          cùng đã nói rõ đang ở trang nào, chữ này dư thừa. `hideHeader` không còn dùng để ẩn
+          gì ở đây nữa nhưng giữ nguyên prop (nơi gọi component vẫn truyền vào). */}
       <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-xs">
-        {!hideHeader && (
-          <h1 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2 shrink-0">
-            <span className="material-symbols-outlined text-[22px] text-[#be123c]">bolt</span>
-            Hoạt động Seeding bên ngoài
-          </h1>
-        )}
         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
           Chọn nền tảng
         </span>

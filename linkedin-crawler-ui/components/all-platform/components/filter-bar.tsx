@@ -110,7 +110,8 @@ export function FilterBar({
   // Phase 6: seeding status filter (admin/leader)
   const [seedingStatus, setSeedingStatus] = useState<SeedingStatusFilter>("all");
 
-  // Việc 2 (2026-11-21): 9 filter ít dùng hơn gom vào popover "Thêm bộ lọc" (lưới 2 cột) —
+  // Việc 2 (2026-11-21): 7 filter ít dùng hơn gom vào popover "Thêm bộ lọc" (lưới 2 cột) —
+  // Lĩnh vực (intent) + Ngành (industry) đã ghim ra hàng filter chính, không còn ở đây.
   // state/logic lọc underneath giữ nguyên, chỉ đổi UI từ hiện sẵn sang ẩn trong popover.
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -234,7 +235,41 @@ export function FilterBar({
         ))}
       </select>
 
-      {/* "Thêm bộ lọc" — popover lưới 2 cột chứa 9 filter còn lại. */}
+      {/* Dropdown "Lĩnh vực" — ghim ra hàng filter chính (Việc 2, 2026-11-21). */}
+      <select
+        value={intent}
+        onChange={(e) => {
+          setIntent(e.target.value);
+          handleChange({ intent: e.target.value });
+        }}
+        className={cn(selectCls, "min-w-[140px]")}
+      >
+        <option value="">Tất cả Lĩnh vực</option>
+        {intents.map((i) => (
+          <option key={i.id} value={i.id}>
+            {i.name || i.code}
+          </option>
+        ))}
+      </select>
+
+      {/* Dropdown "Ngành" — ghim ra hàng filter chính (Việc 2, 2026-11-21). */}
+      <select
+        value={industry}
+        onChange={(e) => {
+          setIndustry(e.target.value);
+          handleChange({ industry: e.target.value });
+        }}
+        className={cn(selectCls, "min-w-[140px]")}
+      >
+        <option value="">Tất cả Ngành</option>
+        {industries.map((i) => (
+          <option key={i.id} value={i.id}>
+            {i.name || i.code}
+          </option>
+        ))}
+      </select>
+
+      {/* "Thêm bộ lọc" — popover lưới 2 cột chứa 7 filter còn lại. */}
       <div className="relative" ref={moreRef}>
         <button
           type="button"
@@ -285,38 +320,6 @@ export function FilterBar({
                 {SEEDING_STATUS_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={intent}
-                onChange={(e) => {
-                  setIntent(e.target.value);
-                  handleChange({ intent: e.target.value });
-                }}
-                className={cn(selectCls, "w-full")}
-              >
-                <option value="">Tất cả Lĩnh vực</option>
-                {intents.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name || i.code}
-                  </option>
-                ))}
-              </select>
-
-              <select
-                value={industry}
-                onChange={(e) => {
-                  setIndustry(e.target.value);
-                  handleChange({ industry: e.target.value });
-                }}
-                className={cn(selectCls, "w-full")}
-              >
-                <option value="">Tất cả Ngành</option>
-                {industries.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.name || i.code}
                   </option>
                 ))}
               </select>

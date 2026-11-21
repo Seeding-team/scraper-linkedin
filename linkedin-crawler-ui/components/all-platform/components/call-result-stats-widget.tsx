@@ -530,10 +530,8 @@ export function CallResultStatsWidget({
     );
   }
 
-  // Bộ lọc thời gian: 1 bộ JSX duy nhất, render có điều kiện ở 1 trong 2 vị trí tùy `expanded`
-  // (header khi thu gọn, ngang hàng 3 tab khi mở rộng) — KHÔNG có 2 bản sao, chỉ 2 chỗ gọi
-  // `{filterBar}` cùng trỏ về 1 biến, nên state/handler (applyPreset, handleDraftDateChange,
-  // overflowRef...) vẫn là 1 bộ duy nhất dù hiện ở đâu.
+  // Bộ lọc thời gian (Việc 3, 2026-11-21): về lại đúng 1 vị trí duy nhất — trong header widget,
+  // luôn hiện bất kể thu gọn/mở rộng (đã bỏ tính năng đổi vị trí ngang hàng 3 tab khi mở rộng).
   const filterBar = (
     <div className="flex items-center gap-1.5 flex-wrap">
       {PINNED_PRESETS.map(([key, label]) => (
@@ -634,7 +632,7 @@ export function CallResultStatsWidget({
             ))}
           </select>
 
-          {!expanded && filterBar}
+          {filterBar}
         </div>
       </div>
 
@@ -903,10 +901,11 @@ export function CallResultStatsWidget({
             )}
           </div>
 
-          {/* 3 tab con — bên trái; thanh lọc thời gian ngang hàng, bên phải (xuống hàng trên
-              màn hẹp vì flex-wrap). */}
+          {/* Việc 3 (2026-11-21): bỏ hẳn tính năng đổi vị trí bộ lọc thời gian theo trạng thái
+              thu gọn/mở rộng — filterBar giờ chỉ render đúng 1 chỗ, trong header widget (cạnh
+              tiêu đề + dropdown thành viên), luôn hiện bất kể expanded. */}
           <div className="p-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div className="mb-3">
               <div className="inline-flex gap-1 bg-muted rounded-lg p-1">
                 {([
                   ["member", "Theo thành viên"],
@@ -926,10 +925,6 @@ export function CallResultStatsWidget({
                   </button>
                 ))}
               </div>
-
-              {/* filterBar — cùng 1 biến JSX với bản ở header, chỉ hiện 1 trong 2 chỗ vì khối
-                  này chỉ render khi expanded (xem điều kiện !expanded ở header). */}
-              {filterBar}
             </div>
 
             {activeTab === "member" && (
@@ -939,16 +934,14 @@ export function CallResultStatsWidget({
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Thành viên</th>
                       <th className="py-1.5 text-right">Thành công</th>
-                      <th className="py-1.5 text-right">Thất bại</th>
-                      <th className="py-1.5 text-right">Zalo gửi</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
+                      <th className="py-1.5 text-right">Bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
                     {memberTableRows.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Chưa có hoạt động nào trong kỳ này
                         </td>
                       </tr>
@@ -965,10 +958,6 @@ export function CallResultStatsWidget({
                             <td className="py-1.5 text-right text-emerald-600 font-bold">
                               {m.call_ok}/{m.call_ok + m.call_bad}
                             </td>
-                            <td className="py-1.5 text-right text-rose-600 font-bold">
-                              {m.call_bad}/{m.call_ok + m.call_bad}
-                            </td>
-                            <td className="py-1.5 text-right">{m.zalo}</td>
                             <td className="py-1.5 text-right">
                               {m.zaloReplied}/{m.zalo}
                             </td>
@@ -980,10 +969,6 @@ export function CallResultStatsWidget({
                           <td className="py-1.5 text-right text-emerald-600">
                             {memberTableTotals.call_ok}/{memberTableTotals.call_ok + memberTableTotals.call_bad}
                           </td>
-                          <td className="py-1.5 text-right text-rose-600">
-                            {memberTableTotals.call_bad}/{memberTableTotals.call_ok + memberTableTotals.call_bad}
-                          </td>
-                          <td className="py-1.5 text-right">{memberTableTotals.zalo}</td>
                           <td className="py-1.5 text-right">
                             {memberTableTotals.zaloReplied}/{memberTableTotals.zalo}
                           </td>
@@ -1003,22 +988,20 @@ export function CallResultStatsWidget({
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Ngày</th>
                       <th className="py-1.5 text-right">Thành công</th>
-                      <th className="py-1.5 text-right">Thất bại</th>
-                      <th className="py-1.5 text-right">Zalo gửi</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
+                      <th className="py-1.5 text-right">Bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingDay ? (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Đang tải...
                         </td>
                       </tr>
                     ) : dayRows.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Chưa có hoạt động nào trong kỳ này
                         </td>
                       </tr>
@@ -1056,10 +1039,6 @@ export function CallResultStatsWidget({
                               <td className="py-1.5 text-right text-emerald-600 font-bold">
                                 {d.call_ok}/{d.call_ok + d.call_bad}
                               </td>
-                              <td className="py-1.5 text-right text-rose-600 font-bold">
-                                {d.call_bad}/{d.call_ok + d.call_bad}
-                              </td>
-                              <td className="py-1.5 text-right">{d.zalo_sent}</td>
                               <td className="py-1.5 text-right">
                                 {d.zalo_replied}/{d.zalo_sent}
                               </td>
@@ -1067,14 +1046,13 @@ export function CallResultStatsWidget({
                             </tr>
                             {isExpanded && (
                               <tr className="bg-muted/30">
-                                <td colSpan={6} className="p-0">
+                                <td colSpan={4} className="p-0">
                                   <div className="pl-8 pr-3 py-2">
                                     <table className="w-full text-[12px]">
                                       <thead>
                                         <tr className="text-[10.5px] text-muted-foreground font-bold text-left">
                                           <th className="py-1">Thành viên</th>
-                                          <th className="py-1 text-right">Seeding/Bình luận</th>
-                                          <th className="py-1 text-right">Zalo gửi</th>
+                                          <th className="py-1 text-right">Bình luận</th>
                                           <th className="py-1 text-right">Tổng</th>
                                         </tr>
                                       </thead>
@@ -1090,7 +1068,6 @@ export function CallResultStatsWidget({
                                               </div>
                                             </td>
                                             <td className="py-1 text-right">{m.seed}</td>
-                                            <td className="py-1 text-right">{m.zalo_sent}</td>
                                             <td className="py-1 text-right font-bold">{m.total}</td>
                                           </tr>
                                         ))}
@@ -1108,10 +1085,6 @@ export function CallResultStatsWidget({
                         <td className="py-1.5 text-right text-emerald-600">
                           {dayTableTotals.call_ok}/{dayTableTotals.call_ok + dayTableTotals.call_bad}
                         </td>
-                        <td className="py-1.5 text-right text-rose-600">
-                          {dayTableTotals.call_bad}/{dayTableTotals.call_ok + dayTableTotals.call_bad}
-                        </td>
-                        <td className="py-1.5 text-right">{dayTableTotals.zalo_sent}</td>
                         <td className="py-1.5 text-right">
                           {dayTableTotals.zalo_replied}/{dayTableTotals.zalo_sent}
                         </td>
