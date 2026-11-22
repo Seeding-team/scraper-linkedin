@@ -14,11 +14,23 @@
  */
 
 const crypto = require("crypto");
+const dgram = require("dgram");
 
 const CALL_V2_TRANSPORT_AES_KEY = "yjAF9oqMWl6XfXYJn9mA7w==";
 const CALL_V2_ZERO_IV = Buffer.from("0".repeat(32), "hex");
 
+/**
+ * Zalo Native CallController::ctor (0x008ede19) & matchAudioCodec (0x008e9bec)
+ * bắt buộc kiểm tra khớp cả tên codec "opus/16000/1" VÀ payload == 112 (0x70).
+ * Giữ thêm "opus/48000/2" (payload: 113) ở vị trí thứ 2 để tương thích mở rộng.
+ */
 const DEFAULT_VOIP_CODECS = JSON.stringify([
+  {
+    dynamicFptime: 0,
+    frmPtime: 20,
+    name: "opus/16000/1",
+    payload: 112,
+  },
   {
     dynamicFptime: 0,
     frmPtime: 20,
@@ -26,6 +38,223 @@ const DEFAULT_VOIP_CODECS = JSON.stringify([
     payload: 113,
   },
 ]);
+
+/**
+ * Đóng gói gói tin nhị phân ZrtcPacket InitZRTP (msgType=1, magic=0x7E, cmd=11 cho Caller / 12 cho Callee)
+ * Trích xuất chính xác từ ZrtcPacket::buildInitZRTP (0x00894cc7) & ZrtcPacket::serialize (0x00893a2c).
+ */
+function buildZrtcInitZrtpPacket({
+  callId,
+  fromId,
+  toId,
+  sessId,
+  isCaller = true,
+  subCmd = 1,
+}) {
+  const sessStr = String(sessId || `${callId}_0_401`);
+  const sessBytes = Buffer.from(sessStr, "utf8");
+  const buf = Buffer.alloc(31 + sessBytes.length);
+  const cmd = isCaller ? 11 : 12;
+
+  // 21-byte ZrtcPacket Header (<BBIIIIHB)
+  buf.writeUInt8(1, 0); // msgType = 1
+  buf.writeUInt8(0x7e, 1); // magic = 0x7E ('~')
+  buf.writeUInt32LE(0, 2); // field_08 = 0
+  buf.writeUInt32LE(0, 6); // field_0C = 0
+  buf.writeUInt32LE((Number(fromId) || 0) >>> 0, 10); // field_10 = userId (32-bit internal fromId)
+  buf.writeUInt32LE(0, 14); // field_14 = token (0 when requesting InitZRTP)
+  buf.writeUInt16LE(cmd & 0xffff, 18); // field_18 = cmd (11=Caller, 12=Callee)
+  buf.writeUInt8((Number(subCmd) || 1) & 0xff, 20); // field_1A = subCmd (1=RTP, 2=RTCP)
+
+  // Body (<IIH + sessBytes)
+  buf.writeUInt32LE((Number(callId) || 0) >>> 0, 21); // field_34 = callId
+  buf.writeUInt32LE((Number(toId) || 0) >>> 0, 25); // field_38 = partnerId (32-bit internal toId)
+  buf.writeUInt16LE(sessBytes.length & 0xffff, 29); // uint16_le len(sessId)
+  sessBytes.copy(buf, 31);
+  return buf;
+}
+
+/**
+ * Đóng gói gói tin nhị phân ZrtcPacket Echo / Keepalive (msgType=1, magic=0x7E, cmd=3)
+ * Trích xuất từ ZrtcPacket::buildEcho (0x00894b8e).
+ */
+function buildZrtcEchoPacket({ callId, fromId, token = 0, seq = 1 }) {
+  const buf = Buffer.alloc(25);
+  buf.writeUInt8(1, 0); // msgType = 1
+  buf.writeUInt8(0x7e, 1); // magic = 0x7E
+  buf.writeUInt32LE(0, 2);
+  buf.writeUInt32LE(0, 6);
+  buf.writeUInt32LE((Number(fromId) || 0) >>> 0, 10);
+  buf.writeUInt32LE((Number(token) || Number(fromId) || 0) >>> 0, 14);
+  buf.writeUInt16LE(3, 18); // cmd = 3 (Echo)
+  buf.writeUInt8((Number(seq) || 1) & 0xff, 20);
+  buf.writeUInt32LE((Number(callId) || 0) >>> 0, 21);
+  return buf;
+}
+
+/**
+ * Bọc 5-byte ZRTC Media Header (msgType=5 cho Audio RTP, msgType=3 cho Audio RTCP + uint32_le token)
+ * Trích xuất từ ZrtcPacket::buildAudioRtpOrRtcp (0x008948ff) & serialize case 5 (0x00893e3e).
+ */
+function wrapZrtcAudioRtpPacket(rtpBuf, token = 0, isRtcp = false) {
+  const hdr = Buffer.alloc(5);
+  hdr.writeUInt8(isRtcp ? 3 : 5, 0);
+  hdr.writeUInt32LE((Number(token) || 0) >>> 0, 1);
+  return Buffer.concat([hdr, rtpBuf]);
+}
+
+/**
+ * Giải mã gói tin ZrtcPacket phản hồi từ Media Relay Server (:4200)
+ * Trích xuất từ ZrtcPacket::deserialize (0x00893fe3).
+ */
+function parseZrtcPacket(buf) {
+  if (!buf || buf.length < 5) return null;
+  const msgType = buf.readUInt8(0);
+  if ((msgType === 1 || msgType === 2) && buf.length >= 25 && buf.readUInt8(1) === 0x7e) {
+    const userId = buf.readUInt32LE(10);
+    const headerToken = buf.readUInt32LE(14);
+    const cmd = buf.readUInt16LE(18);
+    const subCmd = buf.readUInt8(20);
+    const res = buf.readInt32LE(21);
+    let callId = 0;
+    let token = headerToken;
+    let publicAddr = "";
+    if (msgType === 2 && (cmd === 11 || cmd === 12) && res === 0 && buf.length >= 35) {
+      callId = buf.readUInt32LE(25);
+      token = buf.readUInt32LE(29);
+      const addrLen = buf.readUInt16LE(33);
+      if (addrLen > 0 && buf.length >= 35 + addrLen) {
+        publicAddr = buf.subarray(35, 35 + addrLen).toString("utf8");
+      }
+    }
+    return {
+      msgType,
+      userId,
+      cmd,
+      subCmd,
+      res,
+      callId,
+      token,
+      publicAddr,
+    };
+  }
+  if ((msgType === 5 || msgType === 3) && buf.length >= 17) {
+    return {
+      msgType,
+      token: buf.readUInt32LE(1),
+      rtpPayload: buf.subarray(5),
+    };
+  }
+  return null;
+}
+
+/**
+ * Thực hiện bắt tay UDP ZrtcPacket InitZRTP tới Media Relay (:4200) ngay sau 11300
+ * để kích hoạt phiên thoại trên Relay trước khi gửi 11301 tới máy khách.
+ */
+async function performUdpInitZrtpHandshake(s1Data, { callId, timeoutMs = 600 } = {}) {
+  if (!s1Data || typeof s1Data !== "object") {
+    return { ok: false, token: 0, res: -1 };
+  }
+  const effectiveCallId = Number(s1Data.id || s1Data.callId || callId || 0) >>> 0;
+  const fromId = Number(s1Data.fromId || 0) >>> 0;
+  const toId = Number(s1Data.toId || 0) >>> 0;
+  const sessId = String(s1Data.sessId || s1Data.session || `${effectiveCallId}_0_401`);
+  if (!effectiveCallId || !fromId) {
+    return { ok: false, token: 0, res: -2, fromId, toId, sessId };
+  }
+
+  const targets = [];
+  const addTarget = (rawAddr) => {
+    if (!rawAddr || typeof rawAddr !== "string" || !rawAddr.includes(":")) return;
+    const [host, portStr] = rawAddr.split(":");
+    const port = Number(portStr || 4200);
+    if (host && port > 0 && !targets.some((t) => t.host === host && t.port === port)) {
+      targets.push({ host, port });
+    }
+  };
+  addTarget(s1Data.rtpIP || s1Data.rtpAddress);
+  addTarget(s1Data.rtcpIP || s1Data.rtcpAddress);
+  if (Array.isArray(s1Data.servers)) {
+    for (const srv of s1Data.servers) {
+      if (srv && typeof srv === "object") {
+        addTarget(srv.rtpaddr || srv.rtp);
+        addTarget(srv.rtcpaddr || srv.rtcp);
+      }
+    }
+  }
+  if (targets.length === 0) {
+    addTarget("171.244.25.121:4200");
+  }
+
+  const pktSub1 = buildZrtcInitZrtpPacket({
+    callId: effectiveCallId,
+    fromId,
+    toId,
+    sessId,
+    isCaller: true,
+    subCmd: 1,
+  });
+  const pktSub2 = buildZrtcInitZrtpPacket({
+    callId: effectiveCallId,
+    fromId,
+    toId,
+    sessId,
+    isCaller: true,
+    subCmd: 2,
+  });
+
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket("udp4");
+    let settled = false;
+    let bestResult = { ok: false, token: 0, res: null, publicAddr: "", fromId, toId, sessId };
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        sock.close();
+      } catch (_) {}
+      resolve(result);
+    };
+
+    const timer = setTimeout(() => {
+      finish(bestResult);
+    }, Math.max(150, Number(timeoutMs || 600)));
+
+    sock.on("error", () => {
+      finish(bestResult);
+    });
+
+    sock.on("message", (msg) => {
+      const parsed = parseZrtcPacket(msg);
+      if (parsed && parsed.msgType === 2 && (parsed.cmd === 11 || parsed.cmd === 12)) {
+        bestResult = {
+          ok: parsed.res === 0,
+          token: parsed.token || 0,
+          res: parsed.res,
+          publicAddr: parsed.publicAddr || "",
+          fromId,
+          toId,
+          sessId,
+        };
+        if (parsed.res === 0) {
+          finish(bestResult);
+        }
+      }
+    });
+
+    sock.bind(0, () => {
+      for (const t of targets) {
+        try {
+          sock.send(pktSub1, t.port, t.host);
+          sock.send(pktSub2, t.port, t.host);
+        } catch (_) {}
+      }
+    });
+  });
+}
 
 function encryptZCallTransportFrame(arg1, arg2 = CALL_V2_TRANSPORT_AES_KEY) {
   let headerPrefix = "";
@@ -378,9 +607,19 @@ async function startDirectZaloCall(
   // KHÔNG gọi tiếp Step 2 (11301) vì máy chủ Zalo sẽ ném lỗi "Tham số không hợp lệ".
   const isRejectedOrBusy = s1Data.status !== undefined && Number(s1Data.status) !== 0;
 
+  let zrtcInitResult = null;
   let step2 = null;
   let step2Error = null;
   if (!isRejectedOrBusy) {
+    // Khởi tạo phiên ZRTC InitZRTP (cmd=11) lên Media Relay (:4200) TRƯỚC KHI gửi 11301
+    // để khi điện thoại/Zalo PC của khách nhận 11301 và check Relay thì phiên đã sẵn sàng.
+    try {
+      zrtcInitResult = await performUdpInitZrtpHandshake(s1Data, {
+        callId: effectiveCallId,
+        timeoutMs: 600,
+      });
+    } catch (_) {}
+
     try {
       step2 = await zcallSendRequestCall(api, {
         calleeId: targetUid,
@@ -403,6 +642,10 @@ async function startDirectZaloCall(
     call_ok: !isRejectedOrBusy,
     call_id: effectiveCallId,
     callee_id: targetUid,
+    from_id: Number(s1Data.fromId || 0) >>> 0,
+    to_id: Number(s1Data.toId || 0) >>> 0,
+    zrtc_token: zrtcInitResult && zrtcInitResult.token ? zrtcInitResult.token : 0,
+    zrtc_init: zrtcInitResult,
     session: serverSession,
     call_type: Number(callType || 1),
     status: isRejectedOrBusy ? (Number(s1Data.status) === 7 ? "privacy_blocked" : "rejected") : "ringing",
@@ -420,6 +663,11 @@ async function startDirectZaloCall(
 module.exports = {
   CALL_V2_TRANSPORT_AES_KEY,
   DEFAULT_VOIP_CODECS,
+  buildZrtcInitZrtpPacket,
+  buildZrtcEchoPacket,
+  wrapZrtcAudioRtpPacket,
+  parseZrtcPacket,
+  performUdpInitZrtpHandshake,
   encryptZCallTransportFrame,
   decryptZCallTransportFrame,
   generateZaloCallId,

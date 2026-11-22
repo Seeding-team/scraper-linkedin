@@ -1223,6 +1223,12 @@ class ZcaPersistentListenerManager:
         if act == "answer":
             if raw_status == "0":
                 mapped_status = "connected"
+            elif raw_status == "1":
+                mapped_status = "busy"
+            elif raw_status == "3":
+                mapped_status = "rejected"
+            elif raw_status == "5":
+                mapped_status = "failed"
             else:
                 mapped_status = "ringing"
         elif act == "answerack":

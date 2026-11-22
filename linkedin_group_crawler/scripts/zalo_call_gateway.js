@@ -16,6 +16,10 @@ const http = require("http");
 const { WebSocketServer } = require("ws");
 const {
   CALL_V2_TRANSPORT_AES_KEY,
+  buildZrtcInitZrtpPacket,
+  buildZrtcEchoPacket,
+  wrapZrtcAudioRtpPacket,
+  parseZrtcPacket,
   encryptZCallTransportFrame,
   decryptZCallTransportFrame,
   startDirectZaloCall,
@@ -26,9 +30,9 @@ const {
   DEFAULT_VOIP_CODECS,
 } = require("./zca_call_engine");
 
-// Chuẩn Opus ZRTC 48kHz Stereo 20ms
-const OPUS_PAYLOAD_TYPE = 113;
-const OPUS_TIMESTAMP_STEP = 960; // 48000 * 0.02
+// Chuẩn Opus ZRTC Native của Zalo (opus/16000/1, PT=112, 20ms=320 samples)
+const OPUS_PAYLOAD_TYPE = 112;
+const OPUS_TIMESTAMP_STEP = 320; // 16000 * 0.02
 const OPUS_SILENCE_FRAME = Buffer.from([0xf8, 0xff, 0xfe]);
 
 /**
@@ -107,6 +111,10 @@ class ZaloCallGatewaySession {
     this.p2pTarget = null; // { host, port }
     this.relayServers = [];
     this.sessId = null;
+    this.fromId = 0;
+    this.toId = 0;
+    this.zrtcToken = 0;
+    this.echoSeq = 0;
 
     // RTP state
     this.seq = Math.floor(Math.random() * 1000);
@@ -134,7 +142,8 @@ class ZaloCallGatewaySession {
       phone_number: this.phone || "",
       call_type: this.callType,
       status: this.status,
-      codec: "opus/48000/2 (PT 113)",
+      codec: "opus/16000/1 (PT 112)",
+      zrtc_token: this.zrtcToken || 0,
       duration_sec: this.durationSec,
       packets_sent: this.packetsSent,
       packets_received: this.packetsReceived,
@@ -169,15 +178,20 @@ class ZaloCallGatewaySession {
   }
 
   /**
-   * Khởi tạo UDP Socket và gửi gói bắt tay ZCall Transport Frame tới Relay
+   * Khởi tạo UDP Socket và gửi gói bắt tay nhị phân ZrtcPacket InitZRTP tới Relay :4200
    */
-  async initUdpRelay(s1Data) {
+  async initUdpRelay(s1Data, initialToken = 0) {
     this.udpSocket = dgram.createSocket("udp4");
 
     const relayAddr = s1Data.rtpIP || s1Data.rtpAddress || "171.244.25.90:4200";
     const [host, portStr] = relayAddr.split(":");
     this.remoteRelay = { host, port: Number(portStr || 4200) };
     this.sessId = s1Data.sessId || s1Data.session || String(this.callId);
+    this.fromId = Number(s1Data.fromId || this.fromId || 0) >>> 0;
+    this.toId = Number(s1Data.toId || this.toId || 0) >>> 0;
+    if (initialToken) {
+      this.zrtcToken = Number(initialToken) >>> 0;
+    }
 
     if (Array.isArray(s1Data.servers)) {
       this.relayServers = s1Data.servers
@@ -192,10 +206,28 @@ class ZaloCallGatewaySession {
 
     this.udpSocket.on("message", (msg, rinfo) => {
       if (!["dialing", "ringing", "connected"].includes(this.status)) return;
-      const parsed = parseRtpPacket(msg);
-      if (!parsed || parsed.payloadType !== OPUS_PAYLOAD_TYPE || !parsed.payload.length || parsed.ssrc === this.ssrc) return;
       const sources = [this.remoteRelay, this.p2pTarget, ...this.relayServers].filter(Boolean);
-      if (!sources.some(s => s.host === rinfo.address && s.port === rinfo.port)) return;
+      if (!sources.some((s) => s.host === rinfo.address && s.port === rinfo.port)) return;
+
+      // Kiểm tra gói tin ZrtcPacket (msgType=2 phản hồi InitZRTP/Echo hoặc msgType=5 Audio RTP)
+      const zrtc = parseZrtcPacket(msg);
+      if (zrtc && zrtc.msgType === 2) {
+        if ((zrtc.cmd === 11 || zrtc.cmd === 12) && zrtc.res === 0 && zrtc.token) {
+          this.zrtcToken = zrtc.token >>> 0;
+        }
+        return;
+      }
+
+      const rtpBuf = zrtc && zrtc.msgType === 5 && zrtc.rtpPayload ? zrtc.rtpPayload : msg;
+      const parsed = parseRtpPacket(rtpBuf);
+      if (
+        !parsed ||
+        (parsed.payloadType !== 112 && parsed.payloadType !== 113) ||
+        !parsed.payload.length ||
+        parsed.ssrc === this.ssrc
+      ) {
+        return;
+      }
       this.packetsReceived += 1;
       if (this.status === "ringing") {
         this.status = "connected";
@@ -221,7 +253,7 @@ class ZaloCallGatewaySession {
       this.udpSocket.bind(0, () => resolve(true));
     });
 
-    // Gửi Handshake Frame mã hóa AES (CALL_V2_AES_KEY) tới Relay :4200
+    // Gửi ZrtcPacket InitZRTP (cmd=11, subCmd=1 & 2) tới Relay :4200
     this.sendHandshakeFrame();
 
     // Bắt đầu nhịp keep-alive định kỳ 1s
@@ -233,19 +265,27 @@ class ZaloCallGatewaySession {
   sendHandshakeFrame() {
     if (!this.udpSocket || !this.remoteRelay) return;
     try {
-      const handshakePayload = {
+      const pktSub1 = buildZrtcInitZrtpPacket({
         callId: this.callId,
+        fromId: this.fromId,
+        toId: this.toId,
         sessId: this.sessId,
-        userId: this.accountId,
-        toId: this.calleeId,
-        status: 0,
-        ts: Date.now(),
-      };
-      const enc = encryptZCallTransportFrame("49", handshakePayload);
-      const buf = Buffer.from(enc, "utf8");
-      this.udpSocket.send(buf, this.remoteRelay.port, this.remoteRelay.host);
+        isCaller: true,
+        subCmd: 1,
+      });
+      const pktSub2 = buildZrtcInitZrtpPacket({
+        callId: this.callId,
+        fromId: this.fromId,
+        toId: this.toId,
+        sessId: this.sessId,
+        isCaller: true,
+        subCmd: 2,
+      });
+      this.udpSocket.send(pktSub1, this.remoteRelay.port, this.remoteRelay.host);
+      this.udpSocket.send(pktSub2, this.remoteRelay.port, this.remoteRelay.host);
       for (const srv of this.relayServers.slice(0, 2)) {
-        this.udpSocket.send(buf, srv.port, srv.host);
+        this.udpSocket.send(pktSub1, srv.port, srv.host);
+        this.udpSocket.send(pktSub2, srv.port, srv.host);
       }
     } catch (err) {
       console.warn(`[CALL-GATEWAY] Handshake frame error:`, err.message);
@@ -254,26 +294,40 @@ class ZaloCallGatewaySession {
 
   sendKeepaliveTick() {
     if (!this.udpSocket || !this.remoteRelay || this.status === "ended") return;
+    if (!this.zrtcToken) {
+      this.sendHandshakeFrame();
+    } else {
+      this.echoSeq = (this.echoSeq + 1) & 0xff;
+      const echoPkt = buildZrtcEchoPacket({
+        callId: this.callId,
+        fromId: this.fromId,
+        token: this.zrtcToken,
+        seq: this.echoSeq,
+      });
+      this.udpSocket.send(echoPkt, this.remoteRelay.port, this.remoteRelay.host);
+    }
+
     this.seq = (this.seq + 1) & 0xffff;
     this.timestamp = (this.timestamp + OPUS_TIMESTAMP_STEP) >>> 0;
     this.packetsSent += 1;
 
-    // Gói tin Opus silence TOC chuẩn (PT=113)
-    const pkt = buildRtpPacket(OPUS_SILENCE_FRAME, {
+    // Gói tin Opus silence TOC chuẩn (PT=112) bọc 5-byte ZRTC Header khi gửi qua Relay
+    const rawRtp = buildRtpPacket(OPUS_SILENCE_FRAME, {
       seq: this.seq,
       timestamp: this.timestamp,
       ssrc: this.ssrc,
       payloadType: OPUS_PAYLOAD_TYPE,
     });
+    const zrtcRtp = wrapZrtcAudioRtpPacket(rawRtp, this.zrtcToken || this.fromId);
 
-    this.udpSocket.send(pkt, this.remoteRelay.port, this.remoteRelay.host);
+    this.udpSocket.send(zrtcRtp, this.remoteRelay.port, this.remoteRelay.host);
     if (this.p2pTarget) {
-      this.udpSocket.send(pkt, this.p2pTarget.port, this.p2pTarget.host);
+      this.udpSocket.send(rawRtp, this.p2pTarget.port, this.p2pTarget.host);
     }
   }
 
   /**
-   * Nhận audio từ trình duyệt Sale, đóng gói RTP PT=113 và đẩy qua Relay
+   * Nhận audio từ trình duyệt Sale, đóng gói RTP PT=112 + 5-byte ZRTC header và đẩy qua Relay
    */
   sendAudioFromBrowser(audioBuffer) {
     if (!this.udpSocket || !this.remoteRelay || !audioBuffer || audioBuffer.length === 0) return;
@@ -281,16 +335,17 @@ class ZaloCallGatewaySession {
     this.timestamp = (this.timestamp + OPUS_TIMESTAMP_STEP) >>> 0;
     this.packetsSent += 1;
 
-    const pkt = buildRtpPacket(audioBuffer, {
+    const rawRtp = buildRtpPacket(audioBuffer, {
       seq: this.seq,
       timestamp: this.timestamp,
       ssrc: this.ssrc,
       payloadType: OPUS_PAYLOAD_TYPE,
     });
+    const zrtcRtp = wrapZrtcAudioRtpPacket(rawRtp, this.zrtcToken || this.fromId);
 
-    this.udpSocket.send(pkt, this.remoteRelay.port, this.remoteRelay.host);
+    this.udpSocket.send(zrtcRtp, this.remoteRelay.port, this.remoteRelay.host);
     if (this.p2pTarget) {
-      this.udpSocket.send(pkt, this.p2pTarget.port, this.p2pTarget.host);
+      this.udpSocket.send(rawRtp, this.p2pTarget.port, this.p2pTarget.host);
     }
   }
 
@@ -435,9 +490,18 @@ function handleVoipEvent(voipEvent) {
   const rawStatus = String(data.status ?? params.status ?? "").trim();
   if (act === "answer") {
     if (rawStatus === "5") {
-      // Gói đàm phán sớm P2P / SDP Offer khi máy khách đổ chuông (status 5)
-      session.handleEarlyNegotiation(data, params);
-    } else if (rawStatus === "0") {
+      // Theo ZCallInfoSignal::receiveAnswer (0x007ec17f), status=5 là callee_init_zrtp_fail
+      // (thiết bị khách thất bại khởi tạo ZRTP/codec và đã tự ngắt cuộc gọi).
+      session.warning = "Thiết bị khách không thể khởi tạo kênh thoại ZRTC (callee_init_zrtp_fail - status 5).";
+      session.status = "failed";
+      session.close();
+    } else if (rawStatus === "3") {
+      session.status = "rejected";
+      session.close();
+    } else if (rawStatus === "1") {
+      session.status = "busy";
+      session.close();
+    } else if (rawStatus === "0" || rawStatus === "") {
       // Khách hàng thực sự bấm nghe máy (status 0 hoặc accept)
       session.handleAnswerEvent(data);
     }
@@ -559,7 +623,7 @@ async function initiateGatewayCall(api, { accountId, calleeId, phone, callType =
 
     session.status = "ringing";
     const s1Data = sigRes.requestcall_result || {};
-    await session.initUdpRelay(s1Data);
+    await session.initUdpRelay(s1Data, sigRes.zrtc_token || 0);
 
     return { ok: true, session: session.toDict() };
   } catch (err) {
