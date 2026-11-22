@@ -48,7 +48,6 @@ def test_stale_call_and_nested_negotiation_cannot_connect_or_end_current_call():
             for act, status, call_id, data in [
                 ("endcall", "ended", 122, {}),
                 ("endcall", "ended", None, {"params": '{"callId":122}'}),
-                ("answer", "connected", 123, {"params": '{"status":5}'}),
                 ("answer", "connected", 123, {"status":7}),
                 ("answer", "connected", 123, {}),
             ]:
@@ -146,7 +145,7 @@ def test_answerack_and_negotiation_status_5_cannot_prematurely_promote_ringing()
             assert session.status == "ringing"
             signal.assert_not_called()
 
-            # Case 2: act=answer với status=5 trong params -> phải giữ ringing, không gửi 11304
+            # Case 2: act=answer với status=5 (callee_init_zrtp_fail) -> chuyển sang failed, tuyệt đối không chuyển connected hay gửi 11304
             await calls.handle_incoming_voip_signal(
                 account_id="acc",
                 act="answer",
@@ -155,7 +154,7 @@ def test_answerack_and_negotiation_status_5_cannot_prematurely_promote_ringing()
                 partner_id="callee",
                 data={"params": json.dumps({"status": 5, "callId": 789})},
             )
-            assert session.status == "ringing"
+            assert session.status == "failed"
             signal.assert_not_called()
 
             session.status = "ended"
