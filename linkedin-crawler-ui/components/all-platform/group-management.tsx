@@ -426,89 +426,183 @@ function IntentMultiSelect({ value, onChange, options, onOptionCreated }: Intent
 }
 
 // ── Bảng giá nhiều dòng (Việc 2) — chỉ hiện khi bật "Nhóm có phí" ────────────────────────
+// ── Ô input Tên nhóm/Số thành viên tự động điền từ URL — viền nét đứt khi chưa xác nhận
+// qua API, viền xanh + badge "✓ API" khi lấy tự động thành công (prototype v2 đã duyệt).
+// Luôn cho gõ tay bình thường (KHÔNG disable) — xem lib/fb-ext-bridge.ts.
+function AutoFillTextField({
+  value,
+  onChange,
+  loading,
+  filled,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  loading?: boolean;
+  filled?: boolean;
+  placeholder?: string;
+}) {
+  // Nét đứt CHỈ khi còn trống (đang chờ điền, dù qua API hay gõ tay) — field đã có giá trị
+  // thật (vd đang Sửa nhóm cũ, hoặc người dùng đã gõ tay) thì hiện viền thường như mọi field
+  // khác, không phải mãi mãi "trông như chưa điền gì".
+  const isEmpty = !value.trim();
+  return (
+    <div
+      className={`flex items-center gap-1.5 border rounded-xl pl-3 pr-1.5 h-10 transition-all duration-150 ease-out ${
+        filled
+          ? "border-emerald-400 bg-emerald-50"
+          : loading
+            ? "border-dashed border-primary/50 bg-surface"
+            : isEmpty
+              ? "border-dashed border-outline-variant bg-surface"
+              : "border-outline-variant bg-surface"
+      }`}
+    >
+      <input
+        className="flex-1 min-w-0 h-full bg-transparent outline-none text-sm text-on-surface"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+      />
+      {loading && <span className="material-symbols-outlined text-[14px] text-primary animate-spin shrink-0">progress_activity</span>}
+      {filled && (
+        <span className="shrink-0 text-[10px] font-bold bg-emerald-600 text-white px-1.5 py-0.5 rounded-full">✓ API</span>
+      )}
+    </div>
+  );
+}
+
+// ── Đánh số section trong modal Thêm/Sửa nhóm (prototype v2 đã duyệt) ───────────────────
+function FormSection({ number, title, children }: { number: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="md:col-span-2">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="w-5 h-5 rounded-full bg-surface-container-highest text-on-surface-variant text-[11px] font-bold flex items-center justify-center shrink-0">
+          {number}
+        </span>
+        <b className="text-[12px] font-bold text-on-surface-variant uppercase tracking-wide">{title}</b>
+      </div>
+      <div className="bg-surface-container-low border border-outline-variant rounded-xl p-3 space-y-2.5">{children}</div>
+    </div>
+  );
+}
+
+// ── Toggle dạng pill bo tròn (Dễ/Khó, Miễn phí/Có phí) — khớp prototype v2 đã duyệt ─────
+function SegmentedPill<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string; onColorClass: string }[];
+  value: T | "";
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-0.5 bg-surface-container-highest rounded-full p-0.5 shrink-0">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          type="button"
+          onClick={() => onChange(opt.value)}
+          className={`h-6 px-3 rounded-full text-[11px] font-bold transition-all duration-150 ease-out cursor-pointer ${
+            value === opt.value ? opt.onColorClass : "text-on-surface-variant hover:bg-surface-container-low"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Thẻ nhỏ 1 khía cạnh (Bình luận/Đăng bài/Chi phí) trong khối "Độ khó & Chi phí" ──────
+function DiffCard({
+  icon,
+  iconColorClass,
+  label,
+  pill,
+  children,
+}: {
+  icon: string;
+  iconColorClass: string;
+  label: string;
+  pill: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="bg-surface border border-outline-variant rounded-lg p-2.5">
+      <div className="flex items-center gap-2">
+        <span className={`w-7 h-7 rounded-md flex items-center justify-center text-sm shrink-0 ${iconColorClass}`}>{icon}</span>
+        <b className="text-xs font-bold text-on-surface flex-1 min-w-0 truncate">{label}</b>
+        {pill}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ── Bảng giá nhiều dòng (Việc 2) — chỉ render phần các dòng, bật/tắt do SegmentedPill ngoài quyết định ──
 interface PricingTiersEditorProps {
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
   tiers: GroupPricingTier[];
   onChange: (tiers: GroupPricingTier[]) => void;
 }
 
-function PricingTiersEditor({ enabled, onEnabledChange, tiers, onChange }: PricingTiersEditorProps) {
+function PricingTiersEditor({ tiers, onChange }: PricingTiersEditorProps) {
   const updateTier = (idx: number, patch: Partial<GroupPricingTier>) =>
     onChange(tiers.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
   const removeTier = (idx: number) => onChange(tiers.filter((_, i) => i !== idx));
   const addTier = () => onChange([...tiers, { posts_count: 1, period: "week", unit_price: 0 }]);
 
   return (
-    <div className="md:col-span-2 p-4 border border-outline-variant rounded-xl bg-surface-container-low space-y-3">
-      <label className="flex items-center gap-2 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => {
-            const checked = e.target.checked;
-            onEnabledChange(checked);
-            if (!checked) onChange([]);
-            else if (tiers.length === 0) onChange([{ posts_count: 1, period: "week", unit_price: 0 }]);
-          }}
-          className="w-4 h-4 rounded text-primary border-outline-variant focus:ring-primary/20"
-        />
-        <span className="text-sm font-bold text-on-surface">Nhóm có phí</span>
-      </label>
-
-      {enabled && (
-        <div className="space-y-2">
-          {tiers.map((tier, idx) => (
-            <div key={idx} className="flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                className="w-20 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-                value={tier.posts_count}
-                onChange={(e) => updateTier(idx, { posts_count: Number(e.target.value) || 1 })}
-                placeholder="Số bài"
-              />
-              <span className="text-xs text-on-surface-variant whitespace-nowrap">bài /</span>
-              <select
-                className="border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
-                value={tier.period}
-                onChange={(e) => updateTier(idx, { period: e.target.value as "week" | "month" })}
-              >
-                <option value="week">Tuần</option>
-                <option value="month">Tháng</option>
-              </select>
-              <input
-                type="number"
-                min={0}
-                className="flex-1 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-                value={tier.unit_price}
-                onChange={(e) => updateTier(idx, { unit_price: Number(e.target.value) || 0 })}
-                placeholder="Đơn giá (đ)"
-              />
-              <button
-                type="button"
-                onClick={() => removeTier(idx)}
-                className="text-red-500 hover:text-red-700 cursor-pointer p-1 shrink-0"
-                title="Xóa dòng giá này"
-              >
-                <FaTrash size={11} />
-              </button>
-            </div>
-          ))}
+    <div className="mt-2 pt-2 border-t border-dashed border-outline-variant space-y-1.5">
+      {tiers.map((tier, idx) => (
+        <div key={idx} className="flex items-center gap-1.5">
+          <input
+            type="number"
+            min={1}
+            className="w-16 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+            value={tier.posts_count}
+            onChange={(e) => updateTier(idx, { posts_count: Number(e.target.value) || 1 })}
+            placeholder="Số bài"
+          />
+          <select
+            className="border border-outline-variant rounded-lg px-1.5 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+            value={tier.period}
+            onChange={(e) => updateTier(idx, { period: e.target.value as "week" | "month" })}
+          >
+            <option value="week">bài/tuần</option>
+            <option value="month">bài/tháng</option>
+          </select>
+          <input
+            type="number"
+            min={0}
+            className="flex-1 min-w-0 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+            value={tier.unit_price}
+            onChange={(e) => updateTier(idx, { unit_price: Number(e.target.value) || 0 })}
+            placeholder="Đơn giá (đ)"
+          />
           <button
             type="button"
-            onClick={addTier}
-            className="flex items-center gap-1 text-xs font-bold text-primary hover:underline cursor-pointer"
+            onClick={() => removeTier(idx)}
+            className="text-red-500 hover:text-red-700 cursor-pointer p-1 shrink-0"
+            title="Xóa dòng giá này"
           >
-            <FaPlus size={9} /> Thêm dòng giá
+            <FaTrash size={11} />
           </button>
         </div>
-      )}
+      ))}
+      <button
+        type="button"
+        onClick={addTier}
+        className="flex items-center gap-1 text-[11px] font-bold text-primary hover:underline cursor-pointer"
+      >
+        <FaPlus size={8} /> Thêm gói giá
+      </button>
     </div>
   );
 }
 
-// ── Mẫu bình luận/bài đăng riêng của group (Việc 3) — khối thu gọn, gõ thêm/xóa tự do ────
+// ── Mẫu bình luận/bài đăng riêng của group (Việc 3) — thu gọn mặc định, bấm "▶" để mở ───
 interface TemplateListEditorProps {
   label: string;
   items: string[];
@@ -523,23 +617,21 @@ function TemplateListEditor({ label, items, onChange }: TemplateListEditorProps)
   const addItem = () => onChange([...items, ""]);
 
   return (
-    <div className="md:col-span-2 border border-outline-variant rounded-xl bg-surface-container-low overflow-hidden">
+    <div className="mt-1.5">
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-bold text-on-surface cursor-pointer"
+        className="flex items-center gap-1 text-[11px] font-bold text-primary cursor-pointer"
       >
-        <span>
-          {label} ({items.filter((it) => it.trim()).length})
-        </span>
-        <span className="material-symbols-outlined text-[18px]">{expanded ? "expand_less" : "expand_more"}</span>
+        <span className={`inline-block text-[9px] transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>▶</span>
+        {label} ({items.filter((it) => it.trim()).length})
       </button>
       {expanded && (
-        <div className="px-4 pb-4 space-y-2">
+        <div className="mt-1.5 space-y-1.5">
           {items.map((item, idx) => (
-            <div key={idx} className="flex items-start gap-2">
-              <textarea
-                className="flex-1 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface resize-y min-h-[36px] bg-surface"
+            <div key={idx} className="flex items-center gap-1.5 bg-surface border border-outline-variant rounded-lg px-2 py-1">
+              <input
+                className="flex-1 min-w-0 text-[11px] outline-none bg-transparent text-on-surface"
                 value={item}
                 onChange={(e) => updateItem(idx, e.target.value)}
                 placeholder="Nhập nội dung mẫu..."
@@ -547,63 +639,24 @@ function TemplateListEditor({ label, items, onChange }: TemplateListEditorProps)
               <button
                 type="button"
                 onClick={() => removeItem(idx)}
-                className="text-red-500 hover:text-red-700 cursor-pointer p-1 mt-1 shrink-0"
+                className="text-on-surface-variant hover:text-red-600 cursor-pointer shrink-0"
                 title="Xóa mẫu này"
               >
-                <FaTrash size={11} />
+                ✕
               </button>
             </div>
           ))}
+          {items.length === 0 && <p className="text-[11px] text-on-surface-variant italic">Chưa có mẫu nào.</p>}
           <button
             type="button"
             onClick={addItem}
-            className="flex items-center gap-1 text-xs font-bold text-primary hover:underline cursor-pointer"
+            className="flex items-center gap-1 text-[11px] font-bold text-primary hover:underline cursor-pointer"
           >
-            <FaPlus size={9} /> Thêm mẫu
+            <FaPlus size={8} /> Thêm mẫu
           </button>
         </div>
       )}
     </div>
-  );
-}
-
-// ── Độ khó riêng Bình luận/Bài đăng (Việc 2) — 2 toggle Dễ/Khó độc lập, độc lập health_score ──
-interface DifficultyTogglesProps {
-  difficultyComment: string;
-  difficultyPost: string;
-  onChange: (key: "difficulty_comment" | "difficulty_post", value: string) => void;
-}
-
-function DifficultyToggles({ difficultyComment, difficultyPost, onChange }: DifficultyTogglesProps) {
-  const renderToggle = (label: string, field: "difficulty_comment" | "difficulty_post", value: string) => (
-    <div>
-      <label className="text-xs font-bold text-on-surface-variant block mb-1">{label}</label>
-      <div className="flex gap-1.5">
-        {(["easy", "hard"] as const).map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onChange(field, value === opt ? "" : opt)}
-            className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all duration-150 ease-out cursor-pointer ${
-              value === opt
-                ? opt === "easy"
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-300"
-                  : "bg-red-50 text-red-700 border-red-300"
-                : "bg-surface text-on-surface-variant border-outline-variant hover:bg-surface-container-low"
-            }`}
-          >
-            {opt === "easy" ? "Dễ" : "Khó"}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-
-  return (
-    <>
-      {renderToggle("Độ khó Bình luận", "difficulty_comment", difficultyComment)}
-      {renderToggle("Độ khó Bài đăng", "difficulty_post", difficultyPost)}
-    </>
   );
 }
 
@@ -856,198 +909,253 @@ function FacebookGroupForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2">
-          <label className="text-xs font-bold text-on-surface-variant block mb-1 flex items-center gap-1.5">
-            Tên nhóm *
-            {apiFilledFields.has("group_name") && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
-                ✓ API
-              </span>
-            )}
-          </label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.group_name}
-            onChange={(e) => {
-              set("group_name", e.target.value);
-              setApiFilledFields((prev) => {
-                if (!prev.has("group_name")) return prev;
-                const next = new Set(prev);
-                next.delete("group_name");
-                return next;
-              });
-            }}
-            required
-            placeholder="VD: IT Vietnam"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">URL nhóm *</label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.group_url}
-            onChange={(e) => set("group_url", e.target.value)}
-            onBlur={handleGroupUrlBlur}
-            required
-            placeholder="https://facebook.com/groups/..."
-          />
-          {groupInfoFetch.status === "loading" && (
-            <p className="text-[11px] text-on-surface-variant mt-1 flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px] animate-spin">progress_activity</span>
-              Đang thử tự động lấy tên nhóm/số thành viên qua Extension...
-            </p>
-          )}
-          {groupInfoFetch.status === "error" && (
-            <p className="text-[11px] text-amber-600 mt-1">
-              ⚠️ Không tự lấy được thông tin nhóm ({groupInfoFetch.error}) — vui lòng nhập tay bên dưới.
-            </p>
-          )}
-          {duplicateMatch && (
-            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">
-              ⚠️ Có vẻ nhóm này đã tồn tại trong hệ thống: <b>{duplicateMatch.group_name || duplicateMatch.group_url}</b> — vẫn
-              có thể tiếp tục nếu đây thực sự là nhóm khác.
-            </p>
-          )}
-        </div>
-        <div>
-          <IntentMultiSelect
-            value={form.intent_ids}
-            onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
-            options={intentOptions}
-            onOptionCreated={onIntentCreated}
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Industry"
-            value={form.id_industry}
-            onChange={(val) => set("id_industry", val)}
-            options={industryOptions}
-            placeholder="Tìm chọn Industry..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Tier"
-            value={form.id_tier}
-            onChange={(val) => set("id_tier", val)}
-            options={tierOptions}
-            placeholder="Tìm chọn Tier..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Team"
-            value={form.id_team}
-            onChange={(val) => set("id_team", val)}
-            options={teamOptions}
-            placeholder="Tìm chọn Team..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="ICP Target"
-            value={form.id_icp}
-            onChange={(val) => set("id_icp", val)}
-            options={icpOptions}
-            placeholder="Tìm chọn ICP Target..."
-            valueField="id"
-          />
-        </div>
-        <DifficultyToggles
-          difficultyComment={form.difficulty_comment}
-          difficultyPost={form.difficulty_post}
-          onChange={(key, value) => set(key, value)}
-        />
-        <div>
-          <SearchableDropdown
-            label="Người phụ trách chính"
-            value={form.assignee_id}
-            onChange={(val) => setPerson("assignee_id", "assignee_name_hint", val)}
-            options={userOptions}
-            placeholder="Tìm theo tên/email..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Đồng phụ trách"
-            value={form.co_assignee_id}
-            onChange={(val) => setPerson("co_assignee_id", "co_assignee_name_hint", val)}
-            options={userOptions}
-            placeholder="Tìm theo tên/email..."
-            valueField="id"
-          />
-        </div>
-        {isAdmin && (
+        <FormSection number={1} title="Thông tin nhóm">
           <div>
-            <SearchableDropdown
-              label="Thành viên sở hữu *"
-              value={form.id_member || ""}
-              onChange={(val) => setPerson("id_member", "id_member_name_hint", val)}
-              options={userOptions}
-              placeholder="Tìm theo tên/email..."
-              valueField="id"
+            <label className="text-xs font-bold text-on-surface-variant block mb-1">URL nhóm *</label>
+            <input
+              className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+              value={form.group_url}
+              onChange={(e) => set("group_url", e.target.value)}
+              onBlur={handleGroupUrlBlur}
               required
+              placeholder="https://facebook.com/groups/..."
+            />
+            {groupInfoFetch.status === "loading" && (
+              <p className="text-[11px] text-on-surface-variant mt-1 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[13px] animate-spin">progress_activity</span>
+                Đang thử tự động lấy tên nhóm/số thành viên qua Extension...
+              </p>
+            )}
+            {groupInfoFetch.status === "error" && (
+              <p className="text-[11px] text-amber-600 mt-1">
+                ⚠️ Không tự lấy được thông tin nhóm ({groupInfoFetch.error}) — vui lòng nhập tay bên dưới.
+              </p>
+            )}
+            {duplicateMatch && (
+              <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">
+                ⚠️ Có vẻ nhóm này đã tồn tại trong hệ thống: <b>{duplicateMatch.group_name || duplicateMatch.group_url}</b> —
+                vẫn có thể tiếp tục nếu đây thực sự là nhóm khác.
+              </p>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant block mb-1">Tên nhóm * {apiFilledFields.has("group_name") && <span className="font-normal text-emerald-700">(tự điền)</span>}</label>
+              <AutoFillTextField
+                value={form.group_name}
+                onChange={(v) => {
+                  set("group_name", v);
+                  setApiFilledFields((prev) => {
+                    if (!prev.has("group_name")) return prev;
+                    const next = new Set(prev);
+                    next.delete("group_name");
+                    return next;
+                  });
+                }}
+                loading={groupInfoFetch.status === "loading"}
+                filled={apiFilledFields.has("group_name")}
+                placeholder="VD: IT Vietnam"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant block mb-1">Số thành viên {apiFilledFields.has("members") && <span className="font-normal text-emerald-700">(tự điền)</span>}</label>
+              <AutoFillTextField
+                value={form.members}
+                onChange={(v) => {
+                  set("members", v);
+                  setApiFilledFields((prev) => {
+                    if (!prev.has("members")) return prev;
+                    const next = new Set(prev);
+                    next.delete("members");
+                    return next;
+                  });
+                }}
+                loading={groupInfoFetch.status === "loading"}
+                filled={apiFilledFields.has("members")}
+                placeholder="50000"
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <SearchableDropdown
+                label="Người phụ trách chính"
+                value={form.assignee_id}
+                onChange={(val) => setPerson("assignee_id", "assignee_name_hint", val)}
+                options={userOptions}
+                placeholder="Tìm theo tên/email..."
+                valueField="id"
+              />
+            </div>
+            <div>
+              <SearchableDropdown
+                label="Đồng phụ trách"
+                value={form.co_assignee_id}
+                onChange={(val) => setPerson("co_assignee_id", "co_assignee_name_hint", val)}
+                options={userOptions}
+                placeholder="Tìm theo tên/email..."
+                valueField="id"
+              />
+            </div>
+          </div>
+          {isAdmin && (
+            <div>
+              <SearchableDropdown
+                label="Thành viên sở hữu *"
+                value={form.id_member || ""}
+                onChange={(val) => setPerson("id_member", "id_member_name_hint", val)}
+                options={userOptions}
+                placeholder="Tìm theo tên/email..."
+                valueField="id"
+                required
+              />
+            </div>
+          )}
+          <div>
+            <label className="text-xs font-bold text-on-surface-variant block mb-1">Posts/tuần</label>
+            <input
+              className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+              value={form.posts_per_week}
+              onChange={(e) => set("posts_per_week", e.target.value)}
+              placeholder="10"
             />
           </div>
-        )}
-        <div>
-          <SearchableDropdown
-            label="Loại nội dung"
-            value={form.id_content_type}
-            onChange={(val) => set("id_content_type", val)}
-            options={contentTypeOptions}
-            placeholder="Tìm chọn Loại nội dung..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Sản phẩm Seeding"
-            value={form.id_product_seeding}
-            onChange={(val) => set("id_product_seeding", val)}
-            options={productSeedingOptions}
-            placeholder="Tìm chọn SP Seeding..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-on-surface-variant block mb-1 flex items-center gap-1.5">
-            Số thành viên
-            {apiFilledFields.has("members") && (
-              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
-                ✓ API
-              </span>
+        </FormSection>
+
+        <FormSection number={2} title="Phân loại">
+          <div>
+            <IntentMultiSelect
+              value={form.intent_ids}
+              onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
+              options={intentOptions}
+              onOptionCreated={onIntentCreated}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <SearchableDropdown
+              label="Industry"
+              value={form.id_industry}
+              onChange={(val) => set("id_industry", val)}
+              options={industryOptions}
+              placeholder="Tìm chọn Industry..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Tier"
+              value={form.id_tier}
+              onChange={(val) => set("id_tier", val)}
+              options={tierOptions}
+              placeholder="Tìm chọn Tier..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Team"
+              value={form.id_team}
+              onChange={(val) => set("id_team", val)}
+              options={teamOptions}
+              placeholder="Tìm chọn Team..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="ICP Target"
+              value={form.id_icp}
+              onChange={(val) => set("id_icp", val)}
+              options={icpOptions}
+              placeholder="Tìm chọn ICP Target..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Loại nội dung"
+              value={form.id_content_type}
+              onChange={(val) => set("id_content_type", val)}
+              options={contentTypeOptions}
+              placeholder="Tìm chọn Loại nội dung..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Sản phẩm Seeding"
+              value={form.id_product_seeding}
+              onChange={(val) => set("id_product_seeding", val)}
+              options={productSeedingOptions}
+              placeholder="Tìm chọn SP Seeding..."
+              valueField="id"
+            />
+          </div>
+        </FormSection>
+
+        <FormSection number={3} title="Độ khó & Chi phí">
+          <div className="grid grid-cols-2 gap-2.5">
+            <DiffCard
+              icon="💬"
+              iconColorClass="bg-sky-50 text-sky-600"
+              label="Bình luận"
+              pill={
+                <SegmentedPill
+                  value={form.difficulty_comment as "easy" | "hard" | ""}
+                  onChange={(v) => set("difficulty_comment", form.difficulty_comment === v ? "" : v)}
+                  options={[
+                    { value: "easy", label: "Dễ", onColorClass: "bg-emerald-600 text-white" },
+                    { value: "hard", label: "Khó", onColorClass: "bg-red-600 text-white" },
+                  ]}
+                />
+              }
+            >
+              <TemplateListEditor
+                label="Mẫu bình luận"
+                items={form.comment_templates}
+                onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
+              />
+            </DiffCard>
+            <DiffCard
+              icon="📝"
+              iconColorClass="bg-violet-50 text-violet-600"
+              label="Đăng bài"
+              pill={
+                <SegmentedPill
+                  value={form.difficulty_post as "easy" | "hard" | ""}
+                  onChange={(v) => set("difficulty_post", form.difficulty_post === v ? "" : v)}
+                  options={[
+                    { value: "easy", label: "Dễ", onColorClass: "bg-emerald-600 text-white" },
+                    { value: "hard", label: "Khó", onColorClass: "bg-red-600 text-white" },
+                  ]}
+                />
+              }
+            >
+              <TemplateListEditor
+                label="Mẫu bài đăng"
+                items={form.post_templates}
+                onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
+              />
+            </DiffCard>
+          </div>
+          <DiffCard
+            icon="💰"
+            iconColorClass="bg-amber-50 text-amber-600"
+            label="Chi phí đăng bài"
+            pill={
+              <SegmentedPill
+                value={form.has_pricing ? "paid" : "free"}
+                onChange={(v) => {
+                  const paid = v === "paid";
+                  setForm((f) => ({
+                    ...f,
+                    has_pricing: paid,
+                    pricing_tiers: paid ? (f.pricing_tiers.length ? f.pricing_tiers : [{ posts_count: 1, period: "week", unit_price: 0 }]) : [],
+                  }));
+                }}
+                options={[
+                  { value: "free", label: "Miễn phí", onColorClass: "bg-emerald-600 text-white" },
+                  { value: "paid", label: "Có phí", onColorClass: "bg-amber-600 text-white" },
+                ]}
+              />
+            }
+          >
+            {form.has_pricing && (
+              <PricingTiersEditor tiers={form.pricing_tiers} onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))} />
             )}
-          </label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.members}
-            onChange={(e) => {
-              set("members", e.target.value);
-              setApiFilledFields((prev) => {
-                if (!prev.has("members")) return prev;
-                const next = new Set(prev);
-                next.delete("members");
-                return next;
-              });
-            }}
-            placeholder="50000"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">Posts/tuần</label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.posts_per_week}
-            onChange={(e) => set("posts_per_week", e.target.value)}
-            placeholder="10"
-          />
-        </div>
+          </DiffCard>
+        </FormSection>
+
         <div className="md:col-span-2">
           <label className="text-xs font-bold text-on-surface-variant block mb-1">Ghi chú rủi ro</label>
           <textarea
@@ -1066,22 +1174,6 @@ function FacebookGroupForm({
             placeholder="Nhập ghi chú chung..."
           />
         </div>
-        <PricingTiersEditor
-          enabled={form.has_pricing}
-          onEnabledChange={(enabled) => setForm((f) => ({ ...f, has_pricing: enabled }))}
-          tiers={form.pricing_tiers}
-          onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))}
-        />
-        <TemplateListEditor
-          label="Mẫu bình luận"
-          items={form.comment_templates}
-          onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
-        />
-        <TemplateListEditor
-          label="Mẫu bài đăng"
-          items={form.post_templates}
-          onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
-        />
         <div className="md:col-span-2 p-4 border border-outline-variant rounded-xl bg-surface-container-low space-y-4">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -1338,121 +1430,47 @@ function LinkedInGroupForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="md:col-span-2">
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">Tên nhóm</label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.group_name}
-            onChange={(e) => set("group_name", e.target.value)}
-            placeholder="LinkedIn Group Name"
-          />
-        </div>
-        <div className="md:col-span-2">
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">URL nhóm *</label>
-          <input
-            className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
-            value={form.group_url}
-            onChange={(e) => set("group_url", e.target.value)}
-            required
-            placeholder="https://linkedin.com/groups/..."
-          />
-        </div>
-
-        <div>
-          <IntentMultiSelect
-            value={form.intent_ids}
-            onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
-            options={intentOptions}
-            onOptionCreated={onIntentCreated}
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Industry"
-            value={form.id_industry}
-            onChange={(val) => set("id_industry", val)}
-            options={industryOptions}
-            placeholder="Tìm chọn Industry..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Tier"
-            value={form.id_tier}
-            onChange={(val) => set("id_tier", val)}
-            options={tierOptions}
-            placeholder="Tìm chọn Tier..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Team"
-            value={form.id_team}
-            onChange={(val) => set("id_team", val)}
-            options={teamOptions}
-            placeholder="Tìm chọn Team..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="ICP Target"
-            value={form.id_icp}
-            onChange={(val) => set("id_icp", val)}
-            options={icpOptions}
-            placeholder="Tìm chọn ICP Target..."
-            valueField="id"
-          />
-        </div>
-        <DifficultyToggles
-          difficultyComment={form.difficulty_comment}
-          difficultyPost={form.difficulty_post}
-          onChange={(key, value) => set(key, value)}
-        />
-        <div>
-          <SearchableDropdown
-            label="Loại nội dung"
-            value={form.id_content_type}
-            onChange={(val) => set("id_content_type", val)}
-            options={contentTypeOptions}
-            placeholder="Tìm chọn Loại nội dung..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Sản phẩm Seeding"
-            value={form.id_product_seeding}
-            onChange={(val) => set("id_product_seeding", val)}
-            options={productSeedingOptions}
-            placeholder="Tìm chọn SP Seeding..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Người phụ trách chính"
-            value={form.assignee_id}
-            onChange={(val) => setPerson("assignee_id", "assignee_name_hint", val)}
-            options={userOptions}
-            placeholder="Tìm theo tên/email..."
-            valueField="id"
-          />
-        </div>
-        <div>
-          <SearchableDropdown
-            label="Đồng phụ trách"
-            value={form.co_assignee_id}
-            onChange={(val) => setPerson("co_assignee_id", "co_assignee_name_hint", val)}
-            options={userOptions}
-            placeholder="Tìm theo tên/email..."
-            valueField="id"
-          />
-        </div>
-        {isAdmin && (
-          <div>
+        <FormSection number={1} title="Thông tin nhóm">
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant block mb-1">Tên nhóm</label>
+              <input
+                className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+                value={form.group_name}
+                onChange={(e) => set("group_name", e.target.value)}
+                placeholder="LinkedIn Group Name"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-bold text-on-surface-variant block mb-1">URL nhóm *</label>
+              <input
+                className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+                value={form.group_url}
+                onChange={(e) => set("group_url", e.target.value)}
+                required
+                placeholder="https://linkedin.com/groups/..."
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <SearchableDropdown
+              label="Người phụ trách chính"
+              value={form.assignee_id}
+              onChange={(val) => setPerson("assignee_id", "assignee_name_hint", val)}
+              options={userOptions}
+              placeholder="Tìm theo tên/email..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Đồng phụ trách"
+              value={form.co_assignee_id}
+              onChange={(val) => setPerson("co_assignee_id", "co_assignee_name_hint", val)}
+              options={userOptions}
+              placeholder="Tìm theo tên/email..."
+              valueField="id"
+            />
+          </div>
+          {isAdmin && (
             <SearchableDropdown
               label="Thành viên sở hữu *"
               value={form.id_member || ""}
@@ -1462,8 +1480,141 @@ function LinkedInGroupForm({
               valueField="id"
               required
             />
+          )}
+        </FormSection>
+
+        <FormSection number={2} title="Phân loại">
+          <IntentMultiSelect
+            value={form.intent_ids}
+            onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
+            options={intentOptions}
+            onOptionCreated={onIntentCreated}
+          />
+          <div className="grid grid-cols-2 gap-2.5">
+            <SearchableDropdown
+              label="Industry"
+              value={form.id_industry}
+              onChange={(val) => set("id_industry", val)}
+              options={industryOptions}
+              placeholder="Tìm chọn Industry..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Tier"
+              value={form.id_tier}
+              onChange={(val) => set("id_tier", val)}
+              options={tierOptions}
+              placeholder="Tìm chọn Tier..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Team"
+              value={form.id_team}
+              onChange={(val) => set("id_team", val)}
+              options={teamOptions}
+              placeholder="Tìm chọn Team..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="ICP Target"
+              value={form.id_icp}
+              onChange={(val) => set("id_icp", val)}
+              options={icpOptions}
+              placeholder="Tìm chọn ICP Target..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Loại nội dung"
+              value={form.id_content_type}
+              onChange={(val) => set("id_content_type", val)}
+              options={contentTypeOptions}
+              placeholder="Tìm chọn Loại nội dung..."
+              valueField="id"
+            />
+            <SearchableDropdown
+              label="Sản phẩm Seeding"
+              value={form.id_product_seeding}
+              onChange={(val) => set("id_product_seeding", val)}
+              options={productSeedingOptions}
+              placeholder="Tìm chọn SP Seeding..."
+              valueField="id"
+            />
           </div>
-        )}
+        </FormSection>
+
+        <FormSection number={3} title="Độ khó & Chi phí">
+          <div className="grid grid-cols-2 gap-2.5">
+            <DiffCard
+              icon="💬"
+              iconColorClass="bg-sky-50 text-sky-600"
+              label="Bình luận"
+              pill={
+                <SegmentedPill
+                  value={form.difficulty_comment as "easy" | "hard" | ""}
+                  onChange={(v) => set("difficulty_comment", form.difficulty_comment === v ? "" : v)}
+                  options={[
+                    { value: "easy", label: "Dễ", onColorClass: "bg-emerald-600 text-white" },
+                    { value: "hard", label: "Khó", onColorClass: "bg-red-600 text-white" },
+                  ]}
+                />
+              }
+            >
+              <TemplateListEditor
+                label="Mẫu bình luận"
+                items={form.comment_templates}
+                onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
+              />
+            </DiffCard>
+            <DiffCard
+              icon="📝"
+              iconColorClass="bg-violet-50 text-violet-600"
+              label="Đăng bài"
+              pill={
+                <SegmentedPill
+                  value={form.difficulty_post as "easy" | "hard" | ""}
+                  onChange={(v) => set("difficulty_post", form.difficulty_post === v ? "" : v)}
+                  options={[
+                    { value: "easy", label: "Dễ", onColorClass: "bg-emerald-600 text-white" },
+                    { value: "hard", label: "Khó", onColorClass: "bg-red-600 text-white" },
+                  ]}
+                />
+              }
+            >
+              <TemplateListEditor
+                label="Mẫu bài đăng"
+                items={form.post_templates}
+                onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
+              />
+            </DiffCard>
+          </div>
+          <DiffCard
+            icon="💰"
+            iconColorClass="bg-amber-50 text-amber-600"
+            label="Chi phí đăng bài"
+            pill={
+              <SegmentedPill
+                value={form.has_pricing ? "paid" : "free"}
+                onChange={(v) => {
+                  const paid = v === "paid";
+                  setForm((f) => ({
+                    ...f,
+                    has_pricing: paid,
+                    pricing_tiers: paid ? (f.pricing_tiers.length ? f.pricing_tiers : [{ posts_count: 1, period: "week", unit_price: 0 }]) : [],
+                  }));
+                }}
+                options={[
+                  { value: "free", label: "Miễn phí", onColorClass: "bg-emerald-600 text-white" },
+                  { value: "paid", label: "Có phí", onColorClass: "bg-amber-600 text-white" },
+                ]}
+              />
+            }
+          >
+            {form.has_pricing && (
+              <PricingTiersEditor tiers={form.pricing_tiers} onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))} />
+            )}
+          </DiffCard>
+        </FormSection>
+
         <div className="md:col-span-2">
           <label className="text-xs font-bold text-on-surface-variant block mb-1">Ghi chú rủi ro</label>
           <textarea
@@ -1482,22 +1633,6 @@ function LinkedInGroupForm({
             placeholder="Nhập ghi chú chung..."
           />
         </div>
-        <PricingTiersEditor
-          enabled={form.has_pricing}
-          onEnabledChange={(enabled) => setForm((f) => ({ ...f, has_pricing: enabled }))}
-          tiers={form.pricing_tiers}
-          onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))}
-        />
-        <TemplateListEditor
-          label="Mẫu bình luận"
-          items={form.comment_templates}
-          onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
-        />
-        <TemplateListEditor
-          label="Mẫu bài đăng"
-          items={form.post_templates}
-          onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
-        />
       </div>
       <div className="flex gap-3 border-t border-outline-variant pt-4 mt-6">
         <button
