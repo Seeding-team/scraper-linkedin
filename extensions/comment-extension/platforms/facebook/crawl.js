@@ -276,7 +276,76 @@ function nudgeFeedAndWaitForCapture(timeoutMs = 2500) {
                 .catch((err) => sendResponse({ success: false, error: err.message }));
             return true;
         }
+        if (request.action === "FB_GROUP_FETCH_ONE") {
+            doFetchGroupInfo(request.url)
+                .then((res) => sendResponse(res))
+                .catch((err) => sendResponse({ success: false, error: String(err) }));
+            return true;
+        }
     });
+
+    // Viec con dang do (2026-11-22): tu dong lay Ten nhom + So thanh vien tu URL khi them
+    // nhom Facebook moi. Doc document.title + quet text hien thi (KHONG dung class CSS cu
+    // the - Facebook obfuscate/doi class lien tuc, giong cach POST_SELECTORS cua LinkedIn
+    // trong repo nay uu tien aria-label/text hon class). CHUA kiem chung voi Facebook that
+    // (BUOC 0 khong co trinh duyet da dang nhap de test) - selector/pattern o day la best-
+    // effort, se duoc xac nhan that o lan dung dau tien; loi o day luon tra ve
+    // { success:false, error } ro rang, KHONG bao gio chan nguoi dung nhap tay (xem
+    // lib/fb-ext-bridge.ts + FacebookGroupForm).
+    async function doFetchGroupInfo(_url) {
+        try {
+            // Cho DOM on dinh them 1 chut - banner cookie/quang cao co the lam doi layout
+            // ngay sau khi "complete".
+            await new Promise((resolve) => setTimeout(resolve, 500));
+
+            const sec = checkSecurityInterception();
+            if (sec.blocked) {
+                return { success: false, error: sec.reason, error_code: "blocked" };
+            }
+            if (/\/login\b/i.test(window.location.href)) {
+                return {
+                    success: false,
+                    error: "Phiên đăng nhập Facebook trong trình duyệt chưa sẵn sàng (bị chuyển về trang đăng nhập) — vui lòng đăng nhập Facebook rồi thử lại, hoặc nhập tay.",
+                    error_code: "login_required",
+                };
+            }
+
+            let groupName = (document.title || "").replace(/\s*\|\s*Facebook\s*$/i, "").trim();
+            if (!groupName || /^facebook$/i.test(groupName)) {
+                const h1 = document.querySelector("h1");
+                groupName = (h1 && h1.textContent ? h1.textContent : "").trim();
+            }
+
+            const bodyText = (document.body && document.body.innerText) || "";
+            let memberCount = null;
+            const memberPatterns = [
+                /([\d.,]+)\s*(?:thành viên|members?)\b/i,
+                /(?:thành viên|members?)\s*[:：]?\s*([\d.,]+)/i,
+            ];
+            for (const re of memberPatterns) {
+                const m = bodyText.match(re);
+                if (m) {
+                    const n = parseInt(m[1].replace(/[.,]/g, ""), 10);
+                    if (!Number.isNaN(n) && n > 0) {
+                        memberCount = n;
+                        break;
+                    }
+                }
+            }
+
+            if (!groupName && memberCount == null) {
+                return {
+                    success: false,
+                    error: "Không đọc được tên nhóm/số thành viên từ trang (nhóm riêng tư, không tồn tại, hoặc Facebook đã đổi giao diện) — vui lòng nhập tay.",
+                    error_code: "not_found",
+                };
+            }
+
+            return { success: true, group_name: groupName || null, member_count: memberCount };
+        } catch (e) {
+            return { success: false, error: String(e && e.message ? e.message : e), error_code: "exception" };
+        }
+    }
 
     function getCrawlTokens() {
         const html = document.documentElement.innerHTML;

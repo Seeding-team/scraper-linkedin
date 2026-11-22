@@ -13,7 +13,8 @@ import {
   type AppUserProfile,
   type TeamRow
 } from "@/services/all-platform.service";
-import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category } from "@/types/unified.types";
+import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category, GroupPricingTier } from "@/types/unified.types";
+import { fetchFacebookGroupInfo } from "@/lib/fb-ext-bridge";
 
 import { SiThreads } from "react-icons/si";
 import { ThreadsKeywordsTab } from "./threads-keywords-tab";
@@ -279,12 +280,339 @@ function InlineAssigneeCell({
   );
 }
 
+// ── Lĩnh vực chọn nhiều (tag multi-select, cho phép tạo lĩnh vực mới ngay trong form) ────
+interface IntentMultiSelectProps {
+  value: string[];
+  onChange: (ids: string[]) => void;
+  options: Category[];
+  onOptionCreated: (newOption: Category) => void;
+}
+
+function IntentMultiSelect({ value, onChange, options, onOptionCreated }: IntentMultiSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [creating, setCreating] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+        setSearch("");
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedOptions = useMemo(
+    () => value.map((id) => options.find((o) => String(o.id) === id)).filter(Boolean) as Category[],
+    [value, options],
+  );
+
+  const filteredOptions = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return options.filter(
+      (o) =>
+        !value.includes(String(o.id)) &&
+        (!s || (o.name || "").toLowerCase().includes(s) || (o.code || "").toLowerCase().includes(s)),
+    );
+  }, [options, search, value]);
+
+  const exactMatch = options.some((o) => (o.name || o.code || "").toLowerCase() === search.trim().toLowerCase());
+
+  const addId = (id: string) => {
+    if (!value.includes(id)) onChange([...value, id]);
+    setSearch("");
+  };
+  const removeId = (id: string) => onChange(value.filter((v) => v !== id));
+
+  const handleCreate = async () => {
+    const name = search.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    try {
+      const code =
+        name
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .replace(/đ/g, "d")
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/(^-+|-+$)/g, "") || `intent-${Date.now()}`;
+      const res = await allPlatformCategoriesService.add({
+        category_type: "intent",
+        code,
+        name,
+        platform: "all",
+        is_active: true,
+      });
+      if (res.success && res.data) {
+        onOptionCreated(res.data);
+        addId(String(res.data.id));
+      }
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative flex flex-col">
+      <label className="text-xs font-bold text-on-surface-variant block mb-1">Lĩnh vực</label>
+      <div
+        className="w-full min-h-[42px] border border-outline-variant rounded-xl px-2 py-1.5 text-sm outline-none focus-within:ring-2 focus-within:ring-primary/15 focus-within:border-primary text-on-surface flex flex-wrap gap-1 items-center cursor-text"
+        onClick={() => setIsOpen(true)}
+      >
+        {selectedOptions.map((o) => (
+          <span
+            key={String(o.id)}
+            className="inline-flex items-center gap-1 bg-primary/10 text-primary rounded-md px-2 py-0.5 text-xs font-bold"
+          >
+            {o.name || o.code}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                removeId(String(o.id));
+              }}
+              className="hover:text-red-600 cursor-pointer"
+            >
+              ✕
+            </button>
+          </span>
+        ))}
+        <input
+          className="flex-1 min-w-[100px] outline-none text-sm bg-transparent"
+          placeholder={selectedOptions.length === 0 ? "Tìm hoặc thêm lĩnh vực..." : ""}
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+        />
+      </div>
+
+      {isOpen && (
+        <div className="absolute top-full z-[60] left-0 right-0 mt-1 bg-surface border border-outline-variant rounded-xl shadow-lg max-h-56 overflow-y-auto">
+          {filteredOptions.map((opt) => (
+            <button
+              key={String(opt.id)}
+              type="button"
+              onClick={() => addId(String(opt.id))}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-surface-container-low transition-all duration-200 ease-out border-b border-outline-variant last:border-0 cursor-pointer text-on-surface"
+            >
+              <div className="font-bold">{opt.name || opt.code}</div>
+            </button>
+          ))}
+          {search.trim() && !exactMatch && (
+            <button
+              type="button"
+              disabled={creating}
+              onClick={handleCreate}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-primary/10 text-primary font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <FaPlus size={9} />
+              {creating ? "Đang tạo..." : `Tạo lĩnh vực mới "${search.trim()}"`}
+            </button>
+          )}
+          {filteredOptions.length === 0 && !search.trim() && (
+            <div className="p-3 text-xs text-on-surface-variant text-center">Gõ để tìm hoặc tạo lĩnh vực mới</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Bảng giá nhiều dòng (Việc 2) — chỉ hiện khi bật "Nhóm có phí" ────────────────────────
+interface PricingTiersEditorProps {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  tiers: GroupPricingTier[];
+  onChange: (tiers: GroupPricingTier[]) => void;
+}
+
+function PricingTiersEditor({ enabled, onEnabledChange, tiers, onChange }: PricingTiersEditorProps) {
+  const updateTier = (idx: number, patch: Partial<GroupPricingTier>) =>
+    onChange(tiers.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  const removeTier = (idx: number) => onChange(tiers.filter((_, i) => i !== idx));
+  const addTier = () => onChange([...tiers, { posts_count: 1, period: "week", unit_price: 0 }]);
+
+  return (
+    <div className="md:col-span-2 p-4 border border-outline-variant rounded-xl bg-surface-container-low space-y-3">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            onEnabledChange(checked);
+            if (!checked) onChange([]);
+            else if (tiers.length === 0) onChange([{ posts_count: 1, period: "week", unit_price: 0 }]);
+          }}
+          className="w-4 h-4 rounded text-primary border-outline-variant focus:ring-primary/20"
+        />
+        <span className="text-sm font-bold text-on-surface">Nhóm có phí</span>
+      </label>
+
+      {enabled && (
+        <div className="space-y-2">
+          {tiers.map((tier, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <input
+                type="number"
+                min={1}
+                className="w-20 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
+                value={tier.posts_count}
+                onChange={(e) => updateTier(idx, { posts_count: Number(e.target.value) || 1 })}
+                placeholder="Số bài"
+              />
+              <span className="text-xs text-on-surface-variant whitespace-nowrap">bài /</span>
+              <select
+                className="border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface bg-surface"
+                value={tier.period}
+                onChange={(e) => updateTier(idx, { period: e.target.value as "week" | "month" })}
+              >
+                <option value="week">Tuần</option>
+                <option value="month">Tháng</option>
+              </select>
+              <input
+                type="number"
+                min={0}
+                className="flex-1 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
+                value={tier.unit_price}
+                onChange={(e) => updateTier(idx, { unit_price: Number(e.target.value) || 0 })}
+                placeholder="Đơn giá (đ)"
+              />
+              <button
+                type="button"
+                onClick={() => removeTier(idx)}
+                className="text-red-500 hover:text-red-700 cursor-pointer p-1 shrink-0"
+                title="Xóa dòng giá này"
+              >
+                <FaTrash size={11} />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addTier}
+            className="flex items-center gap-1 text-xs font-bold text-primary hover:underline cursor-pointer"
+          >
+            <FaPlus size={9} /> Thêm dòng giá
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Mẫu bình luận/bài đăng riêng của group (Việc 3) — khối thu gọn, gõ thêm/xóa tự do ────
+interface TemplateListEditorProps {
+  label: string;
+  items: string[];
+  onChange: (items: string[]) => void;
+}
+
+function TemplateListEditor({ label, items, onChange }: TemplateListEditorProps) {
+  const [expanded, setExpanded] = useState(false);
+
+  const updateItem = (idx: number, value: string) => onChange(items.map((it, i) => (i === idx ? value : it)));
+  const removeItem = (idx: number) => onChange(items.filter((_, i) => i !== idx));
+  const addItem = () => onChange([...items, ""]);
+
+  return (
+    <div className="md:col-span-2 border border-outline-variant rounded-xl bg-surface-container-low overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-bold text-on-surface cursor-pointer"
+      >
+        <span>
+          {label} ({items.filter((it) => it.trim()).length})
+        </span>
+        <span className="material-symbols-outlined text-[18px]">{expanded ? "expand_less" : "expand_more"}</span>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-4 space-y-2">
+          {items.map((item, idx) => (
+            <div key={idx} className="flex items-start gap-2">
+              <textarea
+                className="flex-1 border border-outline-variant rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface resize-y min-h-[36px] bg-surface"
+                value={item}
+                onChange={(e) => updateItem(idx, e.target.value)}
+                placeholder="Nhập nội dung mẫu..."
+              />
+              <button
+                type="button"
+                onClick={() => removeItem(idx)}
+                className="text-red-500 hover:text-red-700 cursor-pointer p-1 mt-1 shrink-0"
+                title="Xóa mẫu này"
+              >
+                <FaTrash size={11} />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={addItem}
+            className="flex items-center gap-1 text-xs font-bold text-primary hover:underline cursor-pointer"
+          >
+            <FaPlus size={9} /> Thêm mẫu
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Độ khó riêng Bình luận/Bài đăng (Việc 2) — 2 toggle Dễ/Khó độc lập, độc lập health_score ──
+interface DifficultyTogglesProps {
+  difficultyComment: string;
+  difficultyPost: string;
+  onChange: (key: "difficulty_comment" | "difficulty_post", value: string) => void;
+}
+
+function DifficultyToggles({ difficultyComment, difficultyPost, onChange }: DifficultyTogglesProps) {
+  const renderToggle = (label: string, field: "difficulty_comment" | "difficulty_post", value: string) => (
+    <div>
+      <label className="text-xs font-bold text-on-surface-variant block mb-1">{label}</label>
+      <div className="flex gap-1.5">
+        {(["easy", "hard"] as const).map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => onChange(field, value === opt ? "" : opt)}
+            className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition-all duration-150 ease-out cursor-pointer ${
+              value === opt
+                ? opt === "easy"
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-300"
+                  : "bg-red-50 text-red-700 border-red-300"
+                : "bg-surface text-on-surface-variant border-outline-variant hover:bg-surface-container-low"
+            }`}
+          >
+            {opt === "easy" ? "Dễ" : "Khó"}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {renderToggle("Độ khó Bình luận", "difficulty_comment", difficultyComment)}
+      {renderToggle("Độ khó Bài đăng", "difficulty_post", difficultyPost)}
+    </>
+  );
+}
+
 // ── Facebook Group Form ──────────────────────────────────────────────────────
 interface FbGroupFormData {
   id_member?: string;
   group_name: string;
   group_url: string;
-  id_intent: string;
+  intent_ids: string[];
   id_industry: string;
   id_tier: string;
   id_team: string;
@@ -310,13 +638,19 @@ interface FbGroupFormData {
   assignee_name_hint: string;
   co_assignee_name_hint: string;
   id_member_name_hint: string;
+  difficulty_comment: string;
+  difficulty_post: string;
+  has_pricing: boolean;
+  pricing_tiers: GroupPricingTier[];
+  comment_templates: string[];
+  post_templates: string[];
 }
 
 const FB_EMPTY_FORM: FbGroupFormData = {
   id_member: "",
   group_name: "",
   group_url: "",
-  id_intent: "",
+  intent_ids: [],
   id_industry: "",
   id_tier: "",
   id_team: "",
@@ -342,13 +676,22 @@ const FB_EMPTY_FORM: FbGroupFormData = {
   assignee_name_hint: "",
   co_assignee_name_hint: "",
   id_member_name_hint: "",
+  difficulty_comment: "",
+  difficulty_post: "",
+  has_pricing: false,
+  pricing_tiers: [],
+  comment_templates: [],
+  post_templates: [],
 };
 
 function FacebookGroupForm({
   initial,
+  editingGroupId,
+  existingGroups,
   onSubmit,
   onCancel,
   intentOptions,
+  onIntentCreated,
   industryOptions,
   teamOptions,
   tierOptions,
@@ -360,9 +703,12 @@ function FacebookGroupForm({
   nameHintById,
 }: {
   initial?: Partial<FbGroupFormData>;
+  editingGroupId?: string;
+  existingGroups: FacebookGroup[];
   onSubmit: (data: Partial<FbGroupFormData>) => Promise<void>;
   onCancel: () => void;
   intentOptions: Category[];
+  onIntentCreated: (newOption: Category) => void;
   industryOptions: Category[];
   teamOptions: Category[];
   tierOptions: Category[];
@@ -378,8 +724,60 @@ function FacebookGroupForm({
   const [form, setForm] = useState<FbGroupFormData>({ ...FB_EMPTY_FORM, ...initial });
   const [busy, setBusy] = useState(false);
 
+  // Việc còn dở (2026-11-22): tự động lấy Tên nhóm + Số thành viên từ URL qua Extension
+  // (lib/fb-ext-bridge.ts). apiFilledFields đánh dấu field nào đang hiện badge "✓ API" —
+  // mất ngay khi người dùng tự gõ lại field đó (set()/onChange riêng bên dưới sẽ xoá dấu).
+  const [groupInfoFetch, setGroupInfoFetch] = useState<{ status: "idle" | "loading" | "error"; error?: string }>({
+    status: "idle",
+  });
+  const [apiFilledFields, setApiFilledFields] = useState<Set<"group_name" | "members">>(new Set());
+  const lastFetchedUrlRef = useRef<string>("");
+
   const set = (key: keyof FbGroupFormData, value: string | boolean) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  const handleGroupUrlBlur = async () => {
+    const url = form.group_url.trim();
+    if (!url || !/facebook\.com\/groups\//i.test(url) || url === lastFetchedUrlRef.current) return;
+    lastFetchedUrlRef.current = url;
+    setGroupInfoFetch({ status: "loading" });
+    const res = await fetchFacebookGroupInfo(url);
+    if (!res.success) {
+      // Không bao giờ chặn người dùng — vẫn gõ tay bình thường, chỉ báo lỗi để biết vì sao
+      // không tự điền được (xem BƯỚC 1: graceful fallback).
+      setGroupInfoFetch({ status: "error", error: res.error || "Không lấy được thông tin nhóm." });
+      return;
+    }
+    setGroupInfoFetch({ status: "idle" });
+    const filled = new Set<"group_name" | "members">();
+    setForm((f) => {
+      const next = { ...f };
+      if (res.group_name && !f.group_name.trim()) {
+        next.group_name = res.group_name;
+        filled.add("group_name");
+      }
+      if (res.member_count != null && !f.members.trim()) {
+        next.members = String(res.member_count);
+        filled.add("members");
+      }
+      return next;
+    });
+    if (filled.size > 0) setApiFilledFields(filled);
+  };
+
+  const duplicateMatch = useMemo(() => {
+    const url = form.group_url.trim().toLowerCase().replace(/\/+$/, "");
+    const name = form.group_name.trim().toLowerCase();
+    if (!url && !name) return null;
+    return (
+      existingGroups.find((g) => {
+        if (editingGroupId && String(g.id) === String(editingGroupId)) return false;
+        const gUrl = (g.group_url || "").trim().toLowerCase().replace(/\/+$/, "");
+        const gName = (g.group_name || "").trim().toLowerCase();
+        return (url && gUrl === url) || (name && gName === name);
+      }) || null
+    );
+  }, [form.group_url, form.group_name, existingGroups, editingGroupId]);
 
   // Chọn 1 người phụ trách/thành viên sở hữu thì lưu kèm luôn tên hiển thị
   // "sạch" (không kèm email) — dùng làm fallback hiển thị nếu người đó chưa
@@ -392,11 +790,8 @@ function FacebookGroupForm({
     e.preventDefault();
     if (!form.group_name.trim() || !form.group_url.trim()) return;
 
-    // Validate that intent, industry, team, tier and icp are chosen from options (if selected)
-    if (form.id_intent && !intentOptions.some((o) => String(o.id) === form.id_intent)) {
-      alert("Vui lòng chọn Lĩnh vực hợp lệ từ danh mục!");
-      return;
-    }
+    // Validate that industry, team, tier and icp are chosen from options (if selected) —
+    // Lĩnh vực (intent_ids) đã là multi-select ràng buộc theo options sẵn, không cần check lại.
     if (form.id_industry && !industryOptions.some((o) => String(o.id) === form.id_industry)) {
       alert("Vui lòng chọn Industry hợp lệ từ danh sách!");
       return;
@@ -448,6 +843,9 @@ function FacebookGroupForm({
         assignee_id: validUserIds.has(form.assignee_id) ? form.assignee_id : "",
         co_assignee_id: validUserIds.has(form.co_assignee_id) ? form.co_assignee_id : "",
         id_member: form.id_member && validUserIds.has(form.id_member) ? form.id_member : "",
+        pricing_tiers: form.has_pricing ? form.pricing_tiers : [],
+        comment_templates: form.comment_templates.filter((t) => t.trim()),
+        post_templates: form.post_templates.filter((t) => t.trim()),
       };
       await onSubmit(submitData);
     } finally {
@@ -459,11 +857,26 @@ function FacebookGroupForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="md:col-span-2">
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">Tên nhóm *</label>
+          <label className="text-xs font-bold text-on-surface-variant block mb-1 flex items-center gap-1.5">
+            Tên nhóm *
+            {apiFilledFields.has("group_name") && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
+                ✓ API
+              </span>
+            )}
+          </label>
           <input
             className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
             value={form.group_name}
-            onChange={(e) => set("group_name", e.target.value)}
+            onChange={(e) => {
+              set("group_name", e.target.value);
+              setApiFilledFields((prev) => {
+                if (!prev.has("group_name")) return prev;
+                const next = new Set(prev);
+                next.delete("group_name");
+                return next;
+              });
+            }}
             required
             placeholder="VD: IT Vietnam"
           />
@@ -474,18 +887,34 @@ function FacebookGroupForm({
             className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
             value={form.group_url}
             onChange={(e) => set("group_url", e.target.value)}
+            onBlur={handleGroupUrlBlur}
             required
             placeholder="https://facebook.com/groups/..."
           />
+          {groupInfoFetch.status === "loading" && (
+            <p className="text-[11px] text-on-surface-variant mt-1 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[13px] animate-spin">progress_activity</span>
+              Đang thử tự động lấy tên nhóm/số thành viên qua Extension...
+            </p>
+          )}
+          {groupInfoFetch.status === "error" && (
+            <p className="text-[11px] text-amber-600 mt-1">
+              ⚠️ Không tự lấy được thông tin nhóm ({groupInfoFetch.error}) — vui lòng nhập tay bên dưới.
+            </p>
+          )}
+          {duplicateMatch && (
+            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">
+              ⚠️ Có vẻ nhóm này đã tồn tại trong hệ thống: <b>{duplicateMatch.group_name || duplicateMatch.group_url}</b> — vẫn
+              có thể tiếp tục nếu đây thực sự là nhóm khác.
+            </p>
+          )}
         </div>
         <div>
-          <SearchableDropdown
-            label="Lĩnh vực"
-            value={form.id_intent}
-            onChange={(val) => set("id_intent", val)}
+          <IntentMultiSelect
+            value={form.intent_ids}
+            onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
             options={intentOptions}
-            placeholder="Tìm chọn Lĩnh vực..."
-            valueField="id"
+            onOptionCreated={onIntentCreated}
           />
         </div>
         <div>
@@ -528,6 +957,11 @@ function FacebookGroupForm({
             valueField="id"
           />
         </div>
+        <DifficultyToggles
+          difficultyComment={form.difficulty_comment}
+          difficultyPost={form.difficulty_post}
+          onChange={(key, value) => set(key, value)}
+        />
         <div>
           <SearchableDropdown
             label="Người phụ trách chính"
@@ -582,11 +1016,26 @@ function FacebookGroupForm({
           />
         </div>
         <div>
-          <label className="text-xs font-bold text-on-surface-variant block mb-1">Số thành viên</label>
+          <label className="text-xs font-bold text-on-surface-variant block mb-1 flex items-center gap-1.5">
+            Số thành viên
+            {apiFilledFields.has("members") && (
+              <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-bold">
+                ✓ API
+              </span>
+            )}
+          </label>
           <input
             className="w-full border border-outline-variant rounded-xl px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/15 focus:border-primary text-on-surface"
             value={form.members}
-            onChange={(e) => set("members", e.target.value)}
+            onChange={(e) => {
+              set("members", e.target.value);
+              setApiFilledFields((prev) => {
+                if (!prev.has("members")) return prev;
+                const next = new Set(prev);
+                next.delete("members");
+                return next;
+              });
+            }}
             placeholder="50000"
           />
         </div>
@@ -617,6 +1066,22 @@ function FacebookGroupForm({
             placeholder="Nhập ghi chú chung..."
           />
         </div>
+        <PricingTiersEditor
+          enabled={form.has_pricing}
+          onEnabledChange={(enabled) => setForm((f) => ({ ...f, has_pricing: enabled }))}
+          tiers={form.pricing_tiers}
+          onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))}
+        />
+        <TemplateListEditor
+          label="Mẫu bình luận"
+          items={form.comment_templates}
+          onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
+        />
+        <TemplateListEditor
+          label="Mẫu bài đăng"
+          items={form.post_templates}
+          onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
+        />
         <div className="md:col-span-2 p-4 border border-outline-variant rounded-xl bg-surface-container-low space-y-4">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
@@ -733,7 +1198,7 @@ interface LiGroupFormData {
   group_name: string;
   group_url: string;
   status: string;
-  id_intent: string;
+  intent_ids: string[];
   id_industry: string;
   id_tier: string;
   id_team: string;
@@ -747,6 +1212,12 @@ interface LiGroupFormData {
   assignee_name_hint: string;
   co_assignee_name_hint: string;
   id_member_name_hint: string;
+  difficulty_comment: string;
+  difficulty_post: string;
+  has_pricing: boolean;
+  pricing_tiers: GroupPricingTier[];
+  comment_templates: string[];
+  post_templates: string[];
 }
 
 const LI_EMPTY_FORM: LiGroupFormData = {
@@ -754,7 +1225,7 @@ const LI_EMPTY_FORM: LiGroupFormData = {
   group_name: "",
   group_url: "",
   status: "idle",
-  id_intent: "",
+  intent_ids: [],
   id_industry: "",
   id_tier: "",
   id_team: "",
@@ -768,6 +1239,12 @@ const LI_EMPTY_FORM: LiGroupFormData = {
   assignee_name_hint: "",
   co_assignee_name_hint: "",
   id_member_name_hint: "",
+  difficulty_comment: "",
+  difficulty_post: "",
+  has_pricing: false,
+  pricing_tiers: [],
+  comment_templates: [],
+  post_templates: [],
 };
 
 function LinkedInGroupForm({
@@ -775,6 +1252,7 @@ function LinkedInGroupForm({
   onSubmit,
   onCancel,
   intentOptions,
+  onIntentCreated,
   industryOptions,
   teamOptions,
   tierOptions,
@@ -789,6 +1267,7 @@ function LinkedInGroupForm({
   onSubmit: (data: Partial<LiGroupFormData>) => Promise<void>;
   onCancel: () => void;
   intentOptions: Category[];
+  onIntentCreated: (newOption: Category) => void;
   industryOptions: Category[];
   teamOptions: Category[];
   tierOptions: Category[];
@@ -818,10 +1297,6 @@ function LinkedInGroupForm({
     e.preventDefault();
     if (!form.group_url.trim()) return;
 
-    if (form.id_intent && !intentOptions.some((o) => String(o.id) === form.id_intent)) {
-      alert("Vui lòng chọn Lĩnh vực hợp lệ từ danh mục!");
-      return;
-    }
     if (form.id_industry && !industryOptions.some((o) => String(o.id) === form.id_industry)) {
       alert("Vui lòng chọn Industry hợp lệ từ danh sách!");
       return;
@@ -850,6 +1325,9 @@ function LinkedInGroupForm({
         assignee_id: validUserIds.has(form.assignee_id) ? form.assignee_id : "",
         co_assignee_id: validUserIds.has(form.co_assignee_id) ? form.co_assignee_id : "",
         id_member: form.id_member && validUserIds.has(form.id_member) ? form.id_member : "",
+        pricing_tiers: form.has_pricing ? form.pricing_tiers : [],
+        comment_templates: form.comment_templates.filter((t) => t.trim()),
+        post_templates: form.post_templates.filter((t) => t.trim()),
       };
       await onSubmit(submitData);
     } finally {
@@ -881,13 +1359,11 @@ function LinkedInGroupForm({
         </div>
 
         <div>
-          <SearchableDropdown
-            label="Lĩnh vực"
-            value={form.id_intent}
-            onChange={(val) => set("id_intent", val)}
+          <IntentMultiSelect
+            value={form.intent_ids}
+            onChange={(ids) => setForm((f) => ({ ...f, intent_ids: ids }))}
             options={intentOptions}
-            placeholder="Tìm chọn Lĩnh vực..."
-            valueField="id"
+            onOptionCreated={onIntentCreated}
           />
         </div>
         <div>
@@ -930,6 +1406,11 @@ function LinkedInGroupForm({
             valueField="id"
           />
         </div>
+        <DifficultyToggles
+          difficultyComment={form.difficulty_comment}
+          difficultyPost={form.difficulty_post}
+          onChange={(key, value) => set(key, value)}
+        />
         <div>
           <SearchableDropdown
             label="Loại nội dung"
@@ -1001,6 +1482,22 @@ function LinkedInGroupForm({
             placeholder="Nhập ghi chú chung..."
           />
         </div>
+        <PricingTiersEditor
+          enabled={form.has_pricing}
+          onEnabledChange={(enabled) => setForm((f) => ({ ...f, has_pricing: enabled }))}
+          tiers={form.pricing_tiers}
+          onChange={(tiers) => setForm((f) => ({ ...f, pricing_tiers: tiers }))}
+        />
+        <TemplateListEditor
+          label="Mẫu bình luận"
+          items={form.comment_templates}
+          onChange={(items) => setForm((f) => ({ ...f, comment_templates: items }))}
+        />
+        <TemplateListEditor
+          label="Mẫu bài đăng"
+          items={form.post_templates}
+          onChange={(items) => setForm((f) => ({ ...f, post_templates: items }))}
+        />
       </div>
       <div className="flex gap-3 border-t border-outline-variant pt-4 mt-6">
         <button
@@ -1170,6 +1667,13 @@ export function GroupManagementContent() {
     } catch (e) {
       console.error("Lỗi khi tải danh mục:", e);
     }
+  }, []);
+
+  // Tạo lĩnh vực mới ngay trong form "Thêm/Sửa nhóm" (IntentMultiSelect) — cập nhật luôn vào
+  // state categories dùng chung để lựa chọn mới hiện ngay cả ở bộ lọc "Lĩnh vực" trên bảng,
+  // không cần reload trang.
+  const handleIntentCreated = useCallback((newOption: Category) => {
+    setCategories((prev) => (prev.some((c) => String(c.id) === String(newOption.id)) ? prev : [...prev, newOption]));
   }, []);
 
   useEffect(() => {
@@ -1764,7 +2268,10 @@ export function GroupManagementContent() {
             <div className="flex-1 overflow-y-auto p-6">
               {platform === "facebook" ? (
                 <FacebookGroupForm
+                  existingGroups={fbGroups}
+                  editingGroupId={editingGroup ? String(editingGroup.id) : undefined}
                   intentOptions={categories.filter((c) => c.category_type === "intent")}
+                  onIntentCreated={handleIntentCreated}
                   industryOptions={categories.filter((c) => c.category_type === "industry")}
                   teamOptions={teamCategories}
                   tierOptions={categories.filter((c) => c.category_type === "tier")}
@@ -1780,7 +2287,9 @@ export function GroupManagementContent() {
                           id_member: String((editingGroup as any).id_member ?? ""),
                           group_name: (editingGroup as FacebookGroup).group_name,
                           group_url: (editingGroup as FacebookGroup).group_url,
-                          id_intent: String((editingGroup as any).id_intent ?? ""),
+                          intent_ids:
+                            (editingGroup as FacebookGroup).intent_ids ??
+                            ((editingGroup as any).id_intent ? [String((editingGroup as any).id_intent)] : []),
                           id_industry: String((editingGroup as any).id_industry ?? ""),
                           id_tier: String((editingGroup as any).id_tier ?? ""),
                           id_team: String((editingGroup as any).id_team ?? ""),
@@ -1802,6 +2311,12 @@ export function GroupManagementContent() {
                           time_crawl: (editingGroup as FacebookGroup).time_crawl || "",
                           end_time_24h: (editingGroup as FacebookGroup).end_time_24h ? String((editingGroup as FacebookGroup).end_time_24h).substring(0, 10) : "",
                           end_date_hour: (editingGroup as FacebookGroup).end_date_hour ? String((editingGroup as FacebookGroup).end_date_hour).substring(0, 10) : "",
+                          difficulty_comment: (editingGroup as FacebookGroup).difficulty_comment || "",
+                          difficulty_post: (editingGroup as FacebookGroup).difficulty_post || "",
+                          has_pricing: ((editingGroup as FacebookGroup).pricing_tiers?.length ?? 0) > 0,
+                          pricing_tiers: (editingGroup as FacebookGroup).pricing_tiers || [],
+                          comment_templates: ((editingGroup as FacebookGroup).comment_templates || []).map((t) => t.content),
+                          post_templates: ((editingGroup as FacebookGroup).post_templates || []).map((t) => t.content),
                         }
                       : undefined
                   }
@@ -1814,6 +2329,7 @@ export function GroupManagementContent() {
               ) : (
                 <LinkedInGroupForm
                   intentOptions={categories.filter((c) => c.category_type === "intent")}
+                  onIntentCreated={handleIntentCreated}
                   industryOptions={categories.filter((c) => c.category_type === "industry")}
                   teamOptions={teamCategories}
                   tierOptions={categories.filter((c) => c.category_type === "tier")}
@@ -1827,7 +2343,9 @@ export function GroupManagementContent() {
                           group_name: (editingGroup as LinkedInGroup).group_name,
                           group_url: (editingGroup as LinkedInGroup).group_url,
                           status: (editingGroup as LinkedInGroup).status || "idle",
-                          id_intent: String((editingGroup as any).id_intent ?? ""),
+                          intent_ids:
+                            (editingGroup as LinkedInGroup).intent_ids ??
+                            ((editingGroup as any).id_intent ? [String((editingGroup as any).id_intent)] : []),
                           id_industry: String((editingGroup as any).id_industry ?? ""),
                           id_tier: String((editingGroup as any).id_tier ?? ""),
                           id_team: String((editingGroup as any).id_team ?? ""),
@@ -1838,6 +2356,12 @@ export function GroupManagementContent() {
                           co_assignee_id: String((editingGroup as LinkedInGroup).co_assignee_id ?? ""),
                           note: (editingGroup as LinkedInGroup).note || "",
                           risk_note: (editingGroup as LinkedInGroup).risk_note || "",
+                          difficulty_comment: (editingGroup as LinkedInGroup).difficulty_comment || "",
+                          difficulty_post: (editingGroup as LinkedInGroup).difficulty_post || "",
+                          has_pricing: ((editingGroup as LinkedInGroup).pricing_tiers?.length ?? 0) > 0,
+                          pricing_tiers: (editingGroup as LinkedInGroup).pricing_tiers || [],
+                          comment_templates: ((editingGroup as LinkedInGroup).comment_templates || []).map((t) => t.content),
+                          post_templates: ((editingGroup as LinkedInGroup).post_templates || []).map((t) => t.content),
                         }
                       : undefined
                   }

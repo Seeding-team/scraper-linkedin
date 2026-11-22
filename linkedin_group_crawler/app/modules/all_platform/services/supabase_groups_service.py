@@ -111,6 +111,143 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
     return rows
 
 
+def _attach_group_extras(supabase: Client, rows: list[dict], platform: str, cat_map: dict[str, dict]) -> None:
+    """Gắn group_intents (nhiều lĩnh vực - Việc 1), group_pricing_tiers (Việc 2) và
+    group_comment_templates/group_post_templates (Việc 3) cho mỗi nhóm trong `rows` — sửa
+    trực tiếp từng dict, không trả về giá trị mới.
+
+    KHÔNG dùng `.in_(group_id, ...)` để lọc theo danh sách group — lặp lại đúng bài học đã
+    ghi ở `_attach_group_lead_stats`: URL quá dài với nhiều id có thể bị gateway self-host
+    từ chối (502). Quét toàn bộ bảng con theo `platform` rồi map bằng Python, cùng kỹ thuật
+    với thống kê lead/can-lien-he bên dưới.
+    """
+    if not rows:
+        return
+
+    intents_by_group: dict[str, list[str]] = {}
+    try:
+        gi_res = supabase.table("group_intents").select("group_id, id_intent").eq("platform", platform).execute()
+        missing_cat_ids = {
+            str(r["id_intent"]) for r in (gi_res.data or []) if str(r.get("id_intent")) not in cat_map
+        }
+        if missing_cat_ids:
+            extra_cats = (
+                supabase.table("categories")
+                .select("id, category_type, code, name")
+                .in_("id", list(missing_cat_ids))
+                .execute()
+            )
+            for c in (extra_cats.data or []):
+                cat_map[str(c["id"])] = c
+        for r in (gi_res.data or []):
+            intents_by_group.setdefault(str(r.get("group_id")), []).append(str(r.get("id_intent")))
+    except Exception as e:
+        logger.warning(f"[GROUP-EXTRAS] Lỗi đọc group_intents ({platform}): {e}")
+
+    tiers_by_group: dict[str, list[dict]] = {}
+    try:
+        tier_res = (
+            supabase.table("group_pricing_tiers")
+            .select("id, group_id, posts_count, period, unit_price")
+            .eq("platform", platform)
+            .execute()
+        )
+        for r in (tier_res.data or []):
+            tiers_by_group.setdefault(str(r.get("group_id")), []).append(
+                {k: v for k, v in r.items() if k != "group_id"}
+            )
+    except Exception as e:
+        logger.warning(f"[GROUP-EXTRAS] Lỗi đọc group_pricing_tiers ({platform}): {e}")
+
+    comment_tpl_by_group: dict[str, list[dict]] = {}
+    post_tpl_by_group: dict[str, list[dict]] = {}
+    for table_name, bucket in (
+        ("group_comment_templates", comment_tpl_by_group),
+        ("group_post_templates", post_tpl_by_group),
+    ):
+        try:
+            tpl_res = supabase.table(table_name).select("id, group_id, content").eq("platform", platform).execute()
+            for r in (tpl_res.data or []):
+                bucket.setdefault(str(r.get("group_id")), []).append(
+                    {k: v for k, v in r.items() if k != "group_id"}
+                )
+        except Exception as e:
+            logger.warning(f"[GROUP-EXTRAS] Lỗi đọc {table_name} ({platform}): {e}")
+
+    for r in rows:
+        gid = str(r.get("id"))
+        intent_ids = intents_by_group.get(gid, [])
+        r["intent_ids"] = intent_ids
+        r["intent_names"] = [cat_map[i].get("name") or cat_map[i].get("code") for i in intent_ids if i in cat_map]
+        r["pricing_tiers"] = tiers_by_group.get(gid, [])
+        r["comment_templates"] = comment_tpl_by_group.get(gid, [])
+        r["post_templates"] = post_tpl_by_group.get(gid, [])
+
+
+def _sync_group_intents(supabase: Client, group_id: str, platform: str, intent_ids: list[str]) -> None:
+    """Thay toàn bộ lĩnh vực của 1 group bằng danh sách mới (xoá hết rồi chèn lại) — khớp
+    UX form: multi-select sửa tự do trong modal, lưu 1 lần khi submit."""
+    supabase.table("group_intents").delete().eq("group_id", group_id).eq("platform", platform).execute()
+    seen: list[str] = []
+    for iid in intent_ids or []:
+        if iid and iid not in seen:
+            seen.append(iid)
+    if seen:
+        supabase.table("group_intents").insert(
+            [{"group_id": group_id, "platform": platform, "id_intent": iid} for iid in seen]
+        ).execute()
+
+
+def _sync_group_pricing_tiers(supabase: Client, group_id: str, platform: str, tiers: list[dict]) -> None:
+    """Thay toàn bộ bảng giá của 1 group (xoá hết rồi chèn lại) — chọn "Miễn phí" ở FE thì
+    gửi mảng rỗng, hàm này sẽ xoá sạch các dòng giá cũ."""
+    supabase.table("group_pricing_tiers").delete().eq("group_id", group_id).eq("platform", platform).execute()
+    rows = []
+    for t in tiers or []:
+        if not isinstance(t, dict):
+            continue
+        try:
+            posts_count = int(t.get("posts_count"))
+            unit_price = float(t.get("unit_price"))
+        except (TypeError, ValueError):
+            continue
+        period = t.get("period")
+        if period not in ("week", "month") or posts_count <= 0 or unit_price < 0:
+            continue
+        rows.append(
+            {
+                "group_id": group_id,
+                "platform": platform,
+                "posts_count": posts_count,
+                "period": period,
+                "unit_price": unit_price,
+            }
+        )
+    if rows:
+        supabase.table("group_pricing_tiers").insert(rows).execute()
+
+
+def _sync_group_templates(
+    supabase: Client,
+    table: str,
+    group_id: str,
+    platform: str,
+    items: list,
+    created_by: Optional[str],
+) -> None:
+    """Thay toàn bộ mẫu (bình luận hoặc bài đăng) của 1 group (xoá hết rồi chèn lại)."""
+    supabase.table(table).delete().eq("group_id", group_id).eq("platform", platform).execute()
+    rows = []
+    for item in items or []:
+        content = (item.get("content") if isinstance(item, dict) else item) or ""
+        content = str(content).strip()
+        if not content:
+            continue
+        rows.append({"group_id": group_id, "platform": platform, "content": content, "created_by": created_by})
+    if rows:
+        supabase.table(table).insert(rows).execute()
+
+
 def get_facebook_groups(
     id_intent: Optional[str] = None,
     id_team: Optional[str] = None,
@@ -187,6 +324,7 @@ def get_facebook_groups(
             else:
                 r[disp_field] = None
 
+    _attach_group_extras(supabase, rows, "facebook", cat_map)
     return _attach_group_lead_stats(supabase, rows, "facebook_posts", "group_id")
 
 
@@ -220,11 +358,12 @@ def _clean_group_payload(payload: dict) -> dict:
     return cleaned
 
 
-def add_facebook_group(payload: dict) -> dict:
+def add_facebook_group(payload: dict, current_user_id: Optional[str] = None) -> dict:
     """Add a new Facebook group."""
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+    intent_ids = [str(i) for i in (payload.get("intent_ids") or []) if i]
 
     # Chặn thêm trùng nhóm (cùng group_url) — khớp UNIQUE constraint facebook_groups_
     # group_url_key (migration 158). Báo lỗi rõ ràng thay vì để lộ lỗi DB thô, và tránh
@@ -252,7 +391,9 @@ def add_facebook_group(payload: dict) -> dict:
         "crawl_frequency": cleaned.get("crawl_frequency"),
         "id_member": cleaned.get("id_member"),
         # Stable FK fields (match DB clean)
-        "id_intent": cleaned.get("id_intent"),
+        # id_intent = linh vuc DAU TIEN trong intent_ids (neu co) - giu tuong thich nguoc
+        # voi post-feed filter/group-list filter/daily_crawl_job (xem migration 236).
+        "id_intent": intent_ids[0] if intent_ids else cleaned.get("id_intent"),
         "id_industry": cleaned.get("id_industry"),
         "id_tier": cleaned.get("id_tier"),
         "id_team": cleaned.get("id_team"),
@@ -280,6 +421,8 @@ def add_facebook_group(payload: dict) -> dict:
             else bool(cleaned.get("public_crawl_enabled"))
         ),
         "public_crawl_interval_min": cleaned.get("public_crawl_interval_min") or 30,
+        "difficulty_comment": cleaned.get("difficulty_comment"),
+        "difficulty_post": cleaned.get("difficulty_post"),
     }
 
     result = (
@@ -287,14 +430,30 @@ def add_facebook_group(payload: dict) -> dict:
         .insert(insert_data)
         .execute()
     )
-    return result.data[0] if result.data else {}
+    new_group = result.data[0] if result.data else {}
+    new_id = new_group.get("id")
+    if new_id:
+        _sync_group_intents(supabase, new_id, "facebook", intent_ids)
+        _sync_group_pricing_tiers(supabase, new_id, "facebook", payload.get("pricing_tiers") or [])
+        _sync_group_templates(
+            supabase, "group_comment_templates", new_id, "facebook",
+            payload.get("comment_templates") or [], current_user_id,
+        )
+        _sync_group_templates(
+            supabase, "group_post_templates", new_id, "facebook",
+            payload.get("post_templates") or [], current_user_id,
+        )
+    return new_group
 
 
-def update_facebook_group(group_id: str, payload: dict) -> dict:
+def update_facebook_group(group_id: str, payload: dict, current_user_id: Optional[str] = None) -> dict:
     """Update an existing Facebook group."""
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+    intent_ids = [str(i) for i in (payload.get("intent_ids") or []) if i]
+    if intent_ids:
+        cleaned["id_intent"] = intent_ids[0]
     allowed_fields = {
         "group_name",
         "group_url",
@@ -328,6 +487,8 @@ def update_facebook_group(group_id: str, payload: dict) -> dict:
         "visibility",
         "public_crawl_enabled",
         "public_crawl_interval_min",
+        "difficulty_comment",
+        "difficulty_post",
     }
 
     update_data = {k: v for k, v in cleaned.items() if k in allowed_fields}
@@ -346,6 +507,25 @@ def update_facebook_group(group_id: str, payload: dict) -> dict:
         .eq("id", group_id)
         .execute()
     )
+
+    # Chi dong bo group_intents/pricing_tiers/templates khi payload CO gui key tuong ung -
+    # tranh xoa sach du lieu cu khi gui PATCH rieng le (vd handleInlineAssign chi gui
+    # assignee_id, khong gui intent_ids/pricing_tiers/templates).
+    if "intent_ids" in payload:
+        _sync_group_intents(supabase, group_id, "facebook", intent_ids)
+    if "pricing_tiers" in payload:
+        _sync_group_pricing_tiers(supabase, group_id, "facebook", payload.get("pricing_tiers") or [])
+    if "comment_templates" in payload:
+        _sync_group_templates(
+            supabase, "group_comment_templates", group_id, "facebook",
+            payload.get("comment_templates") or [], current_user_id,
+        )
+    if "post_templates" in payload:
+        _sync_group_templates(
+            supabase, "group_post_templates", group_id, "facebook",
+            payload.get("post_templates") or [], current_user_id,
+        )
+
     return result.data[0] if result.data else {}
 
 
@@ -443,14 +623,16 @@ def get_linkedin_groups(status: Optional[str] = None, id_member: Optional[str] =
             else:
                 r[disp_field] = None
 
+    _attach_group_extras(supabase, rows, "linkedin", cat_map)
     return _attach_group_lead_stats(supabase, rows, "linkedin_posts", "id_group")
 
 
-def add_linkedin_group(payload: dict) -> dict:
+def add_linkedin_group(payload: dict, current_user_id: Optional[str] = None) -> dict:
     """Add a new LinkedIn group."""
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+    intent_ids = [str(i) for i in (payload.get("intent_ids") or []) if i]
 
     # Chặn thêm trùng nhóm (cùng group_url) — khớp UNIQUE constraint linkedin_groups_
     # group_url_key (migration 158). Báo lỗi rõ ràng thay vì để lộ lỗi DB thô, và tránh
@@ -473,7 +655,9 @@ def add_linkedin_group(payload: dict) -> dict:
         "status": "idle",
         "id_member": cleaned.get("id_member"),
         # Stable FK fields (match DB clean)
-        "id_intent": cleaned.get("id_intent"),
+        # id_intent = linh vuc DAU TIEN trong intent_ids (neu co) - giu tuong thich nguoc,
+        # cung quyet dinh voi facebook_groups (xem migration 236).
+        "id_intent": intent_ids[0] if intent_ids else cleaned.get("id_intent"),
         "id_industry": cleaned.get("id_industry"),
         "id_tier": cleaned.get("id_tier"),
         "id_team": cleaned.get("id_team"),
@@ -487,6 +671,8 @@ def add_linkedin_group(payload: dict) -> dict:
         "assignee_name_hint": cleaned.get("assignee_name_hint"),
         "co_assignee_name_hint": cleaned.get("co_assignee_name_hint"),
         "id_member_name_hint": cleaned.get("id_member_name_hint"),
+        "difficulty_comment": cleaned.get("difficulty_comment"),
+        "difficulty_post": cleaned.get("difficulty_post"),
     }
 
     result = (
@@ -494,14 +680,30 @@ def add_linkedin_group(payload: dict) -> dict:
         .insert(insert_data)
         .execute()
     )
-    return result.data[0] if result.data else {}
+    new_group = result.data[0] if result.data else {}
+    new_id = new_group.get("id")
+    if new_id:
+        _sync_group_intents(supabase, new_id, "linkedin", intent_ids)
+        _sync_group_pricing_tiers(supabase, new_id, "linkedin", payload.get("pricing_tiers") or [])
+        _sync_group_templates(
+            supabase, "group_comment_templates", new_id, "linkedin",
+            payload.get("comment_templates") or [], current_user_id,
+        )
+        _sync_group_templates(
+            supabase, "group_post_templates", new_id, "linkedin",
+            payload.get("post_templates") or [], current_user_id,
+        )
+    return new_group
 
 
-def update_linkedin_group(group_id: str, payload: dict) -> dict:
+def update_linkedin_group(group_id: str, payload: dict, current_user_id: Optional[str] = None) -> dict:
     """Update an existing LinkedIn group."""
     supabase: Client = get_supabase_client()
 
     cleaned = _clean_group_payload(payload)
+    intent_ids = [str(i) for i in (payload.get("intent_ids") or []) if i]
+    if intent_ids:
+        cleaned["id_intent"] = intent_ids[0]
     allowed_fields = {
         "group_url",
         "group_name",
@@ -522,6 +724,8 @@ def update_linkedin_group(group_id: str, payload: dict) -> dict:
         "assignee_name_hint",
         "co_assignee_name_hint",
         "id_member_name_hint",
+        "difficulty_comment",
+        "difficulty_post",
     }
 
     # Giữ cả None (vd bỏ gán assignee_id) — khớp hành vi update_facebook_group(), trước đây
@@ -535,6 +739,22 @@ def update_linkedin_group(group_id: str, payload: dict) -> dict:
         .eq("id", group_id)
         .execute()
     )
+
+    if "intent_ids" in payload:
+        _sync_group_intents(supabase, group_id, "linkedin", intent_ids)
+    if "pricing_tiers" in payload:
+        _sync_group_pricing_tiers(supabase, group_id, "linkedin", payload.get("pricing_tiers") or [])
+    if "comment_templates" in payload:
+        _sync_group_templates(
+            supabase, "group_comment_templates", group_id, "linkedin",
+            payload.get("comment_templates") or [], current_user_id,
+        )
+    if "post_templates" in payload:
+        _sync_group_templates(
+            supabase, "group_post_templates", group_id, "linkedin",
+            payload.get("post_templates") or [], current_user_id,
+        )
+
     return result.data[0] if result.data else {}
 
 

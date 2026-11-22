@@ -545,6 +545,30 @@ export interface FacebookGroup {
   last_public_crawled_at?: string | null;
   last_public_crawl_status?: string | null;
   last_public_posts_count?: number;
+  /** Việc 1 (2026-11-22): nhiều lĩnh vực/group (bảng group_intents, migration 236) — id_intent
+   * cũ vẫn được ghi song song = phần tử đầu tiên của mảng này (xem supabase_groups_service.py). */
+  intent_ids?: string[];
+  intent_names?: string[];
+  /** Việc 2 (2026-11-22): độ khó riêng Bình luận/Bài đăng (migration 237) — độc lập với health_score cũ. */
+  difficulty_comment?: "easy" | "hard" | null;
+  difficulty_post?: "easy" | "hard" | null;
+  pricing_tiers?: GroupPricingTier[];
+  /** Việc 3 (2026-11-22): mẫu bình luận/bài đăng riêng của group (migration 238) — độc lập
+   * với "Thư viện mẫu câu" dùng chung (quick_comment_templates). */
+  comment_templates?: GroupTemplateItem[];
+  post_templates?: GroupTemplateItem[];
+}
+
+export interface GroupPricingTier {
+  id?: string;
+  posts_count: number;
+  period: "week" | "month";
+  unit_price: number;
+}
+
+export interface GroupTemplateItem {
+  id?: string;
+  content: string;
 }
 
 export interface LinkedInGroup {
@@ -595,6 +619,16 @@ export interface LinkedInGroup {
   /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
    * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
   can_lien_he_stats_error?: boolean;
+  /** Việc 1 (2026-11-22): nhiều lĩnh vực/group — xem chú thích tương ứng ở FacebookGroup. */
+  intent_ids?: string[];
+  intent_names?: string[];
+  /** Việc 2 (2026-11-22): độ khó riêng Bình luận/Bài đăng — xem chú thích ở FacebookGroup. */
+  difficulty_comment?: "easy" | "hard" | null;
+  difficulty_post?: "easy" | "hard" | null;
+  pricing_tiers?: GroupPricingTier[];
+  /** Việc 3 (2026-11-22): mẫu bình luận/bài đăng riêng của group. */
+  comment_templates?: GroupTemplateItem[];
+  post_templates?: GroupTemplateItem[];
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────
