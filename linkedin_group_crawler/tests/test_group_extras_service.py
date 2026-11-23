@@ -212,3 +212,50 @@ def test_sync_group_templates_independent_tables(fake_db):
     svc._sync_group_templates(fake_db, "group_post_templates", "g1", "facebook", ["mẫu bài đăng"], created_by=None)
     assert [r["content"] for r in fake_db.store["group_comment_templates"]] == ["mẫu bình luận"]
     assert [r["content"] for r in fake_db.store["group_post_templates"]] == ["mẫu bài đăng"]
+
+
+# ---------------------------------------------------------------------------
+# Regression (2026-11-23): 1 bảng vệ tinh lỗi/chưa tồn tại (vd migration 236/237/238
+# chưa áp dụng ở DB đích) KHÔNG được làm thất bại cả add/update_facebook_group — các
+# trường chính (tên, URL, lịch cào 24h...) phải vẫn lưu được. Trước đây các lời gọi
+# _sync_group_intents/_sync_group_pricing_tiers/_sync_group_templates không được bọc
+# try/except nên 1 exception ở đó (vd "relation group_intents does not exist") làm cả
+# request trả success=False dù dòng chính đã UPDATE/INSERT xong.
+# ---------------------------------------------------------------------------
+class _RaisingQuery(_FakeQuery):
+    def execute(self):
+        raise RuntimeError('relation "group_intents" does not exist')
+
+
+class _FakeSupabaseWithFailingTable(_FakeSupabase):
+    def __init__(self, failing_tables: set[str]):
+        super().__init__()
+        self.failing_tables = failing_tables
+
+    def table(self, name: str):
+        if name in self.failing_tables:
+            return _RaisingQuery(self.store.setdefault(name, []), name)
+        return super().table(name)
+
+
+def test_update_facebook_group_still_saves_main_fields_when_group_intents_table_missing(monkeypatch):
+    db = _FakeSupabaseWithFailingTable({"group_intents"})
+    db.store["facebook_groups"] = [{"id": "g1", "group_name": "Ten cu"}]
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: db)
+
+    result = svc.update_facebook_group("g1", {"id": "g1", "group_name": "Ten moi", "intent_ids": ["cat-a"]})
+
+    assert result["group_name"] == "Ten moi"
+    assert db.store["group_intents"] == []  # khong co dong nao duoc ghi (bang loi), nhung khong van den dong chinh
+
+
+def test_add_facebook_group_still_creates_group_when_group_intents_table_missing(monkeypatch):
+    db = _FakeSupabaseWithFailingTable({"group_intents"})
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: db)
+
+    result = svc.add_facebook_group(
+        {"group_name": "Nhom moi", "group_url": "https://facebook.com/groups/abc", "intent_ids": ["cat-a"]}
+    )
+
+    assert result["group_name"] == "Nhom moi"
+    assert db.store["facebook_groups"][0]["group_name"] == "Nhom moi"
