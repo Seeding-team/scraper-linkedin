@@ -123,11 +123,13 @@ export function getInitials(name?: string) {
 
 /** Trang chủ đúng theo role — dùng chung cho sidebar (mục "Trang chủ") lẫn
  * redirect ngay sau khi đăng nhập (AuthPage.tsx). Từ 2026-09-22, trang chủ
- * của CẢ 3 role là "Tương tác nội bộ" (thay vì dashboard riêng của
- * admin/leader hay Dashboard Pipeline của member) — dashboard riêng vẫn còn,
- * truy cập được qua các mục khác trong sidebar, chỉ không còn là mặc định. */
+ * của CẢ 3 role từng là "Tương tác nội bộ" (thay vì dashboard riêng của
+ * admin/leader hay Dashboard Pipeline của member). Từ 2026-11-24, đổi tiếp
+ * sang "Hoạt động seeding" (tab "Chưa đánh giá") — dashboard riêng/Tương tác
+ * nội bộ vẫn còn, truy cập được qua các mục khác trong sidebar, chỉ không
+ * còn là mặc định sau khi đăng nhập. */
 export function getDashboardHrefForRole(role?: string | null): string {
-  return "/all-platform/internal-engagement";
+  return "/all-platform/post-feed?status=pending";
 }
 
 // "Nhom quyen" CRM (migration 155, OPT-IN theo tung user) - id cua tung muc
@@ -764,7 +766,10 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     href: dashboardHref,
     icon: "dashboard",
     label: "Trang chủ",
-    matchStartsWith: [dashboardHref],
+    // dashboardHref hiện có query string ("?status=pending") — isLeafActive() đã tự xử lý
+    // khớp theo query ở nhánh riêng (không đi qua matchStartsWith), nên matchStartsWith chỉ
+    // cần phần path để không bị "chết" nếu sau này có chỗ khác gọi pathMatchesPrefix trực tiếp.
+    matchStartsWith: [dashboardHref.split("?")[0]],
   };
   const phoneBridgeEntry: NavLeafItem = {
     type: "item",

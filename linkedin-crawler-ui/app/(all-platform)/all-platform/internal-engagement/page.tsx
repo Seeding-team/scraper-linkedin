@@ -218,8 +218,9 @@ export default function InternalEngagementPage() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   // Tabs — thứ tự hiển thị: Seeding nội bộ -> Seeding bên ngoài -> Tổng quan báo cáo.
-  // Mặc định "feed" (Seeding nội bộ) - đây là trang landing chính khi vào app
-  // (xem getDashboardHrefForRole trong AllPlatformSidebar.tsx).
+  // Mặc định "feed" (Seeding nội bộ) khi vào thẳng trang này. Từ 2026-11-24, trang landing
+  // chính sau đăng nhập đã đổi sang "/all-platform/post-feed?status=pending" (xem
+  // getDashboardHrefForRole trong AllPlatformSidebar.tsx) — trang này không còn là mặc định.
   const searchParams = useSearchParams();
   const urlTab = searchParams?.get("tab");
   const router = useRouter();
