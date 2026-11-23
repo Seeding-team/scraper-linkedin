@@ -398,6 +398,14 @@ function GroupLinks({
                         {child.items.map((subItem) => {
                           const SubItemIcon = materialToLucideIcon(subItem.icon);
                           const subActive = isLeafActive(pathname, subItem, searchParams);
+                          // "Hoạt động seeding" và các mục tương tự có href riêng (status mặc định)
+                          // + children là các status cụ thể (status=todo/skip...) — khi 1 child đang
+                          // active thì PHẢI tắt highlight của chính subItem, nếu không cả 2 cùng sáng
+                          // cùng lúc nhìn như sidebar chưa "default" đúng vào 1 mục duy nhất (khớp
+                          // pattern đã dùng ở "internal-engagement"/active && !childHasActiveLeaf).
+                          const subItemHasActiveLeaf = Boolean(
+                            subItem.children?.some((leaf) => isLeafActive(pathname, leaf, searchParams)),
+                          );
 
                           // Nếu là menu cha Thư viện & Công cụ có các submenu con
                           if (subItem.id === "external-library-tools" && subItem.children && subItem.children.length > 0) {
@@ -496,7 +504,7 @@ function GroupLinks({
                                 }}
                                 className={cn(
                                   "group relative flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium transition-all duration-150 outline-none select-none",
-                                  subActive
+                                  subActive && !subItemHasActiveLeaf
                                     ? "bg-rose-50 text-rose-700 font-bold shadow-2xs"
                                     : "text-slate-600 hover:bg-slate-100/70 hover:text-slate-900 active:bg-slate-200/50",
                                 )}
@@ -505,7 +513,7 @@ function GroupLinks({
                                   <SubItemIcon
                                     className={cn(
                                       "size-3.5 shrink-0 stroke-[1.8] transition-colors",
-                                      subActive ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
+                                      (subActive || subItemHasActiveLeaf) ? "text-rose-700" : "text-slate-400 group-hover:text-slate-600",
                                     )}
                                   />
                                   <span className="truncate">{subItem.label}</span>
