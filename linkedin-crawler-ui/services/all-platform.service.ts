@@ -3047,14 +3047,26 @@ export interface CallResultStats {
   by_member: CallResultStatsByMember[];
   by_day: CallResultStatsByDay[];
   total: number;
-  /** Cột "Comment" (widget Kết quả liên hệ): số dòng seeding_content_kpi trong kỳ đang chọn. */
+  /** Cột "Comment" (widget Kết quả liên hệ): số LƯỢT (dòng seeding_content_kpi) trong kỳ đang chọn. */
   comment_count: number;
-  /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — dùng tính xu hướng "+N"/"-N". */
+  /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — vẫn giữ, có thể dùng ở chỗ khác (vd "Ai đã làm"). */
   comment_count_prev: number;
+  /** Tử số "X/Y" của card "Comment": số BÀI khác nhau (COUNT DISTINCT id_post, không phải lượt)
+   *  đã có seeding/bình luận trong kỳ, chỉ tính bài "phù hợp" (chưa bị đánh giá "Không phù hợp"). */
+  comment_distinct_post_count: number;
+  /** Cùng số liệu ở kỳ trước liền kề — dùng tính % tăng/giảm TRÊN SỐ BÀI (khác comment_count_prev). */
+  comment_distinct_post_count_prev: number;
+  /** Mẫu số Y của card "Comment": tổng bài phù hợp trong kỳ. Khi lọc 1 thành viên cụ thể, đã
+   *  thu hẹp về đúng phạm vi bài của thành viên đó — RIÊNG với total_posts_suitable_count bên
+   *  dưới (card "Tổng bài" luôn toàn cục, không lọc theo thành viên). */
+  comment_post_pool_count: number;
   /** Card "Tổng bài": số bài crawl (crawl_date) trong kỳ đang chọn, không lọc theo member. */
   total_posts_count: number;
   /** Cùng số liệu ở kỳ trước liền kề (cùng độ dài) — dùng tính % tăng/giảm. */
   total_posts_count_prev: number;
+  /** Tử số của card "Tổng bài" (X/Y): trong total_posts_count, số bài KHÔNG bị đánh giá
+   *  "Không phù hợp" (post_quick_review.evaluation_code != 'khong-phu-hop'). */
+  total_posts_suitable_count: number;
   range: { start: string; end: string };
 }
 
