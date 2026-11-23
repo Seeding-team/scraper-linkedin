@@ -454,11 +454,20 @@ export function CallResultStatsWidget({
     () => (callStats?.by_type || []).filter((t) => OK_CODES.has(t.code)).reduce((s, t) => s + t.count, 0),
     [callStats]
   );
-  // Cột "Comment" (Bước 1): đếm seeding_content_kpi — xu hướng "+N"/"-N" so với kỳ trước,
-  // tính kiểu CHÊNH LỆCH TUYỆT ĐỐI (không phải %) theo đúng mô tả Bước 2 ("chỉ hiện số + badge
-  // xu hướng +N/-N", không có badge % vì Comment không có khái niệm tỷ lệ).
-  const commentCount = callStats?.comment_count ?? 0;
-  const commentDelta = commentCount - (callStats?.comment_count_prev ?? 0);
+  // Cột "Comment" dạng "X/Y" (Việc 3+4, 2026-11-23): X = comment_distinct_post_count (số BÀI
+  // khác nhau đã comment, COUNT DISTINCT id_post — không phải số lượt/dòng như comment_count
+  // cũ), Y = comment_post_pool_count (tổng bài phù hợp trong kỳ, đã thu hẹp theo thành viên
+  // đang lọc nếu có). % xu hướng tính trên X so với kỳ trước (comment_distinct_post_count_prev)
+  // theo đúng công thức đã dùng ở totalPostsPctChange — KHÔNG còn delta tuyệt đối "+N/-N" cũ.
+  const commentDistinctPostCount = callStats?.comment_distinct_post_count ?? 0;
+  const commentDistinctPostCountPrev = callStats?.comment_distinct_post_count_prev ?? 0;
+  const commentPostPoolCount = callStats?.comment_post_pool_count ?? 0;
+  const commentPostPctChange =
+    commentDistinctPostCountPrev > 0
+      ? Math.round(((commentDistinctPostCount - commentDistinctPostCountPrev) / commentDistinctPostCountPrev) * 100)
+      : commentDistinctPostCount > 0
+        ? 100
+        : 0;
 
   // Card "Tổng bài" (Việc 1): số bài crawl trong kỳ + % so với kỳ trước liền kề cùng độ
   // dài. Không có mẫu số cố định như callPctVal/zaloPctVal (đây là % TĂNG/GIẢM so với kỳ
@@ -466,6 +475,9 @@ export function CallResultStatsWidget({
   // kỳ này > 0 (từ 0 lên có dữ liệu), 0% khi cả 2 kỳ đều = 0.
   const totalPostsCount = callStats?.total_posts_count ?? 0;
   const totalPostsCountPrev = callStats?.total_posts_count_prev ?? 0;
+  // Tử số "X/Y" (Việc 2): trong totalPostsCount, số bài KHÔNG bị đánh giá "Không phù hợp".
+  // % xu hướng bên dưới vẫn tính trên Y (totalPostsCount so với kỳ trước) — không đổi.
+  const totalPostsSuitableCount = callStats?.total_posts_suitable_count ?? 0;
   const totalPostsPctChange =
     totalPostsCountPrev > 0
       ? Math.round(((totalPostsCount - totalPostsCountPrev) / totalPostsCountPrev) * 100)
@@ -648,10 +660,12 @@ export function CallResultStatsWidget({
             iconBgClass="bg-blue-100"
             iconTextClass="text-blue-600"
             title="Tổng bài"
-            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước."
+            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
           />
           <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">{totalPostsCount}</span>
+            <span className="text-[26px] font-extrabold leading-tight">
+              {totalPostsSuitableCount} / {totalPostsCount}
+            </span>
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] font-bold",
@@ -667,7 +681,7 @@ export function CallResultStatsWidget({
             </span>
           </div>
           <div className="text-[12px] text-muted-foreground mt-0.5">
-            {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
+            {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
           </div>
         </div>
 
@@ -737,26 +751,28 @@ export function CallResultStatsWidget({
             iconBgClass="bg-violet-100"
             iconTextClass="text-violet-600"
             title="Comment"
-            tooltip="Số lượt seeding/bình luận (ghi nhận KPI) trong kỳ đang chọn, so với cùng độ dài kỳ liền trước."
+            tooltip="Số bài đã có seeding/bình luận trên tổng số bài phù hợp trong kỳ đang chọn (mẫu số thu hẹp theo đúng thành viên nếu đang lọc 1 người), so với cùng độ dài kỳ liền trước."
           />
           <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">{commentCount}</span>
+            <span className="text-[26px] font-extrabold leading-tight">
+              {commentDistinctPostCount} / {commentPostPoolCount}
+            </span>
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] font-bold",
-                commentDelta > 0
+                commentPostPctChange > 0
                   ? "bg-emerald-50 text-emerald-700"
-                  : commentDelta < 0
+                  : commentPostPctChange < 0
                     ? "bg-rose-50 text-rose-600"
                     : "bg-muted text-muted-foreground"
               )}
             >
-              {commentDelta > 0 ? "+" : ""}
-              {commentDelta}
+              {commentPostPctChange > 0 ? "+" : ""}
+              {commentPostPctChange}%
             </span>
           </div>
           <div className="text-[12px] text-muted-foreground mt-0.5">
-            {commentCount} lượt seeding/bình luận trong kỳ
+            {commentDistinctPostCount} bài đã comment / {commentPostPoolCount} bài phù hợp trong kỳ
           </div>
         </div>
       </div>
