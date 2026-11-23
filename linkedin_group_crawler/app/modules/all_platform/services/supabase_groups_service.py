@@ -248,6 +248,20 @@ def _sync_group_templates(
         supabase.table(table).insert(rows).execute()
 
 
+def _safe_sync_satellite(label: str, fn, *args, **kwargs) -> None:
+    """Chạy 1 hàm đồng bộ bảng vệ tinh (group_intents/group_pricing_tiers/group_*_templates)
+    nhưng KHÔNG để lỗi ở đó làm thất bại cả thao tác lưu nhóm chính — cùng nguyên tắc đã
+    dùng ở `_attach_group_extras` cho đường đọc. Thiếu cái này: nếu 1 trong các bảng vệ tinh
+    lỗi/chưa tồn tại (vd migration 236/237/238 chưa áp dụng ở DB đích), add/update_facebook_
+    group sẽ ném exception SAU KHI dòng chính (tên, URL, lịch cào 24h, người phụ trách...) đã
+    UPDATE/INSERT thành công — FE nhận success=False, báo "lưu thất bại" dù thực ra đã lưu.
+    """
+    try:
+        fn(*args, **kwargs)
+    except Exception as e:
+        logger.warning(f"[GROUP-SAVE] Bỏ qua lỗi đồng bộ {label}: {e}")
+
+
 def get_facebook_groups(
     id_intent: Optional[str] = None,
     id_team: Optional[str] = None,
@@ -433,13 +447,18 @@ def add_facebook_group(payload: dict, current_user_id: Optional[str] = None) -> 
     new_group = result.data[0] if result.data else {}
     new_id = new_group.get("id")
     if new_id:
-        _sync_group_intents(supabase, new_id, "facebook", intent_ids)
-        _sync_group_pricing_tiers(supabase, new_id, "facebook", payload.get("pricing_tiers") or [])
-        _sync_group_templates(
+        _safe_sync_satellite("group_intents", _sync_group_intents, supabase, new_id, "facebook", intent_ids)
+        _safe_sync_satellite(
+            "group_pricing_tiers", _sync_group_pricing_tiers, supabase, new_id, "facebook",
+            payload.get("pricing_tiers") or [],
+        )
+        _safe_sync_satellite(
+            "group_comment_templates", _sync_group_templates,
             supabase, "group_comment_templates", new_id, "facebook",
             payload.get("comment_templates") or [], current_user_id,
         )
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_post_templates", _sync_group_templates,
             supabase, "group_post_templates", new_id, "facebook",
             payload.get("post_templates") or [], current_user_id,
         )
@@ -512,16 +531,21 @@ def update_facebook_group(group_id: str, payload: dict, current_user_id: Optiona
     # tranh xoa sach du lieu cu khi gui PATCH rieng le (vd handleInlineAssign chi gui
     # assignee_id, khong gui intent_ids/pricing_tiers/templates).
     if "intent_ids" in payload:
-        _sync_group_intents(supabase, group_id, "facebook", intent_ids)
+        _safe_sync_satellite("group_intents", _sync_group_intents, supabase, group_id, "facebook", intent_ids)
     if "pricing_tiers" in payload:
-        _sync_group_pricing_tiers(supabase, group_id, "facebook", payload.get("pricing_tiers") or [])
+        _safe_sync_satellite(
+            "group_pricing_tiers", _sync_group_pricing_tiers, supabase, group_id, "facebook",
+            payload.get("pricing_tiers") or [],
+        )
     if "comment_templates" in payload:
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_comment_templates", _sync_group_templates,
             supabase, "group_comment_templates", group_id, "facebook",
             payload.get("comment_templates") or [], current_user_id,
         )
     if "post_templates" in payload:
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_post_templates", _sync_group_templates,
             supabase, "group_post_templates", group_id, "facebook",
             payload.get("post_templates") or [], current_user_id,
         )
@@ -683,13 +707,18 @@ def add_linkedin_group(payload: dict, current_user_id: Optional[str] = None) -> 
     new_group = result.data[0] if result.data else {}
     new_id = new_group.get("id")
     if new_id:
-        _sync_group_intents(supabase, new_id, "linkedin", intent_ids)
-        _sync_group_pricing_tiers(supabase, new_id, "linkedin", payload.get("pricing_tiers") or [])
-        _sync_group_templates(
+        _safe_sync_satellite("group_intents", _sync_group_intents, supabase, new_id, "linkedin", intent_ids)
+        _safe_sync_satellite(
+            "group_pricing_tiers", _sync_group_pricing_tiers, supabase, new_id, "linkedin",
+            payload.get("pricing_tiers") or [],
+        )
+        _safe_sync_satellite(
+            "group_comment_templates", _sync_group_templates,
             supabase, "group_comment_templates", new_id, "linkedin",
             payload.get("comment_templates") or [], current_user_id,
         )
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_post_templates", _sync_group_templates,
             supabase, "group_post_templates", new_id, "linkedin",
             payload.get("post_templates") or [], current_user_id,
         )
@@ -741,16 +770,21 @@ def update_linkedin_group(group_id: str, payload: dict, current_user_id: Optiona
     )
 
     if "intent_ids" in payload:
-        _sync_group_intents(supabase, group_id, "linkedin", intent_ids)
+        _safe_sync_satellite("group_intents", _sync_group_intents, supabase, group_id, "linkedin", intent_ids)
     if "pricing_tiers" in payload:
-        _sync_group_pricing_tiers(supabase, group_id, "linkedin", payload.get("pricing_tiers") or [])
+        _safe_sync_satellite(
+            "group_pricing_tiers", _sync_group_pricing_tiers, supabase, group_id, "linkedin",
+            payload.get("pricing_tiers") or [],
+        )
     if "comment_templates" in payload:
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_comment_templates", _sync_group_templates,
             supabase, "group_comment_templates", group_id, "linkedin",
             payload.get("comment_templates") or [], current_user_id,
         )
     if "post_templates" in payload:
-        _sync_group_templates(
+        _safe_sync_satellite(
+            "group_post_templates", _sync_group_templates,
             supabase, "group_post_templates", group_id, "linkedin",
             payload.get("post_templates") or [], current_user_id,
         )
