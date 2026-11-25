@@ -28,7 +28,10 @@ import type { ZaloConversationSummary } from "@/types/zalo-api";
 import { MaterialIcon } from "@/components/ui";
 import { Trash2 } from "lucide-react";
 import { InboxShareToggle } from "../InboxShareToggle";
-import { useAppAuth } from "@/contexts/AppAuthContext";
+import {
+  formatConversationSidebarPreview,
+  isSidebarSystemNoticePreview,
+} from "../../centralized-shared/zaloUi";
 import {
   Dialog,
   DialogContent,
@@ -368,22 +371,32 @@ export function ZaloConversationListVirtualized({
                     >
                       {(() => {
                         const cleanSenderName = conv.latest_sender_name?.trim();
-                        if (!cleanSenderName) return "";
-
-                        const lowerName = cleanSenderName.toLowerCase();
-                        const isSelf = lowerName === "__me__" || lowerName === "me" || lowerName === "bạn" || lowerName === "ban";
-                        if (isSelf) {
-                          return "Bạn: ";
+                        const lowerName = (cleanSenderName || "").toLowerCase();
+                        const isSelf =
+                          lowerName === "__me__" ||
+                          lowerName === "me" ||
+                          lowerName === "bạn" ||
+                          lowerName === "ban";
+                        const formatted = formatConversationSidebarPreview(conv, {
+                          isSelf,
+                          emptyText: "Tin nhắn mới",
+                        });
+                        if (isSidebarSystemNoticePreview(formatted)) {
+                          return formatted;
                         }
-
-                        const isGroup = !conv.conversation_id.startsWith("fb_") && conv.conversation_id.startsWith("g");
-                        if (isGroup) {
-                          return `${cleanSenderName}: `;
+                        let prefix = "";
+                        if (cleanSenderName) {
+                          if (isSelf) {
+                            prefix = "Bạn: ";
+                          } else {
+                            const isGroup =
+                              !conv.conversation_id.startsWith("fb_") &&
+                              (conv.thread_type === "group" || conv.conversation_id.startsWith("g"));
+                            if (isGroup) prefix = `${cleanSenderName}: `;
+                          }
                         }
-
-                        return "";
+                        return `${prefix}${formatted}`;
                       })()}
-                      {conv.latest_content || "Tin nhắn mới"}
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       {conv.unread_count !== undefined &&

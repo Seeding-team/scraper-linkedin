@@ -359,15 +359,28 @@ def _sort_messages_new_to_old(messages: List[Message]) -> List[Message]:
 
 
 def _to_message(row: Dict[str, Any]) -> Message:
+    from app.modules.all_platform.zalo.services.supabase_service import (
+        _normalize_raw_content,
+        classify_message_kind,
+    )
     raw_mentions = row.get("mentions") or []
+    norm_raw = _normalize_raw_content(row.get("raw") if row.get("raw") is not None else row.get("raw_content"))
+    msg_type = str(row.get("type") or "text")
+    msg_content = row.get("content") or None
+    resolved_kind = classify_message_kind(
+        msg_type,
+        msg_content,
+        norm_raw,
+        existing_kind=row.get("msg_kind"),
+    )
     return Message(
         message_id=str(row.get("message_id") or ""),
         sender_id=row.get("sender_id") or None,
         sender_name=row.get("sender_name") or None,
         timestamp=row.get("timestamp") or None,
         time_text=row.get("time_text") or None,
-        type=str(row.get("type") or "text"),
-        content=row.get("content") or None,
+        type=msg_type,
+        content=msg_content,
         image_urls=[str(url) for url in (row.get("image_urls") or []) if url],
         reply_to_id=row.get("reply_to_id") or None,
         is_deleted=bool(row.get("is_deleted")),
@@ -379,8 +392,8 @@ def _to_message(row: Dict[str, Any]) -> Message:
         ts=int(row["ts"]) if row.get("ts") else None,
         cli_msg_id=row.get("cli_msg_id") or None,
         mentions=[m for m in raw_mentions if isinstance(m, dict) and "uid" in m],
-        msg_kind=row.get("msg_kind") or None,
-        raw_content=row.get("raw") or row.get("raw_content") or None,
+        msg_kind=resolved_kind,
+        raw_content=norm_raw,
     )
 
 
@@ -632,6 +645,11 @@ class ZcaPersistentListenerManager:
                                         "reply_to_id": message.reply_to_id,
                                         "is_deleted": message.is_deleted,
                                         "is_sent": message.is_sent,
+                                        "ts": message.ts,
+                                        "cli_msg_id": message.cli_msg_id,
+                                        "mentions": [m.model_dump() for m in message.mentions] if message.mentions else [],
+                                        "msg_kind": message.msg_kind,
+                                        "raw_content": message.raw_content,
                                     }
                                     for message in messages
                                 ],
@@ -769,6 +787,11 @@ class ZcaPersistentListenerManager:
                                         "reply_to_id": message.reply_to_id,
                                         "is_deleted": message.is_deleted,
                                         "is_sent": message.is_sent,
+                                        "ts": message.ts,
+                                        "cli_msg_id": message.cli_msg_id,
+                                        "mentions": [m.model_dump() for m in message.mentions] if message.mentions else [],
+                                        "msg_kind": message.msg_kind,
+                                        "raw_content": message.raw_content,
                                     }
                                     for message in messages
                                 ],
@@ -1171,6 +1194,14 @@ class ZcaPersistentListenerManager:
             state.connected = True
             await self._handle_voip_event(state, event.get("voip") or {})
             return
+        if event_name in {"friend_event", "group_event"}:
+            state.connected = True
+            await self._handle_system_event(state, event_name, event.get("message") or {})
+            return
+        if event_name == "undo":
+            state.connected = True
+            await self._handle_undo_event(state, event.get("undo") or {})
+            return
 
     async def _handle_voip_event(self, state: ListenerState, voip: Dict[str, Any]) -> None:
         """Nhận sự kiện cuộc gọi VoIP thời gian thực từ WebSocket Zalo (act_type='voip')
@@ -1352,6 +1383,172 @@ class ZcaPersistentListenerManager:
             )
         except Exception as exc:
             logger.warning(f"Realtime reaction publish failed for user={state.user_id}: {exc}")
+
+    async def _handle_system_event(
+        self,
+        state: ListenerState,
+        event_name: str,
+        row: Dict[str, Any],
+    ) -> None:
+        """G1: Lưu & phát SSE cho sự kiện kết bạn (friend_event) và sự kiện nhóm (group_event)."""
+        if not isinstance(row, dict):
+            return
+        group_id = str(row.get("thread_id") or row.get("group_id") or "").strip()
+        if not group_id:
+            return
+
+        default_type = "friend.event" if event_name == "friend_event" else "group.event"
+        normalized_row = dict(row)
+        normalized_row["type"] = normalized_row.get("type") or default_type
+        normalized_row["msg_kind"] = "system_notice"
+        message = _to_message(normalized_row)
+        if not message.message_id:
+            return
+
+        group_name = (
+            str(row.get("group_name") or "").strip()
+            or state.group_names.get(group_id)
+            or _supabase_group_name_cache.get((state.user_id, group_id))
+            or group_id
+        )
+        # Cập nhật cache tên nhóm nếu group_event đổi tên nhóm
+        if event_name == "group_event" and row.get("group_name"):
+            clean_gname = str(row["group_name"]).strip()
+            if clean_gname and clean_gname != group_id:
+                state.group_names[group_id] = clean_gname
+                _supabase_group_name_cache[(state.user_id, group_id)] = clean_gname
+
+        # Cập nhật in-memory cache của listener
+        cache = self._cache.setdefault((state.user_id, group_id), {})
+        cache[message.message_id] = message
+
+        if is_supabase_configured():
+            try:
+                from app.modules.all_platform.zalo.services.supabase_service import (
+                    persist_zalo_system_event,
+                )
+                await persist_zalo_system_event(state.user_id, group_id, group_name, message)
+            except Exception as exc:
+                logger.warning(
+                    f"Could not persist {event_name} user={state.user_id} group={group_id}: {exc}"
+                )
+
+        try:
+            from app.modules.all_platform.zalo.api.routes.conversations import (
+                invalidate_conversation_message_cache,
+            )
+            invalidate_conversation_message_cache(state.user_id, group_id)
+        except Exception:
+            pass
+
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_zalo_message_event,
+            )
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                list_shared_conversation_ids,
+            )
+
+            shared_ids = await list_shared_conversation_ids(state.user_id)
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "new_messages",
+                    "event_subtype": event_name,
+                    "account_id": state.user_id,
+                    "group_id": group_id,
+                    "group_name": group_name,
+                    "messages": [message.model_dump()],
+                },
+                shared_conversation_ids=shared_ids,
+            )
+        except Exception as exc:
+            logger.warning(f"Realtime {event_name} publish failed for user={state.user_id}: {exc}")
+
+    async def _handle_undo_event(self, state: ListenerState, undo: Dict[str, Any]) -> None:
+        """G7: Đánh dấu tin nhắn bị thu hồi (is_deleted=True) trong Supabase & phát SSE message_recalled."""
+        if not isinstance(undo, dict):
+            return
+        group_id = str(undo.get("thread_id") or undo.get("group_id") or "").strip() or None
+        target_msg_id = str(undo.get("message_id") or "").strip() or None
+        target_cli_msg_id = str(undo.get("cli_msg_id") or "").strip() or None
+        if not target_msg_id and not target_cli_msg_id:
+            return
+
+        updated_info: Optional[Dict[str, Any]] = None
+        if is_supabase_configured():
+            try:
+                from app.modules.all_platform.zalo.services.supabase_service import (
+                    mark_zalo_message_recalled,
+                )
+                updated_info = await mark_zalo_message_recalled(
+                    state.user_id,
+                    group_id,
+                    source_message_id=target_msg_id,
+                    cli_msg_id=target_cli_msg_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Could not persist undo recall user={state.user_id} msg={target_msg_id}: {exc}"
+                )
+
+        resolved_group_id = (
+            (updated_info.get("group_id") if updated_info else None)
+            or group_id
+            or ""
+        )
+        resolved_msg_id = (
+            (updated_info.get("source_message_id") if updated_info else None)
+            or target_msg_id
+            or target_cli_msg_id
+            or ""
+        )
+
+        # Cập nhật in-memory cache của listener
+        if resolved_group_id:
+            cache = self._cache.get((state.user_id, resolved_group_id))
+            if cache:
+                if resolved_msg_id and resolved_msg_id in cache:
+                    cache[resolved_msg_id] = cache[resolved_msg_id].model_copy(
+                        update={"is_deleted": True, "msg_kind": "undo"}
+                    )
+                elif target_cli_msg_id:
+                    for mid, cached_msg in list(cache.items()):
+                        if cached_msg.cli_msg_id == target_cli_msg_id:
+                            cache[mid] = cached_msg.model_copy(
+                                update={"is_deleted": True, "msg_kind": "undo"}
+                            )
+
+        try:
+            from app.modules.all_platform.zalo.api.routes.conversations import (
+                invalidate_conversation_message_cache,
+            )
+            invalidate_conversation_message_cache(state.user_id, resolved_group_id or None)
+        except Exception:
+            pass
+
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_zalo_message_event,
+            )
+            from app.modules.all_platform.zalo.services.supabase_service import (
+                list_shared_conversation_ids,
+            )
+
+            shared_ids = await list_shared_conversation_ids(state.user_id)
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "message_recalled",
+                    "account_id": state.user_id,
+                    "group_id": resolved_group_id,
+                    "source_message_id": resolved_msg_id,
+                    "cli_msg_id": target_cli_msg_id,
+                },
+                shared_conversation_ids=shared_ids,
+            )
+        except Exception as exc:
+            logger.warning(f"Realtime undo publish failed for user={state.user_id}: {exc}")
 
     async def _record_messages(self, state: ListenerState, rows: List[Dict[str, Any]], *, increment_unread: bool = True) -> None:
         grouped: Dict[str, List[Message]] = {}

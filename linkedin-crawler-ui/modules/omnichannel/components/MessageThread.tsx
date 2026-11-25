@@ -17,6 +17,13 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ZaloCallMessageCard } from "@/components/all-platform/zalo/centralized-shared/ZaloCallMessageCard";
+import {
+  ZaloRichMessageContent,
+  ZaloSystemEventBanner,
+  isBareZaloRichMessage,
+  isCenteredZaloSystemMessage,
+} from "@/components/all-platform/zalo/centralized-shared/ZaloRichMessageCard";
 
 interface MessageThreadProps {
   conversation: ConversationItem;
@@ -375,6 +382,28 @@ export const MessageThread: React.FC<MessageThreadProps> = ({
 
       {/* Message Feed */}
       {conversation.messages.map((msg) => {
+        if (msg.normalizedZalo && isCenteredZaloSystemMessage(msg.normalizedZalo)) {
+          const fallbackCategory =
+            msg.normalizedZalo.isRecalled || msg.normalizedZalo.kind === "undo"
+              ? "undo"
+              : msg.normalizedZalo.kind === "ecard" ||
+                  msg.normalizedZalo.kind === "poll" ||
+                  msg.normalizedZalo.kind === "reminder" ||
+                  msg.normalizedZalo.kind === "todo"
+                ? msg.normalizedZalo.kind
+                : undefined;
+          return (
+            <div key={msg.id} className="my-1 flex w-full justify-center">
+              <ZaloSystemEventBanner
+                event={msg.normalizedZalo.systemEvent}
+                title={msg.normalizedZalo.systemEvent?.title || msg.normalizedZalo.system_text || msg.text}
+                category={msg.normalizedZalo.systemEvent?.category || fallbackCategory}
+                compact
+              />
+            </div>
+          );
+        }
+
         if (msg.sender === "system") {
           return (
             <div key={msg.id} className="flex items-center justify-center my-1.5">
@@ -387,6 +416,198 @@ export const MessageThread: React.FC<MessageThreadProps> = ({
         }
 
         const isMe = msg.sender === "me";
+
+        if (msg.normalizedZalo) {
+          const isBare = isBareZaloRichMessage(msg.normalizedZalo);
+          const isCall =
+            msg.normalizedZalo.kind === "call" || Boolean(msg.normalizedZalo.callInfo);
+
+          if (isBare) {
+            return (
+              <div
+                key={msg.id}
+                className={cn("flex items-end gap-1.5", isMe ? "justify-end" : "justify-start")}
+              >
+                {!isMe && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={conversation.customerAvatar}
+                    alt={conversation.customerName}
+                    className="h-6 w-6 rounded-full object-cover shrink-0 border border-slate-200 mb-0.5"
+                  />
+                )}
+                <div
+                  className={cn(
+                    "flex max-w-[78%] flex-col gap-1",
+                    isMe ? "items-end" : "items-start",
+                  )}
+                >
+                  {msg.quote && (
+                    <div
+                      className={cn(
+                        "w-full max-w-[264px] rounded-xl border-l-[3px] px-2.5 py-1.5 text-[10.5px] leading-snug shadow-2xs",
+                        isMe
+                          ? "border-[var(--color-markee-primary,#c2185b)]/70 bg-rose-50/90 text-slate-700"
+                          : "border-slate-300 bg-slate-100/90 text-slate-600",
+                      )}
+                    >
+                      {msg.quote.senderName && (
+                        <div className="truncate font-semibold text-slate-800">
+                          {msg.quote.senderName}
+                        </div>
+                      )}
+                      <div className="truncate opacity-90">{msg.quote.previewText}</div>
+                    </div>
+                  )}
+                  <ZaloRichMessageContent
+                    normalized={msg.normalizedZalo}
+                    isOwn={isMe}
+                    onDarkSurface={false}
+                    timeLabel={msg.time}
+                    compact
+                  />
+                  {!isCall && (
+                    <div
+                      className={cn(
+                        "flex items-center gap-1 px-1 text-[9px] text-slate-400",
+                        isMe ? "justify-end" : "justify-start",
+                      )}
+                    >
+                      <span>{msg.time}</span>
+                      {isMe &&
+                        (msg.status === "sending" ? (
+                          <Loader2 className="h-2.5 w-2.5 animate-spin text-slate-400" />
+                        ) : msg.status === "failed" ? (
+                          <span title="Gửi thất bại">
+                            <AlertCircle className="h-2.5 w-2.5 text-rose-500" />
+                          </span>
+                        ) : (
+                          <CheckCheck className="h-3 w-3 text-slate-400" />
+                        ))}
+                    </div>
+                  )}
+                </div>
+                {isMe && !isCall && (
+                  <div
+                    className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-slate-200 text-[8px] font-bold text-slate-600 shrink-0 mb-0.5"
+                    title="TV"
+                  >
+                    TV
+                  </div>
+                )}
+              </div>
+            );
+          }
+
+          return (
+            <div
+              key={msg.id}
+              className={cn("flex items-end gap-1.5", isMe ? "justify-end" : "justify-start")}
+            >
+              {!isMe && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={conversation.customerAvatar}
+                  alt={conversation.customerName}
+                  className="h-6 w-6 rounded-full object-cover shrink-0 border border-slate-200 mb-0.5"
+                />
+              )}
+
+              <div
+                className={cn(
+                  "group relative max-w-[75%] space-y-1 rounded-2xl px-3 py-1.5 text-xs shadow-2xs",
+                  isMe
+                    ? "bg-[var(--color-markee-primary,#c2185b)] text-white rounded-br-xs"
+                    : "bg-white text-slate-800 border border-slate-200/80 rounded-bl-xs",
+                )}
+              >
+                {msg.quote && (
+                  <div
+                    className={cn(
+                      "mb-1 rounded-lg border-l-[3px] px-2 py-1 text-[10.5px] leading-snug",
+                      isMe
+                        ? "border-white/60 bg-white/15 text-white/90"
+                        : "border-[var(--color-markee-primary,#c2185b)]/60 bg-slate-100/90 text-slate-600",
+                    )}
+                  >
+                    {msg.quote.senderName && (
+                      <div
+                        className={cn(
+                          "truncate font-semibold",
+                          isMe ? "text-white" : "text-slate-800",
+                        )}
+                      >
+                        {msg.quote.senderName}
+                      </div>
+                    )}
+                    <div className="truncate opacity-90">{msg.quote.previewText}</div>
+                  </div>
+                )}
+
+                <ZaloRichMessageContent
+                  normalized={msg.normalizedZalo}
+                  isOwn={isMe}
+                  onDarkSurface={isMe}
+                  timeLabel={msg.time}
+                  compact
+                  className="text-[11px] leading-relaxed"
+                />
+
+                <div
+                  className={cn(
+                    "flex items-center gap-1 text-[9px] pt-0.5 opacity-80",
+                    isMe ? "justify-end text-rose-100" : "justify-start text-slate-400",
+                  )}
+                >
+                  <span>{msg.time}</span>
+                  {isMe &&
+                    (msg.status === "sending" ? (
+                      <Loader2 className="h-2.5 w-2.5 animate-spin text-rose-100" />
+                    ) : msg.status === "failed" ? (
+                      <span title="Gửi thất bại">
+                        <AlertCircle className="h-2.5 w-2.5 text-rose-300" />
+                      </span>
+                    ) : (
+                      <CheckCheck className="h-3 w-3 text-rose-100" />
+                    ))}
+                </div>
+              </div>
+
+              {isMe && (
+                <div
+                  className="flex h-4.5 w-4.5 items-center justify-center rounded-full bg-slate-200 text-[8px] font-bold text-slate-600 shrink-0 mb-0.5"
+                  title="TV"
+                >
+                  TV
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        if (msg.callInfo) {
+          return (
+            <div
+              key={msg.id}
+              className={cn("flex items-end gap-1.5", isMe ? "justify-end" : "justify-start")}
+            >
+              {!isMe && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={conversation.customerAvatar}
+                  alt={conversation.customerName}
+                  className="h-6 w-6 rounded-full object-cover shrink-0 border border-slate-200 mb-0.5"
+                />
+              )}
+              <ZaloCallMessageCard
+                info={msg.callInfo}
+                isSent={isMe}
+                timeLabel={msg.time}
+                compact
+              />
+            </div>
+          );
+        }
 
         return (
           <div

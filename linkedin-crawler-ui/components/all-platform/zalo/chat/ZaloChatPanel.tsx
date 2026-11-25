@@ -10,7 +10,7 @@
  * tin / đính kèm file / gom nhóm ảnh giữ nguyên, không đổi.
  */
 
-import { ArrowLeft, Check, Copy, Forward, Images, Loader2, MessageCircle, MoreVertical, Paperclip, Pencil, Plus, RefreshCw, Reply, Search as SearchIcon, Send, SmilePlus, Sticker as StickerIcon, Trash2, Undo2, User, UserPlus, X, Zap } from "lucide-react";
+import { ArrowLeft, Check, Copy, ExternalLink, Forward, Images, Loader2, MessageCircle, MoreVertical, Paperclip, Pencil, Plus, RefreshCw, Reply, Search as SearchIcon, Send, SmilePlus, Sticker as StickerIcon, Trash2, Undo2, User, UserPlus, X, Zap } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emojiForReaction, REACTION_OPTIONS, zaloApi, ZaloConversation, ZaloMessage, ZaloSticker } from "@/lib/zaloApiClient";
 import {
@@ -23,9 +23,24 @@ import {
   type MentionCandidate,
   type PendingMention,
 } from "@/lib/mentionUtils";
-import { previewText, type ZaloAttachment } from "@/lib/zaloMessageContent";
+import {
+  formatZaloAnySidebarPreview,
+  kindLabel,
+  normalizeStoredMessage,
+  type NormalizedZaloMessage,
+  type ZaloAttachment,
+  type ZaloMessageKind,
+  type ZaloSystemEventCategory,
+  type ZaloSystemEventMeta,
+} from "@/lib/zaloMessageContent";
+import { isSendBubblePlaceholder } from "@/lib/zaloCallMessage";
+import {
+  ZaloRichMessageContent,
+  ZaloSystemEventBanner,
+  isBareZaloRichMessage,
+  isCenteredZaloSystemMessage,
+} from "@/components/all-platform/zalo/centralized-shared/ZaloRichMessageCard";
 import { Avatar } from "./Avatar";
-import { MessageAttachments } from "./MessageAttachments";
 import { MentionPicker } from "./MentionPicker";
 import { ForwardMessageModal } from "./ForwardMessageModal";
 import { MediaGalleryModal } from "./MediaGalleryModal";
@@ -40,6 +55,7 @@ const IMAGE_GROUP_WINDOW_MS = 3000;
  * Chỉ gộp ẢNH: video/link/file mỗi cái là 1 thẻ riêng, gộp lại sẽ rối.
  */
 function isImageOnlyMessage(m: ZaloMessage): boolean {
+  if (m.is_deleted) return false;
   if (m.content?.trim()) return false;
   const attachments = m.attachments || [];
   if (attachments.length === 0) return false;
@@ -116,6 +132,8 @@ interface Props {
   /** Bấm "Nhắn tin" trên 1 danh thiếp (contact card) có SĐT — mở/chuyển thẳng
    *  sang hội thoại với người đó, xem handleContactMessage ở ZaloPageContent.tsx. */
   onContactMessage?: (a: ZaloAttachment) => void;
+  /** Bấm nút "Gọi lại" trên thẻ cuộc gọi Zalo (tuỳ chọn). */
+  onCallBack?: (mode: "voice" | "video") => void;
 }
 
 type FriendStatus = { is_friend: boolean | null; is_requesting: boolean | null; is_requested: boolean | null };
@@ -197,124 +215,306 @@ function highlightMatch(text: string, query: string): React.ReactNode[] {
   );
 }
 
-/**
- * Bắt URL trong nội dung tin nhắn CHỮ THƯỜNG (không phải tin chia sẻ link
- * "chat.recommended" — loại đó đã có thẻ preview riêng ở MessageAttachments).
- * Zalo cho phép dán thẳng 1 URL vào tin nhắn mà KHÔNG dùng tính năng share
- * link — Zalo protocol coi đây là `content` string thuần (msgType vẫn là
- * "webchat"/text bình thường), nên trước đây bị render y nguyên như chữ,
- * không bấm được. Regex bắt cả "https://..." lẫn "www...." không có scheme.
- */
-const URL_REGEX = /(https?:\/\/[^\s<>"')]+|www\.[^\s<>"')]+\.[a-z]{2,}[^\s<>"'()]*)/gi;
+type ZaloMessageWithRaw = ZaloMessage & {
+  raw_content?: unknown;
+  system_event?: ZaloSystemEventMeta | null;
+};
 
-/** Cắt dấu câu cuối câu (., ,, ;, :, !, ?) dính liền sau URL — vd "xem tại
- *  https://a.co/x." → chỉ link hoá "https://a.co/x", dấu chấm cuối câu vẫn
- *  hiện như chữ thường. */
-function splitTrailingPunctuation(match: string): { url: string; trailing: string } {
-  const m = match.match(/^(.*?)([.,;:!?]+)$/);
-  return m && m[1] ? { url: m[1], trailing: m[2] } : { url: match, trailing: "" };
-}
+type ZaloQuoteWithMeta = NonNullable<ZaloMessage["quote"]> & {
+  type?: string | null;
+  msg_kind?: string | null;
+  raw_content?: unknown;
+  attachments?: unknown;
+  is_deleted?: boolean | null;
+};
 
-/**
- * Nhận diện tin nhắn CHỮ THƯỜNG có khả năng chứa SỐ TÀI KHOẢN NGÂN HÀNG (yêu
- * cầu người dùng 2026-09-20: "gửi số tài khoản ngân hàng cũng hiển thị được")
- * — Zalo KHÔNG có 1 loại tin native riêng cho việc này (khác danh thiếp), nhân
- * viên thường gõ tay kiểu "STK 0123456789 Vietcombank Nguyễn Văn A". Bắt theo
- * 2 điều kiện CÙNG LÚC để tránh bắt nhầm số điện thoại/mã đơn hàng thường:
- *   1. Có ít nhất 1 từ khoá liên quan ngân hàng ở BẤT KỲ đâu trong tin.
- *   2. Dãy số 8-19 chữ số (cho phép khoảng trắng xen giữa kiểu "0123 4567 890").
- */
-const BANK_KEYWORD_RE =
-  /(stk|s\.?\s?tk|số\s*tk|số\s*tài\s*khoản|tài\s*khoản\s*ngân\s*hàng|tk\s*ngân\s*hàng|chuyển\s*khoản|ngân\s*hàng|vietcombank|\bvcb\b|techcombank|\btcb\b|\bbidv\b|agribank|\bacb\b|mbbank|\bmb\s*bank\b|vpbank|tpbank|sacombank|\bvib\b|\bshb\b|eximbank|hdbank|\bocb\b|seabank|vietinbank|\bctg\b|\bscb\b|abbank|\bmsb\b|pvcombank|lienvietpostbank|\blpb\b|bac\s*a\s*bank|\bncb\b|vietabank|kienlongbank|pgbank|saigonbank|dongabank|baovietbank|vietbank|nam\s*a\s*bank|gpbank|cbbank|\bck\b|\bctk\b|vietqr|napas|cake|timo|ubank)/i;
-const BANK_ACCOUNT_RUN_RE = /(?<!\d)(\d(?:[\d ]{4,17})\d)(?!\d)/g;
+const UGLY_FALLBACK_RE = /—\s*mở\s*zalo\s*để\s*xem|tin\s*nhắn\s*dạng\s*đặc\s*biệt/i;
 
-/** Bấm vào số tài khoản để copy — phản hồi tức thì bằng icon đổi thành dấu tích. */
-function BankAccountChip({ raw, mine }: { raw: string; mine: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const digits = raw.replace(/\D/g, "");
-  async function handleCopy(e: React.MouseEvent) {
-    e.stopPropagation();
+const BRACKET_KIND_MAP: Readonly<Record<string, ZaloMessageKind>> = {
+  image: "image",
+  gif: "gif",
+  video: "video",
+  voice: "voice",
+  file: "file",
+  folder: "folder",
+  link: "link",
+  sticker: "sticker",
+  location: "location",
+  contact: "contact",
+  bankcard: "bankcard",
+  call: "call",
+  ecard: "ecard",
+  poll: "poll",
+  reminder: "reminder",
+  todo: "todo",
+  doodle: "doodle",
+  system_notice: "system_notice",
+  undo: "undo",
+  unknown: "unknown",
+};
+
+function sanitizeUnknownLabel(raw?: string | null): string | undefined {
+  if (!raw || typeof raw !== "string") return undefined;
+  const cleaned = raw.replace(/\s*—\s*mở\s*zalo\s*để\s*xem\s*/gi, "").trim();
+  if (!cleaned) return undefined;
+  if (isSendBubblePlaceholder(cleaned)) return undefined;
+  if (/^tin\s*nhắn\s*dạng\s*đặc\s*biệt$/i.test(cleaned)) return undefined;
+  if ((cleaned.startsWith("{") && cleaned.endsWith("}")) || (cleaned.startsWith("[") && cleaned.endsWith("]"))) {
     try {
-      await navigator.clipboard.writeText(digits);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      const parsed: unknown = JSON.parse(cleaned);
+      if (parsed && typeof parsed === "object") return undefined;
     } catch {
-      /* trình duyệt không hỗ trợ Clipboard API — bỏ qua, người dùng vẫn tự bôi đen copy được */
+      // keep normal text
     }
   }
-  return (
-    <span className="inline-flex items-center gap-1.5 align-baseline my-0.5">
-      <span className="font-mono font-bold tracking-wider select-all">{raw}</span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        title="Sao chép số tài khoản"
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold transition active:scale-95 cursor-pointer ${
-          mine
-            ? "bg-white/20 hover:bg-white/30 text-white"
-            : "bg-blue-50 hover:bg-blue-100 text-[#c62828] border border-blue-200/80"
-        }`}
-      >
-        {copied ? (
-          <>
-            <Check className="h-3 w-3 text-emerald-500 shrink-0" />
-            <span className="text-emerald-500">Đã chép</span>
-          </>
-        ) : (
-          <>
-            <Copy className="h-3 w-3 shrink-0" />
-            <span>Sao chép</span>
-          </>
-        )}
-      </button>
-    </span>
-  );
+  return cleaned;
 }
 
-/** Tách tiếp phần CHỮ THƯỜNG (không phải URL) tìm số tài khoản ngân hàng. */
-function linkifyBankAccounts(text: string, mine: boolean, key: string | number): React.ReactNode {
-  const digitsOnly = text.trim().replace(/\s+/g, "");
-  const isPureNumber = /^\d{6,19}$/.test(digitsOnly);
-  if (!isPureNumber && !BANK_KEYWORD_RE.test(text)) return <span key={key}>{text}</span>;
-  return (
-    <span key={key}>
-      {text.split(BANK_ACCOUNT_RUN_RE).map((seg, j) => {
-        if (!seg) return null;
-        if (j % 2 === 1) {
-          const digitsOnly = seg.replace(/\D/g, "");
-          if (digitsOnly.length >= 6 && digitsOnly.length <= 19) {
-            return <BankAccountChip key={j} raw={seg} mine={mine} />;
-          }
-        }
-        return <span key={j}>{seg}</span>;
-      })}
-    </span>
-  );
+/** Nếu `raw_content` bị thiếu nhưng `content` chứa nguyên JSON payload Zalo thì
+ *  đẩy sang `raw_content` để `normalizeStoredMessage` giải mã thành thẻ rich card. */
+function extractJsonPayloadFallback(text?: string | null): string | undefined {
+  if (!text || typeof text !== "string") return undefined;
+  const trimmed = text.trim();
+  if (!((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]")))) {
+    return undefined;
+  }
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const obj = Array.isArray(parsed) ? parsed[0] : parsed;
+    if (!obj || typeof obj !== "object") return undefined;
+    const rec = obj as Record<string, unknown>;
+    if (
+      "msgType" in rec ||
+      "action" in rec ||
+      "data" in rec ||
+      "params" in rec ||
+      "href" in rec ||
+      "fileUrl" in rec ||
+      "hdUrl" in rec ||
+      "zinstantdata_id" in rec ||
+      "callId" in rec ||
+      "act" in rec ||
+      "updateMembers" in rec ||
+      "stickerUrl" in rec
+    ) {
+      return trimmed;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
 }
 
-function linkifyText(text: string, mine: boolean): React.ReactNode[] {
-  // `text.split(regexCóCapturingGroup)` xen kẽ [chữ thường, url khớp, chữ
-  // thường, url khớp, ...] — index lẻ luôn là phần khớp URL.
-  return text.split(URL_REGEX).map((part, i) => {
-    if (!part) return null;
-    if (i % 2 === 0) return linkifyBankAccounts(part, mine, i);
-    const { url, trailing } = splitTrailingPunctuation(part);
-    const href = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-    return (
-      <span key={i}>
-        <a
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          className={`underline underline-offset-2 break-all ${mine ? "text-white" : "text-[#c62828]"}`}
-        >
-          {url}
-        </a>
-        {trailing}
-      </span>
-    );
+/** Chuẩn hoá 1 tin nhắn `ZaloMessage` qua `normalizeStoredMessage` (xử lý đủ
+ *  `raw_content` dạng object/JSON-string, giữ nguyên metadata call/bankcard/
+ *  system_text đã chuẩn hoá từ server khi `raw_content` không gửi về client). */
+function normalizeChatMessage(msg: ZaloMessage): NormalizedZaloMessage {
+  const rawMsg = msg as ZaloMessageWithRaw;
+  const rawContent = rawMsg.raw_content ?? extractJsonPayloadFallback(msg.content);
+  const existingCallAttachment = msg.attachments?.find((a) => a.kind === "call");
+  const existingCallInfo = existingCallAttachment?.call_info;
+  const storedBankcard = msg.attachments?.find((a) => a.kind === "bankcard");
+
+  const effectiveContent =
+    msg.content ||
+    (msg.msg_kind === "system_notice" ? msg.system_text : null) ||
+    (!rawContent && msg.msg_kind === "call" ? existingCallAttachment?.title : null);
+
+  let normalized = normalizeStoredMessage({
+    msg_kind: msg.msg_kind,
+    type: msg.type,
+    is_sent: msg.is_sent,
+    is_deleted: msg.is_deleted,
+    attachments: msg.attachments,
+    raw_content: rawContent,
+    image_urls: msg.image_urls,
+    content: effectiveContent,
   });
+
+  // Giữ nguyên `call_info` chi tiết đã được backend giải mã sẵn nếu client không có `raw_content`.
+  if (!normalized.isRecalled && !rawContent && existingCallInfo && (normalized.kind === "call" || !normalized.callInfo)) {
+    const callAttachment: ZaloAttachment = {
+      ...(existingCallAttachment || { kind: "call" }),
+      kind: "call",
+      title: existingCallInfo.title,
+      description: existingCallInfo.subtitle,
+      duration_ms: existingCallInfo.durationSec > 0 ? existingCallInfo.durationSec * 1000 : existingCallAttachment?.duration_ms,
+      call_info: existingCallInfo,
+    };
+    normalized = {
+      ...normalized,
+      kind: "call",
+      text: "",
+      callInfo: existingCallInfo,
+      attachments: [callAttachment],
+    };
+  }
+
+  // Giữ đầy đủ field thẻ ngân hàng đã có trong `msg.attachments` khi `raw_content` không có ở client.
+  if (!normalized.isRecalled && normalized.kind === "bankcard" && storedBankcard) {
+    const currentCard = normalized.attachments.find((a) => a.kind === "bankcard");
+    const mergedCard: ZaloAttachment = {
+      ...storedBankcard,
+      ...(currentCard || {}),
+      kind: "bankcard",
+      url: currentCard?.url || storedBankcard.url,
+      data_url: currentCard?.data_url || storedBankcard.data_url,
+      bin: currentCard?.bin || storedBankcard.bin,
+      bank_name: currentCard?.bank_name || storedBankcard.bank_name,
+      bank_short_name: currentCard?.bank_short_name || storedBankcard.bank_short_name,
+      account_number: currentCard?.account_number || storedBankcard.account_number,
+      account_name: currentCard?.account_name || storedBankcard.account_name,
+      qr_url: currentCard?.qr_url || storedBankcard.qr_url,
+      logo_url: currentCard?.logo_url || storedBankcard.logo_url,
+      bg_url: currentCard?.bg_url || storedBankcard.bg_url,
+    };
+    normalized = {
+      ...normalized,
+      attachments: [mergedCard],
+    };
+  }
+
+  // Giữ `system_event` / `system_text` sạch khi backend đã dựng sẵn cho `system_notice`.
+  if (normalized.kind === "system_notice" && !normalized.systemEvent) {
+    const cleanSysText = sanitizeUnknownLabel(msg.system_text) || normalized.system_text || normalized.text;
+    if (rawMsg.system_event) {
+      normalized = {
+        ...normalized,
+        systemEvent: rawMsg.system_event,
+        system_text: rawMsg.system_event.title,
+      };
+    } else if (cleanSysText) {
+      normalized = {
+        ...normalized,
+        system_text: cleanSysText,
+        systemEvent: {
+          category: "info",
+          title: cleanSysText,
+          iconKind: "info",
+        },
+      };
+    }
+  }
+
+  // Làm sạch `unknown_label` dự phòng (tuyệt đối không để lọt "— mở Zalo để xem").
+  const cleanUnknown = sanitizeUnknownLabel(normalized.unknown_label || msg.unknown_label);
+  if (cleanUnknown !== normalized.unknown_label) {
+    normalized = {
+      ...normalized,
+      unknown_label: cleanUnknown,
+    };
+  }
+
+  // Nếu content gốc bị lọc sạch (vd chuỗi fallback xấu) khiến text trống rỗng, chuyển về nhãn sạch "[Tin nhắn]".
+  if (
+    normalized.kind === "text" &&
+    !normalized.text &&
+    normalized.attachments.length === 0 &&
+    (msg.content?.trim() || msg.unknown_label?.trim())
+  ) {
+    normalized = {
+      ...normalized,
+      kind: "unknown",
+      unknown_label: cleanUnknown || "[Tin nhắn]",
+    };
+  }
+
+  return normalized;
+}
+
+/** Tạo chuỗi preview chuẩn tiếng Việt (dùng chung cho Quote, Reply bar, Search, Forward). */
+function formatMessagePreview(msg: ZaloMessage): string {
+  const rawMsg = msg as ZaloMessageWithRaw;
+  const rawContent = rawMsg.raw_content ?? extractJsonPayloadFallback(msg.content);
+
+  if (!msg.is_deleted && !rawContent) {
+    const existingCallInfo = msg.attachments?.find((a) => a.kind === "call")?.call_info;
+    if (existingCallInfo) {
+      const icon = existingCallInfo.isMissed ? "📵" : existingCallInfo.mediaType === "video" ? "📹" : "📞";
+      return `${icon} ${existingCallInfo.previewLabel}`;
+    }
+  }
+
+  const formatted = formatZaloAnySidebarPreview({
+    content: msg.content || (msg.msg_kind === "system_notice" ? msg.system_text : null),
+    type: msg.type,
+    msg_kind: msg.msg_kind,
+    raw_content: rawContent,
+    attachments: msg.attachments,
+    is_sent: msg.is_sent,
+    is_deleted: msg.is_deleted,
+  });
+
+  if (formatted) return formatted;
+  if (msg.msg_kind === "system_notice" && msg.system_text?.trim()) {
+    return sanitizeUnknownLabel(msg.system_text) || "[Thông báo]";
+  }
+  if (msg.msg_kind && msg.msg_kind !== "text") {
+    return kindLabel(msg.msg_kind) || "[Tin nhắn]";
+  }
+  return "Tin nhắn";
+}
+
+function formatQuotePreview(
+  quote: NonNullable<ZaloMessage["quote"]>,
+  originalMsg: ZaloMessage | undefined,
+  isOwn: boolean,
+): string {
+  const quoteMeta = quote as ZaloQuoteWithMeta;
+  const rawText = typeof quote.text === "string" ? quote.text.trim() : "";
+
+  if (originalMsg) {
+    if (originalMsg.is_deleted) return "Tin nhắn đã được thu hồi";
+    const originalFormatted = formatMessagePreview(originalMsg);
+    const rawLooksStale =
+      !rawText ||
+      isSendBubblePlaceholder(rawText) ||
+      UGLY_FALLBACK_RE.test(rawText) ||
+      Boolean(extractJsonPayloadFallback(rawText)) ||
+      /^\[[a-z_]+\]$/i.test(rawText) ||
+      (originalMsg.msg_kind && originalMsg.msg_kind !== "text") ||
+      (originalMsg.attachments && originalMsg.attachments.length > 0);
+    if (rawLooksStale && originalFormatted) {
+      return originalFormatted;
+    }
+  }
+
+  const bracketMatch = rawText.match(/^\[([a-z_]+)\]$/i);
+  const inferredKind = bracketMatch ? BRACKET_KIND_MAP[bracketMatch[1].toLowerCase()] : undefined;
+  const quoteRawContent = quoteMeta.raw_content ?? extractJsonPayloadFallback(rawText);
+
+  const formatted = formatZaloAnySidebarPreview({
+    content: inferredKind ? null : rawText || null,
+    type: quoteMeta.type,
+    msg_kind: quoteMeta.msg_kind || inferredKind,
+    raw_content: quoteRawContent,
+    attachments: quoteMeta.attachments,
+    is_deleted: quoteMeta.is_deleted,
+    is_sent: isOwn,
+  });
+
+  if (formatted) return formatted;
+  if (inferredKind) return kindLabel(inferredKind) || "Tin nhắn";
+  return "Tin nhắn";
+}
+
+function isRedundantRichCardText(normalized: NormalizedZaloMessage): boolean {
+  const clean = normalized.text.trim();
+  if (!clean || normalized.attachments.length === 0) return false;
+  if (normalized.kind === "bankcard" && /^\[?(thẻ ngân hàng|tài khoản ngân hàng|bank account)\]?$/i.test(clean)) {
+    return true;
+  }
+  if (normalized.kind === "link" && normalized.attachments.some((a) => a.url && a.url.trim() === clean)) {
+    return true;
+  }
+  if (
+    (normalized.kind === "file" || normalized.kind === "folder") &&
+    normalized.attachments.some((a) => a.name && a.name.trim() === clean)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Kéo sang phải bao nhiêu px thì tính là "muốn trả lời" — thả chuột trước
@@ -326,6 +526,7 @@ const REPLY_DRAG_MAX = 84;
 
 function MessageBubble({
   msg,
+  quotedMsg,
   onRecall,
   recalling,
   highlighted,
@@ -337,12 +538,17 @@ function MessageBubble({
   onJumpToQuote,
   onForward,
   onContactMessage,
+  onCallBack,
   menuOpen,
   onToggleMenu,
   onMediaLoad,
   onOpenGallery,
+  onOpenImageLightbox,
 }: {
   msg: ZaloMessage;
+  /** Tin gốc đang được trích dẫn (nếu đã nạp trong `messages`) để hiển thị
+   *  preview chuẩn tiếng Việt thay vì chuỗi cũ/thô từ `quote.text`. */
+  quotedMsg?: ZaloMessage;
   /** Chỉ truyền được khi tin có `cli_msg_id` (xem điều kiện hiện nút bên dưới). */
   onRecall?: (msg: ZaloMessage) => void;
   recalling?: boolean;
@@ -370,6 +576,8 @@ function MessageBubble({
   onForward?: (msg: ZaloMessage) => void;
   /** Bấm "Nhắn tin" trên 1 danh thiếp (contact card) có SĐT bên trong tin này. */
   onContactMessage?: (a: ZaloAttachment) => void;
+  /** Bấm "Gọi lại" trên thẻ cuộc gọi Zalo (tuỳ chọn). */
+  onCallBack?: (mode: "voice" | "video") => void;
   /** Menu "..." gom Copy/Chuyển tiếp/Thu hồi (yêu cầu người dùng 2026-09-21 —
    *  gọn hàng hành động, chỉ để riêng "Thả cảm xúc" ngoài menu). Cùng cơ chế
    *  bật/tắt theo id tin với pickerOpen/onTogglePicker (1 menu mở tại 1 thời
@@ -383,11 +591,13 @@ function MessageBubble({
   /** Bấm vào 1 ảnh trong tin này — mở trình xem toàn màn hình tại đúng ảnh đó
    *  (xem docstring `onOpenGallery` ở MessageAttachments.tsx). */
   onOpenGallery?: (messageId: string) => void;
+  /** Bấm vào mã VietQR hoặc ảnh không thuộc gallery hội thoại — mở lightbox phóng to. */
+  onOpenImageLightbox?: (url: string) => void;
 }) {
-
-
   const mine = msg.is_sent;
-  const [expanded, setExpanded] = useState(false);
+  const normalized = useMemo(() => normalizeChatMessage(msg), [msg]);
+  const isCenteredSystem = isCenteredZaloSystemMessage(normalized);
+
   // Toạ độ menu "⋮" tính tay lúc bấm mở (xem onClick của nút "⋮" bên dưới) —
   // bắt buộc dùng `position: fixed` theo toạ độ VIEWPORT thay vì `absolute`
   // trong khung tin nhắn, vì khung đó có `overflow-y-auto` nên bất kỳ phần
@@ -403,7 +613,7 @@ function MessageBubble({
   const [dragX, setDragX] = useState(0);
   const draggingRef = useRef(false);
   const dragStartXRef = useRef(0);
-  const canSwipeReply = !!msg.cli_msg_id && !!onSwipeReply;
+  const canSwipeReply = !isCenteredSystem && !!msg.cli_msg_id && !!onSwipeReply;
   // `select-none` CHỈ áp trong lúc đang thực sự kéo (state, không phải ref, để
   // trigger re-render đổi class) — trước đây áp CỐ ĐỊNH cho mọi bong bóng
   // (kể cả lúc không kéo gì) nên chặn luôn "bôi đen để copy" tin đã gửi (bug
@@ -418,7 +628,7 @@ function MessageBubble({
     // setPointerCapture() về hàng ngoài, khiến Chrome không còn phát sinh
     // "click" cho đúng phần tử con nữa (pointer capture retarget click) →
     // Cảm xúc/Thu hồi/Chuyển tiếp bấm không phản ứng gì (bug báo 2026-09-21).
-    if ((e.target as Element).closest?.("button, a")) return;
+    if ((e.target as Element).closest?.("button, a, audio, video, input, textarea")) return;
     draggingRef.current = true;
     dragStartXRef.current = e.clientX;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -454,34 +664,65 @@ function MessageBubble({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [menuOpen, onToggleMenu]);
 
-  // Thông báo hệ thống (kết bạn, bình chọn, ...) — hiện CĂN GIỮA như 1 dòng
-  // thông báo, KHÔNG phải bong bóng trái/phải bình thường (xem
-  // systemActionText() ở zaloMessageContent.ts).
-  if (msg.msg_kind === "system_notice") {
+  // Banner sự kiện hệ thống căn giữa (kết bạn, sự kiện nhóm, msginfo.actionlist,
+  // thiệp eCard, bình chọn, nhắc hẹn, công việc, tin nhắn đã thu hồi chat.undo) —
+  // KHÔNG bọc trong bong bóng trái/phải và không hiện menu Copy/Chuyển tiếp.
+  if (isCenteredSystem) {
+    const fallbackCategory: ZaloSystemEventCategory =
+      normalized.isRecalled || normalized.kind === "undo"
+        ? "undo"
+        : normalized.kind === "ecard" ||
+            normalized.kind === "poll" ||
+            normalized.kind === "reminder" ||
+            normalized.kind === "todo"
+          ? normalized.kind
+          : "info";
+
     return (
-      <div className="flex justify-center px-4 py-1">
-        <div className="max-w-[90%] rounded-full bg-[#eef1f5] px-3.5 py-1.5 text-center text-[12px] text-[#6b7a8d]">
-          {msg.system_text || "Thông báo hệ thống"}
-        </div>
+      <div
+        className={`flex justify-center rounded-xl px-2 py-0.5 transition-colors duration-700 ${
+          highlighted ? "bg-[#fff3cd]" : "bg-transparent"
+        }`}
+      >
+        <ZaloSystemEventBanner
+          event={normalized.systemEvent}
+          title={
+            normalized.systemEvent?.title ||
+            normalized.system_text ||
+            normalized.text ||
+            (normalized.isRecalled ? "Tin nhắn đã được thu hồi" : "Thông báo hệ thống")
+          }
+          subtitle={normalized.systemEvent?.subtitle}
+          category={normalized.systemEvent?.category || fallbackCategory}
+          iconKind={normalized.systemEvent?.iconKind}
+        />
       </div>
     );
   }
 
-  const attachments = (msg.attachments && msg.attachments.length > 0)
-    ? msg.attachments
-    : (msg.image_urls && msg.image_urls.length > 0
-        ? msg.image_urls.map((url) => ({ kind: "image" as const, url }))
-        : []);
-  const hasAttachments = attachments.length > 0;
-  // Sticker/ảnh (đơn hoặc album, không kèm chú thích): bỏ nền bong bóng cho
-  // giống Zalo thật — nền xanh/trắng bọc quanh ảnh/nhãn dán trong suốt trông
-  // rất rối (yêu cầu người dùng 2026-09-20: "hình ảnh không nên tô màu nền
-  // xanh xung quanh như chữ"). Video/file/link/danh thiếp... vẫn giữ khung —
-  // các loại đó cần viền/nền để đọc được chữ/icon bên trong.
+  const hasAttachments = normalized.attachments.length > 0;
+  const isCallMsg =
+    normalized.kind === "call" ||
+    Boolean(normalized.callInfo) ||
+    normalized.attachments.some((a) => a.kind === "call");
+  const isSystemOrRecalled =
+    normalized.isRecalled ||
+    normalized.kind === "undo" ||
+    normalized.kind === "system_notice";
+  const redundantCardText = isRedundantRichCardText(normalized);
+  const copyableText = !redundantCardText ? normalized.text.trim() : "";
+
+  // Rich card tự có khung bề mặt hoàn chỉnh (ảnh, sticker, danh thiếp, thẻ ngân hàng,
+  // tệp, link, vị trí, video, cuộc gọi): không bọc thêm nền bong bóng để tránh viền kép.
   const bare =
-    !msg.content?.trim() &&
-    attachments.length > 0 &&
-    attachments.every((a) => a.kind === "sticker" || a.kind === "image" || a.kind === "gif" || a.kind === "contact");
+    isBareZaloRichMessage(redundantCardText ? { ...normalized, text: "" } : normalized) ||
+    (!normalized.text.trim() &&
+      normalized.attachments.length === 0 &&
+      (normalized.kind === "bankcard" ||
+        normalized.kind === "file" ||
+        normalized.kind === "folder" ||
+        normalized.kind === "sticker"));
+  const onDarkSurface = !bare && mine;
 
   // Gom Copy/Chuyển tiếp/Thu hồi vào 1 menu "⋮" nổi bên cạnh bong bóng (yêu
   // cầu người dùng 2026-09-21) — chỉ liệt kê hành động THẬT SỰ dùng được cho
@@ -503,20 +744,20 @@ function MessageBubble({
       },
     });
   }
-  if (msg.content?.trim()) {
+  if (!isCallMsg && !isSystemOrRecalled && copyableText) {
     menuActions.push({
       key: "copy",
       label: "Copy",
       icon: Copy,
       onClick: () => {
-        void navigator.clipboard?.writeText(msg.content || "");
+        void navigator.clipboard?.writeText(copyableText);
         onToggleMenu?.();
       },
     });
   }
-  // Chuyển tiếp THỦ CÔNG — mọi tin có chữ hoặc đính kèm đều chuyển tiếp được
-  // (khác Thu hồi chỉ áp dụng tin của mình).
-  if (onForward && (msg.content?.trim() || hasAttachments)) {
+  // Chuyển tiếp THỦ CÔNG — mọi tin thường/rich card có chữ hoặc đính kèm đều chuyển
+  // tiếp được; ẩn trên cuộc gọi, thông báo hệ thống và tin đã thu hồi.
+  if (!isCallMsg && !isSystemOrRecalled && onForward && (Boolean(copyableText) || hasAttachments)) {
     menuActions.push({
       key: "forward",
       label: "Chuyển tiếp",
@@ -545,14 +786,6 @@ function MessageBubble({
     });
   }
 
-  if (msg.is_deleted) {
-    return (
-      <div className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-        <div className="rounded-2xl bg-[#eef1f5] px-4 py-2 text-xs italic text-[#8a9aa8]">Tin nhắn đã bị thu hồi</div>
-      </div>
-    );
-  }
-
   return (
     <div
       // z-10 khi đang mở menu "⋮"/picker cảm xúc — bảo đảm dropdown của tin
@@ -561,7 +794,7 @@ function MessageBubble({
       // của hàng phía trên nếu không nâng z-index, gây che khuất Copy/Chuyển
       // tiếp — báo lỗi 2026-09-21).
       className={`relative flex gap-2 rounded-xl px-1.5 py-0.5 transition-colors duration-700 ${mine ? "justify-end" : "justify-start"} ${highlighted ? "bg-[#fff3cd]" : "bg-transparent"} ${canSwipeReply ? "cursor-grab active:cursor-grabbing" : ""} ${isDragging ? "select-none" : ""} ${menuOpen || pickerOpen ? "z-10" : ""}`}
-      style={{ transform: dragX ? `translateX(${dragX}px)` : undefined, transition: draggingRef.current ? "none" : "transform 0.18s ease" }}
+      style={{ transform: dragX ? `translateX(${dragX}px)` : undefined, transition: isDragging ? "none" : "transform 0.18s ease" }}
       onPointerDown={handleDragPointerDown}
       onPointerMove={handleDragPointerMove}
       onPointerUp={endDrag}
@@ -607,9 +840,9 @@ function MessageBubble({
           >
             {/* Trích dẫn tin ĐANG ĐƯỢC TRẢ LỜI — hiện NGAY trong bong bóng để
                 biết tin này reply cho tin nhắn nào (yêu cầu người dùng
-                2026-09-18: "phải hiển thị tin nhắn đó trả lời cho tin nhắn
-                nào"), khớp `quote` do bridge dựng sẵn (buildQuotePreview() ở
-                supabaseSync.js). Bấm vào để nhảy tới đúng tin gốc nếu còn id. */}
+                2026-09-18), chuẩn hoá qua formatZaloAnySidebarPreview để mọi loại
+                tin (file, thẻ ngân hàng, danh thiếp, link, cuộc gọi, sticker,
+                thoại, video, vị trí, sự kiện, thu hồi) đều có nhãn tiếng Việt chuẩn. */}
             {msg.quote ? (
               <button
                 type="button"
@@ -617,33 +850,41 @@ function MessageBubble({
                   const targetId = msg.quote?.global_msg_id || msg.quote?.cli_msg_id;
                   if (targetId && msg.quote?.ts) onJumpToQuote?.(msg.quote.ts, targetId);
                 }}
-                className={`mb-1.5 block w-full rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[12.5px] ${mine ? "border-white/60 bg-white/15 text-white/90" : "border-[#c62828]/50 bg-[#f1f4f8] text-[#4a5b6d]"
-                  }`}
+                className={`mb-1.5 block w-full rounded-lg border-l-[3px] px-2.5 py-1.5 text-left text-[12.5px] ${
+                  onDarkSurface
+                    ? "border-white/60 bg-white/15 text-white/90"
+                    : "border-[#c62828]/50 bg-[#f1f4f8] text-[#4a5b6d]"
+                }`}
               >
-                <div className={`text-[11.5px] font-semibold ${mine ? "text-white" : "text-[#c62828]"}`}>
+                <div className={`text-[11.5px] font-semibold ${onDarkSurface ? "text-white" : "text-[#c62828]"}`}>
                   {msg.quote.from_name || "Tin nhắn gốc"}
                 </div>
-                <div className="truncate opacity-90">{msg.quote.text ? truncatePreview(msg.quote.text) : "Tin nhắn"}</div>
+                <div className="truncate opacity-90">
+                  {truncatePreview(formatQuotePreview(msg.quote, quotedMsg, mine))}
+                </div>
               </button>
             ) : null}
-            {/* Đính kèm render theo ĐÚNG loại (ảnh / video phát tại chỗ / link
-                dạng thẻ xem trước / file / thoại / nhãn dán) — xem
-                MessageAttachments.tsx. Trước đây mọi URL đều bị nhét vào <img>
-                nên link và video hiện thành ảnh vỡ. */}
-            <MessageAttachments
-              attachments={attachments}
-              kind={msg.msg_kind}
-              mine={mine}
+            {/* Nội dung tin nhắn & đính kèm hợp nhất (Phase 2A/2B) — hỗ trợ đủ
+                mọi thẻ rich card Zalo + ZaloInlineSmartText (clickable URL, SĐT
+                pill 1-click copy, chip STK ngân hàng) mà không bao giờ lộ
+                "sendBubbleMessage", JSON thô hay "— mở Zalo để xem". */}
+            <ZaloRichMessageContent
+              normalized={normalized}
+              isOwn={mine}
+              onDarkSurface={onDarkSurface}
+              onCallBack={onCallBack}
               onContactMessage={onContactMessage}
-              unknownLabel={msg.unknown_label}
               onMediaLoad={onMediaLoad}
-              onOpenGallery={onOpenGallery ? () => onOpenGallery(msg.message_id) : undefined}
+              onOpenImage={(url, index) => {
+                if (index !== undefined && onOpenGallery) {
+                  onOpenGallery(msg.message_id);
+                } else if (onOpenImageLightbox) {
+                  onOpenImageLightbox(url);
+                } else if (typeof window !== "undefined") {
+                  window.open(url, "_blank", "noopener,noreferrer");
+                }
+              }}
             />
-            {msg.content && !(hasAttachments && msg.msg_kind === "bankcard" && /^\[(tài khoản ngân hàng|bank account)\]$/i.test(msg.content.trim())) && (
-              <div className={`whitespace-pre-wrap break-words ${hasAttachments ? "mt-2" : ""}`} onClick={() => setExpanded(!expanded)}>
-                {linkifyText(msg.content, mine)}
-              </div>
-            )}
           </div>
           {/* Menu "⋮" Copy/Chuyển tiếp/Thu hồi — nổi ngay CẠNH bong bóng (yêu
               cầu người dùng 2026-09-21, kèm ảnh chụp Zalo thật làm mẫu), khác
@@ -773,7 +1014,8 @@ export function ZaloChatPanel({
   onStartReply,
   onCancelReply,
   conversations,
-  onContactMessage
+  onContactMessage,
+  onCallBack,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -793,6 +1035,8 @@ export function ZaloChatPanel({
   // header); có giá trị = mở thẳng viewer tại đúng ảnh vừa bấm trong chat.
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryInitialMessageId, setGalleryInitialMessageId] = useState<string | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<{ convId: string | undefined; url: string } | null>(null);
+  const activeLightboxUrl = lightboxImage && lightboxImage.convId === conv?.conversation_id ? lightboxImage.url : null;
   const [recallingId, setRecallingId] = useState<string | null>(null);
   const [sendingFriendRequest, setSendingFriendRequest] = useState(false);
   const [acceptingFriendRequest, setAcceptingFriendRequest] = useState(false);
@@ -821,6 +1065,15 @@ export function ZaloChatPanel({
     setGalleryOpen(false);
     setGalleryInitialMessageId(null);
   }, [conv?.conversation_id]);
+
+  useEffect(() => {
+    if (!activeLightboxUrl) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setLightboxImage(null);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeLightboxUrl]);
 
   // Debounce 400ms — tránh gọi API theo từng ký tự gõ.
   useEffect(() => {
@@ -1100,10 +1353,11 @@ export function ZaloChatPanel({
       if (!forwardMsg) return;
       setForwarding(true);
       try {
+        const normalizedForward = normalizeChatMessage(forwardMsg);
         const result = await zaloApi.forwardMessage(
           targets.map((t) => ({ thread_id: t.thread_id, thread_type: t.thread_type })),
-          forwardMsg.content || "",
-          forwardMsg.attachments,
+          normalizedForward.text || "",
+          normalizedForward.attachments,
           accountId
         );
         const okCount = result?.success?.length || 0;
@@ -1147,6 +1401,14 @@ export function ZaloChatPanel({
   }, [convId, convThreadType, accountId]);
 
   const displayMessages = useMemo(() => groupImageMessagesForDisplay(messages), [messages]);
+  const messageById = useMemo(() => {
+    const map = new Map<string, ZaloMessage>();
+    for (const m of messages) {
+      if (m.message_id) map.set(String(m.message_id), m);
+      if (m.cli_msg_id) map.set(String(m.cli_msg_id), m);
+    }
+    return map;
+  }, [messages]);
 
   // Cuộn xuống cuối khi MỞ hội thoại (đổi convId) hoặc có tin mới (đổi
   // messages.length). Trước đây chỉ phụ thuộc messages.length — chuyển sang
@@ -1535,7 +1797,7 @@ export function ZaloChatPanel({
               </div>
             ) : (
               searchResults.map((r) => {
-                const preview = r.content || (r.msg_kind && r.msg_kind !== "text" ? `[${r.msg_kind}]` : "");
+                const preview = formatMessagePreview(r);
                 return (
                   <button
                     key={r.message_id || `${r.ts}-${r.sender_id}`}
@@ -1603,6 +1865,8 @@ export function ZaloChatPanel({
               {displayMessages.map((m, idx) => {
                 const tsRaw = m.timestamp ? new Date(m.timestamp).getTime() : 0;
                 const mId = m.message_id ? String(m.message_id) : `${Number.isFinite(tsRaw) ? tsRaw : idx}|${m.sender_id ?? ""}|${(m.content ?? "").slice(0, 50)}`;
+                const quoteLookupId = m.quote?.global_msg_id || m.quote?.cli_msg_id;
+                const quotedMsg = quoteLookupId ? messageById.get(String(quoteLookupId)) : undefined;
                 return (
                   <div
                     key={mId}
@@ -1613,6 +1877,7 @@ export function ZaloChatPanel({
                   >
                     <MessageBubble
                       msg={m}
+                      quotedMsg={quotedMsg}
                       onRecall={handleRecall}
                       recalling={recallingId === m.message_id}
                       highlighted={highlightedMessageId === mId}
@@ -1624,6 +1889,7 @@ export function ZaloChatPanel({
                       onJumpToQuote={onJumpToMessage}
                       onForward={conversations && conversations.length > 0 ? setForwardMsg : undefined}
                       onContactMessage={onContactMessage}
+                      onCallBack={onCallBack}
                       menuOpen={actionMenuFor === mId}
                       onToggleMenu={() => setActionMenuFor((prev) => (prev === mId ? null : mId))}
                       onMediaLoad={handleMediaLoad}
@@ -1631,6 +1897,7 @@ export function ZaloChatPanel({
                         setGalleryInitialMessageId(messageId);
                         setGalleryOpen(true);
                       }}
+                      onOpenImageLightbox={(url) => setLightboxImage({ convId: conv.conversation_id, url })}
                     />
                   </div>
                 );
@@ -1648,11 +1915,7 @@ export function ZaloChatPanel({
                 Trả lời {replyingTo.is_sent ? "chính bạn" : replyingTo.sender_name || "tin nhắn"}
               </div>
               <div className="truncate text-[12.5px] text-[#4f5f71]">
-                {replyingTo.content?.trim()
-                  ? truncatePreview(replyingTo.content)
-                  : replyingTo.msg_kind && replyingTo.msg_kind !== "text"
-                    ? `[${replyingTo.msg_kind}]`
-                    : "Tin nhắn"}
+                {truncatePreview(formatMessagePreview(replyingTo))}
               </div>
             </div>
             <button type="button" onClick={onCancelReply} className="shrink-0 text-[#8a9aa8] hover:text-[#4f5f71]" title="Huỷ trả lời">
@@ -1994,7 +2257,7 @@ export function ZaloChatPanel({
         <ForwardMessageModal
           conversations={conversations}
           excludeConversationId={conv?.conversation_id}
-          preview={previewText({ text: forwardMsg.content, kind: forwardMsg.msg_kind, attachments: forwardMsg.attachments })}
+          preview={formatMessagePreview(forwardMsg)}
           sending={forwarding}
           onCancel={() => setForwardMsg(null)}
           onConfirm={handleConfirmForward}
@@ -2010,6 +2273,43 @@ export function ZaloChatPanel({
           conversationName={conv.conversation_name}
           initialMessageId={galleryInitialMessageId}
         />
+      ) : null}
+      {activeLightboxUrl ? (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div
+            className="relative flex max-h-[90vh] max-w-[92vw] flex-col items-center gap-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={activeLightboxUrl}
+              alt="Xem ảnh phóng to"
+              className="max-h-[80vh] max-w-[88vw] rounded-xl bg-white object-contain p-1 shadow-2xl"
+            />
+            <div className="flex items-center gap-2">
+              <a
+                href={activeLightboxUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3.5 py-1.5 text-xs font-semibold text-[#0a1a2b] shadow-md transition hover:bg-white"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Mở ảnh gốc
+              </a>
+              <button
+                type="button"
+                onClick={() => setLightboxImage(null)}
+                className="inline-flex items-center gap-1 rounded-full bg-white/20 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-white/30"
+              >
+                <X className="h-3.5 w-3.5" />
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
     </>
   );

@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import asyncio
+import html as html_lib
+import ipaddress
+import json
 import mimetypes
 import posixpath
+import re
+import time
 import uuid
 import base64
 import hashlib
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from loguru import logger
@@ -16,6 +21,799 @@ from loguru import logger
 from app.modules.all_platform.zalo.config import settings
 from app.modules.all_platform.zalo.schemas.job import JobData
 from app.modules.all_platform.zalo.schemas.message import Message
+
+
+# ----------------------------------------------------------------------------
+# Zalo Message Normalization Catalog (Zalo PC v26.11.12 — G2/G3/G4/G5/G6)
+# ----------------------------------------------------------------------------
+
+SIDEBAR_BRACKET_LABELS: Dict[str, str] = {
+    "STR_ALBUM_MSG": "[Album]",
+    "STR_ARTICLE_MSG": "[Bài viết]",
+    "STR_CARD_MSG": "[Thiệp]",
+    "STR_CONTACT_MSG": "[Danh thiếp]",
+    "STR_DEL_MSG": "[Tin nhắn đã xóa]",
+    "STR_DOODLE_MSG": "[Vẽ hình]",
+    "STR_FILE_MSG": "[File]",
+    "STR_FOLDER_MSG": "[Thư mục]",
+    "STR_GIF": "[GIF]",
+    "STR_IMPORTANT_PREFIX": "[Quan trọng]",
+    "STR_INCALL_MSG": "[Cuộc gọi đến]",
+    "STR_LINK_MSG": "[Link]",
+    "STR_LOC_MSG": "[Vị trí]",
+    "STR_MISS_CALL_MSG": "[Cuộc gọi nhỡ]",
+    "STR_MSG_MEDIA": "[Tin nhắn Media]",
+    "STR_MSG_NOT_SUPPORTED": "[Tin nhắn chưa hỗ trợ ở phiên bản hiện tại]",
+    "STR_NO_RECENT_MESSAGES": "[Không có tin nhắn gần đây]",
+    "STR_OUTCALL_MSG": "[Cuộc gọi đi]",
+    "STR_PHOTO_MSG": "[Hình ảnh]",
+    "STR_POLL_MSG": "[Bình chọn]",
+    "STR_PREVIEW_SYNCING_OUT_OF_RANGE_W_BRACKET": "[Không có tin nhắn gần đây]",
+    "STR_PREVIEW_SYNCING_W_BRACKET": "[Tin nhắn đang đồng bộ]",
+    "STR_PREVIEW_SYNC_FAILED_W_BRACKET": "[Tin nhắn chưa đồng bộ]",
+    "STR_RECALL_MSG_2": "[Tin nhắn đã thu hồi]",
+    "STR_REPLY_MSG_BRACKET": "[Trả lời]",
+    "STR_STICKER": "[Sticker]",
+    "STR_STICKERSET_MSG": "[Bộ sticker]",
+    "STR_URGENT_PREFIX": "[Khẩn cấp]",
+    "STR_VANISH_MSG": "[Tin nhắn đã tự xóa]",
+    "STR_VIDEO_MSG": "[Video]",
+    "STR_VOICE_MSG": "[Tin nhắn thoại]",
+    # Normalization extension for zinstant.bankcard / templateId=11845
+    "BANKCARD": "[Thẻ ngân hàng]",
+}
+
+# All 57 Vietnamese Bank BIN codes extracted from Zalo PC v26.11.12 BinBankCard
+VIETNAM_BANK_BINS: Dict[str, Dict[str, str]] = {
+    "970425": {"code": "ABBank", "short_name": "ABBank", "name": "Ngân hàng TMCP An Bình (ABBank)"},
+    "970416": {"code": "ACB", "short_name": "ACB", "name": "Ngân hàng TMCP Á Châu (ACB)"},
+    "970405": {"code": "Agribank", "short_name": "Agribank", "name": "Ngân hàng Nông nghiệp và Phát triển Nông thôn Việt Nam (Agribank)"},
+    "970418": {"code": "BIDV", "short_name": "BIDV", "name": "Ngân hàng TMCP Đầu tư và Phát triển Việt Nam (BIDV)"},
+    "970454": {"code": "BVBank", "short_name": "BVBank", "name": "Ngân hàng TMCP Bản Việt (BVBank)"},
+    "970409": {"code": "BacA_Bank", "short_name": "BacA Bank", "name": "Ngân hàng TMCP Bắc Á (BacA Bank)"},
+    "970438": {"code": "BaoViet_Bank", "short_name": "BaoViet Bank", "name": "Ngân hàng TMCP Bảo Việt (BaoViet Bank)"},
+    "546034": {"code": "CAKE", "short_name": "CAKE", "name": "Ngân hàng số CAKE by VPBank"},
+    "970444": {"code": "CB_Bank", "short_name": "CB Bank", "name": "Ngân hàng Thương mại TNHH MTV Xây dựng Việt Nam (CB Bank)"},
+    "422589": {"code": "CIMB_Bank", "short_name": "CIMB Bank", "name": "Ngân hàng TNHH MTV CIMB Việt Nam"},
+    "970446": {"code": "Coop_Bank", "short_name": "Co-opBank", "name": "Ngân hàng Hợp tác xã Việt Nam (Co-opBank)"},
+    "796500": {"code": "DBS_Bank", "short_name": "DBS Bank", "name": "Ngân hàng DBS Bank Ltd - CN TP.HCM"},
+    "970406": {"code": "DongA_Bank", "short_name": "DongA Bank", "name": "Ngân hàng TMCP Đông Á (DongA Bank)"},
+    "970431": {"code": "Eximbank", "short_name": "Eximbank", "name": "Ngân hàng TMCP Xuất Nhập khẩu Việt Nam (Eximbank)"},
+    "970408": {"code": "GPBank", "short_name": "GPBank", "name": "Ngân hàng Thương mại TNHH MTV Dầu Khí Toàn Cầu (GPBank)"},
+    "970437": {"code": "HDBank", "short_name": "HDBank", "name": "Ngân hàng TMCP Phát triển TP.HCM (HDBank)"},
+    "458761": {"code": "HSBC", "short_name": "HSBC", "name": "Ngân hàng TNHH MTV HSBC Việt Nam"},
+    "970442": {"code": "HongLeong_Bank", "short_name": "HongLeong Bank", "name": "Ngân hàng TNHH MTV Hong Leong Việt Nam"},
+    "970456": {"code": "IBK_HCM", "short_name": "IBK HCM", "name": "Ngân hàng Công nghiệp Hàn Quốc - CN TP.HCM"},
+    "970455": {"code": "IBK_HN", "short_name": "IBK HN", "name": "Ngân hàng Công nghiệp Hàn Quốc - CN Hà Nội"},
+    "970434": {"code": "Indovina_Bank", "short_name": "Indovina Bank", "name": "Ngân hàng TNHH Indovina (IVB)"},
+    "668888": {"code": "KBank", "short_name": "KBank", "name": "Ngân hàng Đại chúng TNHH Kasikornbank (KBank)"},
+    "970452": {"code": "KienlongBank", "short_name": "KienlongBank", "name": "Ngân hàng TMCP Kiên Long (KienlongBank)"},
+    "970463": {"code": "Kookmin_Bank_HCM", "short_name": "Kookmin HCM", "name": "Ngân hàng Kookmin - CN TP.HCM"},
+    "970462": {"code": "Kookmin_Bank_HN", "short_name": "Kookmin HN", "name": "Ngân hàng Kookmin - CN Hà Nội"},
+    "970449": {"code": "LPBank", "short_name": "LPBank", "name": "Ngân hàng TMCP Lộc Phát Việt Nam (LPBank)"},
+    "970422": {"code": "MB_Bank", "short_name": "MB Bank", "name": "Ngân hàng TMCP Quân đội (MB Bank)"},
+    "970426": {"code": "MSB", "short_name": "MSB", "name": "Ngân hàng TMCP Hàng Hải Việt Nam (MSB)"},
+    "970419": {"code": "NCB", "short_name": "NCB", "name": "Ngân hàng TMCP Quốc Dân (NCB)"},
+    "970428": {"code": "Nam_A_Bank", "short_name": "Nam A Bank", "name": "Ngân hàng TMCP Nam Á (Nam A Bank)"},
+    "801011": {"code": "NongHyup_Bank", "short_name": "NongHyup Bank", "name": "Ngân hàng NongHyup - CN Hà Nội"},
+    "970448": {"code": "OCB", "short_name": "OCB", "name": "Ngân hàng TMCP Phương Đông (OCB)"},
+    "970414": {"code": "Ocean_Bank", "short_name": "Ocean Bank", "name": "Ngân hàng Thương mại TNHH MTV Đại Dương (Ocean Bank)"},
+    "970430": {"code": "PGBank", "short_name": "PGBank", "name": "Ngân hàng TMCP Thịnh vượng và Phát triển (PGBank)"},
+    "970412": {"code": "PVcomBank", "short_name": "PVcomBank", "name": "Ngân hàng TMCP Đại Chúng Việt Nam (PVcomBank)"},
+    "970439": {"code": "Public_Bank_Vietnam", "short_name": "Public Bank", "name": "Ngân hàng TNHH MTV Public Việt Nam"},
+    "970429": {"code": "SCB", "short_name": "SCB", "name": "Ngân hàng TMCP Sài Gòn (SCB)"},
+    "970443": {"code": "SHB", "short_name": "SHB", "name": "Ngân hàng TMCP Sài Gòn - Hà Nội (SHB)"},
+    "970403": {"code": "Sacombank", "short_name": "Sacombank", "name": "Ngân hàng TMCP Sài Gòn Thương Tín (Sacombank)"},
+    "970400": {"code": "Saigon_Bank", "short_name": "SaigonBank", "name": "Ngân hàng TMCP Sài Gòn Công Thương (SaigonBank)"},
+    "970440": {"code": "SeABank", "short_name": "SeABank", "name": "Ngân hàng TMCP Đông Nam Á (SeABank)"},
+    "970424": {"code": "Shinhan_Bank", "short_name": "Shinhan Bank", "name": "Ngân hàng TNHH MTV Shinhan Việt Nam"},
+    "970410": {"code": "Standard_Chartered_Vietnam", "short_name": "Standard Chartered", "name": "Ngân hàng TNHH MTV Standard Chartered Việt Nam"},
+    "9704261": {"code": "TNEX", "short_name": "TNEX", "name": "Ngân hàng số TNEX by MSB"},
+    "970423": {"code": "TPBank", "short_name": "TPBank", "name": "Ngân hàng TMCP Tiên Phong (TPBank)"},
+    "970407": {"code": "Techcombank", "short_name": "Techcombank", "name": "Ngân hàng TMCP Kỹ thương Việt Nam (Techcombank)"},
+    "963388": {"code": "Timo", "short_name": "Timo", "name": "Ngân hàng số Timo by BVBank"},
+    "546035": {"code": "UBank", "short_name": "UBank", "name": "Ngân hàng số Ubank by VPBank"},
+    "970458": {"code": "United_Overseas_Bank_Vietnam", "short_name": "UOB", "name": "Ngân hàng TNHH MTV United Overseas Bank Việt Nam (UOB)"},
+    "970441": {"code": "VIB", "short_name": "VIB", "name": "Ngân hàng TMCP Quốc tế Việt Nam (VIB)"},
+    "970432": {"code": "VPBank", "short_name": "VPBank", "name": "Ngân hàng TMCP Việt Nam Thịnh Vượng (VPBank)"},
+    "970421": {"code": "VRB", "short_name": "VRB", "name": "Ngân hàng Liên doanh Việt - Nga (VRB)"},
+    "970427": {"code": "VietABank", "short_name": "VietABank", "name": "Ngân hàng TMCP Việt Á (VietABank)"},
+    "970433": {"code": "VietBank", "short_name": "VietBank", "name": "Ngân hàng TMCP Việt Nam Thương Tín (VietBank)"},
+    "970436": {"code": "Vietcombank", "short_name": "Vietcombank", "name": "Ngân hàng TMCP Ngoại thương Việt Nam (Vietcombank)"},
+    "970415": {"code": "VietinBank", "short_name": "VietinBank", "name": "Ngân hàng TMCP Công thương Việt Nam (VietinBank)"},
+    "970457": {"code": "Woori_Bank", "short_name": "Woori Bank", "name": "Ngân hàng TNHH MTV Woori Việt Nam"},
+}
+
+_BANK_ALIAS_TO_BIN: Dict[str, str] = {}
+for _b_bin, _b_meta in VIETNAM_BANK_BINS.items():
+    for _alias in (
+        _b_meta["code"],
+        _b_meta["code"].replace("_", " "),
+        _b_meta["code"].replace("_", ""),
+        _b_meta["short_name"],
+        _b_meta["short_name"].replace(" ", ""),
+    ):
+        _BANK_ALIAS_TO_BIN[_alias.lower()] = _b_bin
+_BANK_ALIAS_TO_BIN.update({
+    "vcb": "970436",
+    "vietcombank": "970436",
+    "tcb": "970407",
+    "techcombank": "970407",
+    "mb": "970422",
+    "mbbank": "970422",
+    "mb bank": "970422",
+    "vpb": "970432",
+    "vpbank": "970432",
+    "ctg": "970415",
+    "vietinbank": "970415",
+    "icb": "970415",
+    "bidv": "970418",
+    "tpb": "970423",
+    "tpbank": "970423",
+    "stb": "970403",
+    "sacombank": "970403",
+    "acb": "970416",
+    "agribank": "970405",
+    "hdbank": "970437",
+    "vib": "970441",
+    "ocb": "970448",
+    "msb": "970426",
+    "shb": "970443",
+    "seabank": "970440",
+    "eximbank": "970431",
+    "lpbank": "970449",
+    "lienvietpostbank": "970449",
+    "pvcombank": "970412",
+    "scb": "970429",
+    "uob": "970458",
+    "cake": "546034",
+    "timo": "963388",
+    "tnex": "9704261",
+})
+
+_CALL_ACTIONS = frozenset({
+    "recommened.misscall", "recommened.calltime", "recommened.calling", "recommened.receivecall",
+    "recommended.misscall", "recommended.calltime", "recommended.calling", "recommended.receivecall",
+})
+_CONTACT_ACTIONS = frozenset({
+    "recommened.user", "recommened.vip", "show.profile",
+    "recommended.user", "recommended.vip",
+})
+_LINK_ACTIONS = frozenset({
+    "recommened.link", "recommened.minisite", "recommened.miniapp",
+    "recommened.oa", "recommened.zvideo", "recommened.article", "recommened.post",
+    "recommended.link", "recommended.minisite", "recommended.miniapp",
+    "recommended.oa", "recommended.zvideo", "recommended.article", "recommended.post",
+})
+_SYSTEM_NOTICE_MSG_TYPES = frozenset({
+    "group.event", "group.leave", "friend.event", "chat.ecard",
+    "group.poll", "chat.poll", "chat.reminder", "chat.todo",
+    "chat.list.action", "chat.e2ee.replace", "chat.delete",
+    "chat.delete.everyone", "chat.vanish", "chat.reaction", "chat._jumpToMessage",
+})
+_SYSTEM_NOTICE_ACTIONS = frozenset({
+    "msginfo.actionlist", "recommened.friend", "recommended.friend",
+    "todo.remind", "todo.remind2",
+})
+_CANONICAL_MSG_KINDS = frozenset({
+    "text", "image", "gif", "video", "voice", "file", "sticker", "doodle",
+    "location", "link", "contact", "bankcard", "call", "system_notice", "undo",
+})
+_NON_BANKCARD_ZINSTANT_TEMPLATE_IDS = frozenset({14875, 17123})
+_UGLY_SUFFIX_RE = re.compile(r"\s*[—–-]+\s*mở\s+zalo\s+để\s+xem\.?\s*$", re.IGNORECASE)
+_BANKCARD_HOST_RE = re.compile(r"^[a-z0-9-]+(?:\.[a-z0-9-]+)+$")
+_BANKCARD_PREVIEW_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_BANKCARD_PREVIEW_CACHE_TTL_S = 600.0
+
+
+def _safe_parse_json_dict(value: Any) -> Optional[Dict[str, Any]]:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s or not s.startswith("{"):
+            return None
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, str) and parsed.strip().startswith("{"):
+                parsed = json.loads(parsed.strip())
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            return None
+    return None
+
+
+def _normalize_raw_content(value: Any) -> Optional[Dict[str, Any]]:
+    """Safely normalize raw_content (dict or JSON string, including legacy type=='group' strings)."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        parsed = _safe_parse_json_dict(s)
+        if parsed is not None:
+            return parsed
+        try:
+            any_parsed = json.loads(s)
+            if isinstance(any_parsed, dict):
+                return any_parsed
+            return {"raw_value": any_parsed}
+        except Exception:
+            return {"raw_text": s}
+    return {"raw_value": value}
+
+
+def _extract_raw_parts(raw_content: Any, msg_type: Optional[str] = None) -> Tuple[str, str, Optional[int], Dict[str, Any], Dict[str, Any]]:
+    """Return (wire_msg_type, action_lower, template_id, content_dict, params_dict)."""
+    raw_dict = _normalize_raw_content(raw_content) or {}
+    data_obj = raw_dict.get("data") if isinstance(raw_dict.get("data"), dict) else raw_dict
+
+    wire_type = str(
+        data_obj.get("msgType")
+        or raw_dict.get("msgType")
+        or msg_type
+        or data_obj.get("type")
+        or raw_dict.get("type")
+        or ""
+    ).strip()
+
+    raw_inner = data_obj.get("content")
+    if raw_inner is None:
+        raw_inner = raw_dict.get("content")
+    content_dict = _safe_parse_json_dict(raw_inner) or {}
+    # If raw_dict itself is already an unwrapped content payload (legacy group rows)
+    if not content_dict and any(k in raw_dict for k in ("action", "zinstantdata_id", "data_url", "template_id", "templateId")):
+        content_dict = raw_dict
+
+    params_dict = (
+        _safe_parse_json_dict(content_dict.get("params"))
+        or _safe_parse_json_dict(data_obj.get("params"))
+        or _safe_parse_json_dict(raw_dict.get("params"))
+        or {}
+    )
+    action = str(
+        content_dict.get("action")
+        or data_obj.get("action")
+        or raw_dict.get("action")
+        or ""
+    ).strip().lower()
+
+    template_id: Optional[int] = None
+    for cand in (
+        raw_dict.get("_template_id"),
+        content_dict.get("template_id"),
+        content_dict.get("templateId"),
+        params_dict.get("template_id"),
+        params_dict.get("templateId"),
+        (params_dict.get("item") or {}).get("templateId") if isinstance(params_dict.get("item"), dict) else None,
+        (params_dict.get("pcItem") or {}).get("templateId") if isinstance(params_dict.get("pcItem"), dict) else None,
+        data_obj.get("template_id"),
+        data_obj.get("templateId"),
+    ):
+        if cand is not None and str(cand).strip().isdigit():
+            template_id = int(str(cand).strip())
+            break
+    if template_id is None:
+        for zid in (
+            content_dict.get("zinstantdata_id"),
+            params_dict.get("zinstantdata_id"),
+            data_obj.get("zinstantdata_id"),
+        ):
+            if isinstance(zid, str):
+                m = re.search(r"templateId\s*=\s*(\d+)", zid, re.IGNORECASE)
+                if m:
+                    template_id = int(m.group(1))
+                    break
+
+    return wire_type, action, template_id, content_dict, params_dict
+
+
+def classify_message_kind(
+    msg_type: Optional[str],
+    content: Optional[str] = None,
+    raw_content: Any = None,
+    *,
+    existing_kind: Optional[str] = None,
+) -> str:
+    """Classify canonical msg_kind for all 28 wire msgTypes & 22 actions."""
+    wire_type, action, template_id, content_dict, _params_dict = _extract_raw_parts(raw_content, msg_type)
+    mt = (wire_type or str(msg_type or "text")).strip()
+    act = action
+
+    # Inspect structured wire signals first (fixes legacy rows misclassified as "image" or raw msgType)
+    if mt in ("chat.undo", "recalled"):
+        return "undo"
+    if act == "zinstant.bankcard" or template_id == 11845:
+        return "bankcard"
+    if mt in ("chat.webcontent", "chat.webcontent.v2"):
+        if template_id in _NON_BANKCARD_ZINSTANT_TEMPLATE_IDS:
+            return "system_notice"
+        return "bankcard"
+    if act in _CALL_ACTIONS:
+        return "call"
+    if mt == "chat.ecard":
+        return "system_notice"
+    if mt in _SYSTEM_NOTICE_MSG_TYPES or act in _SYSTEM_NOTICE_ACTIONS:
+        return "system_notice"
+    if mt == "chat.contact" or act in _CONTACT_ACTIONS:
+        return "contact"
+    if mt == "chat.location.new" or act in ("recommened.location", "recommended.location"):
+        return "location"
+    if mt == "chat.gif" or act in ("recommend.gif", "recommened.gif"):
+        return "gif"
+    if mt == "chat.sticker" or act in ("recommened.stickerset", "recommended.stickerset"):
+        return "sticker"
+    if mt in ("share.file", "file"):
+        return "file"
+    if mt in ("chat.video.msg", "video"):
+        return "video"
+    if mt in ("chat.voice", "voice"):
+        return "voice"
+    if mt in ("chat.doodle", "doodle"):
+        return "doodle"
+    if mt in ("chat.photo", "image"):
+        return "image"
+    if mt in ("chat.link", "chat.zalo.me") or act in _LINK_ACTIONS:
+        return "link"
+    if mt == "group":
+        return "system_notice"
+    if mt == "chat.recommended":
+        href = content_dict.get("href")
+        if isinstance(href, str) and href.startswith(("http://", "https://")):
+            return "link"
+        if existing_kind and existing_kind.strip().lower() in _CANONICAL_MSG_KINDS:
+            return existing_kind.strip().lower()
+        return "text"
+    if act == "rtf" or mt in ("webchat", "text"):
+        if existing_kind and existing_kind.strip().lower() in _CANONICAL_MSG_KINDS:
+            return existing_kind.strip().lower()
+        return "text"
+
+    if existing_kind and existing_kind.strip().lower() in _CANONICAL_MSG_KINDS:
+        return existing_kind.strip().lower()
+    return "text"
+
+
+def _sanitize_preview_text(text: Optional[str]) -> str:
+    if not text or not isinstance(text, str):
+        return ""
+    s = text.strip()
+    if not s:
+        return ""
+    if s.lower() == "sendbubblemessage":
+        return ""
+    s = _UGLY_SUFFIX_RE.sub("", s).strip()
+    if s.startswith(("{", "[")):
+        try:
+            json.loads(s)
+            return ""
+        except Exception:
+            pass
+    return s
+
+
+def _format_call_sidebar_preview(action: str, params_dict: Dict[str, Any], is_sent: bool) -> str:
+    act = (action or "").lower()
+    raw_is_caller = params_dict.get("isCaller")
+    if isinstance(raw_is_caller, bool):
+        is_caller = raw_is_caller
+    elif raw_is_caller is not None:
+        is_caller = bool(int(raw_is_caller)) if str(raw_is_caller).isdigit() else bool(raw_is_caller)
+    elif "calling" in act:
+        is_caller = True
+    elif "receivecall" in act:
+        is_caller = False
+    else:
+        is_caller = bool(is_sent)
+
+    raw_calltype = params_dict.get("calltype", params_dict.get("callType", params_dict.get("type", 0)))
+    try:
+        calltype_num = int(raw_calltype)
+    except Exception:
+        calltype_num = 0
+    is_video = calltype_num in (1, 3) or bool(params_dict.get("isVideo"))
+
+    try:
+        reason = int(params_dict.get("reason", 0) or 0)
+    except Exception:
+        reason = 0
+    is_missed = "misscall" in act
+
+    if is_caller:
+        return "[Cuộc gọi video đi]" if is_video else "[Cuộc gọi thoại đi]"
+    if is_missed and reason != 3:
+        return "[Cuộc gọi video nhỡ]" if is_video else "[Cuộc gọi thoại nhỡ]"
+    return "[Cuộc gọi video đến]" if is_video else "[Cuộc gọi thoại đến]"
+
+
+def _format_msginfo_actionlist_preview(content_dict: Dict[str, Any], params_dict: Dict[str, Any]) -> str:
+    msg_obj = params_dict.get("msg")
+    template = ""
+    if isinstance(msg_obj, dict):
+        template = str(msg_obj.get("vi") or msg_obj.get("en") or "").strip()
+    elif isinstance(msg_obj, str):
+        template = msg_obj.strip()
+    if template:
+        highlights = params_dict.get("highLightsV2") or params_dict.get("highLights") or []
+        resolved = template
+        if isinstance(highlights, list):
+            for idx, item in enumerate(highlights):
+                if isinstance(item, dict):
+                    val = str(item.get("content") or item.get("title") or item.get("text") or item.get("name") or "").strip()
+                else:
+                    val = str(item or "").strip()
+                if val:
+                    resolved = resolved.replace(f"%{idx + 1}$s", val).replace(f"${idx}$", val)
+        resolved = re.sub(r"%\d+\$s|\$\d+\$", "", resolved)
+        resolved = re.sub(r"\s{2,}", " ", resolved).strip()
+        if resolved:
+            return resolved
+    return _sanitize_preview_text(content_dict.get("title")) or "Thông báo hệ thống"
+
+
+def format_sidebar_last_message_preview(
+    content: Optional[str],
+    *,
+    msg_type: Optional[str] = None,
+    msg_kind: Optional[str] = None,
+    raw_content: Any = None,
+    is_sent: bool = False,
+) -> Optional[str]:
+    """Build clean Vietnamese sidebar last-message preview covering all 31 native [...] labels
+    + [Thẻ ngân hàng] + clean call/friend/group notices. Never returns 'sendBubbleMessage',
+    raw JSON, or '— mở Zalo để xem'."""
+    wire_type, action, template_id, content_dict, params_dict = _extract_raw_parts(raw_content, msg_type)
+    kind = classify_message_kind(msg_type, content, raw_content, existing_kind=msg_kind)
+    clean_content = _sanitize_preview_text(content)
+    mt = (wire_type or str(msg_type or "")).strip()
+
+    if kind == "call":
+        return _format_call_sidebar_preview(action, params_dict, is_sent)
+    if kind == "bankcard":
+        return SIDEBAR_BRACKET_LABELS["BANKCARD"]
+    if kind == "contact":
+        title = _sanitize_preview_text(content_dict.get("title"))
+        if title and not title.startswith("[Danh thiếp]"):
+            return f"{SIDEBAR_BRACKET_LABELS['STR_CONTACT_MSG']} {title}"
+        if clean_content.startswith("[Danh thiếp]"):
+            return clean_content
+        return SIDEBAR_BRACKET_LABELS["STR_CONTACT_MSG"]
+    if kind == "file":
+        fdata = _safe_parse_json_dict(params_dict.get("fdata")) or (params_dict.get("fdata") if isinstance(params_dict.get("fdata"), dict) else {})
+        is_folder = str(fdata.get("fType") if isinstance(fdata, dict) else params_dict.get("fType") or "") == "2"
+        raw_meta = (_normalize_raw_content(raw_content) or {}).get("_file_meta")
+        if isinstance(raw_meta, dict) and raw_meta.get("isFolder"):
+            is_folder = True
+        prefix = SIDEBAR_BRACKET_LABELS["STR_FOLDER_MSG"] if is_folder else SIDEBAR_BRACKET_LABELS["STR_FILE_MSG"]
+        fname = clean_content or _sanitize_preview_text(content_dict.get("title"))
+        if fname and not fname.startswith(("http://", "https://")) and not fname.startswith("["):
+            return f"{prefix} {fname}"
+        return prefix
+    if kind == "image":
+        if params_dict.get("is_group_layout") and int(params_dict.get("total_item_in_group") or 0) > 1:
+            return SIDEBAR_BRACKET_LABELS["STR_ALBUM_MSG"]
+        if clean_content and not clean_content.startswith(("http://", "https://", "data:image/")):
+            return clean_content
+        return SIDEBAR_BRACKET_LABELS["STR_PHOTO_MSG"]
+    if kind == "gif":
+        return SIDEBAR_BRACKET_LABELS["STR_GIF"]
+    if kind == "video":
+        return SIDEBAR_BRACKET_LABELS["STR_VIDEO_MSG"]
+    if kind == "voice":
+        return SIDEBAR_BRACKET_LABELS["STR_VOICE_MSG"]
+    if kind == "sticker":
+        if action in ("recommened.stickerset", "recommended.stickerset"):
+            return SIDEBAR_BRACKET_LABELS["STR_STICKERSET_MSG"]
+        return SIDEBAR_BRACKET_LABELS["STR_STICKER"]
+    if kind == "doodle":
+        return SIDEBAR_BRACKET_LABELS["STR_DOODLE_MSG"]
+    if kind == "location":
+        if clean_content and not clean_content.startswith("["):
+            return f"{SIDEBAR_BRACKET_LABELS['STR_LOC_MSG']} {clean_content}"
+        return SIDEBAR_BRACKET_LABELS["STR_LOC_MSG"]
+    if kind == "link":
+        if action in ("recommened.article", "recommended.article"):
+            prefix = SIDEBAR_BRACKET_LABELS["STR_ARTICLE_MSG"]
+        elif action in ("recommened.miniapp", "recommended.miniapp"):
+            prefix = "[Mini App]"
+        else:
+            prefix = SIDEBAR_BRACKET_LABELS["STR_LINK_MSG"]
+        title = _sanitize_preview_text(content_dict.get("title")) or clean_content
+        if title and not title.startswith(("http://", "https://")) and not title.startswith("["):
+            return f"{prefix} {title}"
+        return prefix
+    if kind == "undo":
+        return SIDEBAR_BRACKET_LABELS["STR_RECALL_MSG_2"]
+    if kind == "system_notice":
+        if mt in ("chat.delete", "chat.delete.everyone"):
+            return SIDEBAR_BRACKET_LABELS["STR_DEL_MSG"]
+        if mt == "chat.vanish":
+            return SIDEBAR_BRACKET_LABELS["STR_VANISH_MSG"]
+        if mt in ("group.poll", "chat.poll"):
+            q = _sanitize_preview_text(params_dict.get("question") or content_dict.get("title"))
+            return f"{SIDEBAR_BRACKET_LABELS['STR_POLL_MSG']} {q}" if q else SIDEBAR_BRACKET_LABELS["STR_POLL_MSG"]
+        if mt == "chat.ecard":
+            ecard_txt = _sanitize_preview_text(params_dict.get("previewTxt") or content_dict.get("description") or clean_content)
+            return ecard_txt or SIDEBAR_BRACKET_LABELS["STR_CARD_MSG"]
+        if action == "msginfo.actionlist":
+            return clean_content or _format_msginfo_actionlist_preview(content_dict, params_dict)
+        if mt == "chat.e2ee.replace":
+            return "Đang chờ tin nhắn này"
+        if mt == "chat.list.action":
+            return clean_content or SIDEBAR_BRACKET_LABELS["STR_MSG_NOT_SUPPORTED"]
+        return clean_content or "Thông báo hệ thống"
+
+    # Default text
+    if clean_content:
+        return clean_content
+    if mt in ("chat.photo", "image"):
+        return SIDEBAR_BRACKET_LABELS["STR_PHOTO_MSG"]
+    if mt == "chat.recommended":
+        return SIDEBAR_BRACKET_LABELS["STR_LINK_MSG"]
+    return None
+
+
+def _normalize_message_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure every message row dict returned to API consumers has dict raw_content and canonical msg_kind."""
+    out = dict(row)
+    norm_raw = _normalize_raw_content(out.get("raw_content"))
+    out["raw_content"] = norm_raw
+    out["msg_kind"] = classify_message_kind(
+        out.get("type"),
+        out.get("content"),
+        norm_raw,
+        existing_kind=out.get("msg_kind"),
+    )
+    return out
+
+
+# ----------------------------------------------------------------------------
+# G4: SSRF-safe Bankcard CDN Decoder (HTTPS *.zadn.vn ONLY + 57 Bank BINs)
+# ----------------------------------------------------------------------------
+
+def validate_bankcard_cdn_url(url: str) -> str:
+    """Strictly validate that `url` is an HTTPS URL hosted on `*.zadn.vn` (SSRF guard)."""
+    raw = (url or "").strip()
+    if not raw or len(raw) > 2048:
+        raise ValueError("Invalid bankcard CDN URL")
+    if any(ch in raw for ch in ("\r", "\n", "\x00", "\\")):
+        raise ValueError("Invalid characters in bankcard CDN URL")
+    parsed = urlparse(raw)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("Only HTTPS bankcard CDN URLs are allowed")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Credentials in URL are not allowed")
+    if parsed.port not in (None, 443):
+        raise ValueError("Non-standard HTTPS port is not allowed")
+    host = (parsed.hostname or "").strip().lower()
+    if not host or not _BANKCARD_HOST_RE.match(host):
+        raise ValueError("Invalid bankcard CDN hostname")
+    try:
+        ipaddress.ip_address(host)
+        raise ValueError("IP literal hostnames are not allowed")
+    except ValueError as exc:
+        if "IP literal" in str(exc):
+            raise
+    if not host.endswith(".zadn.vn") or len(host) <= len(".zadn.vn"):
+        raise ValueError("Host is not in allowed *.zadn.vn CDN allowlist")
+    return raw
+
+
+def _lookup_bank_by_bin(bin_code: Optional[str]) -> Optional[Dict[str, str]]:
+    if not bin_code:
+        return None
+    cleaned = re.sub(r"\D", "", str(bin_code))
+    if cleaned in VIETNAM_BANK_BINS:
+        return VIETNAM_BANK_BINS[cleaned]
+    if len(cleaned) > 6 and cleaned[:6] in VIETNAM_BANK_BINS:
+        return VIETNAM_BANK_BINS[cleaned[:6]]
+    return None
+
+
+def _infer_bin_from_bank_text(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    low = text.strip().lower()
+    if not low:
+        return None
+    if low in _BANK_ALIAS_TO_BIN:
+        return _BANK_ALIAS_TO_BIN[low]
+    for alias, b_code in sorted(_BANK_ALIAS_TO_BIN.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if len(alias) >= 3 and re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", low):
+            return b_code
+    return None
+
+
+def _extract_from_json_tree(obj: Any, out: Dict[str, Optional[str]]) -> None:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            kl = str(k).lower()
+            if isinstance(v, (str, int)) and str(v).strip():
+                sv = str(v).strip()
+                if not out["bin"] and kl in ("bin", "binbank", "bankbin", "bank_bin", "acqid", "acq_id"):
+                    digits = re.sub(r"\D", "", sv)
+                    if digits in VIETNAM_BANK_BINS:
+                        out["bin"] = digits
+                elif not out["account_no"] and kl in ("accountno", "account_no", "numaccbank", "bankaccount", "accno", "accountnumber", "bank_account", "stk"):
+                    if re.match(r"^[A-Za-z0-9]{4,24}$", sv):
+                        out["account_no"] = sv
+                elif not out["account_name"] and kl in ("accountname", "account_name", "nameaccbank", "holdername", "holder_name", "ownername", "accname"):
+                    if len(sv) >= 2:
+                        out["account_name"] = sv
+                elif not out["bank_name"] and kl in ("bankname", "bank_name"):
+                    out["bank_name"] = sv
+                elif not out["bank_short_name"] and kl in ("bankshortname", "bank_short_name", "shortname", "short_name"):
+                    out["bank_short_name"] = sv
+                elif not out["logo_url"] and kl in ("logo", "logourl", "logo_url", "banklogo", "bank_logo", "iconurl", "icon_url"):
+                    if sv.startswith("https://"):
+                        out["logo_url"] = sv
+                elif not out["qr_url"] and kl in ("qrurl", "qr_url", "vietqrurl", "vietqr_url", "qrcodeurl", "qr_image"):
+                    if sv.startswith("https://"):
+                        out["qr_url"] = sv
+            elif isinstance(v, (dict, list)):
+                _extract_from_json_tree(v, out)
+    elif isinstance(obj, list):
+        for item in obj:
+            _extract_from_json_tree(item, out)
+
+
+def parse_bankcard_cdn_payload(body_text: str) -> Dict[str, Any]:
+    """Decode Zalo zinstant.bankcard HTML or JSON payload into normalized bankcard metadata."""
+    text = body_text or ""
+    extracted: Dict[str, Optional[str]] = {
+        "bin": None,
+        "bank_name": None,
+        "bank_short_name": None,
+        "account_no": None,
+        "account_name": None,
+        "logo_url": None,
+        "qr_url": None,
+    }
+
+    # 1. Direct JSON payload
+    stripped = text.strip()
+    if stripped.startswith(("{", "[")):
+        try:
+            _extract_from_json_tree(json.loads(stripped), extracted)
+        except Exception:
+            pass
+
+    # 2. VietQR image URL inside HTML/JSON (e.g. https://img.vietqr.io/image/970436-1234567890-compact2.png)
+    vietqr_match = re.search(
+        r"https://img\.vietqr\.io/image/(\d{6,7})-([A-Za-z0-9]{4,24})-[A-Za-z0-9_.-]+",
+        text,
+        re.IGNORECASE,
+    )
+    if vietqr_match:
+        if not extracted["bin"] and vietqr_match.group(1) in VIETNAM_BANK_BINS:
+            extracted["bin"] = vietqr_match.group(1)
+        if not extracted["account_no"]:
+            extracted["account_no"] = vietqr_match.group(2)
+        if not extracted["qr_url"]:
+            extracted["qr_url"] = vietqr_match.group(0)
+
+    # 3. Embedded JSON-like key/value pairs inside HTML/script tags
+    key_patterns = {
+        "bin": r"""["'](?:bin|binBank|bankBin|bank_bin|acqId)["']\s*[:=]\s*["']?(\d{6,7})["']?""",
+        "account_no": r"""["'](?:accountNo|account_no|numAccBank|bankAccount|accNo|accountNumber)["']\s*[:=]\s*["']([A-Za-z0-9]{4,24})["']""",
+        "account_name": r"""["'](?:accountName|account_name|nameAccBank|holderName|ownerName|accName)["']\s*[:=]\s*["']([^"'<>{}]{2,80})["']""",
+        "bank_name": r"""["'](?:bankName|bank_name)["']\s*[:=]\s*["']([^"'<>{}]{2,120})["']""",
+        "bank_short_name": r"""["'](?:bankShortName|bank_short_name|shortName)["']\s*[:=]\s*["']([^"'<>{}]{2,60})["']""",
+        "logo_url": r"""["'](?:logo|logoUrl|logo_url|bankLogo|bank_logo)["']\s*[:=]\s*["'](https://[^"'\s<>]+)["']""",
+    }
+    for field_name, pattern in key_patterns.items():
+        if not extracted[field_name]:
+            m = re.search(pattern, text, re.IGNORECASE)
+            if m:
+                val = html_lib.unescape(m.group(1)).strip()
+                if field_name == "bin":
+                    if val in VIETNAM_BANK_BINS:
+                        extracted["bin"] = val
+                elif val:
+                    extracted[field_name] = val
+
+    # 4. HTML visible text fallback (e.g. Zalo ZInstant PC HTML card markup)
+    if not extracted["logo_url"]:
+        img_m = re.search(r"""<img[^>]+src=["'](https://[^"']+(?:bank|logo|zadn\.vn|vietqr\.io)[^"']*)["']""", text, re.IGNORECASE)
+        if img_m:
+            extracted["logo_url"] = html_lib.unescape(img_m.group(1)).strip()
+
+    plain = html_lib.unescape(re.sub(r"<[^>]+>", " ", text))
+    plain = re.sub(r"\s+", " ", plain).strip()
+
+    if not extracted["bin"]:
+        for m in re.finditer(r"\b(\d{6,7})\b", text):
+            cand = m.group(1)
+            if cand in VIETNAM_BANK_BINS:
+                extracted["bin"] = cand
+                break
+
+    if not extracted["account_no"]:
+        m_stk = re.search(
+            r"(?:Số\s*tài\s*khoản|STK|Account\s*(?:No|Number))[:\s#-]*([A-Za-z0-9]{6,19})",
+            plain,
+            re.IGNORECASE,
+        )
+        if m_stk:
+            extracted["account_no"] = m_stk.group(1).strip()
+
+    if not extracted["account_name"]:
+        m_holder = re.search(
+            r"(?:Chủ\s*tài\s*khoản|Account\s*Name)[:\s-]*([A-Z0-9][A-Z0-9\s]{3,50})",
+            plain,
+        )
+        if m_holder:
+            extracted["account_name"] = m_holder.group(1).strip()
+
+    # Infer BIN from bank_name / bank_short_name / plain text if still missing
+    if not extracted["bin"]:
+        for candidate_text in (extracted["bank_short_name"], extracted["bank_name"], plain[:500]):
+            inferred = _infer_bin_from_bank_text(candidate_text)
+            if inferred:
+                extracted["bin"] = inferred
+                break
+
+    bank_meta = _lookup_bank_by_bin(extracted["bin"])
+    if bank_meta:
+        extracted["bank_short_name"] = extracted["bank_short_name"] or bank_meta["short_name"]
+        extracted["bank_name"] = bank_meta["name"]
+
+    if not extracted["qr_url"] and extracted["bin"] and extracted["account_no"]:
+        extracted["qr_url"] = f"https://img.vietqr.io/image/{extracted['bin']}-{extracted['account_no']}-compact2.png"
+
+    ok = bool(extracted["bin"] or extracted["account_no"] or extracted["bank_name"])
+    return {
+        "ok": ok,
+        "bin": extracted["bin"],
+        "bank_name": extracted["bank_name"],
+        "bank_short_name": extracted["bank_short_name"],
+        "account_no": extracted["account_no"],
+        "account_name": extracted["account_name"],
+        "logo_url": extracted["logo_url"],
+        "qr_url": extracted["qr_url"],
+    }
+
+
+async def fetch_bankcard_preview(url: str, *, timeout: float = 5.0) -> Dict[str, Any]:
+    """Safely fetch and decode a Zalo *.zadn.vn bankcard CDN payload (timeout=5s, no redirects)."""
+    validated_url = validate_bankcard_cdn_url(url)
+    now = time.monotonic()
+    cached = _BANKCARD_PREVIEW_CACHE.get(validated_url)
+    if cached and (now - cached[0] < _BANKCARD_PREVIEW_CACHE_TTL_S):
+        return dict(cached[1])
+
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        response = await client.get(
+            validated_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html,application/json;q=0.9,*/*;q=0.8",
+            },
+        )
+    if response.status_code >= 400 or response.status_code in (301, 302, 303, 307, 308):
+        return {
+            "ok": False,
+            "bin": None,
+            "bank_name": None,
+            "bank_short_name": None,
+            "account_no": None,
+            "account_name": None,
+            "logo_url": None,
+            "qr_url": None,
+        }
+
+    result = parse_bankcard_cdn_payload(response.text[:250_000])
+    if len(_BANKCARD_PREVIEW_CACHE) >= 256:
+        oldest_key = min(_BANKCARD_PREVIEW_CACHE, key=lambda k: _BANKCARD_PREVIEW_CACHE[k][0])
+        _BANKCARD_PREVIEW_CACHE.pop(oldest_key, None)
+    _BANKCARD_PREVIEW_CACHE[validated_url] = (now, dict(result))
+    return result
 
 
 class SupabaseNotConfigured(RuntimeError):
@@ -252,6 +1050,13 @@ async def _download_image(source_url: str, filename_hint: Optional[str] = None) 
 
 
 def _message_payload(user_id: str, job: JobData, group_id: str, group_name: str, msg: Message) -> Dict[str, Any]:
+    norm_raw = _normalize_raw_content(msg.raw_content)
+    resolved_kind = classify_message_kind(
+        msg.type,
+        msg.content,
+        norm_raw,
+        existing_kind=msg.msg_kind,
+    )
     return {
         "user_id": user_id,
         "job_id": job.job_id,
@@ -267,10 +1072,24 @@ def _message_payload(user_id: str, job: JobData, group_id: str, group_name: str,
         "is_sent": msg.is_sent,
         "is_deleted": msg.is_deleted,
         "updated_at": datetime.utcnow().isoformat(),
+        # G3: Persist full normalization metadata on crawl/sync path as well
+        "ts": msg.ts,
+        "raw_content": norm_raw,
+        "mentions": [m.model_dump() for m in msg.mentions] if msg.mentions else None,
+        "cli_msg_id": msg.cli_msg_id,
+        "msg_kind": resolved_kind,
+        "reply_to_id": msg.reply_to_id,
     }
 
 
 def _listener_message_payload(user_id: str, group_id: str, group_name: str, msg: Message) -> Dict[str, Any]:
+    norm_raw = _normalize_raw_content(msg.raw_content)
+    resolved_kind = classify_message_kind(
+        msg.type,
+        msg.content,
+        norm_raw,
+        existing_kind=msg.msg_kind,
+    )
     return {
         "user_id": user_id,
         "job_id": None,
@@ -289,10 +1108,10 @@ def _listener_message_payload(user_id: str, group_id: str, group_name: str, msg:
         # Zalo tập trung (Mục 7.1 guide) — ghi qua RPC fn_bulk_save_zalo_messages
         # (migration 128) hoặc REST fallback trực tiếp (cột đã có từ migration 127).
         "ts": msg.ts,
-        "raw_content": msg.raw_content,
+        "raw_content": norm_raw,
         "mentions": [m.model_dump() for m in msg.mentions] if msg.mentions else None,
         "cli_msg_id": msg.cli_msg_id,
-        "msg_kind": msg.msg_kind,
+        "msg_kind": resolved_kind,
         "reply_to_id": msg.reply_to_id,
     }
 
@@ -304,13 +1123,21 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
             image_urls.append(str(asset["storage_url"]))
         elif asset.get("source_url"):
             image_urls.append(str(asset["source_url"]))
+    norm_raw = _normalize_raw_content(row.get("raw_content"))
+    msg_type = str(row.get("type") or ("image" if image_urls else "text"))
+    resolved_kind = classify_message_kind(
+        msg_type,
+        row.get("content"),
+        norm_raw,
+        existing_kind=row.get("msg_kind"),
+    )
     return Message(
         message_id=str(row.get("source_message_id") or row.get("id") or ""),
         sender_id=row.get("sender_id") or None,
         sender_name=row.get("sender_name") or None,
         timestamp=row.get("timestamp_text") or None,
         time_text=row.get("time_text") or None,
-        type=str(row.get("type") or ("image" if image_urls else "text")),
+        type=msg_type,
         content=row.get("content") or None,
         image_urls=list(dict.fromkeys(image_urls)),
         is_deleted=bool(row.get("is_deleted")),
@@ -318,8 +1145,8 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
         ts=row.get("ts"),
         cli_msg_id=row.get("cli_msg_id") or None,
         mentions=row.get("mentions") or [],
-        msg_kind=row.get("msg_kind") or None,
-        raw_content=row.get("raw_content") or None,
+        msg_kind=resolved_kind,
+        raw_content=norm_raw,
         reply_to_id=row.get("reply_to_id") or None,
     )
 
@@ -433,8 +1260,13 @@ async def upsert_group(
         payload["unread_count"] = unread_count
     if last_message_at is not None:
         payload["last_message_at"] = last_message_at
-    if last_message_content is not None:
-        payload["last_message_content"] = last_message_content
+    if last_message_content is not None or last_message_type is not None:
+        clean_preview = format_sidebar_last_message_preview(
+            last_message_content,
+            msg_type=last_message_type,
+        )
+        if clean_preview is not None:
+            payload["last_message_content"] = clean_preview
     if last_sender_id is not None:
         payload["last_sender_id"] = last_sender_id
     if last_sender_name is not None:
@@ -498,6 +1330,13 @@ async def upsert_groups(user_id: str, groups: Iterable[Dict[str, Any]]) -> int:
 
         last_msg_at_raw = group.get("last_message_at")
         new_last_msg_at = _normalize_iso_timestamp(last_msg_at_raw) if last_msg_at_raw is not None else None
+        raw_preview_cand = group.get("last_message_content") or group.get("last_message") or existing.get("last_message_content")
+        resolved_msg_type = group.get("last_message_type") or existing.get("last_message_type")
+        clean_group_preview = (
+            format_sidebar_last_message_preview(raw_preview_cand, msg_type=resolved_msg_type)
+            if (raw_preview_cand is not None or resolved_msg_type is not None)
+            else None
+        )
         row = {
             "user_id": user_id,
             "group_id": group_id,
@@ -505,10 +1344,10 @@ async def upsert_groups(user_id: str, groups: Iterable[Dict[str, Any]]) -> int:
             "avatar_url": group.get("avatar_url") or existing.get("avatar_url"),
             "unread_count": int(existing.get("unread_count") or 0),
             "last_message_at": new_last_msg_at or existing.get("last_message_at"),
-            "last_message_content": group.get("last_message_content") or group.get("last_message") or existing.get("last_message_content"),
+            "last_message_content": clean_group_preview,
             "last_sender_id": group.get("last_sender_id") or existing.get("last_sender_id"),
             "last_sender_name": group.get("last_sender_name") or existing.get("last_sender_name"),
-            "last_message_type": group.get("last_message_type") or existing.get("last_message_type"),
+            "last_message_type": resolved_msg_type,
             "is_pinned": bool(group.get("is_pinned")),
             "is_friend": bool(group.get("is_friend") or existing.get("is_friend") or False),
             "updated_at": now,
@@ -1025,7 +1864,7 @@ async def get_zalo_inbox_report(
         return {"accounts": [], "customers": [], "total_messages": 0, "total_customers": 0}
 
     params = {
-        "select": "id,user_id,group_id,group_name,source_message_id,sender_id,sender_name,timestamp_text,time_text,type,content,is_sent,created_at",
+        "select": "id,user_id,group_id,group_name,source_message_id,sender_id,sender_name,timestamp_text,time_text,type,content,msg_kind,raw_content,cli_msg_id,is_sent,created_at",
         "user_id": f"in.({','.join(selected_ids)})",
         "is_deleted": "eq.false",
         "order": "created_at.desc",
@@ -1078,7 +1917,20 @@ async def get_zalo_inbox_report(
             customer["received_count"] += 1
         if not customer["latest_message_at"]:
             customer["latest_message_at"] = row.get("created_at")
-            customer["latest_content"] = row.get("content")
+            norm_raw = _normalize_raw_content(row.get("raw_content"))
+            customer["latest_msg_kind"] = classify_message_kind(
+                row.get("type"),
+                row.get("content"),
+                norm_raw,
+                existing_kind=row.get("msg_kind"),
+            )
+            customer["latest_content"] = format_sidebar_last_message_preview(
+                row.get("content"),
+                msg_type=row.get("type"),
+                msg_kind=customer["latest_msg_kind"],
+                raw_content=norm_raw,
+                is_sent=bool(row.get("is_sent")),
+            )
 
     for account_id in account_stats:
         account_stats[account_id]["customer_count"] = sum(1 for key in customer_stats if key[0] == account_id)
@@ -1145,13 +1997,24 @@ async def save_listener_messages(
         if ts_ms > 0:
             last_message_at_value = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
-    # Chuẩn bị payload cho group
+    # Chuẩn bị payload cho group (G5: luôn dùng nhãn tiếng Việt sạch, không bao giờ lưu sendBubbleMessage/raw JSON)
+    last_message_preview = (
+        format_sidebar_last_message_preview(
+            last_message.content,
+            msg_type=last_message.type,
+            msg_kind=last_message.msg_kind,
+            raw_content=last_message.raw_content,
+            is_sent=bool(last_message.is_sent),
+        )
+        if last_message
+        else None
+    )
     group_payload = {
         "group_id": group_id,
         "group_name": safe_group_name,
         "unread_count": (current_unread + unread_inc) if unread_inc > 0 else None,
         "last_message_at": last_message_at_value,
-        "last_message_content": last_message.content if last_message else None,
+        "last_message_content": last_message_preview,
         "last_sender_id": last_message.sender_id if last_message else None,
         "last_sender_name": last_message.sender_name if last_message else None,
         "last_message_type": last_message.type if last_message else None,
@@ -1226,7 +2089,7 @@ async def save_listener_messages(
                 group_name=safe_group_name,
                 unread_count=(current_unread + unread_inc) if unread_inc > 0 else None,
                 last_message_at=last_message_at_value,
-                last_message_content=last_message.content if last_message else None,
+                last_message_content=last_message_preview,
                 last_sender_id=last_message.sender_id if last_message else None,
                 last_sender_name=last_message.sender_name if last_message else None,
                 last_message_type=last_message.type if last_message else None,
@@ -1472,7 +2335,7 @@ async def list_library_messages(
             fallback_params["job_id"] = "in.(" + ",".join(f'"{job_id}"' for job_id in job_ids) + ")"
             rows, total = await _rest_with_count("zalo_messages", params=fallback_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
-    return hydrated_rows, total
+    return [_normalize_message_row(row) for row in hydrated_rows], total
 
 
 def _normalize_iso_timestamp(val: Any) -> Optional[str]:
@@ -1542,12 +2405,12 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
             if g_name:
                 group_name_to_id[g_name.lower()] = g_id
 
-    # 2. Fetch up to 1000 recent messages for aggregation
+    # 2. Fetch up to 1000 recent messages for aggregation (G6: include msg_kind, raw_content, cli_msg_id)
     rows = await _rest(
         "GET",
         "zalo_messages",
         params={
-            "select": "id,user_id,group_id,group_name,sender_name,created_at,timestamp_text,time_text,type,content,is_sent",
+            "select": "id,user_id,group_id,group_name,sender_name,created_at,timestamp_text,time_text,type,content,msg_kind,raw_content,cli_msg_id,is_sent",
             "user_id": f"eq.{user_id}",
             "is_deleted": "eq.false",
             "order": "created_at.desc",
@@ -1627,8 +2490,23 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
         else:
             current["received_count"] += 1
         if not current["latest_message_at"]:
+            norm_raw = _normalize_raw_content(row.get("raw_content"))
+            resolved_kind = classify_message_kind(
+                row.get("type"),
+                row.get("content"),
+                norm_raw,
+                existing_kind=row.get("msg_kind"),
+            )
             current["latest_message_at"] = row.get("created_at") or row.get("timestamp_text") or row.get("time_text")
-            current["latest_content"] = row.get("content")
+            current["latest_msg_kind"] = resolved_kind
+            current["last_message_type"] = row.get("type")
+            current["latest_content"] = format_sidebar_last_message_preview(
+                row.get("content"),
+                msg_type=row.get("type"),
+                msg_kind=resolved_kind,
+                raw_content=norm_raw,
+                is_sent=bool(row.get("is_sent")),
+            )
             current["latest_sender_name"] = row.get("sender_name")
 
     # 3. Add any groups that exist in zalo_groups but have no recent messages in our 3000-message window
@@ -1666,10 +2544,17 @@ async def list_conversations(user_id: str, limit: int = 500) -> List[Dict[str, A
         group_last_at = info.get("last_message_at")
         if group_last_at and _parse_to_millis(group_last_at) >= _parse_to_millis(conv.get("latest_message_at")):
             conv["latest_message_at"] = group_last_at
-            if info.get("last_message_content"):
-                conv["latest_content"] = info.get("last_message_content")
+            overlay_preview = format_sidebar_last_message_preview(
+                info.get("last_message_content"),
+                msg_type=info.get("last_message_type"),
+                msg_kind=conv.get("latest_msg_kind"),
+            )
+            if overlay_preview:
+                conv["latest_content"] = overlay_preview
             if info.get("last_sender_name"):
                 conv["latest_sender_name"] = info.get("last_sender_name")
+            if info.get("last_message_type"):
+                conv["last_message_type"] = info.get("last_message_type")
         conv["is_pinned"] = info.get("is_pinned", conv.get("is_pinned", False))
         if info.get("tag"):
             conv["tag"] = info.get("tag")
@@ -1736,7 +2621,8 @@ async def list_conversation_messages(
         total_count = int(data.get("total_count") or 0)
         
         hydrated_rows = await hydrate_message_groups_from_jobs(user_id, messages_list)
-        return _sort_messages_oldest_first(hydrated_rows), total_count
+        normalized_rows = [_normalize_message_row(row) for row in hydrated_rows]
+        return _sort_messages_oldest_first(normalized_rows), total_count
     except Exception as exc:
         logger.info(f"fn_get_zalo_conversation_messages RPC failed: {exc}. Falling back to manual queries...")
         return await _list_conversation_messages_fallback(user_id, conversation_id, limit, offset)
@@ -1894,7 +2780,8 @@ async def _list_conversation_messages_fallback(
 
     rows, total = await _rest_with_count("zalo_messages", params=query_params)
     hydrated_rows = await hydrate_message_groups_from_jobs(user_id, rows or [])
-    return _sort_messages_oldest_first(hydrated_rows), total
+    normalized_rows = [_normalize_message_row(row) for row in hydrated_rows]
+    return _sort_messages_oldest_first(normalized_rows), total
 
 
 async def search_conversation_messages(
@@ -1924,7 +2811,7 @@ async def search_conversation_messages(
         "GET",
         "zalo_messages",
         params={
-            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,is_sent,created_at,reply_to_id",
+            "select": "id,source_message_id,sender_id,sender_name,content,timestamp_text,time_text,type,msg_kind,raw_content,cli_msg_id,is_sent,created_at,reply_to_id",
             "user_id": f"eq.{user_id}",
             "group_id": f"eq.{conversation_id}",
             "is_deleted": "eq.false",
@@ -1933,7 +2820,7 @@ async def search_conversation_messages(
             "limit": str(safe_limit),
         },
     ) or []
-    return rows
+    return [_normalize_message_row(row) for row in rows]
 
 
 def group_summaries_from_message_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -2533,4 +3420,120 @@ async def delete_account_assignment(account_id: str, app_user_id: str) -> None:
         "zalo_account_assignments",
         params={"account_id": f"eq.{account_id}", "app_user_id": f"eq.{app_user_id}"},
     )
+
+
+# ----------------------------------------------------------------------------
+# G1 & G7: System event (friend_event / group_event) & message recall (undo)
+# ----------------------------------------------------------------------------
+
+async def persist_zalo_system_event(
+    user_id: str,
+    group_id: str,
+    group_name: str,
+    event_msg: Message,
+) -> int:
+    """Persist a normalized friend.event or group.event system notice into zalo_messages."""
+    if not is_supabase_configured():
+        return 0
+    if not group_id or not event_msg.message_id:
+        return 0
+
+    norm_raw = _normalize_raw_content(event_msg.raw_content) or {}
+    normalized_msg = event_msg.model_copy(
+        update={
+            "msg_kind": "system_notice",
+            "raw_content": norm_raw,
+            "is_deleted": False,
+        }
+    )
+
+    saved = await save_listener_messages(
+        user_id,
+        group_id,
+        group_name or group_id,
+        [normalized_msg],
+        increment_unread=False,
+    )
+
+    # Best-effort side-effect metadata sync on zalo_groups (never fail event persistence)
+    try:
+        act = str(norm_raw.get("act") or "").strip().lower()
+        if event_msg.type == "friend.event" and act == "add":
+            await upsert_group(
+                user_id=user_id,
+                group_id=group_id,
+                group_name=group_name or group_id,
+                is_friend=True,
+                thread_type="direct",
+            )
+        elif event_msg.type == "group.event" and act == "update":
+            ev_data = norm_raw.get("data") if isinstance(norm_raw.get("data"), dict) else {}
+            new_group_name = str(ev_data.get("groupName") or "").strip()
+            if new_group_name:
+                await upsert_group(
+                    user_id=user_id,
+                    group_id=group_id,
+                    group_name=new_group_name,
+                    thread_type="group",
+                )
+    except Exception as exc:
+        logger.debug(f"Could not sync group metadata for system event ({event_msg.type}): {exc}")
+
+    return saved
+
+
+async def mark_zalo_message_recalled(
+    user_id: str,
+    group_id: Optional[str],
+    *,
+    source_message_id: Optional[str] = None,
+    cli_msg_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Mark matching message(s) in zalo_messages as recalled (`is_deleted=True`, `msg_kind='undo'`)."""
+    if not is_supabase_configured():
+        return None
+    src_id = (str(source_message_id).strip() if source_message_id is not None else "") or None
+    cli_id = (str(cli_msg_id).strip() if cli_msg_id is not None else "") or None
+    gid = (str(group_id).strip() if group_id is not None else "") or None
+    if not src_id and not cli_id:
+        return None
+
+    patch_body = {
+        "is_deleted": True,
+        "msg_kind": "undo",
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+    attempts: List[Dict[str, str]] = []
+    if src_id and gid:
+        attempts.append({"user_id": f"eq.{user_id}", "group_id": f"eq.{gid}", "source_message_id": f"eq.{src_id}"})
+    if cli_id and gid:
+        attempts.append({"user_id": f"eq.{user_id}", "group_id": f"eq.{gid}", "cli_msg_id": f"eq.{cli_id}"})
+    if src_id:
+        attempts.append({"user_id": f"eq.{user_id}", "source_message_id": f"eq.{src_id}"})
+    if cli_id:
+        attempts.append({"user_id": f"eq.{user_id}", "cli_msg_id": f"eq.{cli_id}"})
+
+    for params in attempts:
+        try:
+            rows = await _rest(
+                "PATCH",
+                "zalo_messages",
+                params=params,
+                json=patch_body,
+                prefer="return=representation",
+            ) or []
+            if rows and isinstance(rows, list):
+                row = rows[0]
+                return {
+                    "id": row.get("id"),
+                    "group_id": row.get("group_id") or gid,
+                    "source_message_id": row.get("source_message_id") or src_id,
+                    "cli_msg_id": row.get("cli_msg_id") or cli_id,
+                    "updated_count": len(rows),
+                }
+        except Exception as exc:
+            logger.debug(f"mark_zalo_message_recalled attempt failed ({params}): {exc}")
+    return None
+
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import os
+import re
 import uuid
 from typing import Optional
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.core.config import settings
@@ -99,6 +102,54 @@ def _final_cost_vnd(item: dict, exchange_rate: float) -> float | None:
     return base + shipping + other
 
 
+async def _create_batch_from_bytes(
+    *,
+    content: bytes,
+    filename: str,
+    content_type: str,
+    vendor_id: str,
+    project_id: Optional[str],
+    exchange_rate: float,
+    target_scope: str,
+    default_group_id: Optional[str],
+    service: SupabaseVendorImportsService,
+    instance: str,
+):
+    batch_id = str(uuid.uuid4())
+    file_path = f"vendor_imports/{batch_id}/{filename}"
+    user_id = "00000000-0000-0000-0000-000000000000"
+    db = get_supabase_client()
+
+    batch = await service.create_batch(
+        instance=instance,
+        user_id=user_id,
+        vendor_id=vendor_id,
+        project_id=project_id,
+        exchange_rate=exchange_rate,
+        target_scope=target_scope,
+        file_name=filename,
+        file_size=len(content),
+        file_type=content_type,
+        file_path=file_path,
+        id=batch_id,
+        default_group_id=default_group_id,
+    )
+
+    try:
+        db.storage.from_("crm-attachments").upload(
+            path=file_path,
+            file=content,
+            file_options={"content-type": content_type},
+        )
+    except Exception as e:
+        await service.update_batch_status(batch["id"], instance, "failed", error=f"Upload failed: {e}")
+        raise
+
+    # Khong tu dong chay OCR ngay sau upload - batch dung o 'uploaded' cho toi
+    # khi nguoi dung bam "Chay OCR + AI" (goi /retry, xem VendorImportFlow.tsx).
+    return batch
+
+
 @router.post("/batches")
 async def upload_batch(
     vendor_id: str = Form(...),
@@ -113,51 +164,116 @@ async def upload_batch(
 ):
     # AUTH (isolation task 2026-10-14, policy confirm boi user/Ops): upload
     # la duong GHI (batch + storage) → JWT + master-data manager role.
-    # Truoc day endpoint nay KHONG co auth gi ca.
     _require_master_data_manager(user)
     try:
         content = await file.read()
-        batch_id = str(uuid.uuid4())
-        file_path = f"vendor_imports/{batch_id}/{file.filename}"
-        user_id = "00000000-0000-0000-0000-000000000000"
-        db = get_supabase_client()
-
-        batch = await service.create_batch(
-            instance=instance,
-            user_id=user_id,
+        return await _create_batch_from_bytes(
+            content=content,
+            filename=file.filename,
+            content_type=file.content_type,
             vendor_id=vendor_id,
             project_id=project_id,
             exchange_rate=exchange_rate,
             target_scope=target_scope,
-            file_name=file.filename,
-            file_size=len(content),
-            file_type=file.content_type,
-            file_path=file_path,
-            id=batch_id,
             default_group_id=default_group_id,
+            service=service,
+            instance=instance,
         )
-
-        try:
-            db.storage.from_("crm-attachments").upload(
-                path=file_path,
-                file=content,
-                file_options={"content-type": file.content_type},
-            )
-        except Exception as e:
-            await service.update_batch_status(batch["id"], instance, "failed", error=f"Upload failed: {e}")
-            raise
-
-        # Khong tu dong chay OCR ngay sau upload nua - batch dung o 'uploaded'
-        # cho toi khi nguoi dung bam "Chay OCR + AI" (goi /retry, xem
-        # VendorImportFlow.tsx). Truoc day auto-fire ngay o day khien FE
-        # nhan lai batch con o status 'uploaded' (response nay tra ve TRUOC
-        # khi background task chay xong) nhung khong co dieu kien nao poll
-        # lai cho status 'uploaded', nen UI ket dung mai o trang thai cu.
-        return batch
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error in upload_batch: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+_SHEET_ID_RE = re.compile(r"^https://docs\.google\.com/spreadsheets/d/([a-zA-Z0-9_-]+)")
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.post("/batches/from-sheet")
+async def upload_batch_from_sheet(
+    vendor_id: str = Form(...),
+    sheet_url: Optional[str] = Form(None),
+    save_link: bool = Form(False),
+    project_id: Optional[str] = Form(None),
+    exchange_rate: float = Form(1.0),
+    target_scope: str = Form(...),
+    default_group_id: Optional[str] = Form(None),
+    service: SupabaseVendorImportsService = Depends(get_imports_service),
+    instance: str = Depends(get_instance),
+    user: dict = Depends(get_current_user),
+):
+    """Tao batch import gia tu link Google Sheet (phai de 'Bat ky ai co link
+    deu xem duoc'). Cung auth voi upload_batch."""
+    _require_master_data_manager(user)
+    db = get_supabase_client()
+    sheet_url = (sheet_url or "").strip()
+    if not sheet_url:
+        # Dong bo lai: dung link da luu tren Vendor.
+        try:
+            vres = db.table("crm_vendors").select("price_sheet_url").eq("id", vendor_id).limit(1).execute()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Không đọc được Vendor (đã chạy migration link Google Sheet chưa?): {e}")
+        if not vres.data:
+            raise HTTPException(status_code=404, detail="Không tìm thấy Vendor.")
+        sheet_url = (vres.data[0].get("price_sheet_url") or "").strip()
+        if not sheet_url:
+            raise HTTPException(status_code=400, detail="Vendor này chưa lưu link Google Sheet. Hãy dán link và tick 'Lưu link cho Vendor'.")
+        save_link = False
+    m = _SHEET_ID_RE.match(sheet_url)
+    if not m:
+        raise HTTPException(status_code=400, detail="Link không phải Google Sheet hợp lệ (docs.google.com/spreadsheets/d/...).")
+    sheet_id = m.group(1)
+    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
+    # Google/mang thinh thoang loi tam thoi o lan goi dau (nguoi dung phai bam
+    # "Tiep tuc" 2 lan) -> tu thu lai toi da 3 lan truoc khi bao loi.
+    resp = None
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+                resp = await client.get(export_url)
+            break
+        except httpx.HTTPError as e:
+            last_err = e
+            logger.warning(f"Tai Google Sheet that bai (lan {attempt + 1}/3): {type(e).__name__}: {e}")
+            await asyncio.sleep(0.7 * (attempt + 1))
+    if resp is None:
+        raise HTTPException(status_code=502, detail=f"Không tải được Google Sheet: {type(last_err).__name__}: {last_err}")
+    content_type = resp.headers.get("content-type", "")
+    if resp.status_code != 200 or "text/html" in content_type or not resp.content[:2] == b"PK":
+        raise HTTPException(
+            status_code=400,
+            detail="Không đọc được Google Sheet. Hãy đặt quyền chia sẻ 'Bất kỳ ai có đường liên kết đều xem được'.",
+        )
+    try:
+        batch = await _create_batch_from_bytes(
+            content=resp.content,
+            filename=f"google-sheet-{sheet_id[:8]}.xlsx",
+            content_type=_XLSX_MIME,
+            vendor_id=vendor_id,
+            project_id=project_id,
+            exchange_rate=exchange_rate,
+            target_scope=target_scope,
+            default_group_id=default_group_id,
+            service=service,
+            instance=instance,
+        )
+        vendor_patch = {
+            "price_sheet_last_synced_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "price_sheet_last_batch_id": batch.get("id"),
+        }
+        if save_link:
+            vendor_patch["price_sheet_url"] = sheet_url
+        try:
+            db.table("crm_vendors").update(vendor_patch).eq("id", vendor_id).execute()
+        except Exception as e:
+            logger.warning(f"Không ghi được trạng thái đồng bộ Google Sheet cho vendor {vendor_id}: {e}")
+        return batch
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in upload_batch_from_sheet: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -183,7 +299,7 @@ async def process_ocr_extraction(batch_id: str, instance: str, file_path: str, c
         # floor bat) — SKU cua workspace khac khong duoc goi y / pre-fill
         # parent_id cua deploy khac. Floor OFF => full map nhu cu.
         catalog_map: dict[str, dict] = {}
-        _vi_floor = _catalog_scope_floor_safe()
+        _vi_floor = _catalog_scope_floor()
         _vi_ws_map = _workspace_map_for_floor(db) if _vi_floor else None
         for item in catalog_res.data or []:
             if _vi_floor is not None and _vi_ws_map is not None:
@@ -499,6 +615,10 @@ async def _approve_product_catalog(batch: dict, items: list[dict], instance: str
             "shipping_cost": item.get("shipping_cost"),
             "other_cost": item.get("other_cost"),
             "default_cost_price_vnd": final_cost,
+            # Gia von la INPUT (khong suy tu gia khach/markup): mode mac dinh "cost" cua
+            # upsert_service_catalog_item_pricing se TINH cost tu customer/markup (deu None
+            # khi import vendor) => default_cost_price_vnd bi ghi NULL, gia khong hien.
+            "pricing_input_mode": "markup",
         }
         if item["review_status"] == "new":
             create_service_catalog_item(payload, None)

@@ -26,6 +26,7 @@ import {
   type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
+import { formatConversationSidebarPreview } from "@/components/all-platform/zalo/centralized-shared/zaloUi";
 import type {
   ZaloAccountInfo,
   ZaloConversationSummary,
@@ -675,7 +676,7 @@ export function useZaloAdminInbox() {
         }
 
         const signature = res.messages
-          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}:${JSON.stringify((m as any).reactions || null)}`)
+          .map((m) => `${m.source_message_id || m.id || ""}:${m.timestamp_text || m.time_text || ""}:${m.is_deleted ? 1 : 0}:${m.msg_kind || ""}:${JSON.stringify(m.reactions || null)}`)
           .join("|");
         if (signature !== messageSignatureRef.current) {
           messageSignatureRef.current = signature;
@@ -733,6 +734,14 @@ export function useZaloAdminInbox() {
     setSseConnected(false);
     if (!selectedAccountId) return;
 
+    const voipRefreshTimers: ReturnType<typeof setTimeout>[] = [];
+    const clearVoipTimers = () => {
+      while (voipRefreshTimers.length > 0) {
+        const t = voipRefreshTimers.pop();
+        if (t) clearTimeout(t);
+      }
+    };
+
     try {
       const streamOptions: BuildZaloRealtimeStreamOptions = { userId: selectedAccountId };
       const url = buildZaloRealtimeStreamUrl(streamOptions);
@@ -747,11 +756,130 @@ export function useZaloAdminInbox() {
         setSseConnected(true);
       });
 
-      es.addEventListener("zalo-message", () => {
+      const applyRecallInPlace = (targetGroupId: string, sourceMsgId: string, cliMsgId: string) => {
+        if (!sourceMsgId && !cliMsgId) return;
+        const currentAccId = selectedAccountIdRef.current;
+        const currentConvId = selectedConvIdRef.current;
+        if (targetGroupId && currentConvId && targetGroupId !== currentConvId) return;
+
+        const matchesRecalled = (m: ZaloLibraryMessage) =>
+          (Boolean(sourceMsgId) && (m.source_message_id === sourceMsgId || String(m.id) === sourceMsgId)) ||
+          (Boolean(cliMsgId) && m.cli_msg_id === cliMsgId);
+
+        messageSignatureRef.current = "";
+        setMessages((prev) => {
+          let changed = false;
+          const next = prev.map((m) => {
+            if (!matchesRecalled(m) || m.is_deleted) return m;
+            changed = true;
+            // Giữ nguyên msg_kind & raw_content, chỉ đánh dấu is_deleted: true tại chỗ
+            return { ...m, is_deleted: true };
+          });
+          if (changed && currentAccId && currentConvId) {
+            const cacheKey = `${currentAccId}:${currentConvId}`;
+            convMessagesCacheRef.current.set(cacheKey, next);
+            if (typeof window !== "undefined") {
+              try {
+                sessionStorage.setItem(`zalo_conv_msgs_${cacheKey}`, JSON.stringify(next.slice(-50)));
+              } catch { /* no-op */ }
+            }
+          }
+          return changed ? next : prev;
+        });
+      };
+
+      const refreshFriendStatusForConv = (targetGroupId: string) => {
+        const currentAccId = selectedAccountIdRef.current;
+        const currentConvId = selectedConvIdRef.current;
+        if (!currentAccId || !currentConvId) return;
+        if (targetGroupId && targetGroupId !== currentConvId) return;
+        getZaloFriendStatus(currentAccId, currentConvId)
+          .then((res) => {
+            if (selectedAccountIdRef.current === currentAccId && selectedConvIdRef.current === currentConvId) {
+              setFriendStatus(res);
+            }
+          })
+          .catch(() => {});
+      };
+
+      const handleNormalizedRealtimePayload = (
+        payload: Record<string, unknown>,
+        fallbackEventType?: string,
+      ) => {
+        const payloadType = String(payload?.type || fallbackEventType || "").toLowerCase();
+        const eventSubtype = String(payload?.event_subtype || "").toLowerCase();
+        const payloadGroupId = String(
+          payload?.group_id || payload?.thread_id || payload?.conversation_id || "",
+        ).trim();
+
+        if (payloadType === "voip_signal") {
+          const act = String(payload.act || "").toLowerCase();
+          const status = String(payload.status || "").toLowerCase();
+          if (act === "request" || act === "group_request" || status === "incoming") {
+            showToast("📞 Có cuộc gọi đến trên Zalo", true);
+          }
+          if (
+            ["cancel", "reject", "endcall", "end_call", "busy"].includes(act) ||
+            ["cancelled", "rejected", "ended", "busy"].includes(status)
+          ) {
+            // Zalo thường đẩy tin nhắn thẻ cuộc gọi (recommened.misscall / calltime) sau tín hiệu kết thúc 1-3s
+            voipRefreshTimers.push(
+              setTimeout(() => {
+                void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
+                void loadConversations(selectedAccountIdRef.current, true);
+              }, 1500),
+              setTimeout(() => {
+                void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
+                void loadConversations(selectedAccountIdRef.current, true);
+              }, 3800),
+            );
+          }
+          return;
+        }
+
+        if (payloadType === "message_recalled" || payloadType === "undo") {
+          const sourceMsgId = String(
+            payload.source_message_id || payload.message_id || payload.msg_id || payload.global_msg_id || "",
+          ).trim();
+          const cliMsgId = String(payload.cli_msg_id || "").trim();
+          applyRecallInPlace(payloadGroupId, sourceMsgId, cliMsgId);
+          return;
+        }
+
+        if (
+          payloadType === "friend_event" ||
+          (payloadType === "new_messages" && eventSubtype === "friend_event")
+        ) {
+          messageSignatureRef.current = "";
+          refreshFriendStatusForConv(payloadGroupId);
+          return;
+        }
+
+        if (
+          payloadType === "group_event" ||
+          (payloadType === "new_messages" && eventSubtype === "group_event")
+        ) {
+          messageSignatureRef.current = "";
+        }
+      };
+
+      const onZaloRealtimeEvent = (event: Event, fallbackEventType?: string) => {
         setSseConnected(true);
+        try {
+          const payload = JSON.parse((event as MessageEvent).data || "{}") as Record<string, unknown>;
+          handleNormalizedRealtimePayload(payload, fallbackEventType);
+        } catch {
+          /* ignore non-json SSE data */
+        }
         void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
         void loadConversations(selectedAccountIdRef.current, true);
-      });
+      };
+
+      es.addEventListener("zalo-message", (event) => onZaloRealtimeEvent(event));
+      es.addEventListener("message_recalled", (event) => onZaloRealtimeEvent(event, "message_recalled"));
+      es.addEventListener("undo", (event) => onZaloRealtimeEvent(event, "undo"));
+      es.addEventListener("friend_event", (event) => onZaloRealtimeEvent(event, "friend_event"));
+      es.addEventListener("group_event", (event) => onZaloRealtimeEvent(event, "group_event"));
 
       es.addEventListener("auth_expired", (event) => {
         let eventAccountId = selectedAccountId;
@@ -779,11 +907,12 @@ export function useZaloAdminInbox() {
     }
 
     return () => {
+      clearVoipTimers();
       setSseConnected(false);
       sseRef.current?.close();
       sseRef.current = null;
     };
-  }, [selectedAccountId, loadMessages, loadConversations]);
+  }, [selectedAccountId, loadMessages, loadConversations, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // KPI verified counts load
@@ -1547,10 +1676,11 @@ export function useZaloAdminInbox() {
         ? lastSender
         : (rawName || lastSender || "Người dùng Zalo");
 
+      const isSelfSender = ["__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase());
       return {
         conv_id: c.conversation_id,
         name: finalName,
-        preview: c.latest_content || "",
+        preview: formatConversationSidebarPreview(c, { isSelf: isSelfSender }),
         latest_sender_name: c.latest_sender_name ?? null,
         unread: hasUnread,
         time: timeStr,
