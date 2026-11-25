@@ -28,8 +28,10 @@ import type { ZaloConversationSummary } from "@/types/zalo-api";
 import { MaterialIcon } from "@/components/ui";
 import { Trash2 } from "lucide-react";
 import { InboxShareToggle } from "../InboxShareToggle";
-import { useAppAuth } from "@/contexts/AppAuthContext";
-import { formatZaloSidebarPreview } from "@/lib/zaloCallMessage";
+import {
+  formatConversationSidebarPreview,
+  isSidebarSystemNoticePreview,
+} from "../../centralized-shared/zaloUi";
 import {
   Dialog,
   DialogContent,
@@ -370,17 +372,29 @@ export function ZaloConversationListVirtualized({
                       {(() => {
                         const cleanSenderName = conv.latest_sender_name?.trim();
                         const lowerName = (cleanSenderName || "").toLowerCase();
-                        const isSelf = lowerName === "__me__" || lowerName === "me" || lowerName === "bạn" || lowerName === "ban";
+                        const isSelf =
+                          lowerName === "__me__" ||
+                          lowerName === "me" ||
+                          lowerName === "bạn" ||
+                          lowerName === "ban";
+                        const formatted = formatConversationSidebarPreview(conv, {
+                          isSelf,
+                          emptyText: "Tin nhắn mới",
+                        });
+                        if (isSidebarSystemNoticePreview(formatted)) {
+                          return formatted;
+                        }
                         let prefix = "";
                         if (cleanSenderName) {
                           if (isSelf) {
                             prefix = "Bạn: ";
                           } else {
-                            const isGroup = !conv.conversation_id.startsWith("fb_") && conv.conversation_id.startsWith("g");
+                            const isGroup =
+                              !conv.conversation_id.startsWith("fb_") &&
+                              (conv.thread_type === "group" || conv.conversation_id.startsWith("g"));
                             if (isGroup) prefix = `${cleanSenderName}: `;
                           }
                         }
-                        const formatted = formatZaloSidebarPreview(conv.latest_content, { isSelf }) || "Tin nhắn mới";
                         return `${prefix}${formatted}`;
                       })()}
                     </div>

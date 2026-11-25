@@ -1,4 +1,5 @@
 import type { ZaloCallMessageInfo } from "@/lib/zaloCallMessage";
+import type { NormalizedZaloMessage } from "@/lib/zaloMessageContent";
 
 export type ChannelType =
   | "all"
@@ -65,6 +66,14 @@ export interface MessageItem {
   idempotencyKey?: string;
   /** Thông tin cuộc gọi Zalo đã chuẩn hóa (cuộc gọi đến / đi / nhỡ / video) */
   callInfo?: ZaloCallMessageInfo;
+  /** Tin nhắn Zalo đã chuẩn hóa đầy đủ (28 msgType, 22 action, rich cards, sự kiện hệ thống...) */
+  normalizedZalo?: NormalizedZaloMessage;
+  /** Trích dẫn tin nhắn gốc được trả lời */
+  quote?: {
+    id?: string;
+    senderName?: string;
+    previewText: string;
+  };
 }
 
 export interface CrmCustomerMatch {

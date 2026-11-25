@@ -25,7 +25,11 @@ from app.modules.all_platform.zalo.schemas.library import (
 from app.modules.all_platform.zalo.schemas.message import Message, Mention
 from app.modules.all_platform.zalo.services.supabase_service import (
     SupabaseNotConfigured,
+    _normalize_raw_content,
     _rest,
+    classify_message_kind,
+    fetch_bankcard_preview,
+    format_sidebar_last_message_preview,
     list_conversation_messages,
     list_conversations,
     save_listener_messages,
@@ -297,6 +301,10 @@ async def list_conversations_for_caller(
             elif not c_name:
                 c_name = r.get("conversation_id") or "Người dùng Zalo"
 
+            clean_latest_content = format_sidebar_last_message_preview(
+                r.get("last_message_content"),
+                msg_type=r.get("last_message_type"),
+            )
             results.append({
                 "conversation_id": r.get("conversation_id"),
                 "conversation_name": c_name,
@@ -306,7 +314,7 @@ async def list_conversations_for_caller(
                 "sent_count": 0,
                 "received_count": 0,
                 "latest_message_at": latest_message_at,
-                "latest_content": r.get("last_message_content"),
+                "latest_content": clean_latest_content,
                 "latest_sender_name": r.get("last_sender_name"),
                 "has_messages": bool(latest_message_at),
                 "sync_status": "has_messages" if latest_message_at else "no_messages",
@@ -1101,9 +1109,16 @@ async def get_conversation_messages(
         )
         # Nhãn "Bot": tin gửi đi do Bot AI trả lời (khớp nhật ký bot) -> sent_by="bot".
         await annotate_bot_messages(user_id, conversation_id.strip(), rows)
-        # Bóc tách thông tin nhân sự gửi tin nhắn nội bộ từ raw_content
+        # Bóc tách thông tin nhân sự gửi tin nhắn nội bộ & chuẩn hóa raw_content/msg_kind (G6)
         for row in rows:
-            raw = row.get("raw_content")
+            raw = _normalize_raw_content(row.get("raw_content"))
+            row["raw_content"] = raw
+            row["msg_kind"] = classify_message_kind(
+                row.get("type"),
+                row.get("content"),
+                raw,
+                existing_kind=row.get("msg_kind"),
+            )
             if isinstance(raw, dict):
                 if not row.get("staff_name") and raw.get("staff_name"):
                     row["staff_name"] = raw.get("staff_name")
@@ -2487,13 +2502,20 @@ async def _persist_outgoing_message(
     group_name = await _resolve_group_name(user_id, conversation_id)
 
     try:
-        # Cập nhật metadata group để sidebar hiển thị ngay tin mới nhất
+        # Cập nhật metadata group để sidebar hiển thị ngay tin mới nhất (G5: không ghi URL thô)
+        sidebar_preview = format_sidebar_last_message_preview(
+            safe_content,
+            msg_type=resolved_type,
+            msg_kind=resolved_type,
+            raw_content=raw_content_override,
+            is_sent=True,
+        )
         await upsert_group(
             user_id=user_id,
             group_id=conversation_id,
             group_name=group_name,
             last_message_at=now_iso,
-            last_message_content=safe_content or (safe_image_urls[0] if safe_image_urls else None),
+            last_message_content=sidebar_preview,
             last_sender_id=None,
             last_sender_name="Bạn",
             last_message_type=resolved_type,
@@ -3324,3 +3346,60 @@ async def save_conversation_phone(
         logger.error(f"create customer_leads for conv_id failed: {e}")
         # Vẫn trả về phone để UI hiển thị được ngay lập tức
         return {"success": True, "phone": clean_digits, "action": "fallback_local"}
+
+
+# --------------------------------------------------------------------------------------
+# G4: Safe Bankcard CDN Decoder Endpoint (SSRF-protected HTTPS *.zadn.vn allowlist)
+# Exposed at BOTH:
+#   - GET /api/all-platform/zalo/bankcard-preview?url=<encoded_data_url>
+#   - GET /api/all-platform/zalo/conversations/bankcard-preview?url=<encoded_data_url>
+# --------------------------------------------------------------------------------------
+
+async def get_bankcard_preview(
+    url: str = Query(..., min_length=12, max_length=2048, description="Zalo bankcard CDN URL (HTTPS *.zadn.vn only)"),
+    x_caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Giải mã an toàn thẻ ngân hàng Zalo (`zinstant.bankcard` / `templateId=11845`) từ CDN `*.zadn.vn`."""
+    _ = x_caller_email
+    try:
+        return await fetch_bankcard_preview(url, timeout=5.0)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.warning(f"Bankcard preview decode failed for url={url[:120]}: {exc}")
+        return {
+            "ok": False,
+            "bin": None,
+            "bank_name": None,
+            "bank_short_name": None,
+            "account_no": None,
+            "account_name": None,
+            "logo_url": None,
+            "qr_url": None,
+        }
+
+
+router.add_api_route(
+    "/bankcard-preview",
+    get_bankcard_preview,
+    methods=["GET"],
+    name="get_conversation_bankcard_preview",
+)
+
+# Wrap `/conversations` sub-router inside a prefix-less parent router so
+# `all_platform_router.include_router(zalo_conversations_router, prefix="/zalo")`
+# serves `/api/all-platform/zalo/bankcard-preview` alongside all existing
+# `/api/all-platform/zalo/conversations/*` routes untouched.
+_conversations_subrouter = router
+_zalo_bankcard_root_router = APIRouter()
+_zalo_bankcard_root_router.add_api_route(
+    "/bankcard-preview",
+    get_bankcard_preview,
+    methods=["GET"],
+    name="get_zalo_bankcard_preview",
+    tags=["zalo-conversations"],
+    dependencies=[Depends(verify_zalo_api_key)],
+)
+_zalo_bankcard_root_router.include_router(_conversations_subrouter)
+router = _zalo_bankcard_root_router
+

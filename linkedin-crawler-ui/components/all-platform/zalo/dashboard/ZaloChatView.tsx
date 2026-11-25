@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { MaterialIcon, type MaterialSymbolName } from "@/components/ui";
@@ -63,8 +62,19 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
-import { ZaloCallMessageCard } from "../centralized-shared/ZaloCallMessageCard";
-import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
+import {
+  formatZaloAnySidebarPreview,
+  normalizeStoredMessage,
+  type NormalizedZaloMessage,
+  type ZaloAttachment,
+} from "@/lib/zaloMessageContent";
+import {
+  ZaloRichMessageContent,
+  ZaloSystemEventBanner,
+  isBareZaloRichMessage,
+  isCenteredZaloSystemMessage,
+} from "../centralized-shared/ZaloRichMessageCard";
+import { formatConversationSidebarPreview } from "../centralized-shared/zaloUi";
 import type {
   ZaloConversationSummary,
   ZaloLibraryMessage,
@@ -297,6 +307,115 @@ function assetFileName(url: string, message: ZaloLibraryMessage): string {
   } catch {
     return "file";
   }
+}
+
+interface SseIncomingMessage {
+  message_id?: string;
+  source_message_id?: string;
+  cli_msg_id?: string | null;
+  reply_to_id?: string | null;
+  ts?: number | null;
+  user_id?: string;
+  sender_id?: string;
+  sender_name?: string;
+  timestamp?: string;
+  time_text?: string;
+  type?: string;
+  msg_kind?: string | null;
+  raw_content?: Record<string, unknown> | null;
+  attachments?: unknown;
+  content?: string | null;
+  is_sent?: boolean;
+  is_deleted?: boolean;
+  image_urls?: string[];
+}
+
+function normalizeLibraryMessage(message: ZaloLibraryMessage): NormalizedZaloMessage {
+  const uploadedAssets = messageAssets(message);
+  const assetUrls = uploadedAssets
+    .map((asset) => asset.storage_url || "")
+    .filter((u): u is string => Boolean(u));
+
+  const storedAttachments = (message as ZaloLibraryMessage & { attachments?: unknown }).attachments;
+  const normalized = normalizeStoredMessage({
+    msg_kind: message.msg_kind,
+    type: message.type,
+    is_sent: message.is_sent,
+    is_deleted: message.is_deleted,
+    attachments: storedAttachments,
+    raw_content: message.raw_content,
+    image_urls: assetUrls,
+    content: message.content,
+  });
+
+  if (normalized.isRecalled || isCenteredZaloSystemMessage(normalized) || normalized.kind === "call") {
+    return normalized;
+  }
+
+  // Fallback cho tin gửi lạc quan (blob: previewUrl) hoặc row lịch sử chỉ có `assets`
+  if (normalized.attachments.length === 0 && uploadedAssets.length > 0) {
+    const mapped: ZaloAttachment[] = uploadedAssets.map((asset) => {
+      const url = asset.storage_url || "";
+      const kind = classifyAssetKind(url, message);
+      if (kind === "video") return { kind: "video", url, title: assetFileName(url, message) };
+      if (kind === "audio") return { kind: "voice", url };
+      if (kind === "file") {
+        const name = assetFileName(url, message);
+        const extMatch = name.match(/\.([a-z0-9]{1,8})$/i);
+        return { kind: "file", url, name, ext: extMatch ? extMatch[1].toLowerCase() : undefined };
+      }
+      return { kind: "image", url };
+    });
+    return {
+      ...normalized,
+      kind: mapped[0].kind,
+      attachments: mapped,
+    };
+  }
+
+  // Bổ sung ảnh từ Supabase Storage nếu album có nhiều ảnh hơn raw_content đơn lẻ
+  if (normalized.kind === "image" && uploadedAssets.length > normalized.attachments.length) {
+    const existingUrls = new Set(normalized.attachments.map((a) => a.url).filter(Boolean));
+    const extraImages: ZaloAttachment[] = uploadedAssets
+      .filter((asset) => {
+        const url = asset.storage_url || "";
+        return url && !existingUrls.has(url) && classifyAssetKind(url, message) === "image";
+      })
+      .map((asset) => ({ kind: "image", url: asset.storage_url || "" }));
+    if (extraImages.length > 0) {
+      return {
+        ...normalized,
+        attachments: [...normalized.attachments, ...extraImages],
+      };
+    }
+  }
+
+  return normalized;
+}
+
+function formatQuotedPreview(
+  msg?: ZaloLibraryMessage | null,
+  emptyFallback = "(không tải được nội dung gốc)",
+): string {
+  if (!msg) return emptyFallback;
+  const formatted = formatZaloAnySidebarPreview({
+    content: msg.content,
+    type: msg.type,
+    msg_kind: msg.msg_kind,
+    raw_content: msg.raw_content,
+    is_sent: msg.is_sent,
+    is_deleted: msg.is_deleted,
+  });
+  if (formatted) return formatted;
+  const assets = messageAssets(msg);
+  if (assets.length > 0) {
+    const firstKind = classifyAssetKind(assets[0].storage_url || "", msg);
+    if (firstKind === "video") return "[Video]";
+    if (firstKind === "audio") return "[Tin nhắn thoại]";
+    if (firstKind === "file") return `[File] ${assetFileName(assets[0].storage_url || "", msg)}`;
+    return "[Hình ảnh]";
+  }
+  return "Tin nhắn";
 }
 
 interface SelectedMedia {
@@ -607,8 +726,31 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   // when the user switches groups faster than the API responds.
   const messagesRequestIdRef = useRef(0);
   const lastLoadedConversationIdRef = useRef<string | null>(null);
+  const selectedConversationIdRef = useRef<string | null>(selectedConversationId);
+  const loadFriendStatusRef = useRef<((uid: string) => Promise<void>) | null>(null);
   const [callModalOpen, setCallModalOpen] = useState(false);
   const [callModalMode, setCallModalMode] = useState<"voice" | "video">("voice");
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!lightboxImageUrl) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setLightboxImageUrl(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [lightboxImageUrl]);
+
+  const handleContactCardMessage = useCallback((att: ZaloAttachment) => {
+    if (att.phone) {
+      setPhoneSearchQuery(att.phone);
+      setNewChatModalOpen(true);
+    }
+  }, []);
 
   // Click outside listener for emoji picker & quick replies
   useEffect(() => {
@@ -1036,24 +1178,42 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       es.addEventListener("zalo-message", (e: MessageEvent) => {
         if (cancelled) return;
         try {
-          const payload = JSON.parse(e.data);
-          // Payload format: { type, account_id, group_id, group_name, messages: [] }
-          if (payload.type === "message_recalled") {
-            const mid = payload.source_message_id;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.source_message_id === mid || m.id === mid
-                  ? { ...m, is_deleted: true, content: null }
-                  : m
-              )
-            );
+          const payload = JSON.parse(e.data) as Record<string, unknown>;
+          const activeConversationId = selectedConversationIdRef.current;
+
+          // 1. Tin nhắn bị thu hồi (message_recalled / undo) — khớp source_message_id, message_id hoặc cli_msg_id
+          if (payload.type === "message_recalled" || payload.type === "undo") {
+            const mid = String(payload.source_message_id || payload.message_id || "").trim();
+            const cliMid = String(payload.cli_msg_id || "").trim();
+            const gid = String(payload.group_id || payload.thread_id || "").trim();
+            if (mid || cliMid) {
+              setMessages((prev) =>
+                prev.map((m) => {
+                  const matches =
+                    (mid && (m.source_message_id === mid || m.id === mid)) ||
+                    (cliMid && m.cli_msg_id === cliMid);
+                  return matches
+                    ? { ...m, is_deleted: true, msg_kind: "undo", content: null }
+                    : m;
+                }),
+              );
+            }
+            if (gid) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.conversation_id === gid
+                    ? { ...c, latest_content: "Tin nhắn đã được thu hồi" }
+                    : c,
+                ),
+              );
+            }
             return;
           }
 
           if (payload.type === "message_deleted") {
-            const mid = payload.source_message_id || payload.message_id;
+            const mid = String(payload.source_message_id || payload.message_id || "").trim();
             setMessages((prev) =>
-              prev.filter((m) => (m.source_message_id || m.id) !== mid)
+              prev.filter((m) => (m.source_message_id || m.id) !== mid),
             );
             return;
           }
@@ -1092,49 +1252,76 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             return;
           }
 
-          if (payload.type !== "new_messages") return;
+          const eventType = String(payload.type || "");
+          const eventSubtype = String(payload.event_subtype || "");
+          const isSystemEventPayload =
+            eventType === "friend_event" ||
+            eventType === "group_event" ||
+            eventSubtype === "friend_event" ||
+            eventSubtype === "group_event";
 
-          const groupId = String(payload.group_id || "").trim();
-          const msgs: any[] = Array.isArray(payload.messages) ? payload.messages : [];
-          if (!msgs.length) return;
+          if (eventType !== "new_messages" && !isSystemEventPayload) return;
+
+          const groupId = String(payload.group_id || payload.thread_id || "").trim();
+          const msgs: SseIncomingMessage[] = Array.isArray(payload.messages)
+            ? (payload.messages as SseIncomingMessage[])
+            : payload.message && typeof payload.message === "object"
+              ? [payload.message as SseIncomingMessage]
+              : isSystemEventPayload
+                ? [payload as unknown as SseIncomingMessage]
+                : [];
+          if (!msgs.length || !groupId) return;
 
           const lastMsg = msgs[msgs.length - 1];
 
-          // 1. Cập nhật last message preview và unread count cho sidebar trong thời gian thực
+          // 2. Cập nhật last message preview & unread count ở sidebar theo chuẩn Zalo PC
           if (lastMsg) {
-            const formattedLatestPreview =
-              formatZaloSidebarPreview(lastMsg.content, {
+            const formattedLatestPreview = formatConversationSidebarPreview(
+              {
+                latest_content: lastMsg.content ?? null,
+                latest_type: lastMsg.type ?? null,
+                latest_msg_kind: lastMsg.msg_kind ?? null,
+                latest_raw_content: lastMsg.raw_content ?? null,
+                latest_is_self: Boolean(lastMsg.is_sent),
+                latest_is_deleted: Boolean(lastMsg.is_deleted),
+              },
+              {
                 isSelf: Boolean(lastMsg.is_sent),
-                fallbackMessage: {
-                  type: lastMsg.type,
-                  msg_kind: lastMsg.msg_kind,
-                  content: lastMsg.content,
-                  is_sent: Boolean(lastMsg.is_sent),
-                  raw_content: lastMsg.raw_content,
-                },
-              }) ||
-              lastMsg.type ||
-              "Tin nhắn mới";
-            setConversations(prev => {
-              const exists = prev.some(c => c.conversation_id === groupId);
+                emptyText: "Tin nhắn mới",
+              },
+            );
+            const nextGroupName =
+              typeof payload.group_name === "string" ? payload.group_name.trim() : "";
+
+            setConversations((prev) => {
+              const exists = prev.some((c) => c.conversation_id === groupId);
               let updated = prev;
               if (exists) {
-                updated = prev.map(c =>
+                updated = prev.map((c) =>
                   c.conversation_id === groupId
                     ? {
                         ...c,
+                        conversation_name:
+                          (eventType === "group_event" || eventSubtype === "group_event") &&
+                          nextGroupName &&
+                          !isFallbackName(nextGroupName, groupId)
+                            ? nextGroupName
+                            : c.conversation_name,
                         latest_content: formattedLatestPreview,
-                        latest_message_at: lastMsg.timestamp || lastMsg.time_text,
-                        latest_sender_name: lastMsg.sender_name,
-                        unread_count: c.conversation_id === selectedConversationId ? c.unread_count : (c.unread_count || 0) + 1
+                        latest_message_at: lastMsg.timestamp || lastMsg.time_text || c.latest_message_at,
+                        latest_sender_name: lastMsg.sender_name ?? c.latest_sender_name,
+                        unread_count:
+                          c.conversation_id === activeConversationId
+                            ? c.unread_count
+                            : (c.unread_count || 0) + 1,
                       }
-                    : c
+                    : c,
                 );
               } else {
                 const newConv: ZaloConversationSummary = {
                   conversation_id: groupId,
-                  conversation_name: payload.group_name || `Conversation ${groupId}`,
-                  account_id: payload.account_id || flow.userId,
+                  conversation_name: nextGroupName || `Conversation ${groupId}`,
+                  account_id: String(payload.account_id || flow.userId || ""),
                   message_count: 1,
                   image_count: lastMsg.type === "image" ? 1 : 0,
                   sent_count: lastMsg.is_sent ? 1 : 0,
@@ -1142,18 +1329,25 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   latest_message_at: lastMsg.timestamp || lastMsg.time_text,
                   latest_content: formattedLatestPreview,
                   latest_sender_name: lastMsg.sender_name,
-                  unread_count: groupId === selectedConversationId ? 0 : 1,
+                  unread_count: groupId === activeConversationId ? 0 : 1,
                   is_pinned: false,
                 };
                 updated = [newConv, ...prev];
               }
-              // Sắp xếp lại sidebar giống Zalo: pinned lên trước -> time giảm dần
               return sortConversationsLikeZalo(updated);
             });
           }
 
-          // 2. Chỉ cập nhật tin nhắn vào khung chat nếu đang mở đúng cuộc trò chuyện đó
-          if (groupId !== selectedConversationId) return;
+          // Nếu có sự kiện kết bạn ở hội thoại đang mở → làm mới badge bạn bè trên header
+          if (
+            (eventType === "friend_event" || eventSubtype === "friend_event") &&
+            groupId === activeConversationId
+          ) {
+            void loadFriendStatusRef.current?.(groupId);
+          }
+
+          // 3. Chỉ chèn tin nhắn vào khung chat nếu đang mở đúng hội thoại đó
+          if (groupId !== activeConversationId) return;
 
           setMessages((prev) => {
             const seen = new Set(prev.map(messageKey));
@@ -1161,53 +1355,50 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
             for (const rawMsg of msgs) {
               const sourceMsgId = rawMsg.message_id || rawMsg.source_message_id;
-              if (!sourceMsgId || seen.has(messageKey({
+              if (!sourceMsgId) continue;
+
+              const built: ZaloLibraryMessage & { attachments?: unknown } = {
                 id: sourceMsgId,
                 source_message_id: sourceMsgId,
+                cli_msg_id: rawMsg.cli_msg_id ?? null,
+                reply_to_id: rawMsg.reply_to_id ?? null,
+                ts: rawMsg.ts ?? null,
                 user_id: rawMsg.user_id || flow.userId || "",
                 group_id: groupId,
                 sender_id: rawMsg.sender_id,
                 sender_name: rawMsg.sender_name,
                 timestamp_text: rawMsg.timestamp,
                 time_text: rawMsg.time_text,
-                type: rawMsg.type || "text",
-                msg_kind: rawMsg.msg_kind ?? null,
+                type:
+                  rawMsg.type ||
+                  (eventType === "friend_event"
+                    ? "friend.event"
+                    : eventType === "group_event"
+                      ? "group.event"
+                      : "text"),
+                msg_kind: rawMsg.msg_kind ?? (isSystemEventPayload ? "system_notice" : null),
                 raw_content: rawMsg.raw_content ?? null,
-                content: rawMsg.content,
+                ...(rawMsg.attachments !== undefined ? { attachments: rawMsg.attachments } : {}),
+                content: rawMsg.content ?? null,
                 is_sent: Boolean(rawMsg.is_sent),
                 is_deleted: Boolean(rawMsg.is_deleted),
                 assets: (rawMsg.image_urls || []).map((url: string) => ({
-                  source_url: url, status: "uploaded", storage_url: url,
+                  source_url: url,
+                  status: "uploaded",
+                  storage_url: url,
                 })),
-              }))) {
-                continue;
-              }
-              newOnes.push({
-                id: sourceMsgId,
-                source_message_id: sourceMsgId,
-                user_id: rawMsg.user_id || flow.userId || "",
-                group_id: groupId,
-                sender_id: rawMsg.sender_id,
-                sender_name: rawMsg.sender_name,
-                timestamp_text: rawMsg.timestamp,
-                time_text: rawMsg.time_text,
-                type: rawMsg.type || "text",
-                msg_kind: rawMsg.msg_kind ?? null,
-                raw_content: rawMsg.raw_content ?? null,
-                content: rawMsg.content,
-                is_sent: Boolean(rawMsg.is_sent),
-                is_deleted: Boolean(rawMsg.is_deleted),
-                assets: (rawMsg.image_urls || []).map((url: string) => ({
-                  source_url: url, status: "uploaded", storage_url: url,
-                })),
-              });
+              };
+
+              if (seen.has(messageKey(built))) continue;
+              seen.add(messageKey(built));
+              newOnes.push(built);
             }
 
             if (!newOnes.length) return prev;
 
             const shouldStickToBottom = isNearBottom(messageListRef.current);
             if (shouldStickToBottom) pendingScrollRef.current = "bottom";
-            else setNewMessageCount(c => c + 1);
+            else setNewMessageCount((c) => c + newOnes.length);
 
             return [...prev, ...newOnes];
           });
@@ -1552,6 +1743,19 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
     pendingScrollRef.current = "bottom";
 
     // Cập nhật ngay preview bên sidebar
+    const optimisticSidebarPreview = formatConversationSidebarPreview(
+      {
+        latest_content: textToSend || null,
+        latest_type:
+          mediaToSend.length > 0
+            ? mediaToSend[0].file.type.startsWith("image/")
+              ? "chat.photo"
+              : "share.file"
+            : "webchat",
+        latest_is_self: true,
+      },
+      { isSelf: true, emptyText: "Tin nhắn mới" },
+    );
     setConversations((prev) =>
       sortConversationsLikeZalo(
         prev.map((c) =>
@@ -1559,7 +1763,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             ? {
                 ...c,
                 latest_message_at: nowIso,
-                latest_content: textToSend || (mediaToSend.length > 0 ? "[Hình ảnh/Tệp]" : "Tin nhắn mới"),
+                latest_content: optimisticSidebarPreview,
                 latest_sender_name: "Bạn",
                 has_messages: true,
               }
@@ -1682,7 +1886,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
   const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
 
   const handleCopyMessage = useCallback((message: ZaloLibraryMessage) => {
-    const text = (message.content || "").trim();
+    const text = normalizeLibraryMessage(message).text.trim();
     if (!text) return;
     navigator.clipboard
       .writeText(text)
@@ -1767,6 +1971,10 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
       setIsLoadingFriendStatus(false);
     }
   }, [flow.userId]);
+
+  useEffect(() => {
+    loadFriendStatusRef.current = loadFriendStatus;
+  }, [loadFriendStatus]);
 
   const handleSendFriendRequest = useCallback(async () => {
     if (!selectedConversationId) return;
@@ -2404,7 +2612,41 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
                   {messages.map((message) => {
                     const assets = messageAssets(message);
-                    const callInfo = !message.is_deleted ? parseZaloCallMessage(message) : null;
+                    const normalized = normalizeLibraryMessage(message);
+                    const isCentered = isCenteredZaloSystemMessage(normalized);
+
+                    // Thông báo hệ thống (kết bạn, sự kiện nhóm, msginfo.actionlist, eCard,
+                    // poll/reminder/todo, thu hồi chat.undo) — căn giữa luồng chat, KHÔNG bọc bubble!
+                    if (isCentered) {
+                      return (
+                        <div
+                          key={messageRenderKey(message)}
+                          data-msg-anchor={message.source_message_id || undefined}
+                          title={formatTime(message.timestamp_text || message.time_text)}
+                          className="w-full my-1.5 rounded-lg transition-shadow"
+                        >
+                          <ZaloSystemEventBanner
+                            event={normalized.systemEvent}
+                            title={
+                              normalized.systemEvent?.title ||
+                              normalized.system_text ||
+                              normalized.text ||
+                              (normalized.isRecalled
+                                ? "Tin nhắn đã được thu hồi"
+                                : "Thông báo hệ thống")
+                            }
+                            category={
+                              normalized.systemEvent?.category ||
+                              (normalized.isRecalled ? "undo" : undefined)
+                            }
+                            iconKind={normalized.systemEvent?.iconKind}
+                          />
+                        </div>
+                      );
+                    }
+
+                    const isCall = normalized.kind === "call" || Boolean(normalized.callInfo);
+                    const isBareCard = !message.reply_to_id && isBareZaloRichMessage(normalized);
                     const sender = message.sender_name || (message.is_sent ? "Bạn" : "Khách");
                     const isSentByMe = message.is_sent;
                     const msgId = messageKey(message);
@@ -2414,6 +2656,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                       !selectedConversationId?.startsWith("g_") &&
                       !selectedConversationId?.startsWith("group_") &&
                       selectedConversation?.thread_type !== "group";
+                    const canCopy = !isCall && !message.is_deleted && Boolean(normalized.text.trim());
+                    const canForward =
+                      !isCall &&
+                      !message.is_deleted &&
+                      Boolean(
+                        normalized.text.trim() ||
+                          normalized.attachments.length > 0 ||
+                          assets.length > 0,
+                      );
 
                     let roleLabel = "Khách hàng";
                     let roleColorClass = "bg-red-50 text-red-650 border border-red-200/50";
@@ -2425,10 +2676,121 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                       roleColorClass = "bg-surface-container-low text-on-surface-variant border border-outline-variant";
                     }
 
+                    const hoverToolbar =
+                      !isCall && !message.is_deleted && (message.source_message_id || message.id) ? (
+                        <div
+                          data-zalo-reaction-ui
+                          className={`absolute -top-7 ${isSentByMe ? "right-0" : "left-0"} flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition z-20`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setReactionPickerFor((prev) => (prev === msgId ? null : msgId))}
+                            className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                            title="Thả cảm xúc"
+                          >
+                            <MaterialIcon name="mood" className="text-[14px]" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReplyingTo(message)}
+                            className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                            title="Trả lời"
+                          >
+                            <MaterialIcon name="reply" className="text-[13px]" />
+                          </button>
+                          {canCopy && (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyMessage(message)}
+                              className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                              title="Copy"
+                            >
+                              <MaterialIcon name="content_copy" className="text-[13px]" />
+                            </button>
+                          )}
+                          {canForward && (
+                            <button
+                              type="button"
+                              onClick={() => setForwardingMessage(message)}
+                              className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                              title="Chuyển tiếp"
+                            >
+                              <MaterialIcon name="forward" className="text-[13px]" />
+                            </button>
+                          )}
+
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
+                                title="Thao tác khác"
+                              >
+                                <MoreVertical className="w-3.5 h-3.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align={isSentByMe ? "end" : "start"} className="w-48 bg-surface text-on-surface border border-outline-variant shadow-xl">
+                              <DropdownMenuItem
+                                onClick={() => setReplyingTo(message)}
+                                className="gap-2 cursor-pointer text-xs"
+                              >
+                                <Reply className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Trả lời</span>
+                              </DropdownMenuItem>
+                              {canCopy && (
+                                <DropdownMenuItem
+                                  onClick={() => handleCopyMessage(message)}
+                                  className="gap-2 cursor-pointer text-xs"
+                                >
+                                  <Copy className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Sao chép</span>
+                                </DropdownMenuItem>
+                              )}
+                              {canForward && (
+                                <DropdownMenuItem
+                                  onClick={() => setForwardingMessage(message)}
+                                  className="gap-2 cursor-pointer text-xs"
+                                >
+                                  <Forward className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>Chuyển tiếp</span>
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator className="bg-outline-variant" />
+                              <DropdownMenuItem
+                                onClick={() => setConfirmMessageAction({ type: "delete_for_me", message })}
+                                className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer text-xs"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Xóa ở phía tôi</span>
+                              </DropdownMenuItem>
+                              {isSentByMe && message.cli_msg_id && !message.is_deleted && (
+                                <DropdownMenuItem
+                                  onClick={() => setConfirmMessageAction({ type: "recall", message })}
+                                  className="gap-2 text-rose-600 focus:text-rose-600 focus:bg-rose-50 cursor-pointer text-xs"
+                                >
+                                  <Undo2 className="w-3.5 h-3.5" />
+                                  <span>Thu hồi tin nhắn</span>
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      ) : null;
+
+                    const reactionPicker =
+                      !isCall && reactionPickerFor === msgId ? (
+                        <div data-zalo-reaction-ui className={`absolute -top-14 z-30 ${isSentByMe ? "right-0" : "left-0"}`}>
+                          <ZaloReactionQuickPicker
+                            activeIcon={message.reactions?.[myZaloUid || "__me__"] || null}
+                            onPick={(icon) => void handleReactToMessage(message, icon)}
+                          />
+                        </div>
+                      ) : null;
+
                     return (
                       <ZaloSwipeableMessageItem
                         key={messageRenderKey(message)}
-                        disabled={message.is_deleted}
+                        disabled={message.is_deleted || isCall}
                         onReply={() => setReplyingTo(message)}
                         className="w-full"
                       >
@@ -2437,7 +2799,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                           className={`flex group ${isSentByMe ? 'justify-end' : 'justify-start'} w-full mb-3 rounded-lg transition-shadow`}
                         >
                           {/* Checkbox for Auto Send Selection - visible on hover or if selected */}
-                          {!isSentByMe && (
+                          {!isSentByMe && !isCall && (
                              <div className={`mr-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                <input
                                  type="checkbox"
@@ -2455,15 +2817,15 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold uppercase ${roleColorClass}`}>{roleLabel}</span>
                             </div>
 
-                            {/* Bubble box */}
-                            {callInfo ? (
+                            {/* Call card / Bare rich card / Standard bubble */}
+                            {isCall ? (
                               <div className="relative">
-                                <ZaloCallMessageCard
-                                  info={callInfo}
-                                  isSent={isSentByMe}
+                                <ZaloRichMessageContent
+                                  normalized={normalized}
+                                  isOwn={isSentByMe}
                                   isSelected={isSelected}
                                   timeLabel={formatTime(message.timestamp_text || message.time_text)}
-                                  onCallback={
+                                  onCallBack={
                                     canCallBackFromCard
                                       ? (mode) => {
                                           setCallModalMode(mode);
@@ -2473,269 +2835,129 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                                   }
                                 />
                               </div>
-                            ) : (
-                            <div className={`rounded-xl ${
-                              fullScreen ? "px-4 py-2.5 text-[15px]" : "px-3 py-1.5"
-                            } relative transition-all duration-200 ${
-                              isSentByMe
-                                ? 'bg-[#0068FF] text-white rounded-tr-none shadow-sm shadow-blue-500/10'
-                                : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
-                            } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${
-                              message.sending_status === "sending" ? "opacity-75" : ""
-                            } ${
-                              message.sending_status === "failed" ? "ring-2 ring-rose-400" : ""
-                            }`}>
-
-                              {/* Zalo tập trung: toolbar hover hiện đại */}
-                              {!message.is_deleted && (message.source_message_id || message.id) && (
+                            ) : isBareCard ? (
                               <div
-                                data-zalo-reaction-ui
-                                className={`absolute -top-7 ${isSentByMe ? "right-0" : "left-0"} flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition z-20`}
+                                className={cn(
+                                  "relative transition-all duration-200",
+                                  isSelected && "rounded-2xl ring-2 ring-red-500 ring-offset-2",
+                                  message.sending_status === "sending" && "opacity-75",
+                                  message.sending_status === "failed" && "rounded-2xl ring-2 ring-rose-400",
+                                )}
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => setReactionPickerFor((prev) => (prev === msgId ? null : msgId))}
-                                  className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
-                                  title="Thả cảm xúc"
+                                {hoverToolbar}
+                                {reactionPicker}
+                                <ZaloRichMessageContent
+                                  normalized={normalized}
+                                  isOwn={isSentByMe}
+                                  onDarkSurface={false}
+                                  onOpenImage={(url) => setLightboxImageUrl(url)}
+                                  onContactMessage={handleContactCardMessage}
+                                />
+                                <div
+                                  className={`text-[10px] mt-1 px-1 flex items-center gap-1 font-medium text-on-surface-variant ${
+                                    isSentByMe ? "justify-end" : "justify-start"
+                                  }`}
                                 >
-                                  <MaterialIcon name="mood" className="text-[14px]" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setReplyingTo(message)}
-                                  className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
-                                  title="Trả lời"
-                                >
-                                  <MaterialIcon name="reply" className="text-[13px]" />
-                                </button>
-                                {message.content?.trim() && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleCopyMessage(message)}
-                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
-                                    title="Copy"
-                                  >
-                                    <MaterialIcon name="content_copy" className="text-[13px]" />
-                                  </button>
-                                )}
-                                {(message.content?.trim() || assets.length > 0) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setForwardingMessage(message)}
-                                    className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
-                                    title="Chuyển tiếp"
-                                  >
-                                    <MaterialIcon name="forward" className="text-[13px]" />
-                                  </button>
-                                )}
+                                  {message.sending_status === "sending" && (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin opacity-80" />
+                                  )}
+                                  {message.sending_status === "failed" && (
+                                    <span className="inline-flex items-center gap-0.5 text-rose-500 font-semibold" title="Gửi thất bại">
+                                      <AlertCircle className="w-2.5 h-2.5 text-rose-500" />
+                                      Lỗi
+                                    </span>
+                                  )}
+                                  <span>{formatTime(message.timestamp_text || message.time_text)}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div
+                                className={`rounded-xl ${
+                                  fullScreen ? "px-4 py-2.5 text-[15px]" : "px-3 py-1.5"
+                                } relative transition-all duration-200 ${
+                                  isSentByMe
+                                    ? 'bg-[#0068FF] text-white rounded-tr-none shadow-sm shadow-blue-500/10'
+                                    : 'bg-surface text-on-surface rounded-tl-none shadow-sm border border-outline-variant'
+                                } ${isSelected ? 'ring-2 ring-red-500 ring-offset-2' : ''} ${
+                                  message.sending_status === "sending" ? "opacity-75" : ""
+                                } ${
+                                  message.sending_status === "failed" ? "ring-2 ring-rose-400" : ""
+                                }`}
+                              >
+                                {hoverToolbar}
+                                {reactionPicker}
 
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
+                                {!message.is_deleted && message.reply_to_id && (() => {
+                                  const quoted = findQuotedMessage(message.reply_to_id);
+                                  return (
                                     <button
                                       type="button"
-                                      className="rounded-full bg-surface border border-outline-variant p-1 text-on-surface-variant hover:text-primary shadow-sm"
-                                      title="Thao tác khác"
+                                      onClick={() => {
+                                        if (quoted) handleJumpToSearchedMessage(quoted);
+                                      }}
+                                      className={`block w-full text-left mb-1.5 px-2 py-1 rounded-lg border-l-2 text-[11.5px] truncate ${
+                                        isSentByMe
+                                          ? "bg-white/10 border-white/40 text-white/90"
+                                          : "bg-surface-container-low border-outline-variant text-on-surface-variant"
+                                      }`}
+                                      title={quoted ? "Đi tới tin nhắn gốc" : undefined}
                                     >
-                                      <MoreVertical className="w-3.5 h-3.5" />
+                                      <span className="font-semibold">
+                                        {quoted ? (quoted.sender_name || (quoted.is_sent ? "Bạn" : "Khách")) : "Tin nhắn gốc"}:{" "}
+                                      </span>
+                                      {formatQuotedPreview(quoted)}
                                     </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align={isSentByMe ? "end" : "start"} className="w-48 bg-surface text-on-surface border border-outline-variant shadow-xl">
-                                    <DropdownMenuItem
-                                      onClick={() => setReplyingTo(message)}
-                                      className="gap-2 cursor-pointer text-xs"
-                                    >
-                                      <Reply className="w-3.5 h-3.5 text-slate-500" />
-                                      <span>Trả lời</span>
-                                    </DropdownMenuItem>
-                                    {message.content?.trim() && (
-                                      <DropdownMenuItem
-                                        onClick={() => handleCopyMessage(message)}
-                                        className="gap-2 cursor-pointer text-xs"
-                                      >
-                                        <Copy className="w-3.5 h-3.5 text-slate-500" />
-                                        <span>Sao chép</span>
-                                      </DropdownMenuItem>
-                                    )}
-                                    {(message.content?.trim() || assets.length > 0) && (
-                                      <DropdownMenuItem
-                                        onClick={() => setForwardingMessage(message)}
-                                        className="gap-2 cursor-pointer text-xs"
-                                      >
-                                        <Forward className="w-3.5 h-3.5 text-slate-500" />
-                                        <span>Chuyển tiếp</span>
-                                      </DropdownMenuItem>
-                                    )}
-                                    <DropdownMenuSeparator className="bg-outline-variant" />
-                                    <DropdownMenuItem
-                                      onClick={() => setConfirmMessageAction({ type: "delete_for_me", message })}
-                                      className="gap-2 text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer text-xs"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                      <span>Xóa ở phía tôi</span>
-                                    </DropdownMenuItem>
-                                    {isSentByMe && message.cli_msg_id && !message.is_deleted && (
-                                      <DropdownMenuItem
-                                        onClick={() => setConfirmMessageAction({ type: "recall", message })}
-                                        className="gap-2 text-rose-600 focus:text-rose-600 focus:bg-rose-50 cursor-pointer text-xs"
-                                      >
-                                        <Undo2 className="w-3.5 h-3.5" />
-                                        <span>Thu hồi tin nhắn</span>
-                                      </DropdownMenuItem>
-                                    )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                  );
+                                })()}
+
+                                <ZaloRichMessageContent
+                                  normalized={normalized}
+                                  isOwn={isSentByMe}
+                                  onDarkSurface={isSentByMe}
+                                  onOpenImage={(url) => setLightboxImageUrl(url)}
+                                  onContactMessage={handleContactCardMessage}
+                                  className={fullScreen ? "text-[14.5px] leading-relaxed" : "text-[13px] leading-relaxed"}
+                                />
+
+                                <div className={`text-[10px] mt-1 flex items-center justify-end gap-1 font-medium ${isSentByMe ? 'text-blue-100' : 'text-on-surface-variant'}`}>
+                                  {message.sending_status === "sending" && (
+                                    <Loader2 className="w-2.5 h-2.5 animate-spin opacity-80" />
+                                  )}
+                                  {message.sending_status === "failed" && (
+                                    <span className="inline-flex items-center gap-0.5 text-rose-300 font-semibold" title="Gửi thất bại">
+                                      <AlertCircle className="w-2.5 h-2.5 text-rose-300" />
+                                      Lỗi
+                                    </span>
+                                  )}
+                                  <span>{formatTime(message.timestamp_text || message.time_text)}</span>
+                                </div>
                               </div>
                             )}
-                            {reactionPickerFor === msgId && (
-                              <div data-zalo-reaction-ui className={`absolute -top-14 z-30 ${isSentByMe ? "right-0" : "left-0"}`}>
-                                <ZaloReactionQuickPicker
-                                  activeIcon={message.reactions?.[myZaloUid || "__me__"] || null}
-                                  onPick={(icon) => void handleReactToMessage(message, icon)}
+
+                            {!message.is_deleted && !isCall && (
+                              <div className={isSentByMe ? "flex justify-end" : "flex justify-start"}>
+                                <ZaloReactionBadges
+                                  reactions={message.reactions}
+                                  myUid={myZaloUid}
+                                  onClickIcon={(icon) => void handleReactToMessage(message, icon)}
                                 />
                               </div>
                             )}
-
-                            {!message.is_deleted && message.reply_to_id && (() => {
-                              const quoted = findQuotedMessage(message.reply_to_id);
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (quoted) handleJumpToSearchedMessage(quoted);
-                                  }}
-                                  className={`block w-full text-left mb-1 px-2 py-1 rounded-lg border-l-2 text-[11.5px] truncate ${
-                                    isSentByMe
-                                      ? "bg-white/10 border-white/40 text-white/85"
-                                      : "bg-surface-container-low border-outline-variant text-on-surface-variant"
-                                  }`}
-                                  title={quoted ? "Đi tới tin nhắn gốc" : undefined}
-                                >
-                                  <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Bạn" : "Khách")) : "Tin nhắn gốc"}: </span>
-                                  {(() => {
-                                    const qCall = quoted && !quoted.is_deleted ? parseZaloCallMessage(quoted) : null;
-                                    if (qCall) return `${qCall.isMissed ? "📵" : qCall.mediaType === "video" ? "📹" : "📞"} ${qCall.previewLabel}`;
-                                    return quoted?.content || (quoted ? "📷 Ảnh đính kèm" : "(không tải được nội dung gốc)");
-                                  })()}
-                                </button>
-                              );
-                            })()}
-
-                            {message.is_deleted ? (
-                              <p className={`italic text-[12.5px] ${isSentByMe ? 'text-white/70' : 'text-on-surface-variant'}`}>
-                                Tin nhắn đã được thu hồi
-                              </p>
-                            ) : message.content && !(assets.length > 0 && classifyAssetKind(assets[0].storage_url || "", message) === "file") ? (
-                              <p className={`whitespace-pre-wrap break-words text-[13px] leading-relaxed ${isSentByMe ? 'text-white/95' : 'text-on-surface'}`}>
-                                {message.content}
-                              </p>
-                            ) : null}
-
-                            {!message.is_deleted && assets.length > 0 && (
-                              <div className="mt-1 flex flex-col gap-1.5">
-                                {assets.map((asset) => {
-                                  const url = asset.storage_url || "";
-                                  const kind = classifyAssetKind(url, message);
-                                  const fileName = assetFileName(url, message);
-                                  if (kind === "image") {
-                                    return (
-                                      <a
-                                        key={asset.id || url}
-                                        href={url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="block max-w-[220px]"
-                                        title="Mở ảnh gốc"
-                                      >
-                                        <Image
-                                          src={url}
-                                          alt={fileName}
-                                          width={220}
-                                          height={150}
-                                          className="rounded-lg object-cover w-full h-auto"
-                                          unoptimized
-                                        />
-                                      </a>
-                                    );
-                                  }
-                                  if (kind === "video") {
-                                    return (
-                                      <video
-                                        key={asset.id || url}
-                                        src={url}
-                                        controls
-                                        preload="metadata"
-                                        className="max-w-[260px] rounded-lg bg-black/5"
-                                      />
-                                    );
-                                  }
-                                  if (kind === "audio") {
-                                    return (
-                                      <audio key={asset.id || url} src={url} controls className="max-w-[240px]" />
-                                    );
-                                  }
-                                  // file/khác: hiện tên file + bấm để tải về.
-                                  return (
-                                    <a
-                                      key={asset.id || url}
-                                      href={url}
-                                      download={fileName}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className={`flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[12px] transition ${
-                                        isSentByMe
-                                          ? "border-white/25 bg-white/10 text-white hover:bg-white/15"
-                                          : "border-outline-variant bg-surface-container-low text-on-surface hover:bg-surface-container"
-                                      }`}
-                                      title={`Tải về: ${fileName}`}
-                                    >
-                                      <MaterialIcon name="description" className="text-[16px] shrink-0" />
-                                      <span className="truncate flex-1">{fileName}</span>
-                                      <MaterialIcon name="download" className="text-[15px] shrink-0" />
-                                    </a>
-                                  );
-                                })}
-                              </div>
-                            )}
-
-                            <div className={`text-[10px] mt-0.5 flex items-center justify-end gap-1 font-medium ${isSentByMe ? 'text-blue-100' : 'text-on-surface-variant'}`}>
-                              {message.sending_status === "sending" && (
-                                <Loader2 className="w-2.5 h-2.5 animate-spin opacity-80" />
-                              )}
-                              {message.sending_status === "failed" && (
-                                <span className="inline-flex items-center gap-0.5 text-rose-300 font-semibold" title="Gửi thất bại">
-                                  <AlertCircle className="w-2.5 h-2.5 text-rose-300" />
-                                  Lỗi
-                                </span>
-                              )}
-                              <span>{formatTime(message.timestamp_text || message.time_text)}</span>
-                            </div>
                           </div>
-                            )}
 
-                          {!message.is_deleted && !callInfo && (
-                            <div className={isSentByMe ? "flex justify-end" : "flex justify-start"}>
-                              <ZaloReactionBadges
-                                reactions={message.reactions}
-                                myUid={myZaloUid}
-                                onClickIcon={(icon) => void handleReactToMessage(message, icon)}
-                              />
-                            </div>
+                          {isSentByMe && !isCall && (
+                             <div className={`ml-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                               <input
+                                 type="checkbox"
+                                 className="w-3.5 h-3.5 cursor-pointer"
+                                 checked={isSelected}
+                                 onChange={() => handleToggleSelectMessage(msgId)}
+                               />
+                             </div>
                           )}
                         </div>
-
-                        {isSentByMe && (
-                           <div className={`ml-1.5 pt-4 transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                             <input
-                               type="checkbox"
-                               className="w-3.5 h-3.5 cursor-pointer"
-                               checked={isSelected}
-                               onChange={() => handleToggleSelectMessage(msgId)}
-                             />
-                           </div>
-                        )}
-                      </div>
-                    </ZaloSwipeableMessageItem>
-                  );
+                      </ZaloSwipeableMessageItem>
+                    );
                   })}
 
                   {newMessageCount > 0 && (
@@ -3021,11 +3243,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                         Trả lời {replyingTo.is_sent ? "chính mình" : replyingTo.sender_name || "Khách"}
                       </div>
                       <div className="text-[11.5px] text-on-surface-variant truncate">
-                        {(() => {
-                          const rCall = !replyingTo.is_deleted ? parseZaloCallMessage(replyingTo) : null;
-                          if (rCall) return `${rCall.isMissed ? "📵" : rCall.mediaType === "video" ? "📹" : "📞"} ${rCall.previewLabel}`;
-                          return replyingTo.content || (replyingTo.assets?.length ? "📷 Ảnh đính kèm" : "Tin nhắn");
-                        })()}
+                        {formatQuotedPreview(replyingTo, "Tin nhắn")}
                       </div>
                     </div>
                     <button
@@ -3446,33 +3664,41 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   <div className="bg-surface-container-low border border-dashed border-outline-variant rounded-lg p-3 text-xs text-on-surface whitespace-pre-wrap text-left shadow-inner">
                     {selectedMessageIds.length > 0 ? (
                       <div>
-                        {messages.filter(m => selectedMessageIds.includes(messageKey(m))).map((m, idx) => (
-                          <div key={idx} className="mb-2 last:mb-0">
-                            {(campaignMode === "both" || campaignMode === "text") && m.content && (
-                              <div>
-                                <div className="font-bold text-primary mb-0.5">Text sẽ gửi:</div>
-                                <div className="bg-surface border border-outline-variant rounded-lg p-2 mb-2 italic">
-                                  &quot;{m.content}&quot;
+                        {messages.filter(m => selectedMessageIds.includes(messageKey(m))).map((m) => {
+                          const previewNorm = normalizeLibraryMessage(m);
+                          const previewTextVal = previewNorm.text || previewNorm.previewText;
+                          const previewImgAssets = messageAssets(m).filter(
+                            (asset) => classifyAssetKind(asset.storage_url || "", m) === "image",
+                          );
+                          return (
+                            <div key={messageKey(m)} className="mb-2 last:mb-0">
+                              {(campaignMode === "both" || campaignMode === "text") && previewTextVal && (
+                                <div>
+                                  <div className="font-bold text-primary mb-0.5">Nội dung sẽ gửi:</div>
+                                  <div className="bg-surface border border-outline-variant rounded-lg p-2 mb-2 italic">
+                                    &quot;{previewTextVal}&quot;
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                            {(campaignMode === "both" || campaignMode === "image") && messageAssets(m).length > 0 && (
-                              <div>
-                                <div className="font-bold text-[#e3000f] mb-0.5">Ảnh đính kèm:</div>
-                                <div className="grid grid-cols-3 gap-2">
-                                  {messageAssets(m).map((asset, aIdx) => (
-                                    <div
-                                      key={aIdx}
-                                      className="w-full aspect-video bg-surface-container-highest border rounded flex items-center justify-center text-[9px] text-on-surface-variant font-bold overflow-hidden"
-                                    >
-                                      <img src={asset.storage_url || ""} alt="Preview" className="w-full h-full object-cover" />
-                                    </div>
-                                  ))}
+                              )}
+                              {(campaignMode === "both" || campaignMode === "image") && previewImgAssets.length > 0 && (
+                                <div>
+                                  <div className="font-bold text-[#e3000f] mb-0.5">Ảnh đính kèm:</div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    {previewImgAssets.map((asset, aIdx) => (
+                                      <div
+                                        key={asset.id || asset.storage_url || aIdx}
+                                        className="w-full aspect-video bg-surface-container-highest border rounded flex items-center justify-center text-[9px] text-on-surface-variant font-bold overflow-hidden"
+                                      >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={asset.storage_url || ""} alt="Preview" className="w-full h-full object-cover" />
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="text-on-surface-variant text-center italic">
@@ -3633,6 +3859,45 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
           }
         }}
       />
+
+      {lightboxImageUrl && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Xem ảnh phóng to"
+          onClick={() => setLightboxImageUrl(null)}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-xs"
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightboxImageUrl(null);
+            }}
+            aria-label="Đóng xem ảnh"
+            title="Đóng (Esc)"
+            className="absolute right-4 top-4 rounded-full bg-white/15 p-2 text-white transition hover:bg-white/25 cursor-pointer"
+          >
+            <MaterialIcon name="close" className="text-[22px]" />
+          </button>
+          <a
+            href={lightboxImageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="absolute bottom-5 rounded-full bg-white/15 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-white/25"
+          >
+            Mở ảnh gốc
+          </a>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightboxImageUrl}
+            alt="Xem ảnh phóng to"
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[86vh] max-w-[92vw] rounded-xl object-contain shadow-2xl select-none"
+          />
+        </div>
+      )}
 
     </div>
   );

@@ -1,23 +1,12 @@
 /**
- * Chuẩn hoá đính kèm của 1 row `zalo_messages` để UI chat render đúng LOẠI
- * (ảnh / video / link / file / voice / sticker / vị trí) thay vì nhét tất cả
- * vào `<img>`.
+ * Chuẩn hoá nội dung & đính kèm của 1 row `zalo_messages` ở tầng ĐỌC (read-time),
+ * hỗ trợ hồi tố 100% dữ liệu lịch sử (kể cả khi `msg_kind` là NULL, bị gán nhầm
+ * thành raw Zalo `msgType` như `"webchat"`/`"image"`, hoặc `raw_content` là chuỗi
+ * JSON / envelope `{ data: { msgType, content }, isSelf }`).
  *
- * ── Vì sao cần tầng này ở phía ĐỌC ─────────────────────────────────────────
- * Bridge (services/zalo-bridge/src/services/messageContent.js) đã phân loại và
- * ghi sẵn `msg_kind` + `attachments` cho tin nhắn MỚI. Nhưng mọi row CŨ trong
- * DB thì:
- *   - `msg_kind` = NULL, `attachments` = NULL
- *   - `image_urls` chứa lẫn lộn cả `href` của tin link (trang web) lẫn `.mp4`
- *     của tin video — đúng nguyên nhân bug "link hiển thị thành ảnh vỡ"
- *   - nhưng `raw_content` (JSONB, có từ migration 2026-09-04) vẫn giữ nguyên
- *     content object gốc của Zalo
- * → phân loại lại tại chỗ đọc từ `raw_content` thì tin cũ cũng hiển thị đúng
- * ngay, không cần UPDATE backfill trên bảng đang có traffic ghi liên tục.
- *
- * Logic phải KHỚP với bản JS ở bridge. Hai bản cố ý tách rời (Node service vs
- * Next.js app, không import chéo được) — sửa 1 bên nhớ sửa bên kia, và cả bản
- * sao ở services/zalo-account-module/src/lib/zaloMessageContent.ts.
+ * Quy chuẩn 2 tầng: khớp tuyệt đối với Zalo PC native (`app.asar` v26.11.12) và
+ * skill `zalo-message-normalization`. KHÔNG bao giờ xuất chuỗi fallback xấu như
+ * `"sendBubbleMessage"`, JSON thô `{...}`, hay `"— mở Zalo để xem"`.
  */
 
 import {
@@ -26,6 +15,38 @@ import {
   parseZaloCallMessage,
   type ZaloCallMessageInfo,
 } from "./zaloCallMessage";
+import {
+  extractFreeTextBankAccounts,
+  extractUrlsFromText,
+  extractVietnamesePhones,
+  formatMsgInfoActionList,
+  formatZaloAnySidebarPreview,
+  formatZaloFriendEvent,
+  formatZaloGroupEvent,
+  lookupVietnamBankByBin,
+  lookupVietnamBankByKeyword,
+  VIETNAM_BANK_BINS,
+  ZALO_SIDEBAR_BRACKET_LABELS,
+  type ExtractedFreeTextBankAccount,
+  type ExtractedVietnamesePhone,
+  type ZaloSystemEventIconKind,
+} from "./zaloMessageCatalog";
+
+export {
+  extractFreeTextBankAccounts,
+  extractUrlsFromText,
+  extractVietnamesePhones,
+  formatMsgInfoActionList,
+  formatZaloAnySidebarPreview,
+  formatZaloFriendEvent,
+  formatZaloGroupEvent,
+  lookupVietnamBankByBin,
+  lookupVietnamBankByKeyword,
+  VIETNAM_BANK_BINS,
+  type ExtractedFreeTextBankAccount,
+  type ExtractedVietnamesePhone,
+  type ZaloSystemEventIconKind,
+};
 
 export type ZaloAttachmentKind =
   | "image"
@@ -33,19 +54,57 @@ export type ZaloAttachmentKind =
   | "video"
   | "voice"
   | "file"
+  | "folder"
   | "link"
   | "sticker"
   | "location"
   | "contact"
   | "bankcard"
-  | "call";
+  | "call"
+  | "ecard"
+  | "poll"
+  | "reminder"
+  | "todo"
+  | "doodle";
 
-/**
- * Thông báo hệ thống chung (kết bạn, bình chọn, ...) — KHÔNG phải attachment
- * (không có ảnh/file/link gì), chỉ 1 dòng chữ hiển thị CĂN GIỮA như tin hệ
- * thống, khác hẳn bong bóng trái/phải bình thường. Xem systemActionText().
- */
-export type ZaloMessageKind = ZaloAttachmentKind | "text" | "unknown" | "system_notice";
+export type ZaloMessageKind =
+  | ZaloAttachmentKind
+  | "system_notice"
+  | "undo"
+  | "text"
+  | "unknown";
+
+export type ZaloLinkSubType =
+  | "link"
+  | "miniapp"
+  | "minisite"
+  | "oa"
+  | "zvideo"
+  | "article"
+  | "post";
+
+export type ZaloSystemEventCategory =
+  | "friend"
+  | "group"
+  | "ecard"
+  | "poll"
+  | "reminder"
+  | "todo"
+  | "undo"
+  | "info";
+
+export interface ZaloSystemEventMeta {
+  category: ZaloSystemEventCategory;
+  act?: string;
+  title: string;
+  subtitle?: string;
+  iconKind: ZaloSystemEventIconKind;
+  ecardType?: number;
+  thumb?: string;
+  bannerUrl?: string;
+  options?: string[];
+  dueTime?: string | number;
+}
 
 export type ZaloAttachment = {
   kind: ZaloAttachmentKind;
@@ -60,6 +119,10 @@ export type ZaloAttachment = {
   domain?: string;
   name?: string;
   ext?: string;
+  checksum?: string;
+  is_folder?: boolean;
+  expired?: boolean;
+  link_subtype?: ZaloLinkSubType;
   sticker_id?: number;
   cate_id?: number;
   sticker_type?: number;
@@ -68,17 +131,58 @@ export type ZaloAttachment = {
   address?: string;
   avatar_url?: string;
   phone?: string;
-  // Dành cho thẻ tài khoản ngân hàng (zinstant.bankcard)
+  user_id?: string;
+  qr_code_url?: string;
+  // Thẻ tài khoản ngân hàng (zinstant.bankcard / templateId=11845)
   bank_name?: string;
+  bank_short_name?: string;
   account_number?: string;
+  account_name?: string;
   qr_url?: string;
   logo_url?: string;
   bg_url?: string;
   bin?: string;
   data_url?: string;
-  // Dành cho tin nhắn cuộc gọi Zalo (recommened.misscall / calltime / calling / receivecall)
+  // Thiệp eCard
+  ecard_type?: number;
+  banner_url?: string;
+  // Cuộc gọi Zalo (recommened.misscall / calltime / calling / receivecall)
   call_info?: ZaloCallMessageInfo;
 };
+
+/** Row `zalo_messages` (chỉ những cột cần cho phân loại). */
+export type StoredMessageRow = {
+  msg_kind?: string | null;
+  type?: string | null;
+  is_sent?: boolean | null;
+  is_deleted?: boolean | null;
+  attachments?: unknown;
+  raw_content?: unknown;
+  image_urls?: unknown;
+  content?: string | null;
+};
+
+export interface NormalizedZaloMessage {
+  kind: ZaloMessageKind;
+  /** Nội dung văn bản sạch (tuyệt đối không chứa sendBubbleMessage / JSON thô / "— mở Zalo để xem"). */
+  text: string;
+  attachments: ZaloAttachment[];
+  /** Có mặt khi `kind === "call"`. */
+  callInfo?: ZaloCallMessageInfo;
+  /** Có mặt khi là thông báo hệ thống / kết bạn / nhóm / eCard / poll / reminder / todo / undo. */
+  systemEvent?: ZaloSystemEventMeta;
+  /** Tương thích ngược: alias của `systemEvent.title` khi là `system_notice`. */
+  system_text?: string;
+  /** Tương thích ngược: nhãn dự phòng sạch cho loại thẻ lạ (không có "— mở Zalo để xem"). */
+  unknown_label?: string;
+  /** Nhận diện thông minh trên tin nhắn văn bản thường. */
+  inlineBanks: ExtractedFreeTextBankAccount[];
+  inlinePhones: ExtractedVietnamesePhone[];
+  inlineUrls: string[];
+  /** Chuỗi xem trước sạch cho Sidebar & Quote Reply. */
+  previewText: string;
+  isRecalled: boolean;
+}
 
 type RawRecord = Record<string, unknown>;
 
@@ -87,19 +191,65 @@ const AUDIO_EXT_RE = /\.(m4a|mp3|aac|ogg|opus|wav|amr)(\?|#|$)/i;
 const IMAGE_EXT_RE = /\.(jpe?g|png|webp|bmp|heic|heif|avif|jxl)(\?|#|$)/i;
 const GIF_EXT_RE = /\.gif(\?|#|$)/i;
 const HLS_EXT_RE = /\.m3u8(\?|#|$)/i;
+const UGLY_FALLBACK_RE = /—\s*mở\s*zalo\s*để\s*xem|tin\s*nhắn\s*dạng\s*đặc\s*biệt/i;
 
-/** msgType thô của Zalo → kind chuẩn hoá (khớp MSG_TYPE_KIND ở bridge). */
-const MSG_TYPE_KIND: Record<string, ZaloAttachmentKind> = {
+/** Đủ 28 wire `msgType` chuẩn của Zalo PC + alias phổ biến → `ZaloMessageKind`. */
+export const MSG_TYPE_KIND: Readonly<Record<string, ZaloMessageKind>> = {
+  webchat: "text",
+  text: "text",
   "chat.photo": "image",
+  image: "image",
   "chat.gif": "gif",
+  gif: "gif",
   "chat.sticker": "sticker",
-  "chat.doodle": "image",
+  sticker: "sticker",
+  "chat.doodle": "doodle",
+  doodle: "doodle",
   "chat.video.msg": "video",
+  video: "video",
   "chat.voice": "voice",
+  voice: "voice",
   "share.file": "file",
+  file: "file",
+  folder: "folder",
   "chat.recommended": "link",
   "chat.link": "link",
+  link: "link",
+  "chat.zalo.me": "link",
+  "chat.list.action": "link",
   "chat.location.new": "location",
+  location: "location",
+  "chat.contact": "contact",
+  contact: "contact",
+  group: "contact",
+  "chat.webcontent": "bankcard",
+  "chat.webcontent.v2": "bankcard",
+  "zinstant.bankcard": "bankcard",
+  bankcard: "bankcard",
+  "chat.ecard": "system_notice",
+  ecard: "ecard",
+  "chat.undo": "undo",
+  "chat.delete": "undo",
+  "chat.delete.everyone": "undo",
+  undo: "undo",
+  "group.event": "system_notice",
+  group_event: "system_notice",
+  "group.leave": "system_notice",
+  "friend.event": "system_notice",
+  friend_event: "system_notice",
+  system_notice: "system_notice",
+  "chat.vanish": "system_notice",
+  "chat.e2ee.replace": "system_notice",
+  "group.poll": "system_notice",
+  "chat.poll": "system_notice",
+  poll: "poll",
+  "chat.reminder": "system_notice",
+  reminder: "reminder",
+  "chat.todo": "system_notice",
+  todo: "todo",
+  call: "call",
+  "chat.reaction": "text",
+  "chat._jumpToMessage": "text",
 };
 
 /** URL dùng được: http(s) VÀ có path thật (loại placeholder domain trần). */
@@ -130,8 +280,6 @@ function firstPositiveNumber(...values: unknown[]): number | undefined {
 function durationMs(...values: unknown[]): number | undefined {
   const n = firstPositiveNumber(...values);
   if (n === undefined) return undefined;
-  // Payload cũ đôi khi trả GIÂY: dưới 1000 gần như chắc chắn là giây (clip Zalo
-  // không bao giờ ngắn hơn 1 giây nhưng cũng hiếm khi dài quá 1000 giây).
   return n < 1000 ? Math.round(n * 1000) : Math.round(n);
 }
 
@@ -150,6 +298,17 @@ function hostOf(url: string): string | undefined {
   }
 }
 
+function parseJsonSafe(raw: unknown): unknown {
+  if (typeof raw !== "string") return raw;
+  const trimmed = raw.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return raw;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return raw;
+  }
+}
+
 /** `content.params` của Zalo khi là object, khi là string JSON. */
 function parseParams(params: unknown): RawRecord {
   if (!params) return {};
@@ -157,7 +316,9 @@ function parseParams(params: unknown): RawRecord {
   if (typeof params === "string") {
     try {
       const parsed: unknown = JSON.parse(params);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as RawRecord) : {};
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as RawRecord)
+        : {};
     } catch {
       return {};
     }
@@ -181,6 +342,140 @@ function extOf(name: unknown, url: unknown): string | undefined {
   return match ? match[1].toLowerCase() : undefined;
 }
 
+function isRawJsonText(text: string): boolean {
+  const t = text.trim();
+  if (!((t.startsWith("{") && t.endsWith("}")) || (t.startsWith("[") && t.endsWith("]")))) {
+    return false;
+  }
+  try {
+    const parsed: unknown = JSON.parse(t);
+    return !!parsed && typeof parsed === "object";
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeDisplayText(rawText?: string | null): string {
+  if (typeof rawText !== "string") return "";
+  const trimmed = rawText.trim();
+  if (!trimmed) return "";
+  if (isSendBubblePlaceholder(trimmed)) return "";
+  if (UGLY_FALLBACK_RE.test(trimmed)) return "";
+  if (isRawJsonText(trimmed)) return "";
+  return trimmed;
+}
+
+/**
+ * Giải nén `raw_content` từ mọi hình dạng lưu trong Supabase:
+ *   1. Chuỗi JSON (cần `JSON.parse`)
+ *   2. Envelope `zca_persistent_listener.js`: `{ data: { msgType, content, dName, ... }, isSelf, threadId }`
+ *   3. Object phẳng: `{ href, title, action, params, description, ... }`
+ *   4. Mảng các item: `[item1, item2, ...]`
+ */
+interface UnwrappedEnvelope {
+  parsedRoot: unknown;
+  envelopeObj: RawRecord | null;
+  dataObj: RawRecord | null;
+  wireMsgType: string;
+  innerItems: RawRecord[];
+  innerFirst: RawRecord | null;
+  plainInnerText: string | null;
+}
+
+function unwrapRawEnvelope(rawInput: unknown): UnwrappedEnvelope {
+  const parsedRoot = parseJsonSafe(rawInput);
+
+  if (!parsedRoot || typeof parsedRoot !== "object") {
+    return {
+      parsedRoot,
+      envelopeObj: null,
+      dataObj: null,
+      wireMsgType: "",
+      innerItems: [],
+      innerFirst: null,
+      plainInnerText: typeof parsedRoot === "string" ? parsedRoot : null,
+    };
+  }
+
+  if (Array.isArray(parsedRoot)) {
+    const items = parsedRoot
+      .map((item) => parseJsonSafe(item))
+      .filter((item): item is RawRecord => !!item && typeof item === "object" && !Array.isArray(item));
+    const first = items[0] || null;
+    return {
+      parsedRoot,
+      envelopeObj: first,
+      dataObj: first,
+      wireMsgType: firstText(first?.msgType)?.toLowerCase() || "",
+      innerItems: items,
+      innerFirst: first,
+      plainInnerText: null,
+    };
+  }
+
+  const envelopeObj = parsedRoot as RawRecord;
+  const maybeData = parseJsonSafe(envelopeObj.data);
+  const dataObj =
+    maybeData && typeof maybeData === "object" && !Array.isArray(maybeData)
+      ? (maybeData as RawRecord)
+      : envelopeObj;
+
+  const wireMsgType =
+    firstText(dataObj.msgType, envelopeObj.msgType)?.toLowerCase() || "";
+
+  const rawInner = dataObj.content !== undefined ? parseJsonSafe(dataObj.content) : undefined;
+  if (typeof rawInner === "string") {
+    return {
+      parsedRoot,
+      envelopeObj,
+      dataObj,
+      wireMsgType,
+      innerItems: [],
+      innerFirst: null,
+      plainInnerText: rawInner,
+    };
+  }
+  if (Array.isArray(rawInner)) {
+    const items = rawInner
+      .map((item) => parseJsonSafe(item))
+      .filter((item): item is RawRecord => !!item && typeof item === "object" && !Array.isArray(item));
+    return {
+      parsedRoot,
+      envelopeObj,
+      dataObj,
+      wireMsgType,
+      innerItems: items,
+      innerFirst: items[0] || null,
+      plainInnerText: null,
+    };
+  }
+  if (rawInner && typeof rawInner === "object") {
+    const rec = rawInner as RawRecord;
+    return {
+      parsedRoot,
+      envelopeObj,
+      dataObj,
+      wireMsgType,
+      innerItems: [rec],
+      innerFirst: rec,
+      plainInnerText: null,
+    };
+  }
+
+  // Trường hợp raw_content phẳng (không bọc data.content)
+  return {
+    parsedRoot,
+    envelopeObj,
+    dataObj,
+    wireMsgType,
+    innerItems: [dataObj],
+    innerFirst: dataObj,
+    plainInnerText: null,
+  };
+}
+
+// ── Builders cho từng loại Attachment ─────────────────────────────────────────
+
 function extractImageUrl(c: RawRecord): string | undefined {
   const p = parseParams(c.params);
   return firstUsableUrl(
@@ -188,18 +483,19 @@ function extractImageUrl(c: RawRecord): string | undefined {
     c.oriUrl,
     c.normalUrl,
     c.rawUrl,
-    c.href,
-    c.thumbUrl,
-    c.thumb,
+    p.hd,
     p.hdUrl,
     p.oriUrl,
     p.normalUrl,
     p.rawUrl,
-    p.thumbUrl
+    c.href,
+    c.thumbUrl,
+    c.thumb,
+    p.thumbUrl,
   );
 }
 
-function buildImage(c: RawRecord, kind: "image" | "gif"): ZaloAttachment | null {
+function buildImage(c: RawRecord, kind: "image" | "gif" | "doodle"): ZaloAttachment | null {
   const p = parseParams(c.params);
   const url = extractImageUrl(c);
   if (!url) return null;
@@ -210,13 +506,12 @@ function buildImage(c: RawRecord, kind: "image" | "gif"): ZaloAttachment | null 
     thumb_url: thumb && thumb !== url ? thumb : undefined,
     width: firstPositiveNumber(c.width, p.width),
     height: firstPositiveNumber(c.height, p.height),
+    title: typeof c.title === "string" && !isUsableUrl(c.title) ? firstText(c.title) : undefined,
   });
 }
 
 function buildVideo(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
-  // Ưu tiên file thật (mp4) hơn HLS: <video> của Chrome/Firefox không phát
-  // được .m3u8 natively → chọn nhầm là ra ô đen câm.
   const direct = firstUsableUrl(c.videoUrl, p.videoUrl, p.video_url, c.fileUrl, p.fileUrl, c.href);
   const hls = firstUsableUrl(p.m3u8_hls, p.hlsUrl, c.m3u8_hls);
   const url = direct && !HLS_EXT_RE.test(direct) ? direct : direct || hls;
@@ -226,8 +521,8 @@ function buildVideo(c: RawRecord): ZaloAttachment | null {
     url,
     thumb_url: firstUsableUrl(c.thumbUrl, c.thumb, p.thumbUrl, p.thumb),
     duration_ms: durationMs(c.duration, p.duration),
-    width: firstPositiveNumber(c.width, p.width),
-    height: firstPositiveNumber(c.height, p.height),
+    width: firstPositiveNumber(c.width, p.width, p.video_width),
+    height: firstPositiveNumber(c.height, p.height, p.video_height),
     size_bytes: firstPositiveNumber(c.fileSize, p.fileSize, p.totalSize, c.totalSize),
     title: typeof c.title === "string" && !isUsableUrl(c.title) ? firstText(c.title) : undefined,
   });
@@ -245,53 +540,100 @@ function buildVoice(c: RawRecord): ZaloAttachment | null {
   });
 }
 
+function isFolderParams(p: RawRecord): boolean {
+  if (Number(p.fType) === 2 || p.isFolder === true) return true;
+  const fdata = parseParams(p.fdata);
+  if (Number(fdata.fType) === 2 || Number(fdata.type) === 2 && Number(p.fType) === 2) return true;
+  return false;
+}
+
 function buildFile(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
   const url = firstUsableUrl(c.fileUrl, p.fileUrl, c.href);
-  if (!url) return null;
-  const name = [c.fileName, p.fileName, c.title, p.title].find(
-    (v) => typeof v === "string" && v.trim() && !isUsableUrl(v)
+  const folder = isFolderParams(p);
+
+  const rawName = [c.fileName, p.fileName, c.title, p.title].find(
+    (v) => typeof v === "string" && v.trim() && !isUsableUrl(v),
   ) as string | undefined;
-  const rawExt = extOf(name, url) || p.fileExt || p.extention;
+  const rawExt =
+    firstText(p.fileExt, p.extention, c.fileExt) || extOf(rawName, url);
+  const ext = rawExt ? String(rawExt).toLowerCase().replace(/^\./, "") : undefined;
+
+  let name = rawName ? rawName.trim().slice(0, 255) : undefined;
+  // Quy tắc native Zalo PC (`_normalizeMessageJSON`): tự ghép `.fileExt` nếu title thiếu đuôi
+  if (name && ext && !folder && !name.toLowerCase().endsWith(`.${ext}`)) {
+    name = `${name}.${ext}`;
+  }
+
+  // Kể cả khi file đã hết hạn (không còn url) vẫn trả về card để hiển thị tên + "Tệp đã hết hạn trên Zalo"
+  if (!url && !name) return null;
+
   return compact({
-    kind: "file",
+    kind: folder ? "folder" : "file",
     url,
-    name: name ? name.trim().slice(0, 255) : undefined,
-    ext: rawExt ? String(rawExt).toLowerCase().replace(/^\./, "") : undefined,
+    name: name || (folder ? "Thư mục" : "Tệp đính kèm"),
+    ext: folder ? undefined : ext,
     size_bytes: firstPositiveNumber(c.fileSize, p.fileSize, p.totalSize, c.totalSize),
+    checksum: firstText(p.checksum, c.checksum),
+    is_folder: folder || undefined,
+    expired: !url || p.expired === true || c.expired === true ? true : undefined,
   });
+}
+
+function resolveLinkSubType(action: string, p: RawRecord): ZaloLinkSubType {
+  const act = action.toLowerCase();
+  if (act === "recommened.miniapp") return "miniapp";
+  if (act === "recommened.minisite") return "minisite";
+  if (act === "recommened.oa") return "oa";
+  if (act === "recommened.zvideo" || Number(p.type) === 10 || Number(p.type) === 11) return "zvideo";
+  if (act === "recommened.article") return "article";
+  if (act === "recommened.post") return "post";
+  return "link";
 }
 
 function buildLink(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
-  const url = firstUsableUrl(c.href, p.src, c.src, p.href);
+  const url = firstUsableUrl(c.href, p.href, p.src, c.src);
   if (!url) return null;
+
+  const mediaTitle = firstText(p.mediaTitle, p.title);
+  const rawTitle = firstText(c.title);
+  // Nếu `c.title` chỉ là URL trần (hoặc bắt đầu bằng URL kèm chú thích nhiều dòng),
+  // ưu tiên `params.mediaTitle` cho tiêu đề thẻ Link!
+  const titleIsJustUrl = rawTitle ? /^https?:\/\//i.test(rawTitle) : false;
+  const cardTitle = mediaTitle || (!titleIsJustUrl ? rawTitle : undefined) || hostOf(url) || url;
+
+  const action = firstText(c.action) || "";
+  const linkSubType = resolveLinkSubType(action, p);
+
   return compact({
     kind: "link",
     url,
-    title: firstText(c.title, p.title)?.slice(0, 300),
-    description: firstText(c.description, c.desc, p.desc)?.slice(0, 500),
-    thumb_url: firstUsableUrl(c.thumb, c.thumbUrl, p.thumb),
-    domain: hostOf(url),
+    title: cardTitle.slice(0, 300),
+    description: firstText(c.description, c.desc, p.desc, p.description)?.slice(0, 500),
+    thumb_url: firstUsableUrl(c.thumb, c.thumbUrl, p.thumb, p.thumbUrl),
+    domain: hostOf(url) || firstText(p.src),
+    link_subtype: linkSubType,
   });
 }
 
 function buildSticker(c: RawRecord): ZaloAttachment | null {
   const stickerId = firstPositiveNumber(c.id, c.stickerId, c.sticker_id);
-  if (stickerId === undefined) return null;
+  const url = firstUsableUrl(c.stickerWebpUrl, c.stickerUrl, c.staticUrl, c.animationUrl, c.url, c.href);
+  if (stickerId === undefined && !url) return null;
   return compact({
     kind: "sticker",
     sticker_id: stickerId,
-    cate_id: firstPositiveNumber(c.cateId, c.catId, c.cate_id),
+    cate_id: firstPositiveNumber(c.catId, c.cateId, c.cate_id),
     sticker_type: Number.isFinite(Number(c.type)) ? Number(c.type) : undefined,
-    url: firstUsableUrl(c.stickerWebpUrl, c.stickerUrl, c.url, c.href),
+    url,
   });
 }
 
 function buildLocation(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
   const lat = Number(c.latitude ?? c.lat ?? p.latitude ?? p.lat);
-  const lon = Number(c.longitude ?? c.lon ?? c.lng ?? p.longitude ?? p.lon ?? p.lng);
+  const lon = Number(c.longitude ?? c.lon ?? c.lng ?? c.lo ?? p.longitude ?? p.lon ?? p.lng ?? p.lo);
   const hasCoords = Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0);
   const url = firstUsableUrl(c.href, p.href);
   if (!hasCoords && !url) return null;
@@ -300,26 +642,36 @@ function buildLocation(c: RawRecord): ZaloAttachment | null {
     lat: hasCoords ? lat : undefined,
     lon: hasCoords ? lon : undefined,
     url: url || (hasCoords ? `https://www.google.com/maps?q=${lat},${lon}` : undefined),
-    title: firstText(c.title),
-    address: firstText(c.description, c.desc, p.address),
+    title: firstText(c.title, p.title),
+    address: firstText(c.addr, c.description, c.desc, p.address, p.addr),
+    thumb_url: firstUsableUrl(c.thumb, p.thumb),
   });
 }
 
+/**
+ * Bóc tách số điện thoại từ danh thiếp Zalo (`recommened.user` / `recommened.vip`).
+ * Native Zalo PC lưu SĐT bên trong `JSON.parse(content.description).phone`.
+ */
 export function extractContactPhone(c: RawRecord, p?: RawRecord): string | undefined {
   if (p && typeof p.phone === "string" && p.phone.trim()) return p.phone.trim();
   if (typeof c.phone === "string" && c.phone.trim()) return c.phone.trim();
 
-  // Zalo contact card formats phone inside JSON description: {"phone":"0909369898", "caption":"0909369898", ...}
   const sources = [c.description, c.desc, p?.description, p?.desc];
   for (const rawDesc of sources) {
     if (typeof rawDesc === "string" && rawDesc.trim()) {
       try {
-        const parsed = JSON.parse(rawDesc.trim());
-        if (parsed && typeof parsed.phone === "string" && parsed.phone.trim()) {
-          return parsed.phone.trim();
-        }
-        if (parsed && typeof parsed.caption === "string" && /^[0-9+ ]{9,15}$/.test(parsed.caption.trim())) {
-          return parsed.caption.trim().replace(/\s+/g, "");
+        const parsed: unknown = JSON.parse(rawDesc.trim());
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const rec = parsed as RawRecord;
+          if (typeof rec.phone === "string" && rec.phone.trim()) {
+            return rec.phone.trim();
+          }
+          if (
+            typeof rec.caption === "string" &&
+            /^[0-9+\s.-]{9,16}$/.test(rec.caption.trim())
+          ) {
+            return rec.caption.trim().replace(/[\s.-]+/g, "");
+          }
         }
       } catch {
         const direct = rawDesc.trim().replace(/[^0-9+]/g, "");
@@ -330,71 +682,139 @@ export function extractContactPhone(c: RawRecord, p?: RawRecord): string | undef
   return undefined;
 }
 
+function extractContactDescMeta(c: RawRecord): { qrCodeUrl?: string; bgUrl?: string; gUid?: string } {
+  const rawDesc = firstText(c.description, c.desc);
+  if (!rawDesc || !rawDesc.startsWith("{")) return {};
+  try {
+    const parsed = JSON.parse(rawDesc) as RawRecord;
+    return {
+      qrCodeUrl: firstUsableUrl(parsed.qrCodeUrl),
+      bgUrl: firstUsableUrl(parsed.cardBackground),
+      gUid: firstText(parsed.gUid),
+    };
+  } catch {
+    return {};
+  }
+}
+
 function buildContact(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
+  const descMeta = extractContactDescMeta(c);
+  // Native Zalo PC: `content.params` là chuỗi uid (vd `"519110756"`)
+  const userId =
+    typeof c.params === "string" && c.params.trim() && !c.params.trim().startsWith("{")
+      ? c.params.trim()
+      : firstText(p.uid, p.userId, p.id, c.uid, descMeta.gUid);
+
+  const name = firstText(c.title, p.dName, p.dname, p.displayName, p.name);
+  const phone = extractContactPhone(c, p);
+  const avatarUrl = firstUsableUrl(c.thumb, c.thumbUrl, p.avatar);
+  const url = firstUsableUrl(c.href, p.href);
+
+  if (!name && !phone && !userId && !avatarUrl) return null;
+
   return compact({
     kind: "contact",
-    url: firstUsableUrl(c.href, p.href),
-    name: firstText(c.title, p.name, p.displayName),
-    avatar_url: firstUsableUrl(c.thumb, c.thumbUrl, p.avatar),
-    phone: extractContactPhone(c, p),
+    url,
+    name: name || "Danh thiếp Zalo",
+    avatar_url: avatarUrl,
+    phone,
+    user_id: userId,
+    qr_code_url: descMeta.qrCodeUrl,
+    bg_url: descMeta.bgUrl,
   });
 }
 
 /**
- * Thẻ chia sẻ tài khoản ngân hàng (zinstant.bankcard) — trích xuất data_url
- * (chứa template HTML hiển thị tên ngân hàng, số TK, logo, QR VietQR) và
- * các trường đã bóc tách sẵn nếu có.
+ * Thẻ chia sẻ tài khoản ngân hàng (`zinstant.bankcard` / `templateId=11845` / `chat.webcontent*`).
  */
 function buildBankcard(c: RawRecord): ZaloAttachment | null {
   const p = parseParams(c.params);
-  const pcItem = p.pcItem && typeof p.pcItem === "object" ? (p.pcItem as RawRecord) : null;
-  const item = p.item && typeof p.item === "object" ? (p.item as RawRecord) : null;
-  const bubbleItem = p.bubbleItem && typeof p.bubbleItem === "object" ? (p.bubbleItem as RawRecord) : null;
+  const zdata = parseParams(c.zinstant_data ?? p.zinstant_data);
+  const pcItem =
+    (p.pcItem && typeof p.pcItem === "object" ? (p.pcItem as RawRecord) : null) ||
+    (zdata.pcItem && typeof zdata.pcItem === "object" ? (zdata.pcItem as RawRecord) : null);
+  const item =
+    (p.item && typeof p.item === "object" ? (p.item as RawRecord) : null) ||
+    (zdata.item && typeof zdata.item === "object" ? (zdata.item as RawRecord) : null);
+  const bubbleItem =
+    p.bubbleItem && typeof p.bubbleItem === "object" ? (p.bubbleItem as RawRecord) : null;
 
   let dataUrl =
-    (typeof pcItem?.data_url === "string" && pcItem.data_url) ||
-    (typeof item?.data_url === "string" && item.data_url) ||
-    (typeof bubbleItem?.data_url === "string" && bubbleItem.data_url) ||
-    (typeof c.data_url === "string" && c.data_url) ||
-    (typeof c.url === "string" && c.url) ||
-    "";
+    firstText(
+      pcItem?.data_url,
+      item?.data_url,
+      bubbleItem?.data_url,
+      zdata.data_url,
+      c.data_url,
+      p.data_url,
+      c.url,
+    ) || "";
 
-  if (!dataUrl && c) {
+  if (!dataUrl) {
     try {
       const rawStr = JSON.stringify(c);
-      const m = rawStr.match(/https?:\/\/[^"'\s\\]*zadn\.vn[^"'\s\\]*/i);
+      const m = rawStr.match(/https?:\/\/[^"'\s\\]*(?:zadn\.vn|zaloapp\.com)[^"'\s\\]*/i);
       if (m) {
         dataUrl = m[0].replace(/\\u0026/g, "&").replace(/\\/g, "");
       }
     } catch {
-      /* ignore */
+      // ignore
     }
   }
 
-  if (dataUrl && !dataUrl.includes("data=html")) {
+  if (dataUrl && !dataUrl.includes("data=html") && /(?:zinst-stc|stc-zinstant)/i.test(dataUrl)) {
     dataUrl = dataUrl.includes("?") ? `${dataUrl}&data=html` : `${dataUrl}?data=html`;
   }
+
+  const bin = firstText(c.bin, p.bin, c.binBank, p.binBank, zdata.bin);
+  const bankInfo = lookupVietnamBankByBin(bin);
+  const rawBankName = firstText(c.bank_name, p.bank_name, c.bankName, p.bankName, zdata.bank_name);
+  const bankFromName = !bankInfo && rawBankName ? lookupVietnamBankByKeyword(rawBankName) : null;
+  const resolvedBank = bankInfo || bankFromName;
+
+  const accountNo = firstText(
+    c.account_number,
+    p.account_number,
+    c.account_no,
+    p.account_no,
+    c.numAccBank,
+    p.numAccBank,
+    zdata.account_no,
+  );
+  const accountName = firstText(
+    c.account_name,
+    p.account_name,
+    c.nameAccBank,
+    p.nameAccBank,
+    c.holderName,
+    p.holderName,
+    zdata.account_name,
+  );
 
   return compact({
     kind: "bankcard",
     url: dataUrl || undefined,
     data_url: dataUrl || undefined,
-    bank_name: typeof c.bank_name === "string" ? c.bank_name : typeof p.bank_name === "string" ? p.bank_name : undefined,
-    account_number: typeof c.account_number === "string" ? c.account_number : typeof p.account_number === "string" ? p.account_number : undefined,
-    qr_url: typeof c.qr_url === "string" ? c.qr_url : typeof p.qr_url === "string" ? p.qr_url : undefined,
-    logo_url: typeof c.logo_url === "string" ? c.logo_url : typeof p.logo_url === "string" ? p.logo_url : undefined,
-    bg_url: typeof c.bg_url === "string" ? c.bg_url : typeof p.bg_url === "string" ? p.bg_url : undefined,
-    bin: typeof c.bin === "string" ? c.bin : typeof p.bin === "string" ? p.bin : undefined,
-  }) as ZaloAttachment;
+    bin: bin || resolvedBank?.bin,
+    bank_name: rawBankName || resolvedBank?.fullName,
+    bank_short_name: resolvedBank?.shortName || rawBankName,
+    account_number: accountNo,
+    account_name: accountName,
+    qr_url: firstUsableUrl(c.qr_url, p.qr_url, zdata.qr_url),
+    logo_url: firstUsableUrl(c.logo_url, p.logo_url, zdata.logo_url),
+    bg_url: firstUsableUrl(c.bg_url, p.bg_url, zdata.bg_url),
+  });
 }
 
-const BUILDERS: Record<ZaloAttachmentKind, (c: RawRecord) => ZaloAttachment | null> = {
+const BUILDERS: Partial<Record<ZaloAttachmentKind, (c: RawRecord) => ZaloAttachment | null>> = {
   image: (c) => buildImage(c, "image"),
   gif: (c) => buildImage(c, "gif"),
+  doodle: (c) => buildImage(c, "doodle"),
   video: buildVideo,
   voice: buildVoice,
   file: buildFile,
+  folder: buildFile,
   link: buildLink,
   sticker: buildSticker,
   location: buildLocation,
@@ -407,17 +827,54 @@ const BUILDERS: Record<ZaloAttachmentKind, (c: RawRecord) => ZaloAttachment | nu
 };
 
 function looksLikeSticker(c: RawRecord): boolean {
-  return Number.isFinite(Number(c.id)) && Number.isFinite(Number(c.cateId));
+  if (c.stickerUrl || c.stickerWebpUrl) return true;
+  const hasId = Number.isFinite(Number(c.id ?? c.stickerId ?? c.sticker_id)) && Number(c.id ?? c.stickerId ?? c.sticker_id) > 0;
+  const hasCat =
+    Number.isFinite(Number(c.catId ?? c.cateId ?? c.cate_id)) &&
+    Number(c.catId ?? c.cateId ?? c.cate_id) > 0;
+  return hasId && hasCat;
 }
 
-/**
- * Đoán kind từ SHAPE của content khi không có msg_kind/msgType (row cũ).
- * Cố ý KHÔNG đoán theo tên miền (kiểu "url có chữ zalo/thumb → ảnh") — đó
- * chính là logic sai đã gây ra bug link-thành-ảnh.
- */
+function isBankcardCandidate(c: RawRecord | null, rawStr: string, contentText: string): boolean {
+  if (c) {
+    const action = firstText(c.action)?.toLowerCase() || "";
+    if (action.includes("bankcard") || action === "zinstant.bankcard") return true;
+    const zId = firstText(c.zinstantdata_id, c.template_id, c.templateId);
+    if (zId && zId.includes("11845")) return true;
+    if (firstText(c.numAccBank, c.binBank)) return true;
+  }
+  if (
+    rawStr.includes("zinstant.bankcard") ||
+    rawStr.includes("templateId=11845") ||
+    rawStr.includes("zinst-stc.zadn.vn") ||
+    rawStr.includes("stc-zinstant.zadn.vn")
+  ) {
+    return true;
+  }
+  if (contentText && /^\[?tài khoản ngân hàng\]?$/i.test(contentText.trim())) {
+    return true;
+  }
+  return false;
+}
+
 function guessKind(c: RawRecord): ZaloMessageKind {
-  const action = typeof c.action === "string" ? c.action.toLowerCase() : "";
-  if (action.includes("bankcard") || action.includes("bank")) return "bankcard";
+  const action = firstText(c.action)?.toLowerCase() || "";
+  if (action.includes("bankcard")) return "bankcard";
+  if (action === "recommend.gif") return "gif";
+  if (action === "recommened.user" || action === "recommened.vip" || action === "chat.contact") return "contact";
+  if (action === "recommened.friend" || action === "msginfo.actionlist") return "system_notice";
+  if (action === "recommened.location") return "location";
+  if (
+    action === "recommened.link" ||
+    action === "recommened.minisite" ||
+    action === "recommened.miniapp" ||
+    action === "recommened.oa" ||
+    action === "recommened.article" ||
+    action === "recommened.post" ||
+    action === "recommened.zvideo"
+  ) {
+    return "link";
+  }
 
   const p = parseParams(c.params);
   if (looksLikeSticker(c)) return "sticker";
@@ -431,113 +888,74 @@ function guessKind(c: RawRecord): ZaloMessageKind {
   if (AUDIO_EXT_RE.test(probe)) return "voice";
   if (GIF_EXT_RE.test(probe)) return "gif";
 
-  // Ảnh Zalo luôn có ít nhất 1 field ảnh chuyên dụng. KHÔNG xét `href` ở đây:
-  // link/file cũng có href — đúng chỗ code cũ nhầm.
-  if (c.hdUrl || c.oriUrl || c.normalUrl || c.rawUrl || c.thumbUrl || p.hdUrl || p.normalUrl || p.rawUrl) {
+  if (c.hdUrl || c.oriUrl || c.normalUrl || c.rawUrl || c.thumbUrl || p.hd || p.hdUrl || p.normalUrl || p.rawUrl) {
     return "image";
   }
   if (IMAGE_EXT_RE.test(probe)) return "image";
 
-  if (c.fileName || p.fileName || p.fileExt || p.extention || fileUrl) return "file";
-  if (Number.isFinite(Number(c.latitude ?? c.lat)) && Number.isFinite(Number(c.longitude ?? c.lon ?? c.lng))) {
+  if (c.fileName || p.fileName || p.fileExt || p.extention || fileUrl) {
+    return isFolderParams(p) ? "folder" : "file";
+  }
+  if (
+    Number.isFinite(Number(c.latitude ?? c.lat ?? p.lat)) &&
+    Number.isFinite(Number(c.longitude ?? c.lon ?? c.lng ?? c.lo ?? p.lon ?? p.lo)) &&
+    (Number(c.latitude ?? c.lat ?? p.lat) !== 0 || Number(c.longitude ?? c.lon ?? c.lng ?? c.lo ?? p.lon ?? p.lo) !== 0)
+  ) {
     return "location";
   }
-  // Tin chia sẻ DANH THIẾP luôn kèm số điện thoại (yêu cầu người dùng
-  // 2026-09-18: "tin có SĐT thì hiểu là danh thiếp") — kiểm tra TRƯỚC nhánh
-  // 'link' chung, mirror đúng bridge (messageContent.js guessKindFromContent()).
-  if (typeof p.phone === "string" && p.phone.trim()) return "contact";
+  if (extractContactPhone(c, p)) return "contact";
   if (isUsableUrl(href)) return "link";
   return "text";
 }
 
-/**
- * Zalo dùng CHUNG 1 "khuôn" content cho rất nhiều loại THÔNG BÁO HỆ THỐNG
- * khác nhau trong nhóm/hội thoại — không phải tin nhắn thật của ai cả:
- * {action, title, thumb, href:"", params:"{...}", childnumber, description}.
- * Đã xác nhận trực tiếp trên dữ liệu thật (2026-09-14) ít nhất 4 loại:
- *   - action="msginfo.actionlist" (kết bạn): title ĐÃ là câu hoàn chỉnh
- *     "Bạn vừa kết bạn với <Tên>".
- *   - action="vote" (tham gia bình chọn) / "close" (đóng bình chọn) — cả 2
- *     đều có params.pollId + params.question: BẤT KỲ action nào đi kèm
- *     pollId đều coi là hoạt động bình chọn (đề phòng Zalo còn action khác
- *     chưa gặp, vd "reopen"/"extend"...) — hiện gọn "<Tên> đang bình chọn"
- *     thay vì ghép câu dài từ params.msg.vi (dồn dập nhiều tin vote liên
- *     tiếp thì câu dài đọc rối hơn là có ích).
- *   - action="recommened.calltime" (thông báo cuộc gọi): title có giá trị
- *     nhưng không phải câu người đọc được ("sendBubbleMessage"), không có
- *     params.msg.vi lẫn pollId — vẫn rơi về nhánh "unknown" cũ, KHÔNG cố
- *     đoán bừa cho action lạ (thà hiện fallback cũ còn hơn hiện sai).
- *
- * Đặc điểm CHUNG để phân biệt với tin CHIA SẺ LINK/DANH THIẾP thật
- * (chat.recommended — cũng có field `action` và đôi khi `title`): loại đó
- * LUÔN có `href` thật (chính là mục đích của tin), còn mọi thông báo hệ
- * thống loại này đều có `href: ""` — dùng làm điều kiện chặn false-positive.
- *
- * Trước đây các tin này rơi vào nhánh "unknown" (guessKind không nhận ra
- * shape lạ) nên hiện thẳng fallback "Tin nhắn dạng đặc biệt — mở Zalo để
- * xem", gây khó hiểu — đặc biệt rối khi 1 nhóm có bình chọn đang chạy, hàng
- * chục tin "vote" dồn dập đều hiện y hệt fallback đó.
- */
-function systemActionText(c: RawRecord): string | null {
-  if (!c || typeof c !== "object" || typeof c.action !== "string" || !c.action) return null;
-  if (typeof c.href === "string" && c.href.trim()) return null; // tin chia sẻ link/danh thiếp thật
+function refineRecommendedKind(c: RawRecord, wireMsgType: string): ZaloMessageKind {
+  const action = firstText(c.action)?.toLowerCase() || "";
 
-  const title = typeof c.title === "string" ? c.title.trim() : "";
-  if (title && /kết bạn|bạn bè/i.test(title)) return title;
+  if (
+    action === "recommened.misscall" ||
+    action === "recommened.calltime" ||
+    action === "recommened.calling" ||
+    action === "recommened.receivecall"
+  ) {
+    return "call";
+  }
+  if (action.includes("bankcard")) return "bankcard";
+  if (action === "recommend.gif") return "gif";
+  if (action === "recommened.friend") return "system_notice";
+  if (action === "recommened.location") return "location";
+  if (action === "recommened.stickerset") return "sticker";
 
-  const p = parseParams(c.params);
-  const dName = typeof p.dName === "string" ? p.dName.trim() : "";
-
-  // Mọi hoạt động BÌNH CHỌN (vote/đóng/...) đều mang params.pollId — bắt theo
-  // field này (thay vì liệt kê từng action) để bao quát cả action nào khác
-  // chưa gặp trong dữ liệu thật, miễn cùng thuộc luồng bình chọn.
-  if (typeof p.pollId !== "undefined") {
-    const who = dName ? `${dName} ` : "";
-    return c.action === "close" ? `${who}đã kết thúc bình chọn`.trim() : `${who}đang bình chọn`.trim();
+  // `show.profile` trên `chat.ecard` là thiệp kết bạn (`system_notice`), còn trên `chat.recommended` là danh thiếp (`contact`)
+  if (action === "show.profile") {
+    return wireMsgType === "chat.ecard" ? "system_notice" : "contact";
+  }
+  if (
+    action === "recommened.user" ||
+    action === "recommened.vip" ||
+    action === "chat.contact" ||
+    action.includes("vcard")
+  ) {
+    return "contact";
+  }
+  if (
+    action === "recommened.link" ||
+    action === "recommened.minisite" ||
+    action === "recommened.miniapp" ||
+    action === "recommened.oa" ||
+    action === "recommened.zvideo" ||
+    action === "recommened.article" ||
+    action === "recommened.post"
+  ) {
+    return "link";
   }
 
-  const msgTemplates = p.msg && typeof p.msg === "object" && !Array.isArray(p.msg) ? (p.msg as RawRecord) : null;
-  const template = msgTemplates && typeof msgTemplates.vi === "string" ? msgTemplates.vi.trim() : "";
-  if (!template) return null;
-
-  const question = typeof p.question === "string" ? p.question.trim() : "";
-  const text = template.replace("%1$s", dName || "Có người").replace("%2$s", question);
-  return text.trim() || null;
-}
-
-/**
- * Zalo dùng hệ thống "zinstant" (thẻ rich content mã hoá — vd chia sẻ tài
- * khoản ngân hàng `action: "zinstant.bankcard"`, hiện logo ngân hàng + mã QR)
- * để hiển thị các loại thẻ đặc biệt. Nội dung THẬT (tên ngân hàng, số tài
- * khoản, QR...) được Zalo TỰ RENDER từ 1 template mã hoá
- * (`params.item.data_url`, kèm checksum) — KHÔNG thể tái dựng lại phía ta.
- * Nhưng payload LUÔN kèm `params.customMsg.msg.vi` — đúng chuỗi fallback
- * Zalo tự dùng khi client không hỗ trợ render template đó (vd
- * "[Tài khoản ngân hàng]") — dùng chuỗi này thay cho fallback chung chung
- * "Tin nhắn dạng đặc biệt — mở Zalo để xem" (yêu cầu người dùng 2026-09-21).
- */
-function zinstantFallbackLabel(c: RawRecord): string | null {
-  if (!c || typeof c !== "object") return null;
-  const p = parseParams(c.params);
-  const customMsg = p.customMsg && typeof p.customMsg === "object" ? (p.customMsg as RawRecord) : null;
-  const msgTemplates = customMsg?.msg && typeof customMsg.msg === "object" ? (customMsg.msg as RawRecord) : null;
-  const label = msgTemplates && typeof msgTemplates.vi === "string" ? msgTemplates.vi.trim() : "";
-  return label || null;
-}
-
-function refineRecommendedKind(c: RawRecord): ZaloAttachmentKind {
-  const action = typeof c.action === "string" ? c.action.toLowerCase() : "";
-  if (action.includes("bankcard") || action.includes("bank")) return "bankcard";
-  if (action.includes("user") || action.includes("contact") || action.includes("profile")) return "contact";
-  if (action.includes("video")) return "video";
-  // Có SĐT trong params hoặc description → chắc chắn là danh thiếp dù action không nói rõ.
   const p = parseParams(c.params);
   if (extractContactPhone(c, p)) return "contact";
   return "link";
 }
 
 function isAttachmentKind(kind: ZaloMessageKind): kind is ZaloAttachmentKind {
-  return kind !== "text" && kind !== "unknown" && kind !== "system_notice";
+  return kind !== "text" && kind !== "unknown" && kind !== "system_notice" && kind !== "undo";
 }
 
 function normalizeOne(content: unknown, kind: ZaloMessageKind): ZaloAttachment | null {
@@ -547,88 +965,151 @@ function normalizeOne(content: unknown, kind: ZaloMessageKind): ZaloAttachment |
   const built = primary ? primary(c) : null;
   if (built) return built;
   const guessed = guessKind(c);
-  if (guessed !== kind && isAttachmentKind(guessed)) return BUILDERS[guessed](c);
+  if (guessed !== kind && isAttachmentKind(guessed)) {
+    const fallbackBuilder = BUILDERS[guessed];
+    return fallbackBuilder ? fallbackBuilder(c) : null;
+  }
   return null;
 }
-
-/** Row `zalo_messages` (chỉ những cột cần cho phân loại). */
-export type StoredMessageRow = {
-  msg_kind?: string | null;
-  type?: string | null;
-  is_sent?: boolean | null;
-  attachments?: unknown;
-  raw_content?: unknown;
-  image_urls?: unknown;
-  content?: string | null;
-};
 
 function attachmentsFromStoredColumn(value: unknown): ZaloAttachment[] {
   if (!Array.isArray(value)) return [];
   return value.filter(
     (a): a is ZaloAttachment =>
-      !!a && typeof a === "object" && typeof (a as ZaloAttachment).kind === "string"
+      !!a && typeof a === "object" && typeof (a as ZaloAttachment).kind === "string",
   );
 }
 
+function extractPollMeta(c: RawRecord | null, dataObj: RawRecord | null): ZaloSystemEventMeta | null {
+  if (!c) return null;
+  const p = parseParams(c.params);
+  if (p.pollId === undefined && firstText(dataObj?.msgType)?.toLowerCase() !== "group.poll") {
+    return null;
+  }
+  const dName = firstText(p.dName, dataObj?.dName) || "";
+  const question = firstText(p.question, c.title) || "";
+  const action = firstText(c.action)?.toLowerCase() || "";
+
+  let title: string;
+  if (action === "close") {
+    title = dName ? `${dName} đã kết thúc bình chọn` : "Bình chọn đã kết thúc";
+  } else if (action === "vote") {
+    title = dName ? `${dName} đang bình chọn` : "Có thành viên đang bình chọn";
+  } else {
+    const msgFormatted = formatMsgInfoActionList(c);
+    title = msgFormatted || (question ? `Bình chọn: ${question}` : "Bình chọn trong nhóm");
+  }
+
+  const rawOptions = Array.isArray(p.options) ? p.options : [];
+  const options = rawOptions
+    .map((o) => (typeof o === "string" ? o.trim() : firstText((o as RawRecord)?.content, (o as RawRecord)?.title) || ""))
+    .filter(Boolean);
+
+  return {
+    category: "poll",
+    act: action || "group.poll",
+    title,
+    subtitle: question && !title.includes(question) ? question : undefined,
+    iconKind: "poll",
+    ...(options.length > 0 ? { options } : {}),
+  };
+}
+
+function finalizeResult(
+  row: StoredMessageRow,
+  partial: {
+    kind: ZaloMessageKind;
+    text?: string;
+    attachments: ZaloAttachment[];
+    callInfo?: ZaloCallMessageInfo;
+    systemEvent?: ZaloSystemEventMeta;
+    unknown_label?: string;
+    isRecalled?: boolean;
+  },
+): NormalizedZaloMessage {
+  const cleanText = sanitizeDisplayText(partial.text);
+  const runInline = partial.kind === "text" && cleanText.length > 0;
+  const inlineUrls = runInline ? extractUrlsFromText(cleanText) : [];
+  const inlinePhones = runInline ? extractVietnamesePhones(cleanText) : [];
+  const inlineBanks = runInline ? extractFreeTextBankAccounts(cleanText) : [];
+
+  const computedPreview = formatZaloAnySidebarPreview({
+    content: partial.systemEvent?.title || cleanText || row.content,
+    type: row.type,
+    msg_kind: partial.kind !== "text" ? partial.kind : row.msg_kind,
+    raw_content: row.raw_content,
+    attachments: partial.attachments,
+    is_sent: row.is_sent,
+    is_deleted: partial.isRecalled || row.is_deleted,
+  });
+
+  return {
+    kind: partial.kind,
+    text: cleanText,
+    attachments: partial.attachments,
+    ...(partial.callInfo ? { callInfo: partial.callInfo } : {}),
+    ...(partial.systemEvent ? { systemEvent: partial.systemEvent } : {}),
+    ...(partial.kind === "system_notice" && partial.systemEvent?.title
+      ? { system_text: partial.systemEvent.title }
+      : {}),
+    ...(partial.unknown_label ? { unknown_label: partial.unknown_label } : {}),
+    inlineBanks,
+    inlinePhones,
+    inlineUrls,
+    previewText: computedPreview || kindLabel(partial.kind),
+    isRecalled: Boolean(partial.isRecalled),
+  };
+}
+
 /**
- * Kết quả cuối cùng cho UI: luôn có `kind` + `attachments` đã chuẩn hoá.
- *
- * Thứ tự ưu tiên:
- *   1. Cột `attachments` (bridge đã phân loại sẵn — tin nhắn mới).
- *   2. `raw_content` → phân loại lại tại đây (tin nhắn cũ, từ 2026-09-04).
- *   3. `image_urls` → coi là ảnh (tin nhắn rất cũ, không còn dữ liệu khác).
+ * Chuẩn hóa toàn diện 1 row `zalo_messages` cho mọi bề mặt chat & sidebar.
  */
-export function normalizeStoredMessage(row: StoredMessageRow): {
-  kind: ZaloMessageKind;
-  attachments: ZaloAttachment[];
-  /** Chỉ có khi kind === "system_notice" — dòng chữ hiện căn giữa. */
-  system_text?: string;
-  /** Chỉ có khi kind === "unknown" VÀ payload là thẻ "zinstant" (vd danh
-   *  thiếp ngân hàng) — nhãn cụ thể hơn thay cho "Tin nhắn dạng đặc biệt"
-   *  chung chung, xem zinstantFallbackLabel(). */
-  unknown_label?: string;
-} {
-  let raw = row.raw_content;
-  if (typeof raw === "string" && (raw.trim().startsWith("{") || raw.trim().startsWith("["))) {
-    try {
-      raw = JSON.parse(raw);
-    } catch {
-      // ignore
-    }
+export function normalizeStoredMessage(row: StoredMessageRow): NormalizedZaloMessage {
+  const env = unwrapRawEnvelope(row.raw_content);
+  const rawTypeLower = firstText(row.type)?.toLowerCase() || "";
+  const rawKindLower = firstText(row.msg_kind)?.toLowerCase() || "";
+  const wireMsgType = env.wireMsgType || rawTypeLower;
+  const inner = env.innerFirst;
+  const action = firstText(inner?.action, env.dataObj?.action)?.toLowerCase() || "";
+  const rowContentText = typeof row.content === "string" ? row.content.trim() : "";
+
+  // 1. Tin nhắn đã thu hồi / đã xóa (`chat.undo`, `chat.delete`, `chat.delete.everyone`, `is_deleted`)
+  if (
+    row.is_deleted ||
+    wireMsgType === "chat.undo" ||
+    rawKindLower === "undo" ||
+    wireMsgType === "chat.delete.everyone" ||
+    wireMsgType === "chat.delete"
+  ) {
+    const isDelete = wireMsgType === "chat.delete.everyone" || wireMsgType === "chat.delete";
+    const title = isDelete ? "Tin nhắn đã bị xóa" : "Tin nhắn đã được thu hồi";
+    return finalizeResult(row, {
+      kind: "undo",
+      text: title,
+      attachments: [],
+      isRecalled: true,
+      systemEvent: {
+        category: "undo",
+        act: wireMsgType || "chat.undo",
+        title,
+        iconKind: "recall",
+      },
+    });
   }
 
-  // Quét toàn diện tìm thẻ tài khoản ngân hàng zinstant.bankcard (cho cả tin mới và toàn bộ tin cũ từ trước đến nay)
-  const rawList = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
-  const bankItem = rawList.find(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      (String((item as RawRecord).action ?? "").toLowerCase().includes("bankcard") ||
-        String((item as RawRecord).params ?? "").includes("zinstant.bankcard") ||
-        String((item as RawRecord).params ?? "").includes("templateId=11845") ||
-        String((item as RawRecord).title ?? "").toLowerCase().includes("tài khoản ngân hàng") ||
-        JSON.stringify(item).includes("zinst-stc.zadn.vn") ||
-        (row.content && /\[?tài khoản ngân hàng\]?/i.test(row.content.trim())))
-  ) as RawRecord | undefined;
-
-  if (bankItem) {
-    const card = buildBankcard(bankItem);
-    if (card && (card.data_url || card.account_number)) {
-      return { kind: "bankcard", attachments: [card] };
-    }
-  }
-
-  // Nhận diện tin nhắn cuộc gọi Zalo (cuộc gọi đến, gọi đi, gọi nhỡ, video call...)
+  // 2. Tin nhắn cuộc gọi Zalo (ủy quyền hoàn toàn cho `zaloCallMessage.ts` — LOCKED)
   const callInfo = parseZaloCallMessage({
     type: row.type,
     msg_kind: row.msg_kind,
     content: row.content,
     is_sent: row.is_sent,
-    raw_content: raw,
+    raw_content: env.parsedRoot,
   });
   if (callInfo) {
-    return {
+    return finalizeResult(row, {
       kind: "call",
+      text: "",
+      callInfo,
       attachments: [
         {
           kind: "call",
@@ -638,81 +1119,391 @@ export function normalizeStoredMessage(row: StoredMessageRow): {
           call_info: callInfo,
         },
       ],
-    };
+    });
   }
 
-  const rawFirst =
-    raw && typeof raw === "object" ? ((Array.isArray(raw) ? raw[0] : raw) as RawRecord) : null;
+  // 3. Thẻ ngân hàng ZInstant / VietQR (`zinstant.bankcard`, `templateId=11845`, `chat.webcontent*`)
+  const rawProbeStr =
+    typeof row.raw_content === "string"
+      ? row.raw_content
+      : inner
+        ? (() => {
+            try {
+              return JSON.stringify(inner);
+            } catch {
+              return "";
+            }
+          })()
+        : "";
+  const bankItem =
+    wireMsgType === "chat.webcontent" ||
+    wireMsgType === "chat.webcontent.v2" ||
+    rawKindLower === "bankcard" ||
+    isBankcardCandidate(inner, rawProbeStr, rowContentText)
+      ? inner || env.dataObj || {}
+      : null;
 
-  // Thông báo hệ thống (kết bạn/vote...) PHẢI được nhận diện qua raw_content
-  // TRƯỚC shortcut "content bắt đầu bằng https → link" ngay dưới đây. Lý do:
-  // 1 bug ở tầng ghi (bridge, đã sửa 2026-09-18 — xem isSystemNoticeShape() ở
-  // messageContent.js) từng khiến `content` của thông báo hệ thống bị lưu
-  // NHẦM thành 1 URL avatar/thumb kẹt trong params. Nếu shortcut bên dưới
-  // chạy trước, nó khoá cứng row đó thành "text" vĩnh viễn dù raw_content vẫn
-  // còn nguyên đủ dữ liệu để nhận ra đúng là system_notice.
-  if (rawFirst) {
-    const noticeText = systemActionText(rawFirst);
-    if (noticeText) {
-      return { kind: "system_notice", attachments: [], system_text: noticeText };
+  if (bankItem && isBankcardCandidate(bankItem, rawProbeStr, rowContentText)) {
+    const card = buildBankcard(bankItem);
+    if (card) {
+      return finalizeResult(row, {
+        kind: "bankcard",
+        text: "",
+        attachments: [card],
+      });
     }
   }
 
-  // Yêu cầu người dùng (2026-09-17): nội dung TRẦN bắt đầu bằng http(s) LUÔN
-  // hiểu là link thường, bất kể raw_content/msgType nói gì. Lý do có bug này:
-  // Zalo đôi khi tự gắn msgType "chat.recommended" cho tin CHÍNH NGƯỜI DÙNG
-  // tự gõ/dán 1 URL trần (không phải share link có thumbnail thật) nhưng
-  // payload lúc đó KHÔNG có field href đúng chỗ buildLink() cần → dựng link
-  // thất bại → rơi vào kind khác "text" với attachments rỗng → UI hiện
-  // fallback "Tin nhắn dạng đặc biệt — mở Zalo để xem" dù nội dung thật (URL)
-  // vẫn nằm nguyên trong `content`. Ưu tiên kiểm tra này TRƯỚC MỌI phân loại
-  // khác để không bao giờ rơi vào fallback đó với 1 URL trần — text thường
-  // đã tự bôi link/bấm được qua linkifyText() (ZaloChatPanel.tsx).
-  if (typeof row.content === "string" && /^https?:\/\//i.test(row.content.trim())) {
-    return { kind: "text", attachments: [] };
+  // 4. Thông báo hệ thống: `msginfo.actionlist`, `chat.ecard`, `friend.event`, `group.event`, `poll`, `reminder`, `todo`, `vanish`
+  if (action === "msginfo.actionlist") {
+    const formatted = formatMsgInfoActionList(env.parsedRoot);
+    if (formatted) {
+      const lower = formatted.toLowerCase();
+      const category: ZaloSystemEventCategory =
+        lower.includes("kết bạn") || lower.includes("bạn bè")
+          ? "friend"
+          : lower.includes("bình chọn")
+            ? "poll"
+            : lower.includes("nhắc hẹn")
+              ? "reminder"
+              : "group";
+      const iconKind: ZaloSystemEventIconKind = lower.includes("bỏ ghim")
+        ? "unpin"
+        : lower.includes("ghim")
+          ? "pin"
+          : category === "friend"
+            ? "friend_accept"
+            : category === "poll"
+              ? "poll"
+              : category === "reminder"
+                ? "reminder"
+                : "info";
+      return finalizeResult(row, {
+        kind: "system_notice",
+        text: formatted,
+        attachments: [],
+        systemEvent: {
+          category,
+          act: "msginfo.actionlist",
+          title: formatted,
+          iconKind,
+        },
+      });
+    }
   }
 
+  // 4b. `chat.ecard` (bao gồm `action="show.profile"` + `type="2"` đồng ý kết bạn, birthday, reminder ecard) & `friend.event` & `recommened.friend`
+  if (
+    wireMsgType === "chat.ecard" ||
+    wireMsgType === "friend.event" ||
+    wireMsgType === "friend_event" ||
+    action === "recommened.friend"
+  ) {
+    const fe = formatZaloFriendEvent(env.parsedRoot);
+    if (fe) {
+      const category: ZaloSystemEventCategory =
+        fe.iconKind === "reminder"
+          ? "reminder"
+          : fe.iconKind === "friend_accept" ||
+              fe.iconKind === "friend_request" ||
+              fe.iconKind === "friend_remove" ||
+              fe.iconKind === "friend_block" ||
+              fe.iconKind === "stranger"
+            ? "friend"
+            : fe.iconKind === "group_join"
+              ? "group"
+              : "ecard";
+      return finalizeResult(row, {
+        kind: "system_notice",
+        text: fe.title,
+        attachments: [],
+        systemEvent: {
+          category,
+          act: fe.act,
+          title: fe.title,
+          subtitle: fe.subtitle,
+          iconKind: fe.iconKind,
+          ecardType: fe.ecardType,
+          thumb: fe.thumb,
+          bannerUrl: fe.bannerUrl,
+        },
+      });
+    }
+  }
+
+  // 4c. Bình chọn (`group.poll`, `chat.poll`, hoặc `params.pollId`)
+  const pollMeta = extractPollMeta(inner, env.dataObj);
+  if (pollMeta) {
+    return finalizeResult(row, {
+      kind: "system_notice",
+      text: pollMeta.title,
+      attachments: [],
+      systemEvent: pollMeta,
+    });
+  }
+
+  // 4d. Nhắc hẹn (`chat.reminder`) & Công việc (`chat.todo`)
+  if (wireMsgType === "chat.reminder" || rawKindLower === "reminder") {
+    const p = parseParams(inner?.params);
+    const title = firstText(inner?.title, p.title, sanitizeDisplayText(rowContentText)) || "Nhắc hẹn";
+    const dueRaw = p.startTime ?? p.dueTime ?? inner?.startTime;
+    const dueTime =
+      typeof dueRaw === "number" || typeof dueRaw === "string" ? dueRaw : undefined;
+    return finalizeResult(row, {
+      kind: "system_notice",
+      text: title,
+      attachments: [],
+      systemEvent: {
+        category: "reminder",
+        act: "chat.reminder",
+        title,
+        subtitle: firstText(inner?.description, p.description),
+        iconKind: "reminder",
+        dueTime,
+      },
+    });
+  }
+
+  if (wireMsgType === "chat.todo" || rawKindLower === "todo") {
+    const p = parseParams(inner?.params);
+    const title =
+      firstText(inner?.message, inner?.title, p.title, sanitizeDisplayText(rowContentText)) ||
+      "Công việc Zalo To-Do";
+    return finalizeResult(row, {
+      kind: "system_notice",
+      text: title,
+      attachments: [],
+      systemEvent: {
+        category: "todo",
+        act: action || "chat.todo",
+        title,
+        subtitle: firstText(inner?.description, p.description),
+        iconKind: "todo",
+      },
+    });
+  }
+
+  // 4e. Sự kiện nhóm (`group.event`, `group_event`, `group.leave`)
+  if (
+    wireMsgType === "group.event" ||
+    wireMsgType === "group_event" ||
+    wireMsgType === "group.leave" ||
+    rawKindLower === "system_notice"
+  ) {
+    const ge = formatZaloGroupEvent(env.parsedRoot);
+    if (ge) {
+      return finalizeResult(row, {
+        kind: "system_notice",
+        text: ge.title,
+        attachments: [],
+        systemEvent: {
+          category: "group",
+          act: ge.act,
+          title: ge.title,
+          subtitle: ge.subtitle,
+          iconKind: ge.iconKind,
+        },
+      });
+    }
+    if (rawKindLower === "system_notice" && sanitizeDisplayText(rowContentText)) {
+      const cleanNotice = sanitizeDisplayText(rowContentText);
+      return finalizeResult(row, {
+        kind: "system_notice",
+        text: cleanNotice,
+        attachments: [],
+        systemEvent: {
+          category: "info",
+          title: cleanNotice,
+          iconKind: "info",
+        },
+      });
+    }
+  }
+
+  // 4f. Tin nhắn tự xóa (`chat.vanish`)
+  if (wireMsgType === "chat.vanish") {
+    const title = "Tin nhắn đã tự xóa";
+    return finalizeResult(row, {
+      kind: "system_notice",
+      text: title,
+      attachments: [],
+      systemEvent: {
+        category: "info",
+        act: "chat.vanish",
+        title,
+        iconKind: "vanish",
+      },
+    });
+  }
+
+  // 5. Cột `attachments` đã chuẩn hóa sẵn bởi Bridge (bổ sung SĐT/BIN nếu thiếu)
   const stored = attachmentsFromStoredColumn(row.attachments);
   if (stored.length > 0) {
-    const kind = (row.msg_kind as ZaloMessageKind) || stored[0].kind;
-    // Bổ sung SĐT cho danh thiếp cũ trong DB nếu raw_content có
-    if (rawFirst) {
-      const p = parseParams(rawFirst.params);
+    const mappedKind = (MSG_TYPE_KIND[rawKindLower] as ZaloMessageKind | undefined) || stored[0].kind;
+    if (inner) {
+      const p = parseParams(inner.params);
       for (const a of stored) {
-        if (a.kind === "contact" && !a.phone) {
-          const ph = extractContactPhone(rawFirst, p);
-          if (ph) a.phone = ph;
+        if (a.kind === "contact") {
+          if (!a.phone) {
+            const ph = extractContactPhone(inner, p);
+            if (ph) a.phone = ph;
+          }
+          if (!a.user_id && typeof inner.params === "string" && !inner.params.startsWith("{")) {
+            a.user_id = inner.params.trim();
+          }
+        }
+        if (a.kind === "bankcard" && a.bin && !a.bank_short_name) {
+          const b = lookupVietnamBankByBin(a.bin);
+          if (b) {
+            a.bank_short_name = b.shortName;
+            if (!a.bank_name) a.bank_name = b.fullName;
+          }
         }
       }
     }
-    return { kind, attachments: stored };
+    return finalizeResult(row, {
+      kind: mappedKind,
+      text: sanitizeDisplayText(rowContentText),
+      attachments: stored,
+    });
   }
 
-  if (raw && typeof raw === "object") {
-    const first = rawFirst as RawRecord;
+  // 6. Phân loại từ `raw_content` đã unwrap (ưu tiên `wireMsgType` + `action` hơn `row.msg_kind` cũ bị gán sai)
+  if (inner) {
+    // 6a. Rich text (`webchat` + `action="rtf"`)
+    if (action === "rtf" && (wireMsgType === "webchat" || wireMsgType === "" || wireMsgType === "text")) {
+      const fullRtf = firstText(inner.title, rowContentText) || "";
+      return finalizeResult(row, {
+        kind: "text",
+        text: fullRtf,
+        attachments: [],
+      });
+    }
 
-    let kind: ZaloMessageKind =
-      (row.msg_kind && row.msg_kind !== "text" ? (row.msg_kind as ZaloMessageKind) : undefined) ||
-      MSG_TYPE_KIND[String(first?.msgType ?? "")] ||
-      guessKind(first || {});
-    if (kind === "link") kind = refineRecommendedKind(first || {});
+    // 6b. Xác định kind chính xác từ wireMsgType / action / shape
+    let resolvedKind: ZaloMessageKind;
+    if (wireMsgType && MSG_TYPE_KIND[wireMsgType]) {
+      resolvedKind = MSG_TYPE_KIND[wireMsgType];
+    } else if (rawKindLower && MSG_TYPE_KIND[rawKindLower] && rawKindLower !== "text" && rawKindLower !== "webchat") {
+      resolvedKind = MSG_TYPE_KIND[rawKindLower];
+    } else {
+      resolvedKind = guessKind(inner);
+    }
 
-    const items = Array.isArray(raw) ? raw : [raw];
-    const attachments = items.map((item) => normalizeOne(item, kind)).filter((a): a is ZaloAttachment => !!a);
-    if (attachments.length > 0) return { kind: attachments[0].kind, attachments };
-    // raw_content có nhưng không dựng được gì (vd sticker chưa resolve URL,
-    // hoặc thẻ "zinstant" như danh thiếp ngân hàng — không thể render, chỉ
-    // còn cách hiện nhãn fallback) — vẫn trả đúng kind để UI hiện placeholder
-    // thay vì bong bóng rỗng.
-    if (kind !== "text") {
-      const label = zinstantFallbackLabel(first);
-      return { kind, attachments: [], ...(label ? { unknown_label: label } : {}) };
+    // Photo-sticker: `chat.photo` với `msgBubbleLayoutType === 3` hoặc `stickerUrl`
+    if (resolvedKind === "image") {
+      const p = parseParams(inner.params);
+      if (
+        Number(p.msgBubbleLayoutType) === 3 ||
+        (Number(p.subType) === 1 && typeof p.webpUrl === "string") ||
+        looksLikeSticker(inner)
+      ) {
+        resolvedKind = "sticker";
+      }
+    }
+
+    if (
+      resolvedKind === "link" ||
+      wireMsgType === "chat.recommended" ||
+      wireMsgType === "group"
+    ) {
+      resolvedKind = refineRecommendedKind(inner, wireMsgType);
+    }
+
+    if (resolvedKind === "file") {
+      const p = parseParams(inner.params);
+      if (isFolderParams(p)) resolvedKind = "folder";
+    }
+
+    // Nếu `refineRecommendedKind` chuyển sang `system_notice` (vd `recommened.friend` đã check ở 4b)
+    if (resolvedKind === "system_notice") {
+      const fallbackTitle = firstText(inner.title, inner.description, sanitizeDisplayText(rowContentText)) || "Thông báo hệ thống";
+      return finalizeResult(row, {
+        kind: "system_notice",
+        text: fallbackTitle,
+        attachments: [],
+        systemEvent: {
+          category: "info",
+          act: action || wireMsgType,
+          title: fallbackTitle,
+          iconKind: "info",
+        },
+      });
+    }
+
+    // Build attachments
+    if (isAttachmentKind(resolvedKind)) {
+      const items = env.innerItems.length > 0 ? env.innerItems : [inner];
+      const attachments = items
+        .map((item) => normalizeOne(item, resolvedKind))
+        .filter((a): a is ZaloAttachment => !!a);
+
+      if (attachments.length > 0) {
+        const finalKind = attachments[0].kind;
+        // Giữ lại caption nếu là link/ảnh/video có lời nhắn kèm theo (vd URL + "\n@Mylife dạ e mới làm...")
+        let captionText = "";
+        if (finalKind === "link") {
+          const rawTitle = firstText(inner.title) || sanitizeDisplayText(rowContentText);
+          if (rawTitle) {
+            const stripped = rawTitle
+              .replace(attachments[0].url || "", "")
+              .trim();
+            if (stripped && !isUsableUrl(stripped)) {
+              captionText = stripped;
+            }
+          }
+        } else if (finalKind === "image" || finalKind === "video") {
+          const cap = firstText(inner.title) || sanitizeDisplayText(rowContentText);
+          if (cap && !isUsableUrl(cap)) captionText = cap;
+        }
+
+        return finalizeResult(row, {
+          kind: finalKind,
+          text: captionText,
+          attachments,
+        });
+      }
+
+      // Nếu là URL trần trong `content` mà `buildLink` thất bại (không có href) → trả về text thường (linkify sẽ xử lý)
+      if (resolvedKind === "link" && rowContentText && /^https?:\/\//i.test(rowContentText)) {
+        return finalizeResult(row, {
+          kind: "text",
+          text: rowContentText,
+          attachments: [],
+        });
+      }
+
+      // Nếu là zinstant / chat.webcontent không rõ phải bankcard
+      if (wireMsgType === "chat.webcontent" || wireMsgType === "chat.webcontent.v2") {
+        const customText = formatMsgInfoActionList(parseParams(inner.params).customMsg);
+        const label = customText || ZALO_SIDEBAR_BRACKET_LABELS.STR_MSG_MEDIA;
+        return finalizeResult(row, {
+          kind: "bankcard",
+          text: "",
+          attachments: [buildBankcard(inner) || { kind: "bankcard", title: label }],
+          unknown_label: label,
+        });
+      }
+
+      // Không để rơi vào "— mở Zalo để xem" — dùng nhãn Zalo native sạch
+      const cleanFallback = sanitizeDisplayText(rowContentText);
+      if (cleanFallback) {
+        return finalizeResult(row, {
+          kind: "text",
+          text: cleanFallback,
+          attachments: [],
+        });
+      }
+      return finalizeResult(row, {
+        kind: resolvedKind,
+        text: "",
+        attachments: [],
+        unknown_label: kindLabel(resolvedKind),
+      });
     }
   }
 
-  // Tin rất cũ: chỉ còn image_urls. Ở đây KHÔNG lọc lại được link/video lẫn
-  // trong đó (raw_content đã mất) — nhưng vẫn chặn được url .mp4/.m3u8 lọt vào
-  // thẻ <img>, coi chúng là video để ít nhất còn bấm phát được.
+  // 7. Tin cũ chỉ còn `image_urls`
   const urls = Array.isArray(row.image_urls) ? row.image_urls.filter(isUsableUrl) : [];
   if (urls.length > 0) {
     const attachments = urls.map<ZaloAttachment>((url) =>
@@ -720,26 +1511,47 @@ export function normalizeStoredMessage(row: StoredMessageRow): {
         ? { kind: "video", url }
         : AUDIO_EXT_RE.test(url)
           ? { kind: "voice", url }
-          : { kind: GIF_EXT_RE.test(url) ? "gif" : "image", url }
+          : { kind: GIF_EXT_RE.test(url) ? "gif" : "image", url },
     );
-    return { kind: attachments[0].kind, attachments };
+    return finalizeResult(row, {
+      kind: attachments[0].kind,
+      text: sanitizeDisplayText(rowContentText),
+      attachments,
+    });
   }
 
-  return { kind: row.content?.trim() ? "text" : (row.msg_kind as ZaloMessageKind) || "text", attachments: [] };
+  // 8. Tin văn bản thuần (bao gồm `webchat` có `data.content` là chuỗi)
+  const plainText = sanitizeDisplayText(env.plainInnerText || rowContentText);
+  const mappedFallbackKind =
+    MSG_TYPE_KIND[wireMsgType] || MSG_TYPE_KIND[rawKindLower] || "text";
+
+  return finalizeResult(row, {
+    kind: plainText ? "text" : mappedFallbackKind,
+    text: plainText,
+    attachments: [],
+  });
 }
 
 const KIND_LABEL: Record<string, string> = {
   image: "[Hình ảnh]",
-  gif: "[Ảnh động]",
+  gif: "[GIF]",
   video: "[Video]",
   voice: "[Tin nhắn thoại]",
-  file: "[Tệp đính kèm]",
-  link: "[Liên kết]",
+  file: "[File]",
+  folder: "[Thư mục]",
+  link: "[Link]",
   sticker: "[Sticker]",
   location: "[Vị trí]",
   contact: "[Danh thiếp]",
-  bankcard: "[Tài khoản ngân hàng]",
+  bankcard: "[Thẻ ngân hàng]",
   call: "[Cuộc gọi]",
+  ecard: "[Thiệp]",
+  poll: "[Bình chọn]",
+  reminder: "[Nhắc hẹn]",
+  todo: "[Công việc]",
+  doodle: "[Vẽ hình]",
+  system_notice: "[Thông báo]",
+  undo: "Tin nhắn đã được thu hồi",
   unknown: "[Tin nhắn]",
 };
 
@@ -749,9 +1561,7 @@ export function kindLabel(kind: ZaloMessageKind): string {
 }
 
 /**
- * Dòng preview ở danh sách hội thoại. Tin đính kèm có `content` rỗng (nội dung
- * thật là object) — không có hàm này thì sidebar hiện dòng TRẮNG, không biết
- * vừa nhận được gì. Giữ khớp previewTextFor() ở bridge (messageContent.js).
+ * Dòng preview ở danh sách hội thoại (giữ 100% tương thích ngược với `hooks/useZalo.ts`).
  */
 export function previewText(input: {
   text?: string | null;
@@ -764,15 +1574,21 @@ export function previewText(input: {
     const icon = first.call_info?.isMissed ? "📵" : first.call_info?.mediaType === "video" ? "📹" : "📞";
     return `${icon} ${label}`;
   }
-  if (input.text && input.text.trim()) {
-    if (isSendBubblePlaceholder(input.text)) {
-      return formatZaloSidebarPreview(input.text);
-    }
-    return input.text.trim();
+  if (input.kind === "undo") {
+    return "Tin nhắn đã được thu hồi";
+  }
+  const clean = sanitizeDisplayText(input.text);
+  if (clean) {
+    return clean;
+  }
+  if (input.text && isSendBubblePlaceholder(input.text)) {
+    return formatZaloSidebarPreview(input.text);
   }
   if (!first) return input.kind && input.kind !== "text" ? kindLabel(input.kind) : "";
   if (first.kind === "link") return `${KIND_LABEL.link} ${first.title || first.url || ""}`.trim();
   if (first.kind === "file") return `${KIND_LABEL.file} ${first.name || ""}`.trim();
+  if (first.kind === "folder") return `${KIND_LABEL.folder} ${first.name || ""}`.trim();
+  if (first.kind === "contact") return `${KIND_LABEL.contact} ${first.name || ""}`.trim();
   return KIND_LABEL[first.kind] || KIND_LABEL.unknown;
 }
 

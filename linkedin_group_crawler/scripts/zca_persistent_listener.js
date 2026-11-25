@@ -5,23 +5,25 @@ const fs = require("fs");
 
 // Đảm bảo mọi emit ra stdout được flush ngay lập tức (không buffer).
 // Trên Windows, pipe Popen có buffer ~4KB, nếu không flush kịp sẽ block Node process.
-if (process.stdout._handle && typeof process.stdout._handle.setBlocking === "function") {
-  process.stdout._handle.setBlocking(true);
-}
-process.stdout.write = new Proxy(process.stdout.write.bind(process.stdout), {
-  apply(target, thisArg, args) {
-    const result = target(...args);
-    // Force flush ngay sau mỗi write.
-    try {
-      if (thisArg._handle && typeof thisArg._handle.flush === "function") {
-        thisArg._handle.flush();
+if (require.main === module) {
+  if (process.stdout._handle && typeof process.stdout._handle.setBlocking === "function") {
+    process.stdout._handle.setBlocking(true);
+  }
+  process.stdout.write = new Proxy(process.stdout.write.bind(process.stdout), {
+    apply(target, thisArg, args) {
+      const result = target(...args);
+      // Force flush ngay sau mỗi write.
+      try {
+        if (thisArg._handle && typeof thisArg._handle.flush === "function") {
+          thisArg._handle.flush();
+        }
+      } catch (_) {
+        /* ignore */
       }
-    } catch (_) {
-      /* ignore */
-    }
-    return result;
-  },
-});
+      return result;
+    },
+  });
+}
 
 function safeJson(value) {
   try {
@@ -167,22 +169,374 @@ function isLikelyVideoUrl(value) {
 }
 
 // msgType Zalo đã tự phân loại rõ ràng — TIN vào giá trị này, không suy luận
-// lại từ URL. Lý do: url video/file/voice cũng host trên domain zdn.vn/
-// zadn.vn giống ảnh, nên heuristic isLikelyImageUrl (match theo domain) dễ
-// nhận NHẦM video/file/voice thành "image" nếu chỉ dựa vào URL.
+// lại từ URL. Lý do: url video/file/voice/avatar cũng host trên domain zdn.vn/
+// zadn.vn giống ảnh, nên heuristic isLikelyImageUrl dễ nhận NHẦM non-image thành "image".
 const STRUCTURED_MEDIA_MSG_TYPES = new Set([
   "chat.photo", "chat.gif", "chat.doodle",
   "chat.video.msg", "chat.voice", "share.file", "chat.sticker",
 ]);
 const IMAGE_LIKE_MSG_TYPES = new Set(["chat.photo", "chat.gif", "chat.doodle"]);
 
-function resolveMessageType(msgType, imageUrlsCount) {
-  if (STRUCTURED_MEDIA_MSG_TYPES.has(msgType)) {
-    return IMAGE_LIKE_MSG_TYPES.has(msgType) ? "image" : msgType;
+const CALL_ACTIONS = new Set([
+  "recommened.misscall", "recommened.calltime", "recommened.calling", "recommened.receivecall",
+  "recommended.misscall", "recommended.calltime", "recommended.calling", "recommended.receivecall",
+]);
+const CONTACT_ACTIONS = new Set([
+  "recommened.user", "recommened.vip", "show.profile",
+  "recommended.user", "recommended.vip",
+]);
+const LINK_ACTIONS = new Set([
+  "recommened.link", "recommened.minisite", "recommened.miniapp",
+  "recommened.oa", "recommened.zvideo", "recommened.article", "recommened.post",
+  "recommended.link", "recommended.minisite", "recommended.miniapp",
+  "recommended.oa", "recommended.zvideo", "recommended.article", "recommended.post",
+]);
+const SYSTEM_NOTICE_MSG_TYPES = new Set([
+  "group.event", "group.leave", "friend.event", "chat.ecard",
+  "group.poll", "chat.poll", "chat.reminder", "chat.todo",
+  "chat.list.action", "chat.e2ee.replace", "chat.delete",
+  "chat.delete.everyone", "chat.vanish", "chat.reaction", "chat._jumpToMessage",
+]);
+const SYSTEM_NOTICE_ACTIONS = new Set([
+  "msginfo.actionlist", "recommened.friend", "recommended.friend",
+  "todo.remind", "todo.remind2",
+]);
+const STRUCTURED_CONTENT_KEYS = new Set([
+  "action", "href", "thumb", "title", "params", "zinstantdata_id", "zinstant_data",
+  "template_id", "templateId", "data_url", "lat", "latitude", "lo", "longitude",
+  "id", "catId", "cate_id", "message", "description", "type", "fileExt", "fileSize",
+]);
+const NON_BANKCARD_ZINSTANT_TEMPLATE_IDS = new Set([14875, 17123]);
+
+function parseJsonObjectLoose(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    let parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string" && parsed.trim().startsWith("{")) {
+      parsed = JSON.parse(parsed.trim());
+    }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch (_) {
+    /* ignore */
   }
-  // msgType lạ/text ("webchat"...) — giữ heuristic cũ: có URL "giống ảnh"
-  // trong nội dung text (dán link ảnh trần) thì coi là ảnh.
-  return imageUrlsCount ? "image" : msgType;
+  return null;
+}
+
+function unwrapStructuredContent(rawContent, msgType) {
+  if (rawContent && typeof rawContent === "object" && !Array.isArray(rawContent)) {
+    return rawContent;
+  }
+  const parsed = parseJsonObjectLoose(rawContent);
+  if (!parsed) return null;
+  // Legacy type === "group" rows store contact/recommended payload as raw JSON string.
+  if (msgType === "group" || msgType === "chat.recommended" || msgType === "chat.webcontent" || msgType === "chat.webcontent.v2") {
+    return parsed;
+  }
+  for (const key of Object.keys(parsed)) {
+    if (STRUCTURED_CONTENT_KEYS.has(key)) return parsed;
+  }
+  return null;
+}
+
+function extractTemplateId(contentObj, paramsObj, dataObj) {
+  const candidates = [
+    contentObj && contentObj.template_id,
+    contentObj && contentObj.templateId,
+    paramsObj && paramsObj.template_id,
+    paramsObj && paramsObj.templateId,
+    paramsObj && paramsObj.item && (paramsObj.item.template_id ?? paramsObj.item.templateId),
+    paramsObj && paramsObj.pcItem && (paramsObj.pcItem.template_id ?? paramsObj.pcItem.templateId),
+    dataObj && (dataObj.template_id ?? dataObj.templateId),
+  ];
+  for (const c of candidates) {
+    if (c != null && c !== "" && Number.isFinite(Number(c))) {
+      return Number(c);
+    }
+  }
+  const zinstantIds = [
+    contentObj && contentObj.zinstantdata_id,
+    paramsObj && paramsObj.zinstantdata_id,
+    dataObj && dataObj.zinstantdata_id,
+  ];
+  for (const zid of zinstantIds) {
+    if (typeof zid === "string") {
+      const m = zid.match(/templateId\s*=\s*(\d+)/i);
+      if (m) return Number(m[1]);
+    }
+  }
+  return null;
+}
+
+function extractBankcardDataUrl(contentObj, paramsObj, dataObj) {
+  const zdata = parseJsonObjectLoose(contentObj && contentObj.zinstant_data)
+    || parseJsonObjectLoose(paramsObj && paramsObj.zinstant_data);
+  const candidates = [
+    contentObj && contentObj.data_url,
+    paramsObj && paramsObj.data_url,
+    paramsObj && paramsObj.item && paramsObj.item.data_url,
+    paramsObj && paramsObj.pcItem && paramsObj.pcItem.data_url,
+    zdata && zdata.data_url,
+    dataObj && dataObj.data_url,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && /^https?:\/\//i.test(c.trim())) {
+      return c.trim();
+    }
+  }
+  return null;
+}
+
+function formatMsgInfoActionlistText(contentObj, paramsObj) {
+  const msgObj = paramsObj && paramsObj.msg;
+  let template = "";
+  if (msgObj && typeof msgObj === "object") {
+    template = String(msgObj.vi || msgObj.en || "").trim();
+  } else if (typeof msgObj === "string") {
+    template = msgObj.trim();
+  }
+  if (template) {
+    const highlights = Array.isArray(paramsObj && paramsObj.highLightsV2)
+      ? paramsObj.highLightsV2
+      : (Array.isArray(paramsObj && paramsObj.highLights) ? paramsObj.highLights : []);
+    let resolved = template;
+    highlights.forEach((h, idx) => {
+      const label = (h && typeof h === "object")
+        ? String(h.content || h.title || h.text || h.name || "").trim()
+        : String(h || "").trim();
+      if (label) {
+        resolved = resolved.replace(new RegExp(`%${idx + 1}\\$s`, "g"), label);
+        resolved = resolved.replace(new RegExp(`\\$${idx}\\$`, "g"), label);
+      }
+    });
+    resolved = resolved.replace(/%\d+\$s/g, "").replace(/\$\d+\$/g, "").replace(/\s{2,}/g, " ").trim();
+    if (resolved) return resolved;
+  }
+  const title = contentObj && typeof contentObj.title === "string" ? contentObj.title.trim() : "";
+  return title || "Thông báo hệ thống";
+}
+
+function formatCallSummaryVi(action, paramsObj, isSent) {
+  const act = String(action || "").toLowerCase();
+  const params = paramsObj && typeof paramsObj === "object" ? paramsObj : {};
+  let isCaller;
+  if (typeof params.isCaller === "boolean") {
+    isCaller = params.isCaller;
+  } else if (params.isCaller != null) {
+    isCaller = Boolean(Number(params.isCaller));
+  } else if (act.includes("calling")) {
+    isCaller = true;
+  } else if (act.includes("receivecall")) {
+    isCaller = false;
+  } else {
+    isCaller = Boolean(isSent);
+  }
+  const rawCallType = params.calltype ?? params.callType ?? params.type ?? 0;
+  const isVideo = Number(rawCallType) === 1 || Number(rawCallType) === 3 || Boolean(params.isVideo);
+  const reason = params.reason != null ? Number(params.reason) : 0;
+  const isMissed = act.includes("misscall");
+
+  if (isCaller) {
+    if (isMissed) {
+      if (reason === 4 || reason === 5) return "Bạn đã hủy";
+      if (reason === 3) return "Người nhận từ chối";
+      if (reason === 1) return "Người nhận bận";
+    }
+    return isVideo ? "Cuộc gọi video đi" : "Cuộc gọi thoại đi";
+  }
+  if (isMissed) {
+    if (reason === 3) return "Bạn đã từ chối";
+    return isVideo ? "Cuộc gọi video nhỡ" : "Cuộc gọi thoại nhỡ";
+  }
+  return isVideo ? "Cuộc gọi video đến" : "Cuộc gọi thoại đến";
+}
+
+function formatFileNameWithExt(title, fileExt) {
+  const cleanTitle = String(title || "").trim();
+  const cleanExt = String(fileExt || "").trim().replace(/^\.+/, "");
+  if (!cleanTitle) return cleanExt ? `file.${cleanExt}` : "";
+  if (!cleanExt) return cleanTitle;
+  const suffix = `.${cleanExt}`;
+  if (cleanTitle.toLowerCase().endsWith(suffix.toLowerCase())) {
+    return cleanTitle;
+  }
+  return `${cleanTitle}${suffix}`;
+}
+
+function extractFileMetadata(contentObj, paramsObj, fileNameHint) {
+  const rawTitle = (contentObj && typeof contentObj.title === "string" && contentObj.title.trim())
+    || (contentObj && typeof contentObj.fileName === "string" && contentObj.fileName.trim())
+    || (paramsObj && typeof paramsObj.fileName === "string" && paramsObj.fileName.trim())
+    || fileNameHint
+    || "";
+  const fileExt = String(
+    (paramsObj && paramsObj.fileExt)
+    || (contentObj && contentObj.fileExt)
+    || ""
+  ).trim().replace(/^\.+/, "") || null;
+  const rawSize = (paramsObj && (paramsObj.fileSize ?? paramsObj.totalSize))
+    ?? (contentObj && contentObj.fileSize)
+    ?? null;
+  const fileSize = rawSize != null && rawSize !== "" && Number.isFinite(Number(rawSize))
+    ? Number(rawSize)
+    : null;
+  const fdataObj = parseJsonObjectLoose(paramsObj && paramsObj.fdata) || (paramsObj && paramsObj.fdata) || {};
+  const fTypeVal = fdataObj && fdataObj.fType != null
+    ? Number(fdataObj.fType)
+    : (paramsObj && paramsObj.fType != null ? Number(paramsObj.fType) : null);
+  const isFolder = fTypeVal === 2;
+  const fileName = isFolder ? rawTitle : formatFileNameWithExt(rawTitle, fileExt);
+  return {
+    fileName: fileName || null,
+    fileExt,
+    fileSize,
+    isFolder,
+  };
+}
+
+function sanitizeUglyFallbackText(text) {
+  if (typeof text !== "string") return "";
+  let s = text.trim();
+  if (!s) return "";
+  if (s.toLowerCase() === "sendbubblemessage") return "";
+  s = s.replace(/\s*[—–-]+\s*mở\s+zalo\s+để\s+xem\.?\s*$/i, "").trim();
+  if (/^[{[]/.test(s)) {
+    try {
+      JSON.parse(s);
+      return "";
+    } catch (_) {
+      /* ordinary text starting with bracket */
+    }
+  }
+  return s;
+}
+
+function classifyMessageKind({ msgType, action, templateId, contentObj, rawContent }) {
+  const mt = String(msgType || "text").trim();
+  const act = String(action || "").trim().toLowerCase();
+
+  // 1. Undo / recall
+  if (mt === "chat.undo" || mt === "recalled") {
+    return "undo";
+  }
+
+  // 2. Bankcard (zinstant.bankcard, templateId=11845, chat.webcontent / chat.webcontent.v2)
+  if (act === "zinstant.bankcard" || Number(templateId) === 11845) {
+    return "bankcard";
+  }
+  if (mt === "chat.webcontent" || mt === "chat.webcontent.v2") {
+    if (templateId != null && NON_BANKCARD_ZINSTANT_TEMPLATE_IDS.has(Number(templateId))) {
+      return "system_notice";
+    }
+    return "bankcard";
+  }
+
+  // 3. Call actions inside chat.recommended
+  if (CALL_ACTIONS.has(act)) {
+    return "call";
+  }
+
+  // 4. eCard & system notices (check chat.ecard BEFORE show.profile so friend-accept ecards stay system_notice!)
+  if (mt === "chat.ecard") {
+    return "system_notice";
+  }
+  if (SYSTEM_NOTICE_MSG_TYPES.has(mt) || SYSTEM_NOTICE_ACTIONS.has(act)) {
+    return "system_notice";
+  }
+
+  // 5. Contact / Danh thiếp (including legacy type === "group" wrapping recommened.user)
+  if (mt === "chat.contact" || CONTACT_ACTIONS.has(act)) {
+    return "contact";
+  }
+
+  // 6. Location
+  if (mt === "chat.location.new" || act === "recommened.location" || act === "recommended.location") {
+    return "location";
+  }
+
+  // 7. GIF (note double-m "recommend.gif")
+  if (mt === "chat.gif" || act === "recommend.gif" || act === "recommened.gif") {
+    return "gif";
+  }
+
+  // 8. Sticker & stickerset
+  if (mt === "chat.sticker" || act === "recommened.stickerset" || act === "recommended.stickerset") {
+    return "sticker";
+  }
+
+  // 9. File / Folder
+  if (mt === "share.file" || mt === "file") {
+    return "file";
+  }
+
+  // 10. Video / Voice / Doodle / Photo
+  if (mt === "chat.video.msg" || mt === "video") return "video";
+  if (mt === "chat.voice" || mt === "voice") return "voice";
+  if (mt === "chat.doodle" || mt === "doodle") return "doodle";
+  if (mt === "chat.photo" || mt === "image") return "image";
+
+  // 11. Link / MiniApp / OA / ZVideo / Article / Post
+  if (mt === "chat.link" || mt === "chat.zalo.me" || LINK_ACTIONS.has(act)) {
+    return "link";
+  }
+
+  // 12. Legacy "group" wrapper without recognized action
+  if (mt === "group") {
+    return "system_notice";
+  }
+
+  // 13. chat.recommended fallback
+  if (mt === "chat.recommended") {
+    if (contentObj && typeof contentObj.href === "string" && /^https?:\/\//i.test(contentObj.href)) {
+      return "link";
+    }
+    return "text";
+  }
+
+  // 14. Rich text (rtf) & plain webchat/text
+  if (act === "rtf") {
+    return "text";
+  }
+  if (mt === "webchat" || mt === "text") {
+    if (typeof rawContent === "string" && isLikelyImageUrl(rawContent.trim())) {
+      return "image";
+    }
+    return "text";
+  }
+
+  return "text";
+}
+
+function resolveMessageType(msgType, imageUrlsCount, msgKind = null) {
+  const mt = String(msgType || "text").trim();
+  // Bảo toàn 100% hợp đồng chat.recommended cho cuộc gọi (parseZaloCallMessage) và card giàu dữ liệu.
+  if (msgKind === "call" || mt === "chat.recommended") {
+    return mt === "chat.recommended" ? "chat.recommended" : mt;
+  }
+  if (msgKind === "bankcard" || msgKind === "contact" || msgKind === "link" || msgKind === "location" || msgKind === "system_notice" || msgKind === "undo") {
+    return mt;
+  }
+  if (STRUCTURED_MEDIA_MSG_TYPES.has(mt)) {
+    return IMAGE_LIKE_MSG_TYPES.has(mt) ? "image" : mt;
+  }
+  if (msgKind === "image") {
+    return "image";
+  }
+  if (msgKind === "gif") {
+    return "chat.gif";
+  }
+  if (msgKind === "doodle") {
+    return "chat.doodle";
+  }
+  if (msgKind === "text") {
+    return mt;
+  }
+  return imageUrlsCount ? "image" : mt;
 }
 
 function collectUrls(value, out = []) {
@@ -317,10 +671,35 @@ function firstTimestampMs(...values) {
 
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
-  const content = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
+  const rawContent = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
+  const msgType = String(data.msgType || data.type || raw.type || "text").trim();
+  const contentObj = unwrapStructuredContent(rawContent, msgType);
+  const paramsObj =
+    parseJsonObjectLoose(contentObj && contentObj.params)
+    || parseJsonObjectLoose(data.params)
+    || parseJsonObjectLoose(raw.params)
+    || {};
+  const descObj = parseJsonObjectLoose(contentObj && contentObj.description) || {};
+  const action = String(
+    (contentObj && contentObj.action)
+    || data.action
+    || raw.action
+    || ""
+  ).trim().toLowerCase();
+  const templateId = extractTemplateId(contentObj, paramsObj, data);
+  const bankcardDataUrl = extractBankcardDataUrl(contentObj, paramsObj, data);
+
+  const msgKind = classifyMessageKind({
+    msgType,
+    action,
+    templateId,
+    contentObj,
+    rawContent,
+  });
+
   const attachmentsBlob = data.attachments || data.attachment || data.photos || data.attach || raw.attach || data.params || raw.params;
   const mediaSource = {
-    content,
+    content: contentObj || rawContent,
     attachments: attachmentsBlob,
     attach: data.attach || raw.attach,
     params: data.params || raw.params,
@@ -328,15 +707,15 @@ function normalizeMessage(raw, index, ownId = null) {
     data,
     raw,
   };
-  const imageUrls = collectUrls(mediaSource);
-  // media_urls (rộng hơn imageUrls) — nhận cả URL video/file/voice/gif từ mọi field ZCA phổ biến.
-  const mediaUrls = Array.from(new Set(collectMediaUrls(mediaSource)));
+  const isMediaKind = msgKind === "image" || msgKind === "gif" || msgKind === "doodle" || msgKind === "video" || msgKind === "voice" || msgKind === "file" || msgKind === "sticker";
+  const imageUrls = isMediaKind ? collectUrls(mediaSource) : [];
+  // media_urls (rộng hơn imageUrls) — chỉ thu thập cho các tin media/file thực sự để không gom avatar/thumb ecard vào assets.
+  const mediaUrls = isMediaKind ? Array.from(new Set(collectMediaUrls(mediaSource))) : [];
   const fileNameHint = collectFileName(mediaSource);
-  const msgType = String(data.msgType || data.type || raw.type || "text");
-  
+
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");
   const isSent = Boolean(raw.isSelf || data.isSelf || (ownId && String(senderId) === String(ownId)));
-  
+
   let threadId = String(
     raw.threadId ||
     data.threadId ||
@@ -348,10 +727,10 @@ function normalizeMessage(raw, index, ownId = null) {
   );
 
   const idTo = String(
-    data.idTo || raw.idTo || 
-    data.toUid || raw.toUid || 
-    data.receiverId || raw.receiverId || 
-    data.destId || raw.destId || 
+    data.idTo || raw.idTo ||
+    data.toUid || raw.toUid ||
+    data.receiverId || raw.receiverId ||
+    data.destId || raw.destId ||
     ""
   );
 
@@ -394,27 +773,128 @@ function normalizeMessage(raw, index, ownId = null) {
     data.createdAt
   );
   const timestamp = timestampMs || null;
-  let contentText = textOf(content);
-  if (imageUrls.length > 0 && contentText) {
-    const trimmed = contentText.trim();
-    if (imageUrls.includes(trimmed) || isLikelyImageUrl(trimmed)) {
-      contentText = "";
+
+  let contentText = "";
+  let fileMeta = null;
+
+  if (msgKind === "file") {
+    fileMeta = extractFileMetadata(contentObj, paramsObj, fileNameHint);
+    contentText = fileMeta.fileName || (fileMeta.isFolder ? "[Thư mục]" : "[File]");
+  } else if (msgKind === "call") {
+    contentText = formatCallSummaryVi(action, paramsObj, isSent);
+  } else if (msgKind === "bankcard") {
+    const cleanTitle = sanitizeUglyFallbackText(contentObj && typeof contentObj.title === "string" ? contentObj.title : "");
+    contentText = cleanTitle || "[Thẻ ngân hàng]";
+  } else if (msgKind === "contact") {
+    const contactName = sanitizeUglyFallbackText(contentObj && typeof contentObj.title === "string" ? contentObj.title : "");
+    const contactPhone = String(descObj.phone || (contentObj && contentObj.phone) || "").trim();
+    if (contactName && contactPhone) {
+      contentText = `[Danh thiếp] ${contactName} - ${contactPhone}`;
+    } else if (contactName) {
+      contentText = `[Danh thiếp] ${contactName}`;
+    } else if (contactPhone) {
+      contentText = `[Danh thiếp] ${contactPhone}`;
+    } else {
+      contentText = "[Danh thiếp]";
     }
-  }
-  // Tin file/video/voice không có text thật (content chỉ là data URL/blob) —
-  // dùng tên file thật (fileName/title) làm content để UI hiện đúng tên file
-  // thay vì rỗng hoặc rơi vào nhánh "URL bị strip" ở trên.
-  if (!contentText && fileNameHint) {
-    contentText = fileNameHint;
+  } else if (msgKind === "location") {
+    const isUserLoc = Boolean(contentObj && contentObj.isUserLocation);
+    const locTitle = sanitizeUglyFallbackText(
+      (contentObj && (contentObj.title || contentObj.desc || contentObj.description || contentObj.addr)) || ""
+    );
+    const lat = contentObj && (contentObj.lat ?? contentObj.latitude);
+    const lon = contentObj && (contentObj.lo ?? contentObj.longitude);
+    if (isUserLoc) {
+      contentText = "Vị trí hiện tại";
+    } else if (locTitle) {
+      contentText = locTitle;
+    } else if (lat != null && lon != null) {
+      contentText = `Toạ độ (${lat}, ${lon})`;
+    } else {
+      contentText = "[Vị trí]";
+    }
+  } else if (msgKind === "undo") {
+    contentText = "Tin nhắn đã được thu hồi";
+  } else if (msgKind === "system_notice") {
+    if (action === "msginfo.actionlist") {
+      contentText = formatMsgInfoActionlistText(contentObj, paramsObj);
+    } else if (msgType === "chat.ecard") {
+      contentText = sanitizeUglyFallbackText(
+        (paramsObj && paramsObj.previewTxt)
+        || (contentObj && contentObj.description)
+        || (contentObj && contentObj.title)
+        || ""
+      ) || "[Thiệp]";
+    } else if (msgType === "group.poll" || msgType === "chat.poll") {
+      contentText = formatMsgInfoActionlistText(contentObj, paramsObj);
+      if (contentText === "Thông báo hệ thống") {
+        contentText = sanitizeUglyFallbackText((paramsObj && paramsObj.question) || (contentObj && contentObj.title) || "") || "[Bình chọn]";
+      }
+    } else if (msgType === "chat.todo") {
+      const innerMsg = contentObj && contentObj.message;
+      const todoText = typeof innerMsg === "string"
+        ? innerMsg
+        : (innerMsg && typeof innerMsg === "object" ? (innerMsg.message || innerMsg.title || "") : "");
+      contentText = sanitizeUglyFallbackText(todoText || (contentObj && contentObj.title) || "") || "[Công việc]";
+    } else if (msgType === "chat.list.action") {
+      const items = contentObj && Array.isArray(contentObj.message) ? contentObj.message : [];
+      const headerItem = items.find((it) => it && (it.type === "l.a.header.only" || it.type === "l.a.header.full") && it.title);
+      contentText = sanitizeUglyFallbackText((headerItem && headerItem.title) || "") || "[Tin nhắn chưa hỗ trợ ở phiên bản hiện tại]";
+    } else if (msgType === "chat.e2ee.replace") {
+      contentText = "Đang chờ tin nhắn này";
+    } else if (msgType === "chat.delete" || msgType === "chat.delete.everyone") {
+      contentText = "Tin nhắn đã bị xóa";
+    } else if (msgType === "chat.vanish") {
+      contentText = "[Tin nhắn đã tự xóa]";
+    } else if (msgType === "group.leave") {
+      contentText = sanitizeUglyFallbackText(textOf(contentObj || rawContent)) || "Đã rời khỏi nhóm";
+    } else {
+      contentText = sanitizeUglyFallbackText(textOf(contentObj || rawContent)) || "Thông báo hệ thống";
+    }
+  } else if (msgKind === "link") {
+    contentText = sanitizeUglyFallbackText(
+      (contentObj && (contentObj.title || contentObj.href || contentObj.description))
+      || textOf(rawContent)
+    ) || "[Link]";
+  } else if (action === "rtf" && contentObj && typeof contentObj.title === "string") {
+    contentText = sanitizeUglyFallbackText(contentObj.title);
+  } else {
+    contentText = sanitizeUglyFallbackText(textOf(contentObj || rawContent));
+    if (imageUrls.length > 0 && contentText) {
+      const trimmed = contentText.trim();
+      if (imageUrls.includes(trimmed) || isLikelyImageUrl(trimmed)) {
+        contentText = "";
+      }
+    }
+    if (!contentText && fileNameHint && isMediaKind) {
+      contentText = fileNameHint;
+    }
   }
 
   // Zalo tập trung (Mục 7.1 guide): cli_msg_id RIÊNG với message_id — message_id
   // ưu tiên msgId thật (dùng làm source_message_id/dedup key), cli_msg_id CHỈ để
-  // thu hồi tin (api.undo cần cả 2). KHÔNG gộp chung như messageId ở trên vì
-  // cliMsgId có thể trùng giữa nhiều tin nếu dùng làm dedup key.
+  // thu hồi tin (api.undo cần cả 2).
   const cliMsgId = data.cliMsgId != null ? String(data.cliMsgId) : (raw.cliMsgId != null ? String(raw.cliMsgId) : null);
   const mentions = Array.isArray(data.mentions) ? data.mentions : (Array.isArray(raw.mentions) ? raw.mentions : null);
-  const resolvedType = resolveMessageType(msgType, imageUrls.length);
+  const resolvedType = resolveMessageType(msgType, imageUrls.length, msgKind);
+  const isDeleted =
+    msgType === "chat.delete"
+    || msgType === "chat.delete.everyone"
+    || msgType === "chat.vanish"
+    || msgType === "chat.undo"
+    || msgType === "recalled";
+
+  // Đính kèm metadata chuẩn hóa bổ sung vào bản copy raw an toàn (giữ nguyên 100% trường gốc).
+  const normalizedRaw = (raw && typeof raw === "object") ? { ...raw } : { raw_value: raw };
+  if (fileMeta) {
+    normalizedRaw._file_meta = fileMeta;
+  }
+  if (bankcardDataUrl) {
+    normalizedRaw._bankcard_data_url = bankcardDataUrl;
+  }
+  if (templateId != null) {
+    normalizedRaw._template_id = templateId;
+  }
 
   return {
     thread_id: threadId || null,
@@ -425,18 +905,404 @@ function normalizeMessage(raw, index, ownId = null) {
     time_text: timestamp ? new Date(Number(timestamp)).toISOString() : null,
     type: resolvedType,
     content: contentText || null,
-    // image_urls: giữ tên field cũ (đỡ đụng Python/DB) nhưng giờ mang URL
-    // media THẬT của mọi loại (ảnh/video/file/voice/gif), không chỉ ảnh —
-    // xem comment collectMediaUrls() ở trên.
+    // image_urls: giữ tên field cũ nhưng chỉ mang URL media/file thực sự.
     image_urls: mediaUrls,
-    reply_to_id: data.quote?.msgId || data.quoteMsgId || null,
-    is_deleted: msgType === "chat.delete" || msgType === "recalled",
+    reply_to_id: (data.quote && data.quote.msgId) || data.quoteMsgId || null,
+    is_deleted: isDeleted,
     is_sent: isSent,
     ts: timestamp || null,
     cli_msg_id: cliMsgId,
     mentions,
-    msg_kind: resolvedType,
-    raw,
+    msg_kind: msgKind,
+    file_meta: fileMeta,
+    bankcard_data_url: bankcardDataUrl,
+    raw: normalizedRaw,
+  };
+}
+
+// ── G1: Chuẩn hóa friend_event, group_event và G7: undo (recall) ─────────────
+const FRIEND_EVENT_TYPE_TO_ACT = {
+  0: "add",
+  1: "remove",
+  2: "req_v2",
+  3: "undo_req",
+  4: "reject",
+  5: "seen_fr_req",
+  6: "block",
+  7: "unblock",
+  8: "block_call",
+  9: "unblock_call",
+  10: "pin_unpin",
+  11: "pin_create",
+  12: "unknown",
+};
+
+function normalizeFriendEvent(event, ownId = null) {
+  if (!event || typeof event !== "object") return null;
+  const numericType = typeof event.type === "number" ? event.type : Number(event.type);
+  const act = String(
+    event.act
+    || FRIEND_EVENT_TYPE_TO_ACT[numericType]
+    || (typeof event.type === "string" ? event.type.toLowerCase() : "unknown")
+  ).trim().toLowerCase();
+
+  // seen_fr_req không có hội thoại đối phương thực (threadId=ownId), bỏ qua không lưu bubble.
+  if (act === "seen_fr_req" || numericType === 5) {
+    return null;
+  }
+
+  const data = event.data;
+  const dataObj = (data && typeof data === "object" && !Array.isArray(data)) ? data : {};
+  const isSelf = Boolean(event.isSelf);
+  const ownStr = ownId != null ? String(ownId) : "";
+
+  let threadId = "";
+  if (act === "req_v2" || act === "req" || act === "undo_req" || act === "reject") {
+    const fromUid = String(dataObj.fromUid || "");
+    const toUid = String(dataObj.toUid || "");
+    if (isSelf || (ownStr && fromUid === ownStr)) {
+      threadId = toUid || String(event.threadId || "");
+    } else {
+      threadId = fromUid || String(event.threadId || "");
+    }
+  } else if (act === "pin_create" || act === "pin_unpin") {
+    threadId = String(dataObj.conversationId || event.threadId || "");
+  } else {
+    threadId = String(
+      event.threadId
+      || (typeof data === "string" || typeof data === "number" ? data : "")
+      || dataObj.uid
+      || dataObj.fromUid
+      || dataObj.toUid
+      || ""
+    );
+  }
+
+  // Anti-self collapse cho friend_event 1-1
+  if (ownStr && threadId === ownStr) {
+    const fromUid = String(dataObj.fromUid || "");
+    const toUid = String(dataObj.toUid || "");
+    if (fromUid && fromUid !== ownStr) threadId = fromUid;
+    else if (toUid && toUid !== ownStr) threadId = toUid;
+  }
+
+  if (!threadId) return null;
+
+  const reqMessage = typeof dataObj.message === "string" ? dataObj.message.trim() : "";
+  const topicTitle = dataObj.topic && dataObj.topic.params && typeof dataObj.topic.params.title === "string"
+    ? dataObj.topic.params.title.trim()
+    : "";
+
+  let contentText = "Thông báo kết bạn";
+  switch (act) {
+    case "add":
+      contentText = "Hai bạn đã trở thành bạn bè";
+      break;
+    case "req_v2":
+    case "req":
+    case "request":
+      if (isSelf) {
+        contentText = reqMessage ? `Đã gửi lời mời kết bạn: "${reqMessage}"` : "Đã gửi lời mời kết bạn";
+      } else {
+        contentText = reqMessage ? `Đã gửi lời mời kết bạn đến bạn: "${reqMessage}"` : "Đã gửi lời mời kết bạn đến bạn";
+      }
+      break;
+    case "undo_req":
+    case "undo_request":
+      contentText = "Đã thu hồi lời mời kết bạn";
+      break;
+    case "reject":
+    case "reject_request":
+      contentText = "Lời mời kết bạn đã bị từ chối";
+      break;
+    case "remove":
+      contentText = "Đã xóa kết bạn";
+      break;
+    case "block":
+      contentText = "Đã chặn người dùng này";
+      break;
+    case "unblock":
+      contentText = "Đã bỏ chặn người dùng này";
+      break;
+    case "block_call":
+      contentText = "Đã chặn cuộc gọi từ người dùng này";
+      break;
+    case "unblock_call":
+      contentText = "Đã bỏ chặn cuộc gọi từ người dùng này";
+      break;
+    case "pin_create":
+      contentText = topicTitle ? `Đã ghim tin nhắn: "${topicTitle}"` : "Đã ghim một tin nhắn";
+      break;
+    case "pin_unpin":
+      contentText = "Đã bỏ ghim một tin nhắn";
+      break;
+    default:
+      contentText = "Thông báo kết bạn";
+      break;
+  }
+
+  const tsMs = firstTimestampMs(
+    dataObj.ts,
+    dataObj.time,
+    dataObj.createTime,
+    event.ts,
+    Date.now()
+  ) || Date.now();
+  const senderId = String(
+    dataObj.fromUid
+    || dataObj.actorId
+    || (isSelf ? ownStr : threadId)
+    || ""
+  ) || null;
+  const messageId = `friend-event-${act}-${threadId}-${tsMs}`;
+
+  return {
+    thread_id: threadId,
+    message_id: messageId,
+    sender_id: senderId,
+    sender_name: isSelf ? "Bạn" : null,
+    timestamp: String(tsMs),
+    time_text: new Date(tsMs).toISOString(),
+    type: "friend.event",
+    content: contentText,
+    image_urls: [],
+    reply_to_id: null,
+    is_deleted: false,
+    is_sent: isSelf,
+    ts: tsMs,
+    cli_msg_id: null,
+    mentions: null,
+    msg_kind: "system_notice",
+    raw: {
+      event_kind: "friend_event",
+      act,
+      friend_event_type: Number.isFinite(numericType) ? numericType : event.type,
+      threadId,
+      isSelf,
+      data,
+    },
+  };
+}
+
+function normalizeGroupEvent(event, ownId = null) {
+  if (!event || typeof event !== "object") return null;
+  const data = (event.data && typeof event.data === "object") ? event.data : {};
+  const act = String(event.act || event.type || "unknown").trim().toLowerCase();
+  const threadId = String(event.threadId || data.groupId || data.group_id || "").trim();
+  if (!threadId) return null;
+
+  const isSelf = Boolean(event.isSelf);
+  const ownStr = ownId != null ? String(ownId) : "";
+  const sourceId = String(data.sourceId || data.actorId || data.creatorId || "");
+  const updateMembers = Array.isArray(data.updateMembers) ? data.updateMembers : [];
+  const memberNames = updateMembers
+    .map((m) => (m && typeof m === "object" ? String(m.dName || m.displayName || m.name || "").trim() : ""))
+    .filter(Boolean);
+  const memberIds = updateMembers
+    .map((m) => (m && typeof m === "object" ? String(m.id || "") : String(m || "")))
+    .filter(Boolean);
+  const membersText = memberNames.join(", ");
+  const ownInMembers = Boolean(ownStr && memberIds.includes(ownStr));
+  const actorIsOwn = Boolean(ownStr && sourceId === ownStr);
+  const groupName = typeof data.groupName === "string" ? data.groupName.trim() : "";
+
+  const topicObj = data.topic || data.groupTopic || {};
+  const topicParams = parseJsonObjectLoose(topicObj.params) || (topicObj.params && typeof topicObj.params === "object" ? topicObj.params : {});
+  const topicTitle = String(topicParams.title || topicObj.title || data.msg || "").trim();
+
+  let contentText = "Thông báo nhóm";
+  switch (act) {
+    case "join":
+      if (ownInMembers && memberIds.length === 1) {
+        contentText = "Bạn vừa tham gia nhóm";
+      } else if (membersText) {
+        if (memberIds.length === 1 && sourceId && memberIds[0] === sourceId) {
+          contentText = `${membersText} đã tham gia nhóm`;
+        } else if (actorIsOwn) {
+          contentText = `${membersText} được bạn thêm vào nhóm`;
+        } else {
+          contentText = `${membersText} đã được thêm vào nhóm`;
+        }
+      } else {
+        contentText = "Có thành viên mới tham gia nhóm";
+      }
+      break;
+    case "leave":
+      contentText = membersText ? `${membersText} đã rời khỏi nhóm` : "Một thành viên đã rời khỏi nhóm";
+      break;
+    case "remove_member":
+      if (ownInMembers) {
+        contentText = "Bạn đã được xoá khỏi nhóm";
+      } else if (membersText) {
+        contentText = actorIsOwn ? `${membersText} được bạn xóa khỏi nhóm` : `${membersText} đã bị xóa khỏi nhóm`;
+      } else {
+        contentText = "Một thành viên đã bị xóa khỏi nhóm";
+      }
+      break;
+    case "block_member":
+      contentText = membersText
+        ? (actorIsOwn ? `${membersText} bị bạn chặn khỏi nhóm này` : `${membersText} bị chặn khỏi nhóm này`)
+        : "Một thành viên bị chặn khỏi nhóm này";
+      break;
+    case "disband_group":
+    case "destroy":
+      contentText = "Trưởng nhóm đã giải tán nhóm";
+      break;
+    case "update":
+      contentText = groupName
+        ? `Tên nhóm đã đổi thành "${groupName}"`
+        : "Thông tin nhóm đã được cập nhật";
+      break;
+    case "update_avatar":
+      contentText = "Ảnh đại diện nhóm đã thay đổi";
+      break;
+    case "add_admin":
+      if (ownInMembers) {
+        contentText = "Bạn đã trở thành phó nhóm";
+      } else if (membersText) {
+        contentText = `${membersText} đã được bổ nhiệm thành phó nhóm`;
+      } else {
+        contentText = "Đã bổ nhiệm phó nhóm mới";
+      }
+      break;
+    case "remove_admin":
+      if (ownInMembers) {
+        contentText = "Bạn đã không còn là phó nhóm";
+      } else if (membersText) {
+        contentText = `${membersText} đã không còn là phó nhóm`;
+      } else {
+        contentText = "Đã gỡ quyền phó nhóm";
+      }
+      break;
+    case "new_link": {
+      const link = data.info && typeof data.info.group_link === "string" ? data.info.group_link.trim() : "";
+      contentText = link ? `Link mời tham gia nhóm: ${link}` : "Link mời tham gia nhóm đã được cập nhật";
+      break;
+    }
+    case "join_request": {
+      const pending = Number(data.totalPending || (Array.isArray(data.uids) ? data.uids.length : 0));
+      contentText = pending > 1
+        ? `Có ${pending} yêu cầu tham gia nhóm đang chờ phê duyệt`
+        : "Có yêu cầu tham gia nhóm đang chờ phê duyệt";
+      break;
+    }
+    case "update_setting":
+      contentText = "Cài đặt nhóm đã được cập nhật";
+      break;
+    case "new_pin_topic":
+    case "update_pin_topic":
+    case "reorder_pin_topic":
+      contentText = topicTitle
+        ? `Đã ghim thông báo nhóm: "${topicTitle}"`
+        : "Đã ghim một tin nhắn thành thông báo nhóm";
+      break;
+    case "unpin_topic":
+    case "remove_topic":
+      contentText = topicTitle
+        ? `Đã bỏ ghim thông báo nhóm: "${topicTitle}"`
+        : "Đã bỏ ghim một thông báo nhóm";
+      break;
+    case "update_board":
+      contentText = topicTitle ? `Đã cập nhật bảng tin nhóm: "${topicTitle}"` : "Đã cập nhật bảng tin nhóm";
+      break;
+    case "remove_board":
+      contentText = topicTitle ? `Đã xóa khỏi bảng tin nhóm: "${topicTitle}"` : "Đã xóa một mục khỏi bảng tin nhóm";
+      break;
+    case "remind_topic":
+      contentText = topicTitle ? `Nhắc hẹn: "${topicTitle}"` : "Có nhắc hẹn mới trong nhóm";
+      break;
+    case "accept_remind":
+      contentText = "Đã xác nhận tham gia nhắc hẹn";
+      break;
+    case "reject_remind":
+      contentText = "Đã từ chối nhắc hẹn";
+      break;
+    default:
+      contentText = groupName ? `Thông báo nhóm ${groupName}` : "Thông báo nhóm";
+      break;
+  }
+
+  const tsMs = firstTimestampMs(
+    data.time,
+    data.createTime,
+    data.editTime,
+    event.ts,
+    Date.now()
+  ) || Date.now();
+  const messageId = `group-event-${act}-${threadId}-${tsMs}`;
+
+  return {
+    thread_id: threadId,
+    message_id: messageId,
+    sender_id: sourceId || null,
+    sender_name: actorIsOwn ? "Bạn" : null,
+    timestamp: String(tsMs),
+    time_text: new Date(tsMs).toISOString(),
+    type: "group.event",
+    content: contentText,
+    image_urls: [],
+    reply_to_id: null,
+    is_deleted: false,
+    is_sent: isSelf,
+    ts: tsMs,
+    cli_msg_id: null,
+    mentions: null,
+    msg_kind: "system_notice",
+    group_name: groupName || null,
+    raw: {
+      event_kind: "group_event",
+      act,
+      group_event_type: event.type || act,
+      threadId,
+      isSelf,
+      data,
+    },
+  };
+}
+
+function normalizeUndoEvent(undoEvent, ownId = null) {
+  if (!undoEvent || typeof undoEvent !== "object") return null;
+  const data = (undoEvent.data && typeof undoEvent.data === "object") ? undoEvent.data : undoEvent;
+  const content = (data.content && typeof data.content === "object") ? data.content : parseJsonObjectLoose(data.content) || {};
+  const isSelf = Boolean(undoEvent.isSelf);
+  const isGroup = Boolean(undoEvent.isGroup);
+  const ownStr = ownId != null ? String(ownId) : "";
+
+  let threadId = String(undoEvent.threadId || "");
+  if (!threadId) {
+    if (isGroup || isSelf) {
+      threadId = String(data.idTo || content.destId || "");
+    } else {
+      threadId = String(data.uidFrom || content.srcId || data.idTo || "");
+    }
+  }
+  if (!isGroup && ownStr && threadId === ownStr) {
+    const uidFrom = String(data.uidFrom || content.srcId || "");
+    const idTo = String(data.idTo || content.destId || "");
+    if (!isSelf && uidFrom && uidFrom !== ownStr) threadId = uidFrom;
+    else if (isSelf && idTo && idTo !== ownStr) threadId = idTo;
+  }
+
+  const targetMessageId = content.globalMsgId != null
+    ? String(content.globalMsgId)
+    : (data.realMsgId != null ? String(data.realMsgId) : (data.msgId != null ? String(data.msgId) : null));
+  const targetCliMsgId = content.cliMsgId != null
+    ? String(content.cliMsgId)
+    : (data.cliMsgId != null ? String(data.cliMsgId) : null);
+
+  if (!targetMessageId && !targetCliMsgId) return null;
+
+  const tsMs = firstTimestampMs(data.ts, undoEvent.ts, Date.now()) || Date.now();
+  return {
+    thread_id: threadId || null,
+    message_id: targetMessageId,
+    cli_msg_id: targetCliMsgId,
+    undo_packet_msg_id: data.msgId != null ? String(data.msgId) : null,
+    sender_id: data.uidFrom != null ? String(data.uidFrom) : null,
+    is_self: isSelf,
+    is_group: isGroup,
+    ts: tsMs,
+    raw: undoEvent,
   };
 }
 
@@ -750,6 +1616,69 @@ async function main() {
     emit({ event: "old_messages", user_id: userId, type, messages: normalized });
   });
 
+  // G1 & G7: Đăng ký an toàn friend_event, group_event, undo (bọc feature-check + try/catch để không bao giờ crash listener).
+  if (listener && typeof listener.on === "function") {
+    try {
+      listener.on("friend_event", (friendEvent) => {
+        try {
+          const normalized = normalizeFriendEvent(friendEvent, ownId);
+          if (normalized && normalized.thread_id && normalized.message_id) {
+            trackThread(normalized.thread_id);
+            emit({ event: "friend_event", user_id: userId, message: normalized });
+          } else {
+            debugLog("friend_event_skipped", {
+              type: friendEvent && friendEvent.type,
+              thread_id: normalized && normalized.thread_id,
+            });
+          }
+        } catch (err) {
+          debugLog("friend_event_handler_error", { error: String(err) });
+        }
+      });
+    } catch (err) {
+      debugLog("friend_event_subscribe_error", { error: String(err) });
+    }
+
+    try {
+      listener.on("group_event", (groupEvent) => {
+        try {
+          const normalized = normalizeGroupEvent(groupEvent, ownId);
+          if (normalized && normalized.thread_id && normalized.message_id) {
+            trackThread(normalized.thread_id);
+            emit({ event: "group_event", user_id: userId, message: normalized });
+          } else {
+            debugLog("group_event_skipped", {
+              act: groupEvent && (groupEvent.act || groupEvent.type),
+              thread_id: normalized && normalized.thread_id,
+            });
+          }
+        } catch (err) {
+          debugLog("group_event_handler_error", { error: String(err) });
+        }
+      });
+    } catch (err) {
+      debugLog("group_event_subscribe_error", { error: String(err) });
+    }
+
+    try {
+      listener.on("undo", (undoEvent) => {
+        try {
+          const normalized = normalizeUndoEvent(undoEvent, ownId);
+          if (normalized && (normalized.message_id || normalized.cli_msg_id)) {
+            if (normalized.thread_id) trackThread(normalized.thread_id);
+            emit({ event: "undo", user_id: userId, undo: normalized });
+          } else {
+            debugLog("undo_event_dropped", { reason: "missing_target_ids" });
+          }
+        } catch (err) {
+          debugLog("undo_event_handler_error", { error: String(err) });
+        }
+      });
+    } catch (err) {
+      debugLog("undo_event_subscribe_error", { error: String(err) });
+    }
+  }
+
   // Mỗi 30s in ra thống kê: tổng event đã nhận + top 10 thread.
   setInterval(() => {
     const top = Array.from(byThread.values())
@@ -784,7 +1713,24 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  emit({ event: "fatal", error: "listener_fatal", error_detail: serializeError(error) });
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    emit({ event: "fatal", error: "listener_fatal", error_detail: serializeError(error) });
+    process.exit(1);
+  });
+} else {
+  module.exports = {
+    classifyMessageKind,
+    resolveMessageType,
+    normalizeMessage,
+    normalizeFriendEvent,
+    normalizeGroupEvent,
+    normalizeUndoEvent,
+    formatFileNameWithExt,
+    extractFileMetadata,
+    formatCallSummaryVi,
+    formatMsgInfoActionlistText,
+    sanitizeUglyFallbackText,
+    unwrapStructuredContent,
+  };
+}

@@ -32,8 +32,24 @@ import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shar
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
 import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
-import { ZaloCallMessageCard } from "../centralized-shared/ZaloCallMessageCard";
-import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
+import {
+  normalizeStoredMessage,
+  formatZaloAnySidebarPreview,
+  formatBytes,
+  type NormalizedZaloMessage,
+  type ZaloAttachment,
+} from "@/lib/zaloMessageContent";
+import {
+  formatConversationSidebarPreview,
+  isSidebarSystemNoticePreview,
+} from "../centralized-shared/zaloUi";
+import {
+  ZaloRichMessageContent,
+  ZaloSystemEventBanner,
+  isCenteredZaloSystemMessage,
+  isBareZaloRichMessage,
+  buildDownloadProxyUrl,
+} from "../centralized-shared/ZaloRichMessageCard";
 import { ZaloSwipeableMessageItem } from "../centralized-shared/ZaloSwipeableMessageItem";
 import { ZaloNewChatModal } from "../dashboard/ZaloNewChatModal";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
@@ -225,38 +241,8 @@ function formatDate(value: string | null | undefined): string {
   });
 }
 
-const VIDEO_EXT_RE = /\.(mp4|webm|mov|m4v|3gp|mkv|avi)(\?|#|$)/i;
-const IMAGE_EXT_RE = /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i;
-const AUDIO_EXT_RE = /\.(mp3|m4a|aac|wav|ogg|opus)(\?|#|$)/i;
 const FILE_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv|rtf)(\?|#|$)/i;
-
-type ZaloAssetKind = "image" | "video" | "audio" | "file";
-type JsonRecord = Record<string, unknown>;
-
-type NormalizedAsset = NonNullable<ZaloLibraryMessage["assets"]>[number] & { url: string };
-
-type ZaloSpecialCard = {
-  kind: "link" | "contact" | "bank" | "reminder" | "sticker" | "call" | "special";
-  title: string;
-  subtitle?: string;
-  description?: string;
-  url?: string;
-  imageUrl?: string;
-  rows?: { label: string; value: string }[];
-};
-
 const URL_RE = /(https?:\/\/[^\s<>)"']+)/i;
-
-function classifyAssetKind(url: string, message: ZaloLibraryMessage): ZaloAssetKind {
-  if (VIDEO_EXT_RE.test(url)) return "video";
-  if (AUDIO_EXT_RE.test(url)) return "audio";
-  if (IMAGE_EXT_RE.test(url)) return "image";
-  const type = String(message.type || message.msg_kind || "").toLowerCase();
-  if (type === "image" || type === "chat.photo" || type === "chat.gif" || type === "chat.sticker" || type === "sticker") return "image";
-  if (type === "chat.video.msg" || type.startsWith("video")) return "video";
-  if (type === "chat.voice" || type.startsWith("voice") || type.startsWith("audio")) return "audio";
-  return "file";
-}
 
 function assetFileName(url: string, message: ZaloLibraryMessage): string {
   const fromContent = (message.content || "").trim();
@@ -265,253 +251,142 @@ function assetFileName(url: string, message: ZaloLibraryMessage): string {
   }
   try {
     const base = decodeURIComponent(url.split("/").pop()?.split("?")[0] || "");
-    return base || "file";
+    return base || "Tệp đính kèm";
   } catch {
-    return "file";
+    return "Tệp đính kèm";
   }
 }
 
-function asRecord(value: unknown): JsonRecord | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as JsonRecord) : null;
-}
+/**
+ * Chuẩn hóa 1 `ZaloLibraryMessage` qua `normalizeStoredMessage`, đồng thời
+ * ưu tiên `storage_url` (Supabase Storage) thay cho link CDN Zalo dễ hết hạn
+ * và xử lý an toàn các tệp đính kèm lịch sử không có `raw_content`.
+ */
+function normalizeAdminLibraryMessage(message: ZaloLibraryMessage): NormalizedZaloMessage {
+  const storedAssets = Array.isArray(message.assets) ? message.assets : [];
+  const httpAssetUrls: string[] = [];
+  const sourceToStorage = new Map<string, string>();
 
-function parseMaybeJson(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed || !/^[{[]/.test(trimmed)) return value;
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return value;
+  for (const asset of storedAssets) {
+    const storageUrl = typeof asset.storage_url === "string" ? asset.storage_url.trim() : "";
+    const sourceUrl = typeof asset.source_url === "string" ? asset.source_url.trim() : "";
+    const best = storageUrl || sourceUrl;
+    if (storageUrl && sourceUrl && /^https?:\/\//i.test(storageUrl)) {
+      sourceToStorage.set(sourceUrl, storageUrl);
+    }
+    if (best && /^https?:\/\//i.test(best) && !httpAssetUrls.includes(best)) {
+      httpAssetUrls.push(best);
+    }
   }
-}
 
-function getPathString(source: unknown, keys: string[]): string | undefined {
-  const seen = new Set<unknown>();
-  const visit = (value: unknown): string | undefined => {
-    const parsed = parseMaybeJson(value);
-    if (parsed == null || seen.has(parsed)) return undefined;
-    if (typeof parsed === "string") return parsed.trim() || undefined;
-    if (typeof parsed === "number" || typeof parsed === "boolean") return String(parsed);
-    if (Array.isArray(parsed)) {
-      seen.add(parsed);
-      for (const item of parsed) {
-        const found = visit(item);
-        if (found) return found;
+  let normalized = normalizeStoredMessage({
+    msg_kind: message.msg_kind,
+    type: message.type,
+    is_sent: message.is_sent,
+    is_deleted: message.is_deleted,
+    raw_content: message.raw_content,
+    content: message.content,
+    image_urls: httpAssetUrls,
+  });
+
+  // Thay thế URL CDN Zalo gốc bằng Supabase storage_url bền vững nếu khớp
+  if (normalized.attachments.length > 0 && sourceToStorage.size > 0) {
+    let upgraded = false;
+    const nextAttachments = normalized.attachments.map((att) => {
+      const mappedUrl = att.url ? sourceToStorage.get(att.url) : undefined;
+      const mappedThumb = att.thumb_url ? sourceToStorage.get(att.thumb_url) : undefined;
+      if (!mappedUrl && !mappedThumb) return att;
+      upgraded = true;
+      return {
+        ...att,
+        ...(mappedUrl ? { url: mappedUrl } : {}),
+        ...(mappedThumb ? { thumb_url: mappedThumb } : {}),
+      };
+    });
+    if (upgraded) {
+      normalized = { ...normalized, attachments: nextAttachments };
+    }
+  }
+
+  // Tin cũ không có raw_content nhưng assets chứa file PDF/DOCX/XLSX/ZIP
+  if (!message.raw_content && normalized.attachments.length > 0) {
+    const typeLower = String(message.msg_kind || message.type || "").toLowerCase();
+    let changed = false;
+    const refined = normalized.attachments.map((att) => {
+      if (att.kind === "image" && att.url && (FILE_EXT_RE.test(att.url) || typeLower.includes("file"))) {
+        changed = true;
+        const name = assetFileName(att.url, message);
+        const extMatch = name.match(/\.([a-z0-9]{1,8})$/i);
+        return {
+          ...att,
+          kind: "file" as const,
+          name,
+          ext: extMatch?.[1]?.toLowerCase(),
+        };
       }
-      return undefined;
-    }
-    const record = asRecord(parsed);
-    if (!record) return undefined;
-    seen.add(record);
-    for (const key of keys) {
-      const direct = record[key];
-      if (typeof direct === "string" && direct.trim()) return direct.trim();
-      if (typeof direct === "number" || typeof direct === "boolean") return String(direct);
-    }
-    for (const nestedKey of ["data", "content", "params", "attach", "attachment", "extra", "payload", "link", "hrefInfo", "card"]) {
-      if (!(nestedKey in record)) continue;
-      // Chỉ đi sâu tiếp khi giá trị lồng là OBJECT/ARRAY (vùng chứa có thể có
-      // field đang tìm bên trong) — KHÔNG được coi 1 STRING thường (vd nội
-      // dung chữ của tin nhắn text nằm ở raw_content.data.content) là "tìm
-      // thấy" chỉ vì nó nằm dưới 1 key tên quen thuộc như "content"/"data".
-      // Thiếu điều kiện này khiến MỌI tin nhắn chữ bình thường bị hiểu nhầm
-      // thành link/liên hệ/ngân hàng (content text tình cờ trùng điều kiện
-      // content === url ở inferSpecialCard) — bug đã gặp thực tế 2026-10-06.
-      const nestedParsed = parseMaybeJson(record[nestedKey]);
-      if (!nestedParsed || typeof nestedParsed !== "object") continue;
-      const found = visit(nestedParsed);
-      if (found) return found;
-    }
-    return undefined;
-  };
-  return visit(source);
-}
-
-const MEDIA_PRIORITY_KEYS = [
-  "hdUrl",
-  "normalUrl",
-  "url",
-  "href",
-  "src",
-  "imageUrl",
-  "photoUrl",
-  "fileUrl",
-  "downloadUrl",
-  "videoUrl",
-  "voiceUrl",
-  "stickerUrl",
-  "stickerWebpUrl",
-  "thumbUrl",
-  "thumbnail",
-  "thumb",
-  "icon",
-  "avatar",
-] as const;
-
-function collectRawUrls(source: unknown, out = new Set<string>()): string[] {
-  const parsed = parseMaybeJson(source);
-  if (!parsed) return Array.from(out);
-  if (typeof parsed === "string") {
-    if (/^https?:\/\//i.test(parsed.trim()) || /^data:/i.test(parsed.trim())) out.add(parsed.trim());
-    const match = parsed.match(URL_RE);
-    if (match?.[1]) out.add(match[1]);
-    return Array.from(out);
-  }
-  if (Array.isArray(parsed)) {
-    parsed.forEach((item) => collectRawUrls(item, out));
-    return Array.from(out);
-  }
-  const record = asRecord(parsed);
-  if (!record) return Array.from(out);
-
-  // Nếu record này trực tiếp đại diện cho 1 đối tượng media có nhiều độ phân giải
-  // (ví dụ: { hdUrl, normalUrl, thumbUrl }), CHỈ lấy 1 URL chất lượng cao nhất
-  // theo thứ tự ưu tiên, tránh gom cả 3 độ phân giải của CÙNG 1 ảnh vào mảng gây
-  // nhân bản 3 ảnh trên UI trong thời gian thực (lỗi 2026-10-30).
-  let foundDirectMedia = false;
-  for (const key of MEDIA_PRIORITY_KEYS) {
-    const value = record[key];
-    if (typeof value === "string" && (/^https?:\/\//i.test(value.trim()) || /^data:/i.test(value.trim()))) {
-      out.add(value.trim());
-      foundDirectMedia = true;
-      break;
+      return att;
+    });
+    if (changed) {
+      normalized = {
+        ...normalized,
+        kind: refined[0]?.kind ?? normalized.kind,
+        attachments: refined,
+      };
     }
   }
 
-  // Chỉ duyệt sâu vào các thuộc tính con nếu record này là container bao ngoài
-  if (!foundDirectMedia) {
-    Object.values(record).forEach((value) => collectRawUrls(value, out));
+  // Nếu loại tin là file nhưng raw_content thiếu link tải và assets có URL tải hợp lệ
+  if (
+    (normalized.kind === "file" || normalized.kind === "folder") &&
+    normalized.attachments.length === 0 &&
+    httpAssetUrls.length > 0
+  ) {
+    const url = httpAssetUrls[0];
+    const name = assetFileName(url, message);
+    const extMatch = name.match(/\.([a-z0-9]{1,8})$/i);
+    normalized = {
+      ...normalized,
+      attachments: [
+        {
+          kind: normalized.kind,
+          url,
+          name,
+          ext: extMatch?.[1]?.toLowerCase(),
+          is_folder: normalized.kind === "folder",
+        },
+      ],
+    };
   }
-  return Array.from(out);
-}
 
-function normalizeMessageAssets(message: ZaloLibraryMessage): NormalizedAsset[] {
-  const seen = new Set<string>();
-  const normalized: NormalizedAsset[] = [];
-  const addUrl = (urlValue: unknown, baseAsset?: NonNullable<ZaloLibraryMessage["assets"]>[number]) => {
-    const url = String(urlValue || "").trim();
-    if (!url || seen.has(url)) return;
-    if (!/^(https?:|data:)/i.test(url)) return;
-    seen.add(url);
-    normalized.push({ ...(baseAsset || { status: "uploaded" }), source_url: baseAsset?.source_url || url, storage_url: baseAsset?.storage_url || url, url } as NormalizedAsset);
-  };
-  for (const asset of message.assets ?? []) {
-    addUrl(asset.storage_url || asset.source_url, asset);
-  }
-  // Chỉ fallback quét URL từ raw_content nếu message.assets chưa có asset nào
-  // (thường xảy ra ở thời gian thực lúc tin mới tới trước khi background task lưu storage).
-  // Nếu message.assets đã có dữ liệu chuẩn hóa, bỏ qua raw_content để tránh trùng lặp
-  // giữa link Supabase Storage và link CDN Zalo gốc.
-  if (normalized.length === 0) {
-    for (const rawUrl of collectRawUrls(message.raw_content as unknown)) {
-      addUrl(rawUrl);
-    }
-  }
   return normalized;
 }
 
-function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]): ZaloSpecialCard | null {
-  const raw = (message.raw_content as unknown) || null;
-  const type = String(message.msg_kind || message.type || "").toLowerCase();
-  const rawText = JSON.stringify(raw || {}).toLowerCase();
-  const content = (message.content || "").trim();
-  const url = getPathString(raw, ["href", "url", "link", "linkUrl", "shareUrl", "downloadUrl"]) || content.match(URL_RE)?.[1];
-  const imageUrl = getPathString(raw, ["thumb", "thumbnail", "thumbUrl", "imageUrl", "photoUrl", "icon", "avatar", "stickerUrl", "stickerWebpUrl"])
-    || collectRawUrls(raw).find((item) => IMAGE_EXT_RE.test(item));
-  const title = getPathString(raw, ["title", "name", "displayName", "fileName", "accountName", "bankName", "eventTitle", "subject"]);
-  const description = getPathString(raw, ["description", "desc", "summary", "text", "message", "address", "note"]);
-  const phone = getPathString(raw, ["phone", "phoneNumber", "mobile", "tel"]);
-  const accountNo = getPathString(raw, ["accountNo", "accountNumber", "bankAccount", "stk", "cardNumber"]);
-  const amount = getPathString(raw, ["amount", "money", "total", "price"]);
-  const when = getPathString(raw, ["time", "date", "startTime", "endTime", "deadline", "remindTime"]);
-
-  // Zalo dùng CHUNG 1 hình dạng raw_content (href+title+thumb) cho cả "chia sẻ
-  // liên kết web" LẪN "gửi file đính kèm" (share.file, hdUrl trỏ tới CDN file-stal-*)
-  // — nếu không loại trừ, 1 file PDF/DOCX gửi/nhận được sẽ bị vẽ thêm 1 thẻ
-  // "Liên kết" 🔗 thừa bên cạnh thẻ file (icon tài liệu + nút tải) đã đúng từ
-  // normalizeMessageAssets/otherAssets — gây hiện 2 khối cho cùng 1 file (bug
-  // thực tế gặp 2026-10-06). Nhận diện "đây là file, không phải link" qua
-  // msg_kind HOẶC đuôi file phổ biến trong chính URL.
-  const looksLikeFileShare = type.includes("file") || (url ? FILE_EXT_RE.test(url) : false);
-  if (type.includes("sticker")) {
-    return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
-  }
-  if (!looksLikeFileShare && (type.includes("link") || (url && (title || description || content === url)))) {
-    let subtitle = "Liên kết";
-    try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
-    return { kind: "link", title: title || content || url || "Liên kết", subtitle, description, url, imageUrl };
-  }
-  if (type.includes("card") || type.includes("business") || type.includes("contact") || rawText.includes("businesscard") || phone) {
-    return {
-      kind: "contact",
-      title: title || content || "Danh thiếp",
-      subtitle: "Danh thiếp Zalo",
-      imageUrl,
-      rows: [phone ? { label: "Điện thoại", value: phone } : null, url ? { label: "Liên kết", value: url } : null].filter(Boolean) as { label: string; value: string }[],
-    };
-  }
-  if (type.includes("bank") || rawText.includes("bank") || rawText.includes("accountno") || accountNo) {
-    return {
-      kind: "bank",
-      title: title || "Thông tin tài khoản ngân hàng",
-      subtitle: getPathString(raw, ["bankName", "bank", "branch"]),
-      rows: [accountNo ? { label: "Số tài khoản", value: accountNo } : null, amount ? { label: "Số tiền", value: amount } : null, description ? { label: "Nội dung", value: description } : null].filter(Boolean) as { label: string; value: string }[],
-    };
-  }
-  if (type.includes("reminder") || type.includes("calendar") || rawText.includes("remind") || rawText.includes("appointment")) {
-    return {
-      kind: "reminder",
-      title: title || content || "Nhắc hẹn",
-      subtitle: when,
-      description,
-      rows: url ? [{ label: "Liên kết", value: url }] : undefined,
-    };
-  }
-  if (!content && !assets.length && (type === "system" || type.includes("system") || title || description)) {
-    return { kind: "special", title: title || "Tin nhắn đặc biệt", subtitle: type || undefined, description };
-  }
-  return null;
+interface OptimisticBlobAsset {
+  url: string;
+  filename: string;
+  mimeType: string;
 }
 
-function ZaloMessageAssetView({ asset, message, compact = false, onImageClick }: { asset: NormalizedAsset; message: ZaloLibraryMessage; compact?: boolean; onImageClick?: (url: string) => void }) {
-  const url = asset.url;
-  const kind = classifyAssetKind(url, message);
-  const fileName = assetFileName(url, message);
-
-  if (kind === "image") {
-    return (
-      <button
-        type="button"
-        onClick={() => onImageClick?.(url)}
-        title="Xem ảnh"
-        className="block h-full min-h-0 w-full cursor-zoom-in"
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={url} alt={fileName} className={cn("h-full w-full rounded-lg object-cover", compact ? "max-h-[170px]" : "max-h-[260px]")} loading="lazy" />
-      </button>
-    );
+function getOptimisticBlobAssets(message: ZaloLibraryMessage): OptimisticBlobAsset[] {
+  if (!Array.isArray(message.assets) || message.assets.length === 0) return [];
+  const items: OptimisticBlobAsset[] = [];
+  for (const rawAsset of message.assets) {
+    const asset = rawAsset as unknown as {
+      storage_url?: string | null;
+      source_url?: string | null;
+      url?: string | null;
+      filename?: string;
+      mime_type?: string;
+    };
+    const url = String(asset.storage_url || asset.url || asset.source_url || "").trim();
+    if (!url || !/^(blob:|data:)/i.test(url)) continue;
+    items.push({
+      url,
+      filename: asset.filename || "Tệp đính kèm",
+      mimeType: asset.mime_type || "",
+    });
   }
-  if (kind === "video") {
-    return <video src={url} controls preload="metadata" className="w-full max-h-[260px] rounded-lg bg-black/5" />;
-  }
-  if (kind === "audio") {
-    return <audio src={url} controls className="w-full min-w-[220px]" />;
-  }
-  return (
-    <a
-      href={url}
-      download={fileName}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white p-2.5 text-xs text-blue-600 shadow-xs hover:underline"
-      title={`Tải về: ${fileName}`}
-    >
-      <MaterialIcon name="description" className="shrink-0 text-[17px] text-blue-500" />
-      <span className="min-w-0 flex-1 truncate font-semibold">{fileName}</span>
-      <MaterialIcon name="download" className="shrink-0 text-[14px]" />
-    </a>
-  );
+  return items;
 }
 
 function getStaffInitials(name?: string | null): string {
@@ -527,184 +402,119 @@ function getStaffInitials(name?: string | null): string {
   return (first + second).toUpperCase();
 }
 
-function ZaloSpecialCardView({ card, isSent }: { card: ZaloSpecialCard; isSent: boolean }) {
-  if (card.kind === "sticker") {
-    return (
-      <div className="py-1">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={card.imageUrl || card.url || ""}
-          alt={card.title || "Sticker"}
-          className="w-28 h-28 object-contain hover:scale-105 transition-transform duration-200 drop-shadow-xs cursor-pointer select-none"
-          loading="lazy"
-        />
-      </div>
-    );
-  }
-
-  if (card.kind === "call") {
-    const isMissed = card.description === "missed" || /nhỡ/i.test(card.title);
-    return (
-      <div className="flex justify-center my-1.5 w-full">
-        <div
-          className={cn(
-            "inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full shadow-2xs text-xs",
-            isMissed
-              ? "bg-rose-50 border border-rose-200/80 text-rose-700"
-              : "bg-slate-50 border border-slate-200/90 text-slate-700"
-          )}
-        >
-          <span
-            className={cn(
-              "w-5 h-5 rounded-full flex items-center justify-center text-[10px] shrink-0",
-              isMissed
-                ? "bg-rose-100 text-rose-600"
-                : isSent
-                ? "bg-emerald-100 text-emerald-600"
-                : "bg-blue-100 text-blue-600"
-            )}
-          >
-            <MaterialIcon name="call" className="text-[12px]" />
-          </span>
-          <span className="font-semibold text-slate-800">{card.title}</span>
-          {card.subtitle && <span className="text-[10px] text-slate-500">• {card.subtitle}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  const iconName = card.kind === "link" ? "link" : "description";
-  const body = (
-    <div className={cn("overflow-hidden rounded-2xl border text-left shadow-xs", isSent ? "border-white/20 bg-white/15 text-white" : "border-slate-200 bg-white text-slate-800")}>
-      {card.imageUrl && (
-        <div className="max-h-44 overflow-hidden bg-slate-100">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={card.imageUrl} alt={card.title} className="h-full max-h-44 w-full object-cover" loading="lazy" />
-        </div>
-      )}
-      <div className="flex gap-2 p-3">
-        <div className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", isSent ? "bg-white/20" : "bg-[#fce4ec] text-[#E3000F]") }>
-          <MaterialIcon name={iconName} className="text-[18px]" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-xs font-bold">{card.title}</div>
-          {card.subtitle && <div className={cn("mt-0.5 truncate text-[10px]", isSent ? "text-white/75" : "text-slate-500")}>{card.subtitle}</div>}
-          {card.description && <div className={cn("mt-1 line-clamp-2 text-[11px] leading-relaxed", isSent ? "text-white/85" : "text-slate-600")}>{card.description}</div>}
-          {card.rows?.length ? (
-            <div className="mt-2 space-y-1">
-              {card.rows.slice(0, 4).map((row) => (
-                <div key={`${row.label}-${row.value}`} className={cn("flex gap-2 rounded-lg px-2 py-1 text-[10px]", isSent ? "bg-white/10" : "bg-slate-50")}>
-                  <span className={cn("shrink-0 font-semibold", isSent ? "text-white/70" : "text-slate-500")}>{row.label}</span>
-                  <span className="min-w-0 flex-1 truncate font-medium">{row.value}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-  if (!card.url) return body;
-  return <a href={card.url} target="_blank" rel="noopener noreferrer" className="block hover:opacity-95">{body}</a>;
-}
-
-const URL_SPLIT_RE = /(https?:\/\/[^\s<>)"']+)/gi;
-
-// Nhiều tin nhắn text thường (không phải "chia sẻ liên kết" có thẻ preview của
-// Zalo) chỉ là link dán thẳng vào nội dung (vd link Google Meet) — trước đây
-// hiện ra chữ xám tĩnh, không bấm được. Tách URL ra khỏi text thường để render
-// thành <a> bấm mở được, song song với ZaloSpecialCardView (chỉ xử lý link có
-// metadata card riêng từ raw_content).
-function linkifyText(text: string, isSent: boolean): React.ReactNode {
-  const segments = text.split(URL_SPLIT_RE);
-  if (segments.length <= 1) return text;
-  return segments.map((segment, idx) =>
-    /^https?:\/\//i.test(segment) ? (
-      <a
-        key={idx}
-        href={segment}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-blue-600 underline font-medium break-all hover:text-blue-800"
-      >
-        {segment}
-      </a>
-    ) : (
-      <span key={idx}>{segment}</span>
-    ),
-  );
-}
-
 function ZaloMessageBody({
   message,
+  normalized,
   isSent,
   isSelected,
   onImageClick,
   onCallBack,
+  onContactMessage,
 }: {
   message: ZaloLibraryMessage;
+  normalized: NormalizedZaloMessage;
   isSent: boolean;
   isSelected: boolean;
   onImageClick?: (url: string) => void;
   onCallBack?: (mode: "voice" | "video") => void;
+  onContactMessage?: (attachment: ZaloAttachment) => void;
 }) {
-  const callInfo = !message.is_deleted ? parseZaloCallMessage(message) : null;
-  if (callInfo) {
-    return (
-      <div className={cn("flex", isSent ? "justify-end" : "justify-start")}>
-        <ZaloCallMessageCard
-          info={callInfo}
-          isSent={isSent}
-          isSelected={isSelected}
-          onCallback={onCallBack}
-        />
-      </div>
-    );
-  }
+  const optimisticBlobAssets = getOptimisticBlobAssets(message);
+  const isVoiceOnly =
+    !normalized.text.trim() &&
+    normalized.attachments.length > 0 &&
+    normalized.attachments.every((a) => a.kind === "voice");
+  const isBare = isBareZaloRichMessage(normalized) || isVoiceOnly;
+  const isCall = normalized.kind === "call" || Boolean(normalized.callInfo);
 
-  const assets = normalizeMessageAssets(message);
-  const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
-  const otherAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) !== "image");
-  const specialCard = inferSpecialCard(message, assets);
-  const isSticker = specialCard?.kind === "sticker";
-  const hasText = Boolean(message.content?.trim());
-  const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
-    "rounded-2xl px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-2xs",
+    "rounded-2xl px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-2xs text-left",
     isSent
       ? "bg-[#e5efff] text-slate-900 border border-blue-200/80 rounded-tr-xs"
       : "bg-white text-slate-900 border border-slate-200/80 rounded-tl-xs",
     isSelected && (isSent ? "ring-2 ring-blue-400 ring-offset-2" : "ring-2 ring-blue-400/50 bg-blue-50/60"),
   );
 
+  const hasRenderableNormalized =
+    normalized.attachments.length > 0 ||
+    Boolean(normalized.text.trim()) ||
+    isCall ||
+    normalized.kind !== "text";
+
   return (
-    <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
-      {showText && <div className={cn("whitespace-pre-wrap", bubbleClass)}>{linkifyText(message.content || "", isSent)}</div>}
-      {specialCard && <div className={cn(isSticker ? "" : "max-w-[320px]", isSent ? "ml-auto" : "mr-auto")}><ZaloSpecialCardView card={specialCard} isSent={isSent} /></div>}
-      {imageAssets.length > 0 && (
-        <div
-          className={cn(
-            "overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1 shadow-xs cursor-pointer hover:opacity-95 transition",
-            isSent ? "ml-auto rounded-br-md" : "mr-auto rounded-bl-md",
-            imageAssets.length === 1 ? "max-w-[420px] sm:max-w-[500px]" : "grid max-w-[380px] gap-1.5",
-            imageAssets.length === 2 ? "grid-cols-2" : imageAssets.length >= 3 ? "grid-cols-2" : "",
-          )}
-        >
-          {imageAssets.slice(0, 6).map((asset, assetIndex) => (
-            <div key={`${asset.url}-${assetIndex}`} className={cn("relative overflow-hidden rounded-xl", imageAssets.length === 1 ? "" : "aspect-square", imageAssets.length === 3 && assetIndex === 0 && "row-span-2 aspect-auto")}>
-              <ZaloMessageAssetView asset={asset} message={message} compact={imageAssets.length > 1} onImageClick={onImageClick} />
-              {assetIndex === 5 && imageAssets.length > 6 && <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/55 text-sm font-bold text-white">+{imageAssets.length - 6}</div>}
-            </div>
-          ))}
+    <div className={cn("flex flex-col gap-1.5", isSent ? "items-end" : "items-start")}>
+      {hasRenderableNormalized &&
+        (isBare ? (
+          <div
+            className={cn(
+              "max-w-full rounded-2xl transition-all",
+              !isCall && isSelected && "ring-2 ring-blue-400 ring-offset-2",
+            )}
+          >
+            <ZaloRichMessageContent
+              normalized={normalized}
+              isOwn={isSent}
+              onDarkSurface={false}
+              isSelected={isSelected}
+              onCallBack={onCallBack}
+              onOpenImage={onImageClick}
+              onContactMessage={onContactMessage}
+            />
+          </div>
+        ) : (
+          <div className={bubbleClass}>
+            <ZaloRichMessageContent
+              normalized={normalized}
+              isOwn={isSent}
+              onDarkSurface={false}
+              isSelected={isSelected}
+              onCallBack={onCallBack}
+              onOpenImage={onImageClick}
+              onContactMessage={onContactMessage}
+            />
+          </div>
+        ))}
+
+      {/* Optimistic 0ms preview cho ảnh/file/thoại đang tải lên (blob: URL) */}
+      {optimisticBlobAssets.length > 0 && normalized.attachments.length === 0 && (
+        <div className={cn("flex flex-col gap-1.5 max-w-[300px]", isSent ? "items-end" : "items-start")}>
+          {optimisticBlobAssets.map((asset, idx) => {
+            if (asset.mimeType.startsWith("image/")) {
+              return (
+                <div
+                  key={`${asset.url}-${idx}`}
+                  className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white p-1 shadow-xs"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={asset.url}
+                    alt={asset.filename}
+                    className="max-h-56 max-w-[280px] rounded-xl object-cover"
+                  />
+                </div>
+              );
+            }
+            if (asset.mimeType.startsWith("audio/") || message.type === "chat.voice") {
+              return (
+                <div
+                  key={`${asset.url}-${idx}`}
+                  className="min-w-[232px] max-w-[280px] rounded-2xl border border-slate-200/90 bg-white p-2 shadow-2xs"
+                >
+                  <audio src={asset.url} controls preload="metadata" className="h-9 w-full" />
+                </div>
+              );
+            }
+            return (
+              <div
+                key={`${asset.url}-${idx}`}
+                className="flex items-center gap-2 rounded-2xl border border-blue-200/80 bg-[#f4f8ff] px-3 py-2 text-xs text-slate-800 shadow-2xs"
+              >
+                <MaterialIcon name="description" className="shrink-0 text-[16px] text-[#0068FF]" />
+                <span className="truncate font-semibold">{asset.filename}</span>
+              </div>
+            );
+          })}
         </div>
-      )}
-      {otherAssets.length > 0 && (
-        <div className={cn("space-y-1 max-w-[300px]", isSent ? "ml-auto" : "mr-auto")}>
-          {otherAssets.map((asset, assetIndex) => <ZaloMessageAssetView key={`${asset.url}-${assetIndex}`} asset={asset} message={message} onImageClick={onImageClick} />)}
-        </div>
-      )}
-      {!message.is_deleted && !hasText && !assets.length && !specialCard && (
-        <div className={cn(bubbleClass, "italic opacity-80")}>Tin nhắn đặc biệt chưa có dữ liệu hiển thị</div>
       )}
     </div>
   );
@@ -1180,29 +990,21 @@ export function ZaloInboxAdminShell() {
       }
     }
 
-    // 2. Quét tin nhắn tìm SĐT (card danh thiếp hoặc text)
+    // 2. Quét tin nhắn tìm SĐT (thẻ danh thiếp, SĐT nội tuyến hoặc text thường)
     if (inbox.messages && inbox.messages.length > 0) {
       for (const m of inbox.messages) {
         if (m.is_deleted) continue;
-        const raw = (m as any).raw_content;
-        if (raw) {
-          const cardPhone = getPathString(raw, ["phone", "phoneNumber", "mobile", "tel"]);
-          if (cardPhone) {
-            const formatted = formatZaloPhoneDisplay(cardPhone);
-            if (formatted) {
-              setConvPhoneMap((prev) => (prev[convId] === formatted ? prev : { ...prev, [convId]: formatted }));
-              return;
-            }
-          }
-        }
-        if (m.content) {
-          const extracted = extractPhoneFromTextOrCard(m.content);
-          if (extracted) {
-            const formatted = formatZaloPhoneDisplay(extracted);
-            if (formatted) {
-              setConvPhoneMap((prev) => (prev[convId] === formatted ? prev : { ...prev, [convId]: formatted }));
-              return;
-            }
+        const norm = normalizeAdminLibraryMessage(m);
+        const contactPhone = norm.attachments.find((att) => att.kind === "contact" && att.phone)?.phone;
+        const candidatePhone =
+          contactPhone ||
+          norm.inlinePhones[0]?.normalized ||
+          (m.content ? extractPhoneFromTextOrCard(m.content) : null);
+        if (candidatePhone) {
+          const formatted = formatZaloPhoneDisplay(candidatePhone);
+          if (formatted) {
+            setConvPhoneMap((prev) => (prev[convId] === formatted ? prev : { ...prev, [convId]: formatted }));
+            return;
           }
         }
       }
@@ -1269,22 +1071,114 @@ export function ZaloInboxAdminShell() {
     };
   }, [messageMenu, reactionPicker]);
 
-  // Overlay xem ảnh (lightbox) — chỉ lưu INDEX trong chatImageUrls, không lưu URL
-  // trực tiếp, để nút trượt qua lại tính next/prev đơn giản bằng index +-1.
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
-  const chatImageUrls = useMemo(() => {
-    const urls: string[] = [];
+  // Overlay xem ảnh (lightbox) & Kho Ảnh/File/Link cho tab Thông tin (tách từ normalizeStoredMessage)
+  const [lightboxState, setLightboxState] = useState<{ urls: string[]; index: number } | null>(null);
+  const [infoMediaTab, setInfoMediaTab] = useState<"media" | "files" | "links">("media");
+
+  const conversationAssetsSummary = useMemo(() => {
+    const imageUrls: string[] = [];
+    const seenImages = new Set<string>();
+    const mediaItems: Array<{ kind: "image" | "video"; url: string; thumbUrl?: string; title?: string }> = [];
+    const seenMedia = new Set<string>();
+    const fileItems: Array<{
+      name: string;
+      url?: string;
+      ext?: string;
+      sizeBytes?: number;
+      isFolder?: boolean;
+      expired?: boolean;
+    }> = [];
+    const seenFiles = new Set<string>();
+    const linkItems: Array<{ url: string; title: string; domain: string }> = [];
+    const seenLinks = new Set<string>();
+
     for (const m of inbox.messages) {
       if (m.is_deleted) continue;
-      for (const asset of normalizeMessageAssets(m)) {
-        if (classifyAssetKind(asset.url, m) === "image") urls.push(asset.url);
+      const norm = normalizeAdminLibraryMessage(m);
+      if (norm.isRecalled || norm.kind === "undo") continue;
+
+      for (const att of norm.attachments) {
+        if ((att.kind === "image" || att.kind === "gif" || att.kind === "doodle") && att.url) {
+          if (!seenImages.has(att.url)) {
+            seenImages.add(att.url);
+            imageUrls.push(att.url);
+          }
+          if (!seenMedia.has(att.url)) {
+            seenMedia.add(att.url);
+            mediaItems.push({ kind: "image", url: att.url, thumbUrl: att.thumb_url, title: att.title });
+          }
+        } else if (att.kind === "video" && att.url) {
+          if (!seenMedia.has(att.url)) {
+            seenMedia.add(att.url);
+            mediaItems.push({ kind: "video", url: att.url, thumbUrl: att.thumb_url, title: att.title || "Video" });
+          }
+        } else if (att.kind === "file" || att.kind === "folder") {
+          const key = att.url || `${att.name || ""}-${att.size_bytes || ""}`;
+          if (key && !seenFiles.has(key)) {
+            seenFiles.add(key);
+            fileItems.push({
+              name: att.name || att.title || (att.kind === "folder" ? "Thư mục được chia sẻ" : "Tệp đính kèm"),
+              url: att.url,
+              ext: att.ext,
+              sizeBytes: att.size_bytes,
+              isFolder: att.kind === "folder" || att.is_folder,
+              expired: att.expired || !att.url,
+            });
+          }
+        } else if (att.kind === "link" && att.url) {
+          if (!seenLinks.has(att.url)) {
+            seenLinks.add(att.url);
+            let domain = att.domain || "";
+            if (!domain) {
+              try {
+                domain = new URL(att.url).hostname.replace(/^www\./i, "");
+              } catch {
+                domain = "";
+              }
+            }
+            linkItems.push({
+              url: att.url,
+              title: att.title || domain || att.url,
+              domain,
+            });
+          }
+        }
+      }
+
+      for (const inlineUrl of norm.inlineUrls) {
+        if (!inlineUrl || seenLinks.has(inlineUrl)) continue;
+        seenLinks.add(inlineUrl);
+        let domain = "";
+        try {
+          domain = new URL(inlineUrl).hostname.replace(/^www\./i, "");
+        } catch {
+          domain = "";
+        }
+        linkItems.push({
+          url: inlineUrl,
+          title: domain || inlineUrl,
+          domain,
+        });
       }
     }
-    return urls;
+
+    return {
+      chatImageUrls: imageUrls,
+      mediaItems: mediaItems.reverse(),
+      fileItems: fileItems.reverse(),
+      linkItems: linkItems.reverse(),
+    };
   }, [inbox.messages]);
+
   const handleImageClick = (url: string) => {
-    const idx = chatImageUrls.indexOf(url);
-    setLightboxIndex(idx >= 0 ? idx : 0);
+    if (!url) return;
+    const idx = conversationAssetsSummary.chatImageUrls.indexOf(url);
+    if (idx >= 0) {
+      setLightboxState({ urls: conversationAssetsSummary.chatImageUrls, index: idx });
+    } else {
+      // Hỗ trợ phóng to ảnh QR ngân hàng hoặc ảnh đơn ngoài luồng chatImageUrls
+      setLightboxState({ urls: [url], index: 0 });
+    }
   };
 
   const [forwardingMessage, setForwardingMessage] = useState<ZaloLibraryMessage | null>(null);
@@ -1506,12 +1400,24 @@ export function ZaloInboxAdminShell() {
   };
 
   const handleCopyMessage = (message: ZaloLibraryMessage) => {
-    const text = (message.content || "").trim();
+    const normalized = normalizeAdminLibraryMessage(message);
+    const text = (normalized.text || message.content || "").trim();
     if (!text) return;
     navigator.clipboard
       .writeText(text)
       .then(() => inbox.showToast("Đã copy tin nhắn", true))
       .catch(() => inbox.showToast("Không thể copy — trình duyệt chặn quyền clipboard", false));
+  };
+
+  const handleContactCardMessage = (attachment: ZaloAttachment) => {
+    if (attachment.user_id) {
+      void handleMessageSenderPrivately(attachment.user_id, attachment.name || "Người dùng Zalo");
+      return;
+    }
+    if (attachment.phone) {
+      setPhoneSearchQuery(attachment.phone);
+      setNewChatModalOpen(true);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1763,7 +1669,7 @@ export function ZaloInboxAdminShell() {
     }
     setMessageMenu(null);
     setReactionPicker(null);
-    setLightboxIndex(null);
+    setLightboxState(null);
     groupMembersLoadKeyRef.current = null;
   }, [inbox.openConv, inbox.selectedAccountId]);
 
@@ -2446,7 +2352,9 @@ export function ZaloInboxAdminShell() {
                     )}
                   >
                     <div className="truncate font-bold text-slate-900">{item.name}</div>
-                    <div className="mt-0.5 truncate text-[11px] text-slate-500">{formatZaloSidebarPreview(item.preview) || "—"}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-slate-500">
+                      {formatConversationSidebarPreview({ latest_content: item.preview }) || "—"}
+                    </div>
                   </button>
                 ))
               )
@@ -2494,10 +2402,20 @@ export function ZaloInboxAdminShell() {
                 const active = inbox.openConv === conv.conv_id && !inbox.archiveReading;
                 const lastSender = conv.latest_sender_name?.trim();
                 const isSelfPreview = !!lastSender && ["__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase());
-                const previewText = formatZaloSidebarPreview(conv.preview, { isSelf: isSelfPreview }) || "—";
-                const previewWithSender = lastSender && lastSender !== conv.name && previewText !== "—"
-                  ? `${lastSender}: ${previewText}`
-                  : previewText;
+                const previewText =
+                  formatConversationSidebarPreview(
+                    {
+                      latest_content: conv.preview,
+                      latest_sender_name: conv.latest_sender_name,
+                      latest_is_self: isSelfPreview,
+                    },
+                    { isSelf: isSelfPreview },
+                  ) || "—";
+                const isSystemPreview = isSidebarSystemNoticePreview(previewText);
+                const previewWithSender =
+                  !isSystemPreview && lastSender && !isSelfPreview && lastSender !== conv.name && previewText !== "—"
+                    ? `${lastSender}: ${previewText}`
+                    : previewText;
                 return (
                   <button
                     key={conv.conv_id}
@@ -2533,7 +2451,16 @@ export function ZaloInboxAdminShell() {
                         </span>
                       </div>
 
-                      <p className={cn("truncate text-[11px]", conv.unread ? "font-bold text-slate-900" : "text-slate-500")}>
+                      <p
+                        className={cn(
+                          "truncate text-[11px]",
+                          isSystemPreview
+                            ? "italic text-slate-400"
+                            : conv.unread
+                              ? "font-bold text-slate-900"
+                              : "text-slate-500",
+                        )}
+                      >
                         {previewWithSender}
                       </p>
 
@@ -3111,9 +3038,52 @@ export function ZaloInboxAdminShell() {
                       <div className="flex-1 h-px bg-gradient-to-l from-transparent via-slate-200 to-slate-200" />
                     </div>
                     {group.msgs.map((msg, index) => {
+                      const normalized = normalizeAdminLibraryMessage(msg);
                       const isSent = msg.is_sent;
                       const time = formatTime(msg.timestamp_text ?? msg.time_text);
+                      const msgRenderKey = msg.source_message_id || msg.id || `${group.date}-${index}`;
+
+                      // Sự kiện hệ thống căn giữa (kết bạn, sự kiện nhóm, actionlist, eCard, bình chọn, nhắc hẹn, công việc, tin thu hồi)
+                      if (isCenteredZaloSystemMessage(normalized)) {
+                        const fallbackCategory =
+                          normalized.isRecalled || normalized.kind === "undo"
+                            ? "undo"
+                            : normalized.kind === "ecard" ||
+                                normalized.kind === "poll" ||
+                                normalized.kind === "reminder" ||
+                                normalized.kind === "todo"
+                              ? normalized.kind
+                              : "info";
+                        return (
+                          <div
+                            key={msgRenderKey}
+                            data-msg-anchor={msg.source_message_id || undefined}
+                            className="flex w-full flex-col items-center py-1"
+                          >
+                            <ZaloSystemEventBanner
+                              event={normalized.systemEvent}
+                              title={
+                                normalized.systemEvent?.title ||
+                                normalized.system_text ||
+                                normalized.text ||
+                                (normalized.isRecalled ? "Tin nhắn đã được thu hồi" : "Thông báo hệ thống")
+                              }
+                              category={normalized.systemEvent?.category || fallbackCategory}
+                              iconKind={normalized.systemEvent?.iconKind}
+                            />
+                            {time && <span className="mt-0.5 text-[9px] text-slate-400">{time}</span>}
+                          </div>
+                        );
+                      }
+
                       const isSelected = selectedMessageIds.includes(msg.source_message_id || msg.id || "");
+                      const isCallMsg = normalized.kind === "call" || Boolean(normalized.callInfo);
+                      const isSystemOrRecalled =
+                        normalized.isRecalled ||
+                        normalized.kind === "undo" ||
+                        normalized.kind === "system_notice" ||
+                        msg.is_deleted;
+                      const suppressQuickActions = isCallMsg || isSystemOrRecalled;
                       const senderMember = msg.sender_id ? groupMemberByUid.get(msg.sender_id) : undefined;
                       const senderName = senderMember?.display_name || msg.sender_name || selectedName || "Zalo";
                       const senderAvatar = isSent
@@ -3121,7 +3091,7 @@ export function ZaloInboxAdminShell() {
                         : senderMember?.avatar_url || (msg as unknown as { sender_avatar_url?: string; avatar_url?: string }).sender_avatar_url || (msg as unknown as { avatar_url?: string }).avatar_url || null;
                       const displayAvatarName = isSent ? "Bạn" : senderName;
                       const isGroupSender = Boolean(msg.sender_id && msg.sender_id !== inbox.openConv);
-                      const checkboxEl = (
+                      const checkboxEl = !suppressQuickActions ? (
                         <input
                           type="checkbox"
                           className="w-3.5 h-3.5 cursor-pointer opacity-0 group-hover:opacity-100 checked:opacity-100 transition-opacity shrink-0"
@@ -3134,12 +3104,12 @@ export function ZaloInboxAdminShell() {
                             );
                           }}
                         />
-                      );
+                      ) : null;
 
                       return (
                         <ZaloSwipeableMessageItem
-                          key={msg.source_message_id || msg.id || `${group.date}-${index}`}
-                          disabled={msg.is_deleted}
+                          key={msgRenderKey}
+                          disabled={isSystemOrRecalled}
                           onReply={() => inbox.setReplyingTo(msg)}
                           direction={isSent ? "left" : "right"}
                           className="w-full"
@@ -3156,14 +3126,26 @@ export function ZaloInboxAdminShell() {
                                   <span className="text-[11px] font-semibold text-slate-600">{senderName}</span>
                                 </div>
                               )}
-                              {!msg.is_deleted && msg.reply_to_id && (() => {
+                              {!isSystemOrRecalled && msg.reply_to_id && (() => {
                                 const quoted = findQuotedMessage(msg.reply_to_id);
+                                const quotedNormalized = quoted ? normalizeAdminLibraryMessage(quoted) : null;
                                 const quotedMember = quoted?.sender_id ? groupMemberByUid.get(quoted.sender_id) : undefined;
                                 const quotedSender = quoted
                                   ? quoted.is_sent
                                     ? "Bạn"
                                     : quotedMember?.display_name || quoted.sender_name || senderName || "Zalo"
                                   : "Tin nhắn gốc";
+                                const quotedPreviewText = quoted
+                                  ? formatZaloAnySidebarPreview({
+                                      content: quoted.content,
+                                      type: quoted.type,
+                                      msg_kind: quoted.msg_kind,
+                                      raw_content: quoted.raw_content,
+                                      attachments: quotedNormalized?.attachments,
+                                      is_sent: quoted.is_sent,
+                                      is_deleted: quoted.is_deleted,
+                                    }) || "Tin nhắn"
+                                  : "Chưa tải được nội dung gốc";
                                 return (
                                   <button
                                     type="button"
@@ -3173,29 +3155,27 @@ export function ZaloInboxAdminShell() {
                                     className={cn(
                                       "mb-1 block w-full rounded-xl border-l-4 px-2.5 py-1.5 text-left shadow-xs",
                                       isSent
-                                        ? "border-white/60 bg-white/15 text-white/90"
+                                        ? "border-[#0068FF]/70 bg-blue-50/85 text-slate-700"
                                         : "border-[#E3000F] bg-white text-[#4b5563]",
                                     )}
                                     title={quoted ? "Đi tới tin nhắn gốc" : undefined}
                                   >
-                                    <span className={cn("block text-[10px] font-bold", isSent ? "text-white" : "text-[#E3000F]")}>Trả lời {quotedSender}</span>
-                                    <span className="block truncate text-[10.5px] opacity-90">
-                                      {(() => {
-                                        const qCall = quoted && !quoted.is_deleted ? parseZaloCallMessage(quoted) : null;
-                                        if (qCall) return `${qCall.isMissed ? "📵" : qCall.mediaType === "video" ? "📹" : "📞"} ${qCall.previewLabel}`;
-                                        return quoted?.content || (quoted ? "Đính kèm" : "Chưa tải được nội dung gốc");
-                                      })()}
+                                    <span className={cn("block text-[10px] font-bold", isSent ? "text-[#0068FF]" : "text-[#E3000F]")}>
+                                      Trả lời {quotedSender}
                                     </span>
+                                    <span className="block truncate text-[10.5px] opacity-90">{quotedPreviewText}</span>
                                   </button>
                                 );
                               })()}
                               <ZaloMessageBody
                                 message={msg}
+                                normalized={normalized}
                                 isSent={isSent}
                                 isSelected={isSelected}
                                 onImageClick={handleImageClick}
+                                onContactMessage={handleContactCardMessage}
                                 onCallBack={
-                                  !inbox.archiveReading && inbox.openConv && !isZaloGroupConversationId(inbox.openConv)
+                                  !inbox.archiveReading && inbox.openConv && !openConvIsGroup
                                     ? (mode) => {
                                         setCallModalMode(mode);
                                         setCallModalOpen(true);
@@ -3204,12 +3184,21 @@ export function ZaloInboxAdminShell() {
                                 }
                               />
                               {(() => {
-                                const msgCallInfo = !msg.is_deleted ? parseZaloCallMessage(msg) : null;
                                 const msgKey = msg.source_message_id || msg.id || String(index);
-                                const canReact = !msg.is_deleted && !msgCallInfo && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
-                                const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
-                                const canCopyMessage = canActOnMessage && !msgCallInfo && !!msg.content?.trim();
-                                const canForwardMessage = canActOnMessage && !msgCallInfo && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
+                                const canReact =
+                                  !suppressQuickActions &&
+                                  Boolean(msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id);
+                                const canActOnMessage = !isSystemOrRecalled && !!(msg.source_message_id || msg.id);
+                                const canCopyMessage =
+                                  canActOnMessage && !suppressQuickActions && Boolean(normalized.text.trim());
+                                const canForwardMessage =
+                                  canActOnMessage &&
+                                  !suppressQuickActions &&
+                                  Boolean(
+                                    normalized.text.trim() ||
+                                      normalized.attachments.length > 0 ||
+                                      (msg.assets ?? []).some((asset) => asset.storage_url),
+                                  );
                                 const isOptimisticMsg = String(msg.id).startsWith("optimistic_");
                                 const rawStaffName =
                                   (msg.staff_name && String(msg.staff_name).trim()) ||
@@ -3360,35 +3349,39 @@ export function ZaloInboxAdminShell() {
                                                 Nhắn riêng với {senderName}
                                               </button>
                                             )}
-                                            <button
-                                              type="button"
-                                              disabled={!canForwardMessage}
-                                              onClick={() => {
-                                                if (!canForwardMessage) return;
-                                                setForwardingMessage(msg);
-                                                setMessageMenu(null);
-                                              }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-                                            >
-                                              <MaterialIcon name="forward" className="text-[13px]" /> Chuyển tiếp
-                                            </button>
-                                            <button
-                                              type="button"
-                                              disabled={!canCopyMessage}
-                                              onClick={() => {
-                                                if (!canCopyMessage) return;
-                                                handleCopyMessage(msg);
-                                                setMessageMenu(null);
-                                              }}
-                                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-                                            >
-                                              <MaterialIcon name="content_copy" className="text-[13px]" /> Copy
-                                            </button>
+                                            {!suppressQuickActions && (
+                                              <button
+                                                type="button"
+                                                disabled={!canForwardMessage}
+                                                onClick={() => {
+                                                  if (!canForwardMessage) return;
+                                                  setForwardingMessage(msg);
+                                                  setMessageMenu(null);
+                                                }}
+                                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                                              >
+                                                <MaterialIcon name="forward" className="text-[13px]" /> Chuyển tiếp
+                                              </button>
+                                            )}
+                                            {!suppressQuickActions && (
+                                              <button
+                                                type="button"
+                                                disabled={!canCopyMessage}
+                                                onClick={() => {
+                                                  if (!canCopyMessage) return;
+                                                  handleCopyMessage(msg);
+                                                  setMessageMenu(null);
+                                                }}
+                                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[11px] font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#0084ff] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+                                              >
+                                                <MaterialIcon name="content_copy" className="text-[13px]" /> Copy
+                                              </button>
+                                            )}
                                           </div>
                                         )}
                                       </div>
                                     )}
-                                    {isSent && !msg.is_deleted && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
+                                    {isSent && !suppressQuickActions && (msg as unknown as { cli_msg_id?: string }).cli_msg_id && (
                                       <button
                                         type="button"
                                         onClick={() => void inbox.recallMessage(msg)}
@@ -3398,7 +3391,6 @@ export function ZaloInboxAdminShell() {
                                         <MaterialIcon name="delete" className="text-[11px]" />
                                       </button>
                                     )}
-                                    {msg.is_deleted && <span className="italic text-[9px] text-[#A0A0A0]">Tin nhắn đã thu hồi</span>}
                                     {reactionPicker?.id === msgKey && (
                                       <div
                                         data-zalo-reaction-ui
@@ -3420,7 +3412,7 @@ export function ZaloInboxAdminShell() {
                                   </div>
                                 );
                               })()}
-                              {!msg.is_deleted && (
+                              {!suppressQuickActions && (
                                 <div className={isSent ? "flex justify-end" : "flex justify-start"}>
                                   <ZaloReactionBadges
                                     reactions={msg.reactions}
@@ -3556,11 +3548,15 @@ export function ZaloInboxAdminShell() {
                     Đang trả lời {inbox.replyingTo.is_sent ? "bạn" : inbox.replyingTo.sender_name || "khách"}
                   </div>
                   <div className="truncate text-slate-600">
-                    {(() => {
-                      const rCall = !inbox.replyingTo.is_deleted ? parseZaloCallMessage(inbox.replyingTo) : null;
-                      if (rCall) return `${rCall.isMissed ? "📵" : rCall.mediaType === "video" ? "📹" : "📞"} ${rCall.previewLabel}`;
-                      return inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Đính kèm" : "Tin nhắn");
-                    })()}
+                    {formatZaloAnySidebarPreview({
+                      content: inbox.replyingTo.content,
+                      type: inbox.replyingTo.type,
+                      msg_kind: inbox.replyingTo.msg_kind,
+                      raw_content: inbox.replyingTo.raw_content,
+                      attachments: normalizeAdminLibraryMessage(inbox.replyingTo).attachments,
+                      is_sent: inbox.replyingTo.is_sent,
+                      is_deleted: inbox.replyingTo.is_deleted,
+                    }) || "Tin nhắn"}
                   </div>
                 </div>
                 <button type="button" onClick={() => inbox.setReplyingTo(null)} className="rounded-full p-1 hover:bg-white" title="Hủy trả lời">
@@ -3950,13 +3946,15 @@ export function ZaloInboxAdminShell() {
               </div>
             )}
 
-            {/* TAB 2: THÔNG TIN (ZALO CONTACT DETAILS & NOTES) */}
+            {/* TAB 2: THÔNG TIN (ZALO CONTACT DETAILS, NOTES & MEDIA/FILES/LINKS) */}
             {panelTab === "customer" && (
               <div className="space-y-3">
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 space-y-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tài khoản Zalo</span>
                   <h3 className="text-xs font-bold text-slate-900">{selectedName || inbox.openConv}</h3>
-                  <p className="text-xs text-slate-500">{formatZaloSidebarPreview(selectedPreview) || "—"}</p>
+                  <p className="text-xs text-slate-500">
+                    {formatConversationSidebarPreview({ latest_content: selectedPreview }) || "—"}
+                  </p>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 space-y-2">
@@ -3988,6 +3986,166 @@ export function ZaloInboxAdminShell() {
                       Lưu ghi chú
                     </button>
                   </div>
+                </div>
+
+                {/* Kho Ảnh / Tập tin / Liên kết trích xuất từ normalizeStoredMessage */}
+                <div className="rounded-2xl border border-slate-200/80 bg-white p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Kho lưu trữ hội thoại
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-0.5 text-[10.5px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setInfoMediaTab("media")}
+                      className={cn(
+                        "rounded-lg py-1 transition text-center cursor-pointer",
+                        infoMediaTab === "media" ? "bg-white text-[#d81b60] shadow-2xs" : "text-slate-600",
+                      )}
+                    >
+                      Ảnh ({conversationAssetsSummary.mediaItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInfoMediaTab("files")}
+                      className={cn(
+                        "rounded-lg py-1 transition text-center cursor-pointer",
+                        infoMediaTab === "files" ? "bg-white text-[#d81b60] shadow-2xs" : "text-slate-600",
+                      )}
+                    >
+                      File ({conversationAssetsSummary.fileItems.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInfoMediaTab("links")}
+                      className={cn(
+                        "rounded-lg py-1 transition text-center cursor-pointer",
+                        infoMediaTab === "links" ? "bg-white text-[#d81b60] shadow-2xs" : "text-slate-600",
+                      )}
+                    >
+                      Link ({conversationAssetsSummary.linkItems.length})
+                    </button>
+                  </div>
+
+                  {infoMediaTab === "media" &&
+                    (conversationAssetsSummary.mediaItems.length === 0 ? (
+                      <div className="py-4 text-center text-[11px] text-slate-400">Chưa có ảnh/video nào.</div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-1.5 max-h-[240px] overflow-y-auto pr-0.5">
+                        {conversationAssetsSummary.mediaItems.slice(0, 24).map((item, idx) =>
+                          item.kind === "image" ? (
+                            <button
+                              key={`${item.url}-${idx}`}
+                              type="button"
+                              onClick={() => handleImageClick(item.url)}
+                              className="group relative aspect-square overflow-hidden rounded-lg border border-slate-200/80 bg-slate-100 cursor-zoom-in"
+                              title="Xem ảnh"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={item.thumbUrl || item.url}
+                                alt={item.title || `Ảnh ${idx + 1}`}
+                                loading="lazy"
+                                className="h-full w-full object-cover transition group-hover:scale-105"
+                              />
+                            </button>
+                          ) : (
+                            <a
+                              key={`${item.url}-${idx}`}
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="relative flex aspect-square items-center justify-center overflow-hidden rounded-lg border border-slate-200/80 bg-slate-900 text-white"
+                              title={item.title || "Mở video"}
+                            >
+                              {item.thumbUrl && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={item.thumbUrl}
+                                  alt={item.title || "Video"}
+                                  loading="lazy"
+                                  className="absolute inset-0 h-full w-full object-cover opacity-70"
+                                />
+                              )}
+                              <Video className="relative z-10 h-5 w-5" />
+                            </a>
+                          ),
+                        )}
+                      </div>
+                    ))}
+
+                  {infoMediaTab === "files" &&
+                    (conversationAssetsSummary.fileItems.length === 0 ? (
+                      <div className="py-4 text-center text-[11px] text-slate-400">Chưa có tập tin nào.</div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-0.5">
+                        {conversationAssetsSummary.fileItems.slice(0, 20).map((f, idx) => {
+                          const href = f.url
+                            ? f.isFolder
+                              ? f.url
+                              : buildDownloadProxyUrl(f.url, f.name)
+                            : undefined;
+                          const sizeLabel = formatBytes(f.sizeBytes);
+                          return (
+                            <div
+                              key={`${f.url || f.name}-${idx}`}
+                              className="flex items-center gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-2.5 py-2 text-xs"
+                            >
+                              <span className="shrink-0 rounded-md bg-blue-100 px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-[#0068FF]">
+                                {f.isFolder ? "DIR" : (f.ext || "FILE").slice(0, 5)}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-[11.5px] font-semibold text-slate-800" title={f.name}>
+                                  {f.name}
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  {f.expired ? "Tệp đã hết hạn trên Zalo" : sizeLabel || "Tập tin Zalo"}
+                                </div>
+                              </div>
+                              {href && !f.expired && (
+                                <a
+                                  href={href}
+                                  download={f.isFolder ? undefined : f.name}
+                                  target={f.isFolder ? "_blank" : undefined}
+                                  rel={f.isFolder ? "noopener noreferrer" : undefined}
+                                  className="shrink-0 rounded-lg border border-blue-200 bg-white p-1.5 text-[#0068FF] hover:bg-[#0068FF] hover:text-white transition"
+                                  title={f.isFolder ? "Mở thư mục" : "Tải xuống"}
+                                >
+                                  {f.isFolder ? <ExternalLink size={12} /> : <Download size={12} />}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+
+                  {infoMediaTab === "links" &&
+                    (conversationAssetsSummary.linkItems.length === 0 ? (
+                      <div className="py-4 text-center text-[11px] text-slate-400">Chưa có liên kết nào.</div>
+                    ) : (
+                      <div className="space-y-1.5 max-h-[240px] overflow-y-auto pr-0.5">
+                        {conversationAssetsSummary.linkItems.slice(0, 20).map((lk, idx) => (
+                          <a
+                            key={`${lk.url}-${idx}`}
+                            href={lk.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-start gap-2 rounded-xl border border-slate-200/80 bg-slate-50/70 px-2.5 py-2 hover:border-blue-300 hover:bg-blue-50/40 transition"
+                          >
+                            <ExternalLink size={13} className="mt-0.5 shrink-0 text-[#0068FF]" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[11.5px] font-semibold text-slate-800" title={lk.title}>
+                                {lk.title}
+                              </div>
+                              <div className="truncate text-[10px] text-slate-500">{lk.domain || lk.url}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
@@ -4357,12 +4515,14 @@ export function ZaloInboxAdminShell() {
       />
 
       {/* Overlay xem ảnh — trượt qua lại giữa các ảnh đã gửi/nhận trong đoạn chat */}
-      {mounted && lightboxIndex !== null && createPortal(
+      {mounted && lightboxState !== null && createPortal(
         <ZaloImageLightbox
-          urls={chatImageUrls}
-          index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          onNavigate={setLightboxIndex}
+          urls={lightboxState.urls}
+          index={lightboxState.index}
+          onClose={() => setLightboxState(null)}
+          onNavigate={(nextIndex) =>
+            setLightboxState((prev) => (prev ? { ...prev, index: nextIndex } : null))
+          }
         />,
         document.body
       )}

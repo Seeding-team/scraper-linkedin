@@ -1,12 +1,274 @@
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import { ChannelAccount, ConversationItem, MessageItem, CrmCustomerMatch, CrmOpportunity, CrmQuote, ChannelType } from "../types";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
-import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
+import {
+  formatZaloAnySidebarPreview,
+  normalizeStoredMessage,
+} from "@/lib/zaloMessageContent";
+import {
+  formatConversationSidebarPreview,
+  type ZaloSidebarConversationFields,
+} from "@/components/all-platform/zalo/centralized-shared/zaloUi";
 
 const commonHeaders: Record<string, string> = {
   "Content-Type": "application/json",
   "x-api-key": API_KEY,
 };
+
+interface RawZaloAsset {
+  id?: string;
+  storage_url?: string | null;
+  source_url?: string | null;
+}
+
+interface RawZaloMessage {
+  id?: string;
+  msg_id?: string;
+  source_message_id?: string;
+  cli_msg_id?: string;
+  from_uid?: string;
+  sender_id?: string;
+  sender_type?: string;
+  sender_name?: string;
+  is_sent?: boolean;
+  is_deleted?: boolean;
+  type?: string;
+  msg_kind?: string;
+  message_text?: string;
+  text?: string;
+  content?: string | null;
+  raw_content?: unknown;
+  attachments?: unknown;
+  image_urls?: unknown;
+  assets?: RawZaloAsset[];
+  quote?: unknown;
+  reply_to_id?: string | null;
+  reply_to_msg_id?: string | null;
+  ts?: number | string;
+  created_at?: string | number;
+  time_text?: string | number;
+  timestamp_text?: string | number;
+  media_url?: string;
+  media_type?: string;
+  media_name?: string;
+  media_size?: string;
+}
+
+interface RawZaloConversation {
+  conversation_id?: string;
+  conv_id?: string;
+  id?: string;
+  thread_type?: string | null;
+  has_messages?: boolean | null;
+  conversation_name?: string;
+  peer_name?: string;
+  group_name?: string;
+  name?: string;
+  avatar_url?: string;
+  peer_avatar?: string;
+  avatar?: string;
+  latest_content?: string | null;
+  last_message_content?: string | null;
+  last_message_text?: string | null;
+  content?: string | null;
+  message?: string | null;
+  latest_sender_name?: string | null;
+  latest_is_self?: boolean | null;
+  last_message_is_self?: boolean | null;
+  is_sent?: boolean | null;
+  latest_is_deleted?: boolean | null;
+  last_message_is_deleted?: boolean | null;
+  is_deleted?: boolean | null;
+  latest_type?: string | null;
+  latest_msg_type?: string | null;
+  last_message_type?: string | null;
+  type?: string | null;
+  latest_msg_kind?: string | null;
+  last_message_kind?: string | null;
+  msg_kind?: string | null;
+  latest_raw_content?: unknown;
+  last_message_raw_content?: unknown;
+  raw_content?: unknown;
+  latest_message_at?: string | number | null;
+  time?: string | null;
+  unread_count?: number | string | null;
+  tag?: string | null;
+  tags?: string[] | null;
+  crm_customer_id?: string | null;
+  matched_customer_id?: string | null;
+  crm_customer_name?: string | null;
+  customer_name?: string | null;
+  phone_number?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  owner_name?: string | null;
+}
+
+const CLI_MSG_TYPE_MAP: Readonly<Record<number, string>> = {
+  1: "webchat",
+  31: "chat.voice",
+  32: "chat.photo",
+  36: "chat.sticker",
+  38: "chat.recommended",
+  43: "chat.location.new",
+  44: "chat.video.msg",
+  46: "share.file",
+  49: "chat.gif",
+};
+
+function asPlainRecord(value: unknown): Record<string, unknown> | null {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function readFirstNonEmptyString(...values: unknown[]): string | undefined {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return undefined;
+}
+
+function readFirstId(...values: unknown[]): string | undefined {
+  for (const v of values) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  }
+  return undefined;
+}
+
+function resolveCliMsgType(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return CLI_MSG_TYPE_MAP[value];
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    return CLI_MSG_TYPE_MAP[Number(value.trim())];
+  }
+  return undefined;
+}
+
+function extractZaloMessageQuote(
+  row: RawZaloMessage,
+  lookupById: Map<string, RawZaloMessage>,
+  accountId: string,
+): MessageItem["quote"] {
+  const rowQuote = asPlainRecord(row.quote);
+  const rawObj = asPlainRecord(row.raw_content);
+  const dataObj = asPlainRecord(rawObj?.data);
+  const wireQuote = asPlainRecord(dataObj?.quote) || asPlainRecord(rawObj?.quote);
+  const q = rowQuote || wireQuote;
+
+  if (q) {
+    const quoteId = readFirstId(
+      q.global_msg_id,
+      q.globalMsgId,
+      q.cli_msg_id,
+      q.cliMsgId,
+      q.id,
+      q.msg_id,
+      q.msgId,
+      row.reply_to_id,
+      row.reply_to_msg_id,
+    );
+    const referenced = quoteId ? lookupById.get(quoteId) : undefined;
+    const senderName =
+      readFirstNonEmptyString(
+        q.from_name,
+        q.fromName,
+        q.fromD,
+        q.sender_name,
+        q.senderName,
+        q.ownerName,
+      ) || referenced?.sender_name;
+    const attachObj = asPlainRecord(q.attach);
+    const quoteRaw = attachObj ?? q.raw_content;
+    const quoteType =
+      readFirstNonEmptyString(q.msgType, q.type) || resolveCliMsgType(q.cliMsgType);
+    const quoteContent = readFirstNonEmptyString(
+      q.previewText,
+      q.preview_text,
+      q.text,
+      q.msg,
+      q.content,
+    );
+    let previewText = formatZaloAnySidebarPreview({
+      content: quoteContent,
+      type: quoteType,
+      msg_kind: readFirstNonEmptyString(q.msg_kind),
+      raw_content: quoteRaw,
+      attachments: q.attachments,
+      is_deleted: Boolean(q.is_deleted),
+    });
+
+    if (!previewText && referenced) {
+      const refIsMe =
+        referenced.from_uid === accountId ||
+        referenced.sender_type === "me" ||
+        Boolean(referenced.is_sent);
+      previewText = formatZaloAnySidebarPreview({
+        content: referenced.message_text || referenced.text || referenced.content,
+        type: referenced.type,
+        msg_kind: referenced.msg_kind,
+        raw_content: referenced.raw_content,
+        attachments: referenced.attachments,
+        is_sent: refIsMe,
+        is_deleted: referenced.is_deleted,
+      });
+    }
+
+    if (previewText || senderName) {
+      return {
+        ...(quoteId ? { id: quoteId } : {}),
+        ...(senderName ? { senderName } : {}),
+        previewText: previewText || "Tin nhắn",
+      };
+    }
+  }
+
+  const replyId = readFirstId(row.reply_to_id, row.reply_to_msg_id);
+  if (replyId) {
+    const referenced = lookupById.get(replyId);
+    if (referenced) {
+      const refIsMe =
+        referenced.from_uid === accountId ||
+        referenced.sender_type === "me" ||
+        Boolean(referenced.is_sent);
+      const previewText =
+        formatZaloAnySidebarPreview({
+          content: referenced.message_text || referenced.text || referenced.content,
+          type: referenced.type,
+          msg_kind: referenced.msg_kind,
+          raw_content: referenced.raw_content,
+          attachments: referenced.attachments,
+          is_sent: refIsMe,
+          is_deleted: referenced.is_deleted,
+        }) || "Tin nhắn";
+      const senderName = referenced.sender_name || (refIsMe ? "Bạn" : "Khách");
+      return {
+        id: replyId,
+        senderName,
+        previewText,
+      };
+    }
+  }
+
+  return undefined;
+}
 
 export class OmnichannelRepository {
   /**
@@ -268,8 +530,8 @@ export class OmnichannelRepository {
           );
           if (res.ok) {
             const json = await res.json();
-            const list = json.conversations || json.data || [];
-            results.push(...list.map((c: any) => this.mapZaloConversation(c, acc.id, acc.name)));
+            const list: RawZaloConversation[] = json.conversations || json.data || [];
+            results.push(...list.map((c) => this.mapZaloConversation(c, acc.id, acc.name)));
           }
         } catch (e) {
           console.error("Error fetching Zalo conversations:", e);
@@ -341,42 +603,54 @@ export class OmnichannelRepository {
         );
         if (res.ok) {
           const json = await res.json();
-          const list: Array<{
-            id?: string;
-            msg_id?: string;
-            source_message_id?: string;
-            from_uid?: string;
-            sender_type?: string;
-            sender_name?: string;
-            is_sent?: boolean;
-            is_deleted?: boolean;
-            type?: string;
-            msg_kind?: string;
-            message_text?: string;
-            text?: string;
-            content?: string;
-            raw_content?: unknown;
-            created_at?: string | number;
-            time_text?: string | number;
-            timestamp_text?: string | number;
-            media_url?: string;
-            media_type?: string;
-            media_name?: string;
-            media_size?: string;
-          }> = json.messages || json.data || [];
+          const list: RawZaloMessage[] = json.messages || json.data || [];
+          const lookupById = new Map<string, RawZaloMessage>();
+          for (const item of list) {
+            for (const key of [item.source_message_id, item.msg_id, item.id, item.cli_msg_id]) {
+              if (typeof key === "string" && key.trim()) {
+                lookupById.set(key.trim(), item);
+              }
+            }
+          }
+
           return list.map((m) => {
             const isMe = m.from_uid === accountId || m.sender_type === "me" || Boolean(m.is_sent);
             const rawText = m.message_text || m.text || m.content || "";
-            const callInfo = !m.is_deleted
-              ? parseZaloCallMessage({
-                  type: m.type,
-                  msg_kind: m.msg_kind,
-                  content: rawText,
-                  is_sent: isMe,
-                  raw_content: m.raw_content,
-                })
-              : null;
-            const rawTime = m.created_at || m.time_text || m.timestamp_text;
+            const assetUrls = Array.isArray(m.assets)
+              ? m.assets
+                  .map((a) => a?.storage_url || a?.source_url || "")
+                  .filter((u): u is string => Boolean(u))
+              : [];
+            const existingImageUrls = Array.isArray(m.image_urls)
+              ? m.image_urls.filter((u): u is string => typeof u === "string" && u.length > 0)
+              : [];
+            const isLegacyNonImageMedia =
+              Boolean(m.media_url) && Boolean(m.media_type) && m.media_type !== "image";
+            const legacyMediaImageUrls =
+              m.media_url && !isLegacyNonImageMedia ? [m.media_url] : [];
+            const mergedImageUrls = Array.from(
+              new Set([...existingImageUrls, ...assetUrls, ...legacyMediaImageUrls]),
+            );
+            const effectiveAttachments =
+              m.attachments !== undefined
+                ? m.attachments
+                : !m.raw_content && isLegacyNonImageMedia && m.media_url
+                  ? [{ kind: "file", url: m.media_url, name: m.media_name || "Attachment" }]
+                  : undefined;
+
+            const normalized = normalizeStoredMessage({
+              msg_kind: m.msg_kind,
+              type: m.type,
+              is_sent: isMe,
+              is_deleted: m.is_deleted,
+              attachments: effectiveAttachments,
+              raw_content: m.raw_content,
+              image_urls: mergedImageUrls.length > 0 ? mergedImageUrls : undefined,
+              content: rawText,
+            });
+            const quote = extractZaloMessageQuote(m, lookupById, accountId);
+
+            const rawTime = m.created_at || m.time_text || m.timestamp_text || m.ts;
             const parsedTime = rawTime
               ? (() => {
                   const num = Number(rawTime);
@@ -393,9 +667,11 @@ export class OmnichannelRepository {
               id: m.msg_id || m.source_message_id || m.id || `msg-${Date.now()}`,
               sender: isMe ? "me" : "them",
               senderName: m.sender_name || (isMe ? "Tôi" : "Khách"),
-              text: callInfo ? callInfo.previewLabel : rawText,
+              text: normalized.text || normalized.previewText,
               time: parsedTime,
-              callInfo: callInfo || undefined,
+              callInfo: normalized.callInfo || undefined,
+              normalizedZalo: normalized,
+              ...(quote ? { quote } : {}),
               attachment: m.media_url
                 ? {
                     type: m.media_type === "image" ? "image" : "pdf",
@@ -652,14 +928,53 @@ export class OmnichannelRepository {
   /**
    * Map Zalo conversation record from backend to Unified ConversationItem
    */
-  private mapZaloConversation(c: any, accountId: string, accountName?: string): ConversationItem {
+  private mapZaloConversation(c: RawZaloConversation, accountId: string, accountName?: string): ConversationItem {
     const customerName = c.conversation_name || c.peer_name || c.group_name || c.name || c.conversation_id || "Khách hàng Zalo";
     const customerAvatar = c.avatar_url || c.peer_avatar || c.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(customerName)}&background=random`;
-    const rawLastMessage = c.latest_content || c.last_message_text || c.message || "";
+    const rawLastContent =
+      readFirstNonEmptyString(
+        c.latest_content,
+        c.last_message_content,
+        c.last_message_text,
+        c.content,
+        c.message,
+      ) ?? null;
     const lastSenderLower = String(c.latest_sender_name || "").trim().toLowerCase();
-    const lastMessageText = formatZaloSidebarPreview(rawLastMessage, {
-      isSelf: ["__me__", "me", "bạn", "ban"].includes(lastSenderLower),
-    });
+    const isSelf =
+      typeof c.latest_is_self === "boolean"
+        ? c.latest_is_self
+        : typeof c.last_message_is_self === "boolean"
+          ? c.last_message_is_self
+          : typeof c.is_sent === "boolean"
+            ? c.is_sent
+            : ["__me__", "me", "bạn", "ban"].includes(lastSenderLower);
+
+    const sidebarConv: ZaloSidebarConversationFields = {
+      conversation_id: c.conversation_id || c.conv_id || c.id || null,
+      thread_type: c.thread_type ?? null,
+      has_messages: c.has_messages ?? null,
+      latest_content: rawLastContent,
+      last_message_content: c.last_message_content ?? rawLastContent,
+      latest_sender_name: c.latest_sender_name ?? null,
+      latest_is_self: isSelf,
+      latest_is_deleted: Boolean(c.latest_is_deleted ?? c.last_message_is_deleted ?? c.is_deleted),
+      last_message_is_deleted: Boolean(c.last_message_is_deleted ?? c.is_deleted),
+      latest_type: c.latest_type || c.latest_msg_type || c.last_message_type || c.type || null,
+      latest_msg_type: c.latest_msg_type ?? null,
+      last_message_type: c.last_message_type || c.type || null,
+      latest_msg_kind: c.latest_msg_kind || c.last_message_kind || c.msg_kind || null,
+      last_message_kind: c.last_message_kind || c.msg_kind || null,
+      latest_raw_content:
+        c.latest_raw_content !== undefined
+          ? c.latest_raw_content
+          : c.last_message_raw_content !== undefined
+            ? c.last_message_raw_content
+            : c.raw_content,
+      last_message_raw_content:
+        c.last_message_raw_content !== undefined ? c.last_message_raw_content : c.raw_content,
+    };
+
+    const lastMessageText = formatConversationSidebarPreview(sidebarConv, { isSelf });
     const lastMessageTime = c.latest_message_at
       ? new Date(c.latest_message_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
       : (c.time || "");
@@ -680,8 +995,8 @@ export class OmnichannelRepository {
         matched: !!c.crm_customer_id || !!c.matched_customer_id,
         customerId: c.crm_customer_id || c.matched_customer_id || undefined,
         name: c.crm_customer_name || c.customer_name || customerName,
-        phone: c.phone_number || c.phone,
-        email: c.email,
+        phone: c.phone_number || c.phone || undefined,
+        email: c.email || undefined,
         ownerName: c.owner_name || "Nguyễn Thị Mai",
       },
       messages: [],
