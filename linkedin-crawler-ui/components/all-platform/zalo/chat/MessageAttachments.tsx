@@ -43,6 +43,8 @@ import {
   type ZaloAttachment,
   type ZaloMessageKind,
 } from "@/lib/zaloMessageContent";
+import { ZaloCallMessageCard } from "../centralized-shared/ZaloCallMessageCard";
+import type { ZaloCallMessageInfo } from "@/lib/zaloCallMessage";
 
 type Props = {
   attachments: ZaloAttachment[];
@@ -641,6 +643,22 @@ export function MessageAttachments({ attachments, kind, mine, onContactMessage, 
             return <ContactBubble key={i} a={a} onContactMessage={onContactMessage} />;
           case "bankcard":
             return <BankcardBubble key={i} a={a} mine={mine} onOpenGallery={onOpenGallery} />;
+          case "call": {
+            const info: ZaloCallMessageInfo = a.call_info || {
+              direction: mine ? "outgoing" : "incoming",
+              mediaType: "audio",
+              status: "completed",
+              title: a.title || (mine ? "Cuộc gọi thoại đi" : "Cuộc gọi thoại đến"),
+              subtitle: a.description || "Cuộc gọi Zalo",
+              previewLabel: a.title || "Cuộc gọi",
+              durationSec: a.duration_ms ? Math.round(a.duration_ms / 1000) : 0,
+              durationClock: a.duration_ms ? formatDuration(a.duration_ms) : "",
+              durationHuman: a.duration_ms ? formatDuration(a.duration_ms) : "",
+              enableCallback: false,
+              isMissed: false,
+            };
+            return <ZaloCallMessageCard key={i} info={info} isSent={Boolean(mine)} />;
+          }
           default:
             return null;
         }
@@ -660,5 +678,6 @@ const KIND_TEXT: Record<string, string> = {
   location: "vị trí",
   contact: "danh thiếp",
   bankcard: "tài khoản ngân hàng",
+  call: "cuộc gọi",
   unknown: "đặc biệt",
 };

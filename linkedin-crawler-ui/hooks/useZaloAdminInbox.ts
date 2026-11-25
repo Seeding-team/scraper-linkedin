@@ -26,6 +26,7 @@ import {
   type ZaloReplyToPayload,
 } from "@/services/zaloCrawlerService";
 import { allPlatformKpiService, zaloInboxShareService } from "@/services/all-platform.service";
+import { formatZaloSidebarPreview } from "@/lib/zaloCallMessage";
 import type {
   ZaloAccountInfo,
   ZaloConversationSummary,
@@ -733,6 +734,14 @@ export function useZaloAdminInbox() {
     setSseConnected(false);
     if (!selectedAccountId) return;
 
+    const voipRefreshTimers: ReturnType<typeof setTimeout>[] = [];
+    const clearVoipTimers = () => {
+      while (voipRefreshTimers.length > 0) {
+        const t = voipRefreshTimers.pop();
+        if (t) clearTimeout(t);
+      }
+    };
+
     try {
       const streamOptions: BuildZaloRealtimeStreamOptions = { userId: selectedAccountId };
       const url = buildZaloRealtimeStreamUrl(streamOptions);
@@ -747,8 +756,36 @@ export function useZaloAdminInbox() {
         setSseConnected(true);
       });
 
-      es.addEventListener("zalo-message", () => {
+      es.addEventListener("zalo-message", (event) => {
         setSseConnected(true);
+        try {
+          const payload = JSON.parse((event as MessageEvent).data || "{}") as Record<string, unknown>;
+          if (payload?.type === "voip_signal") {
+            const act = String(payload.act || "").toLowerCase();
+            const status = String(payload.status || "").toLowerCase();
+            if (act === "request" || act === "group_request" || status === "incoming") {
+              showToast("📞 Có cuộc gọi đến trên Zalo", true);
+            }
+            if (
+              ["cancel", "reject", "endcall", "end_call", "busy"].includes(act) ||
+              ["cancelled", "rejected", "ended", "busy"].includes(status)
+            ) {
+              // Zalo thường đẩy tin nhắn thẻ cuộc gọi (recommened.misscall / calltime) sau tín hiệu kết thúc 1-3s
+              voipRefreshTimers.push(
+                setTimeout(() => {
+                  void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
+                  void loadConversations(selectedAccountIdRef.current, true);
+                }, 1500),
+                setTimeout(() => {
+                  void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
+                  void loadConversations(selectedAccountIdRef.current, true);
+                }, 3800),
+              );
+            }
+          }
+        } catch {
+          /* ignore non-json SSE data */
+        }
         void loadMessages(selectedAccountIdRef.current, selectedConvIdRef.current, true);
         void loadConversations(selectedAccountIdRef.current, true);
       });
@@ -779,11 +816,12 @@ export function useZaloAdminInbox() {
     }
 
     return () => {
+      clearVoipTimers();
       setSseConnected(false);
       sseRef.current?.close();
       sseRef.current = null;
     };
-  }, [selectedAccountId, loadMessages, loadConversations]);
+  }, [selectedAccountId, loadMessages, loadConversations, showToast]);
 
   // ─────────────────────────────────────────────────────────────────────────────
   // KPI verified counts load
@@ -1547,10 +1585,11 @@ export function useZaloAdminInbox() {
         ? lastSender
         : (rawName || lastSender || "Người dùng Zalo");
 
+      const isSelfSender = ["__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase());
       return {
         conv_id: c.conversation_id,
         name: finalName,
-        preview: c.latest_content || "",
+        preview: formatZaloSidebarPreview(c.latest_content, { isSelf: isSelfSender }),
         latest_sender_name: c.latest_sender_name ?? null,
         unread: hasUnread,
         time: timeStr,

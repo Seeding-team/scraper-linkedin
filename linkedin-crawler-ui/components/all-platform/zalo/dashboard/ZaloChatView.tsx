@@ -63,6 +63,8 @@ import {
   MoreVertical,
 } from "lucide-react";
 import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
+import { ZaloCallMessageCard } from "../centralized-shared/ZaloCallMessageCard";
+import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
 import type {
   ZaloConversationSummary,
   ZaloLibraryMessage,
@@ -1063,6 +1065,33 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
             return;
           }
 
+          if (payload.type === "voip_signal") {
+            const act = String(payload.act || "").toLowerCase();
+            const status = String(payload.status || "").toLowerCase();
+            if (act === "request" || act === "group_request" || status === "incoming") {
+              setNewChatToast("📞 Có cuộc gọi đến trên Zalo");
+              window.setTimeout(() => setNewChatToast(null), 4000);
+            }
+            if (
+              ["cancel", "reject", "endcall", "end_call", "busy"].includes(act) ||
+              ["cancelled", "rejected", "ended", "busy"].includes(status)
+            ) {
+              window.setTimeout(() => {
+                void loadConversations({ silent: true });
+                if (lastLoadedConversationIdRef.current) {
+                  void pollLatestMessages(lastLoadedConversationIdRef.current);
+                }
+              }, 1500);
+              window.setTimeout(() => {
+                void loadConversations({ silent: true });
+                if (lastLoadedConversationIdRef.current) {
+                  void pollLatestMessages(lastLoadedConversationIdRef.current);
+                }
+              }, 3800);
+            }
+            return;
+          }
+
           if (payload.type !== "new_messages") return;
 
           const groupId = String(payload.group_id || "").trim();
@@ -1073,6 +1102,19 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
           // 1. Cập nhật last message preview và unread count cho sidebar trong thời gian thực
           if (lastMsg) {
+            const formattedLatestPreview =
+              formatZaloSidebarPreview(lastMsg.content, {
+                isSelf: Boolean(lastMsg.is_sent),
+                fallbackMessage: {
+                  type: lastMsg.type,
+                  msg_kind: lastMsg.msg_kind,
+                  content: lastMsg.content,
+                  is_sent: Boolean(lastMsg.is_sent),
+                  raw_content: lastMsg.raw_content,
+                },
+              }) ||
+              lastMsg.type ||
+              "Tin nhắn mới";
             setConversations(prev => {
               const exists = prev.some(c => c.conversation_id === groupId);
               let updated = prev;
@@ -1081,7 +1123,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   c.conversation_id === groupId
                     ? {
                         ...c,
-                        latest_content: lastMsg.content || lastMsg.type || "Tin nhắn mới",
+                        latest_content: formattedLatestPreview,
                         latest_message_at: lastMsg.timestamp || lastMsg.time_text,
                         latest_sender_name: lastMsg.sender_name,
                         unread_count: c.conversation_id === selectedConversationId ? c.unread_count : (c.unread_count || 0) + 1
@@ -1098,7 +1140,7 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                   sent_count: lastMsg.is_sent ? 1 : 0,
                   received_count: lastMsg.is_sent ? 0 : 1,
                   latest_message_at: lastMsg.timestamp || lastMsg.time_text,
-                  latest_content: lastMsg.content || lastMsg.type || "Tin nhắn mới",
+                  latest_content: formattedLatestPreview,
                   latest_sender_name: lastMsg.sender_name,
                   unread_count: groupId === selectedConversationId ? 0 : 1,
                   is_pinned: false,
@@ -1129,6 +1171,8 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                 timestamp_text: rawMsg.timestamp,
                 time_text: rawMsg.time_text,
                 type: rawMsg.type || "text",
+                msg_kind: rawMsg.msg_kind ?? null,
+                raw_content: rawMsg.raw_content ?? null,
                 content: rawMsg.content,
                 is_sent: Boolean(rawMsg.is_sent),
                 is_deleted: Boolean(rawMsg.is_deleted),
@@ -1148,6 +1192,8 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                 timestamp_text: rawMsg.timestamp,
                 time_text: rawMsg.time_text,
                 type: rawMsg.type || "text",
+                msg_kind: rawMsg.msg_kind ?? null,
+                raw_content: rawMsg.raw_content ?? null,
                 content: rawMsg.content,
                 is_sent: Boolean(rawMsg.is_sent),
                 is_deleted: Boolean(rawMsg.is_deleted),
@@ -2358,10 +2404,16 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
 
                   {messages.map((message) => {
                     const assets = messageAssets(message);
+                    const callInfo = !message.is_deleted ? parseZaloCallMessage(message) : null;
                     const sender = message.sender_name || (message.is_sent ? "Bạn" : "Khách");
                     const isSentByMe = message.is_sent;
                     const msgId = messageKey(message);
                     const isSelected = selectedMessageIds.includes(msgId);
+                    const canCallBackFromCard =
+                      Boolean(selectedConversationId) &&
+                      !selectedConversationId?.startsWith("g_") &&
+                      !selectedConversationId?.startsWith("group_") &&
+                      selectedConversation?.thread_type !== "group";
 
                     let roleLabel = "Khách hàng";
                     let roleColorClass = "bg-red-50 text-red-650 border border-red-200/50";
@@ -2404,6 +2456,24 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                             </div>
 
                             {/* Bubble box */}
+                            {callInfo ? (
+                              <div className="relative">
+                                <ZaloCallMessageCard
+                                  info={callInfo}
+                                  isSent={isSentByMe}
+                                  isSelected={isSelected}
+                                  timeLabel={formatTime(message.timestamp_text || message.time_text)}
+                                  onCallback={
+                                    canCallBackFromCard
+                                      ? (mode) => {
+                                          setCallModalMode(mode);
+                                          setCallModalOpen(true);
+                                        }
+                                      : undefined
+                                  }
+                                />
+                              </div>
+                            ) : (
                             <div className={`rounded-xl ${
                               fullScreen ? "px-4 py-2.5 text-[15px]" : "px-3 py-1.5"
                             } relative transition-all duration-200 ${
@@ -2541,7 +2611,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                                   title={quoted ? "Đi tới tin nhắn gốc" : undefined}
                                 >
                                   <span className="font-semibold">{quoted ? (quoted.sender_name || (quoted.is_sent ? "Bạn" : "Khách")) : "Tin nhắn gốc"}: </span>
-                                  {quoted?.content || (quoted ? "📷 Ảnh đính kèm" : "(không tải được nội dung gốc)")}
+                                  {(() => {
+                                    const qCall = quoted && !quoted.is_deleted ? parseZaloCallMessage(quoted) : null;
+                                    if (qCall) return `${qCall.isMissed ? "📵" : qCall.mediaType === "video" ? "📹" : "📞"} ${qCall.previewLabel}`;
+                                    return quoted?.content || (quoted ? "📷 Ảnh đính kèm" : "(không tải được nội dung gốc)");
+                                  })()}
                                 </button>
                               );
                             })()}
@@ -2636,8 +2710,9 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                               <span>{formatTime(message.timestamp_text || message.time_text)}</span>
                             </div>
                           </div>
+                            )}
 
-                          {!message.is_deleted && (
+                          {!message.is_deleted && !callInfo && (
                             <div className={isSentByMe ? "flex justify-end" : "flex justify-start"}>
                               <ZaloReactionBadges
                                 reactions={message.reactions}
@@ -2946,7 +3021,11 @@ export function ZaloChatView({ flow, onBackToDashboard, fullScreen = false }: Za
                         Trả lời {replyingTo.is_sent ? "chính mình" : replyingTo.sender_name || "Khách"}
                       </div>
                       <div className="text-[11.5px] text-on-surface-variant truncate">
-                        {replyingTo.content || (replyingTo.assets?.length ? "📷 Ảnh đính kèm" : "Tin nhắn")}
+                        {(() => {
+                          const rCall = !replyingTo.is_deleted ? parseZaloCallMessage(replyingTo) : null;
+                          if (rCall) return `${rCall.isMissed ? "📵" : rCall.mediaType === "video" ? "📹" : "📞"} ${rCall.previewLabel}`;
+                          return replyingTo.content || (replyingTo.assets?.length ? "📷 Ảnh đính kèm" : "Tin nhắn");
+                        })()}
                       </div>
                     </div>
                     <button

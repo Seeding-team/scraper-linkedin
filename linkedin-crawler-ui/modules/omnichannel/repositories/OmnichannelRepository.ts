@@ -1,6 +1,7 @@
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import { ChannelAccount, ConversationItem, MessageItem, CrmCustomerMatch, CrmOpportunity, CrmQuote, ChannelType } from "../types";
 import { seedingCrmRepository } from "@/modules/crm/repositories/SeedingCrmRepository";
+import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
 
 const commonHeaders: Record<string, string> = {
   "Content-Type": "application/json",
@@ -340,22 +341,71 @@ export class OmnichannelRepository {
         );
         if (res.ok) {
           const json = await res.json();
-          const list = json.messages || json.data || [];
-          return list.map((m: any) => ({
-            id: m.msg_id || m.id || `msg-${Date.now()}`,
-            sender: m.from_uid === accountId || m.sender_type === "me" || m.is_sent ? "me" : "them",
-            senderName: m.sender_name || (m.from_uid === accountId ? "Tôi" : "Khách"),
-            text: m.message_text || m.text || m.content || "",
-            time: m.created_at ? new Date(m.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "vừa xong",
-            attachment: m.media_url
-              ? {
-                  type: m.media_type === "image" ? "image" : "pdf",
-                  name: m.media_name || "Attachment",
-                  size: m.media_size || "1.0 MB",
-                  url: m.media_url,
-                }
-              : undefined,
-          }));
+          const list: Array<{
+            id?: string;
+            msg_id?: string;
+            source_message_id?: string;
+            from_uid?: string;
+            sender_type?: string;
+            sender_name?: string;
+            is_sent?: boolean;
+            is_deleted?: boolean;
+            type?: string;
+            msg_kind?: string;
+            message_text?: string;
+            text?: string;
+            content?: string;
+            raw_content?: unknown;
+            created_at?: string | number;
+            time_text?: string | number;
+            timestamp_text?: string | number;
+            media_url?: string;
+            media_type?: string;
+            media_name?: string;
+            media_size?: string;
+          }> = json.messages || json.data || [];
+          return list.map((m) => {
+            const isMe = m.from_uid === accountId || m.sender_type === "me" || Boolean(m.is_sent);
+            const rawText = m.message_text || m.text || m.content || "";
+            const callInfo = !m.is_deleted
+              ? parseZaloCallMessage({
+                  type: m.type,
+                  msg_kind: m.msg_kind,
+                  content: rawText,
+                  is_sent: isMe,
+                  raw_content: m.raw_content,
+                })
+              : null;
+            const rawTime = m.created_at || m.time_text || m.timestamp_text;
+            const parsedTime = rawTime
+              ? (() => {
+                  const num = Number(rawTime);
+                  const dt =
+                    !Number.isNaN(num) && /^\d+$/.test(String(rawTime).trim())
+                      ? new Date(num < 1e11 ? num * 1000 : num)
+                      : new Date(rawTime);
+                  return Number.isNaN(dt.getTime())
+                    ? "vừa xong"
+                    : dt.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+                })()
+              : "vừa xong";
+            return {
+              id: m.msg_id || m.source_message_id || m.id || `msg-${Date.now()}`,
+              sender: isMe ? "me" : "them",
+              senderName: m.sender_name || (isMe ? "Tôi" : "Khách"),
+              text: callInfo ? callInfo.previewLabel : rawText,
+              time: parsedTime,
+              callInfo: callInfo || undefined,
+              attachment: m.media_url
+                ? {
+                    type: m.media_type === "image" ? "image" : "pdf",
+                    name: m.media_name || "Attachment",
+                    size: m.media_size || "1.0 MB",
+                    url: m.media_url,
+                  }
+                : undefined,
+            };
+          });
         }
       } catch (e) {
         console.error("Error fetching Zalo messages:", e);
@@ -605,7 +655,11 @@ export class OmnichannelRepository {
   private mapZaloConversation(c: any, accountId: string, accountName?: string): ConversationItem {
     const customerName = c.conversation_name || c.peer_name || c.group_name || c.name || c.conversation_id || "Khách hàng Zalo";
     const customerAvatar = c.avatar_url || c.peer_avatar || c.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(customerName)}&background=random`;
-    const lastMessageText = c.latest_content || c.last_message_text || c.message || "";
+    const rawLastMessage = c.latest_content || c.last_message_text || c.message || "";
+    const lastSenderLower = String(c.latest_sender_name || "").trim().toLowerCase();
+    const lastMessageText = formatZaloSidebarPreview(rawLastMessage, {
+      isSelf: ["__me__", "me", "bạn", "ban"].includes(lastSenderLower),
+    });
     const lastMessageTime = c.latest_message_at
       ? new Date(c.latest_message_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
       : (c.time || "");

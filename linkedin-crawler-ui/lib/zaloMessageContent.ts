@@ -20,6 +20,13 @@
  * sao ở services/zalo-account-module/src/lib/zaloMessageContent.ts.
  */
 
+import {
+  formatZaloSidebarPreview,
+  isSendBubblePlaceholder,
+  parseZaloCallMessage,
+  type ZaloCallMessageInfo,
+} from "./zaloCallMessage";
+
 export type ZaloAttachmentKind =
   | "image"
   | "gif"
@@ -30,7 +37,8 @@ export type ZaloAttachmentKind =
   | "sticker"
   | "location"
   | "contact"
-  | "bankcard";
+  | "bankcard"
+  | "call";
 
 /**
  * Thông báo hệ thống chung (kết bạn, bình chọn, ...) — KHÔNG phải attachment
@@ -68,6 +76,8 @@ export type ZaloAttachment = {
   bg_url?: string;
   bin?: string;
   data_url?: string;
+  // Dành cho tin nhắn cuộc gọi Zalo (recommened.misscall / calltime / calling / receivecall)
+  call_info?: ZaloCallMessageInfo;
 };
 
 type RawRecord = Record<string, unknown>;
@@ -390,6 +400,10 @@ const BUILDERS: Record<ZaloAttachmentKind, (c: RawRecord) => ZaloAttachment | nu
   location: buildLocation,
   contact: buildContact,
   bankcard: buildBankcard,
+  call: (c) => {
+    const info = parseZaloCallMessage({ raw_content: c });
+    return info ? { kind: "call", title: info.title, description: info.subtitle, call_info: info } : null;
+  },
 };
 
 function looksLikeSticker(c: RawRecord): boolean {
@@ -540,6 +554,8 @@ function normalizeOne(content: unknown, kind: ZaloMessageKind): ZaloAttachment |
 /** Row `zalo_messages` (chỉ những cột cần cho phân loại). */
 export type StoredMessageRow = {
   msg_kind?: string | null;
+  type?: string | null;
+  is_sent?: boolean | null;
   attachments?: unknown;
   raw_content?: unknown;
   image_urls?: unknown;
@@ -600,6 +616,29 @@ export function normalizeStoredMessage(row: StoredMessageRow): {
     if (card && (card.data_url || card.account_number)) {
       return { kind: "bankcard", attachments: [card] };
     }
+  }
+
+  // Nhận diện tin nhắn cuộc gọi Zalo (cuộc gọi đến, gọi đi, gọi nhỡ, video call...)
+  const callInfo = parseZaloCallMessage({
+    type: row.type,
+    msg_kind: row.msg_kind,
+    content: row.content,
+    is_sent: row.is_sent,
+    raw_content: raw,
+  });
+  if (callInfo) {
+    return {
+      kind: "call",
+      attachments: [
+        {
+          kind: "call",
+          title: callInfo.title,
+          description: callInfo.subtitle,
+          duration_ms: callInfo.durationSec > 0 ? callInfo.durationSec * 1000 : undefined,
+          call_info: callInfo,
+        },
+      ],
+    };
   }
 
   const rawFirst =
@@ -699,6 +738,8 @@ const KIND_LABEL: Record<string, string> = {
   sticker: "[Sticker]",
   location: "[Vị trí]",
   contact: "[Danh thiếp]",
+  bankcard: "[Tài khoản ngân hàng]",
+  call: "[Cuộc gọi]",
   unknown: "[Tin nhắn]",
 };
 
@@ -717,8 +758,18 @@ export function previewText(input: {
   kind?: ZaloMessageKind | null;
   attachments?: ZaloAttachment[] | null;
 }): string {
-  if (input.text && input.text.trim()) return input.text.trim();
   const first = input.attachments?.[0];
+  if (first?.kind === "call") {
+    const label = first.call_info?.previewLabel || first.title || "Cuộc gọi";
+    const icon = first.call_info?.isMissed ? "📵" : first.call_info?.mediaType === "video" ? "📹" : "📞";
+    return `${icon} ${label}`;
+  }
+  if (input.text && input.text.trim()) {
+    if (isSendBubblePlaceholder(input.text)) {
+      return formatZaloSidebarPreview(input.text);
+    }
+    return input.text.trim();
+  }
   if (!first) return input.kind && input.kind !== "text" ? kindLabel(input.kind) : "";
   if (first.kind === "link") return `${KIND_LABEL.link} ${first.title || first.url || ""}`.trim();
   if (first.kind === "file") return `${KIND_LABEL.file} ${first.name || ""}`.trim();

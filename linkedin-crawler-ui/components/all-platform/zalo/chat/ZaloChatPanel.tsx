@@ -24,6 +24,7 @@ import {
   type PendingMention,
 } from "@/lib/mentionUtils";
 import { previewText, type ZaloAttachment } from "@/lib/zaloMessageContent";
+import { parseZaloCallMessage } from "@/lib/zaloCallMessage";
 import { Avatar } from "./Avatar";
 import { MessageAttachments } from "./MessageAttachments";
 import { MentionPicker } from "./MentionPicker";
@@ -467,21 +468,32 @@ function MessageBubble({
     );
   }
 
-  const attachments = (msg.attachments && msg.attachments.length > 0)
-    ? msg.attachments
-    : (msg.image_urls && msg.image_urls.length > 0
-        ? msg.image_urls.map((url) => ({ kind: "image" as const, url }))
-        : []);
+  const parsedCallFallback =
+    !msg.is_deleted && msg.msg_kind !== "call"
+      ? parseZaloCallMessage({
+          type: msg.type,
+          msg_kind: msg.msg_kind,
+          content: msg.content,
+          is_sent: msg.is_sent,
+        })
+      : null;
+  const attachments =
+    msg.attachments && msg.attachments.length > 0
+      ? msg.attachments
+      : parsedCallFallback
+        ? [{ kind: "call" as const, title: parsedCallFallback.title, description: parsedCallFallback.subtitle, call_info: parsedCallFallback }]
+        : msg.image_urls && msg.image_urls.length > 0
+          ? msg.image_urls.map((url) => ({ kind: "image" as const, url }))
+          : [];
   const hasAttachments = attachments.length > 0;
-  // Sticker/ảnh (đơn hoặc album, không kèm chú thích): bỏ nền bong bóng cho
-  // giống Zalo thật — nền xanh/trắng bọc quanh ảnh/nhãn dán trong suốt trông
-  // rất rối (yêu cầu người dùng 2026-09-20: "hình ảnh không nên tô màu nền
-  // xanh xung quanh như chữ"). Video/file/link/danh thiếp... vẫn giữ khung —
-  // các loại đó cần viền/nền để đọc được chữ/icon bên trong.
+  const isCallMsg = msg.msg_kind === "call" || attachments.some((a) => a.kind === "call");
+  // Sticker/ảnh (đơn hoặc album, không kèm chú thích) và thẻ cuộc gọi: bỏ nền bong bóng cho
+  // giống Zalo thật — nền xanh/trắng bọc quanh ảnh/nhãn dán/thẻ cuộc gọi trông rất rối.
   const bare =
-    !msg.content?.trim() &&
-    attachments.length > 0 &&
-    attachments.every((a) => a.kind === "sticker" || a.kind === "image" || a.kind === "gif" || a.kind === "contact");
+    isCallMsg ||
+    (!msg.content?.trim() &&
+      attachments.length > 0 &&
+      attachments.every((a) => a.kind === "sticker" || a.kind === "image" || a.kind === "gif" || a.kind === "contact"));
 
   // Gom Copy/Chuyển tiếp/Thu hồi vào 1 menu "⋮" nổi bên cạnh bong bóng (yêu
   // cầu người dùng 2026-09-21) — chỉ liệt kê hành động THẬT SỰ dùng được cho
@@ -503,7 +515,7 @@ function MessageBubble({
       },
     });
   }
-  if (msg.content?.trim()) {
+  if (!isCallMsg && msg.content?.trim()) {
     menuActions.push({
       key: "copy",
       label: "Copy",
@@ -516,7 +528,7 @@ function MessageBubble({
   }
   // Chuyển tiếp THỦ CÔNG — mọi tin có chữ hoặc đính kèm đều chuyển tiếp được
   // (khác Thu hồi chỉ áp dụng tin của mình).
-  if (onForward && (msg.content?.trim() || hasAttachments)) {
+  if (!isCallMsg && onForward && (msg.content?.trim() || hasAttachments)) {
     menuActions.push({
       key: "forward",
       label: "Chuyển tiếp",
@@ -639,7 +651,7 @@ function MessageBubble({
               onMediaLoad={onMediaLoad}
               onOpenGallery={onOpenGallery ? () => onOpenGallery(msg.message_id) : undefined}
             />
-            {msg.content && !(hasAttachments && msg.msg_kind === "bankcard" && /^\[(tài khoản ngân hàng|bank account)\]$/i.test(msg.content.trim())) && (
+            {!isCallMsg && msg.content && !(hasAttachments && msg.msg_kind === "bankcard" && /^\[(tài khoản ngân hàng|bank account)\]$/i.test(msg.content.trim())) && (
               <div className={`whitespace-pre-wrap break-words ${hasAttachments ? "mt-2" : ""}`} onClick={() => setExpanded(!expanded)}>
                 {linkifyText(msg.content, mine)}
               </div>

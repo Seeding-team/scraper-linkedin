@@ -1,3 +1,5 @@
+import type { ZaloCallMessageInfo } from "@/lib/zaloCallMessage";
+
 export type ChannelType =
   | "all"
   | "email"
@@ -61,6 +63,8 @@ export interface MessageItem {
   inReplyTo?: string;
   referencesHeader?: string;
   idempotencyKey?: string;
+  /** Thông tin cuộc gọi Zalo đã chuẩn hóa (cuộc gọi đến / đi / nhỡ / video) */
+  callInfo?: ZaloCallMessageInfo;
 }
 
 export interface CrmCustomerMatch {

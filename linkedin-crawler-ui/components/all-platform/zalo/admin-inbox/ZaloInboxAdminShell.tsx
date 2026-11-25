@@ -32,6 +32,8 @@ import { ZaloReactionQuickPicker, ZaloReactionBadges } from "../centralized-shar
 import { ZaloMessageSearchPanel } from "../centralized-shared/ZaloMessageSearchPanel";
 import { ZaloForwardModal } from "../centralized-shared/ZaloForwardModal";
 import { ZaloCallModal } from "../centralized-shared/ZaloCallModal";
+import { ZaloCallMessageCard } from "../centralized-shared/ZaloCallMessageCard";
+import { formatZaloSidebarPreview, parseZaloCallMessage } from "@/lib/zaloCallMessage";
 import { ZaloSwipeableMessageItem } from "../centralized-shared/ZaloSwipeableMessageItem";
 import { ZaloNewChatModal } from "../dashboard/ZaloNewChatModal";
 import type { ZaloConversationSummary, ZaloLibraryMessage } from "@/types/zalo-api";
@@ -435,16 +437,6 @@ function inferSpecialCard(message: ZaloLibraryMessage, assets: NormalizedAsset[]
   if (type.includes("sticker")) {
     return { kind: "sticker", title: title || "Sticker", imageUrl: imageUrl || assets[0]?.url, description };
   }
-  const isSentMsg = Boolean(message.is_sent);
-  if (type.includes("call") || rawText.includes("voicecall") || rawText.includes("videocall") || /cuộc gọi/i.test(content)) {
-    const isMissed = /nhỡ|từ chối|không trả lời|missed|rejected/i.test(content) || /missed|reject/i.test(rawText);
-    return {
-      kind: "call",
-      title: content || (isMissed ? "Cuộc gọi nhỡ" : isSentMsg ? "Cuộc gọi đi" : "Cuộc gọi đến"),
-      subtitle: isMissed ? "Khách không nhấc máy" : description || "Cuộc gọi thoại",
-      description: isMissed ? "missed" : "completed",
-    };
-  }
   if (!looksLikeFileShare && (type.includes("link") || (url && (title || description || content === url)))) {
     let subtitle = "Liên kết";
     try { if (url) subtitle = new URL(url).hostname.replace(/^www\./, ""); } catch { /* noop */ }
@@ -643,15 +635,40 @@ function linkifyText(text: string, isSent: boolean): React.ReactNode {
   );
 }
 
-function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { message: ZaloLibraryMessage; isSent: boolean; isSelected: boolean; onImageClick?: (url: string) => void }) {
+function ZaloMessageBody({
+  message,
+  isSent,
+  isSelected,
+  onImageClick,
+  onCallBack,
+}: {
+  message: ZaloLibraryMessage;
+  isSent: boolean;
+  isSelected: boolean;
+  onImageClick?: (url: string) => void;
+  onCallBack?: (mode: "voice" | "video") => void;
+}) {
+  const callInfo = !message.is_deleted ? parseZaloCallMessage(message) : null;
+  if (callInfo) {
+    return (
+      <div className={cn("flex", isSent ? "justify-end" : "justify-start")}>
+        <ZaloCallMessageCard
+          info={callInfo}
+          isSent={isSent}
+          isSelected={isSelected}
+          onCallback={onCallBack}
+        />
+      </div>
+    );
+  }
+
   const assets = normalizeMessageAssets(message);
   const imageAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) === "image");
   const otherAssets = assets.filter((asset) => classifyAssetKind(asset.url, message) !== "image");
   const specialCard = inferSpecialCard(message, assets);
   const isSticker = specialCard?.kind === "sticker";
-  const isCall = specialCard?.kind === "call";
   const hasText = Boolean(message.content?.trim());
-  const showText = hasText && !isCall && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
+  const showText = hasText && !(specialCard?.kind === "link" && specialCard.url && message.content?.trim() === specialCard.url);
   const bubbleClass = cn(
     "rounded-2xl px-3.5 py-2 text-[13.5px] font-normal leading-relaxed break-words transition-all duration-200 shadow-2xs",
     isSent
@@ -659,10 +676,6 @@ function ZaloMessageBody({ message, isSent, isSelected, onImageClick }: { messag
       : "bg-white text-slate-900 border border-slate-200/80 rounded-tl-xs",
     isSelected && (isSent ? "ring-2 ring-blue-400 ring-offset-2" : "ring-2 ring-blue-400/50 bg-blue-50/60"),
   );
-
-  if (isCall) {
-    return <ZaloSpecialCardView card={specialCard} isSent={isSent} />;
-  }
 
   return (
     <div className={cn("space-y-1", isSent ? "items-end" : "items-start")}>
@@ -2433,7 +2446,7 @@ export function ZaloInboxAdminShell() {
                     )}
                   >
                     <div className="truncate font-bold text-slate-900">{item.name}</div>
-                    <div className="mt-0.5 truncate text-[11px] text-slate-500">{item.preview || "—"}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-slate-500">{formatZaloSidebarPreview(item.preview) || "—"}</div>
                   </button>
                 ))
               )
@@ -2480,7 +2493,8 @@ export function ZaloInboxAdminShell() {
               inbox.filtered.map((conv) => {
                 const active = inbox.openConv === conv.conv_id && !inbox.archiveReading;
                 const lastSender = conv.latest_sender_name?.trim();
-                const previewText = conv.preview || "—";
+                const isSelfPreview = !!lastSender && ["__me__", "me", "bạn", "ban"].includes(lastSender.toLowerCase());
+                const previewText = formatZaloSidebarPreview(conv.preview, { isSelf: isSelfPreview }) || "—";
                 const previewWithSender = lastSender && lastSender !== conv.name && previewText !== "—"
                   ? `${lastSender}: ${previewText}`
                   : previewText;
@@ -3166,18 +3180,36 @@ export function ZaloInboxAdminShell() {
                                   >
                                     <span className={cn("block text-[10px] font-bold", isSent ? "text-white" : "text-[#E3000F]")}>Trả lời {quotedSender}</span>
                                     <span className="block truncate text-[10.5px] opacity-90">
-                                      {quoted?.content || (quoted ? "Đính kèm" : "Chưa tải được nội dung gốc")}
+                                      {(() => {
+                                        const qCall = quoted && !quoted.is_deleted ? parseZaloCallMessage(quoted) : null;
+                                        if (qCall) return `${qCall.isMissed ? "📵" : qCall.mediaType === "video" ? "📹" : "📞"} ${qCall.previewLabel}`;
+                                        return quoted?.content || (quoted ? "Đính kèm" : "Chưa tải được nội dung gốc");
+                                      })()}
                                     </span>
                                   </button>
                                 );
                               })()}
-                              <ZaloMessageBody message={msg} isSent={isSent} isSelected={isSelected} onImageClick={handleImageClick} />
+                              <ZaloMessageBody
+                                message={msg}
+                                isSent={isSent}
+                                isSelected={isSelected}
+                                onImageClick={handleImageClick}
+                                onCallBack={
+                                  !inbox.archiveReading && inbox.openConv && !isZaloGroupConversationId(inbox.openConv)
+                                    ? (mode) => {
+                                        setCallModalMode(mode);
+                                        setCallModalOpen(true);
+                                      }
+                                    : undefined
+                                }
+                              />
                               {(() => {
+                                const msgCallInfo = !msg.is_deleted ? parseZaloCallMessage(msg) : null;
                                 const msgKey = msg.source_message_id || msg.id || String(index);
-                                const canReact = !msg.is_deleted && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
+                                const canReact = !msg.is_deleted && !msgCallInfo && msg.source_message_id && (msg as unknown as { cli_msg_id?: string }).cli_msg_id;
                                 const canActOnMessage = !msg.is_deleted && !!(msg.source_message_id || msg.id);
-                                const canCopyMessage = canActOnMessage && !!msg.content?.trim();
-                                const canForwardMessage = canActOnMessage && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
+                                const canCopyMessage = canActOnMessage && !msgCallInfo && !!msg.content?.trim();
+                                const canForwardMessage = canActOnMessage && !msgCallInfo && !!(msg.content?.trim() || (msg.assets ?? []).some((asset) => asset.storage_url));
                                 const isOptimisticMsg = String(msg.id).startsWith("optimistic_");
                                 const rawStaffName =
                                   (msg.staff_name && String(msg.staff_name).trim()) ||
@@ -3524,7 +3556,11 @@ export function ZaloInboxAdminShell() {
                     Đang trả lời {inbox.replyingTo.is_sent ? "bạn" : inbox.replyingTo.sender_name || "khách"}
                   </div>
                   <div className="truncate text-slate-600">
-                    {inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Đính kèm" : "Tin nhắn")}
+                    {(() => {
+                      const rCall = !inbox.replyingTo.is_deleted ? parseZaloCallMessage(inbox.replyingTo) : null;
+                      if (rCall) return `${rCall.isMissed ? "📵" : rCall.mediaType === "video" ? "📹" : "📞"} ${rCall.previewLabel}`;
+                      return inbox.replyingTo.content || ((inbox.replyingTo.assets?.length ?? 0) > 0 ? "Đính kèm" : "Tin nhắn");
+                    })()}
                   </div>
                 </div>
                 <button type="button" onClick={() => inbox.setReplyingTo(null)} className="rounded-full p-1 hover:bg-white" title="Hủy trả lời">
@@ -3920,7 +3956,7 @@ export function ZaloInboxAdminShell() {
                 <div className="rounded-2xl border border-slate-200/80 bg-white p-3.5 space-y-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Tài khoản Zalo</span>
                   <h3 className="text-xs font-bold text-slate-900">{selectedName || inbox.openConv}</h3>
-                  <p className="text-xs text-slate-500">{selectedPreview || "—"}</p>
+                  <p className="text-xs text-slate-500">{formatZaloSidebarPreview(selectedPreview) || "—"}</p>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200/80 bg-slate-50/50 p-3 space-y-2">

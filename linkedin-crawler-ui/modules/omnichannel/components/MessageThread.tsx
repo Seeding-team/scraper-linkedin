@@ -17,6 +17,7 @@ import {
   AlertCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ZaloCallMessageCard } from "@/components/all-platform/zalo/centralized-shared/ZaloCallMessageCard";
 
 interface MessageThreadProps {
   conversation: ConversationItem;
@@ -387,6 +388,29 @@ export const MessageThread: React.FC<MessageThreadProps> = ({
         }
 
         const isMe = msg.sender === "me";
+
+        if (msg.callInfo) {
+          return (
+            <div
+              key={msg.id}
+              className={cn("flex items-end gap-1.5", isMe ? "justify-end" : "justify-start")}
+            >
+              {!isMe && (
+                <img
+                  src={conversation.customerAvatar}
+                  alt={conversation.customerName}
+                  className="h-6 w-6 rounded-full object-cover shrink-0 border border-slate-200 mb-0.5"
+                />
+              )}
+              <ZaloCallMessageCard
+                info={msg.callInfo}
+                isSent={isMe}
+                timeLabel={msg.time}
+                compact
+              />
+            </div>
+          );
+        }
 
         return (
           <div

@@ -14,6 +14,7 @@
 import { AlertTriangle, Check, Loader2, MessageSquare, Pin, RefreshCcw, Search, Send, UserPlus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ZaloConversation, ZaloStrangerUser, zaloApi } from "@/lib/zaloApiClient";
+import { formatZaloSidebarPreview } from "@/lib/zaloCallMessage";
 import { Avatar } from "./Avatar";
 import { TagEditor, TagPill } from "./TagEditor";
 
@@ -64,7 +65,8 @@ function asPhoneNumber(raw: string): string | null {
  * đang chat với ai qua tên hội thoại, không cần lặp lại tên).
  */
 function lastMessageLabel(c: ZaloConversation): string {
-  const content = c.latest_content || (c.has_messages ? "..." : "Chưa có tin nhắn");
+  const formatted = formatZaloSidebarPreview(c.latest_content, { isSelf: Boolean(c.latest_is_self) });
+  const content = formatted || (c.has_messages ? "..." : "Chưa có tin nhắn");
   if (!c.has_messages) return content;
   if (c.latest_is_self) return `Bạn: ${content}`;
   if (c.thread_type === "group" && c.latest_sender_name) return `${c.latest_sender_name}: ${content}`;
