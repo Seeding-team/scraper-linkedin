@@ -10,6 +10,7 @@ from typing import Any, Optional
 from app.core.supabase_client import execute_supabase_query, get_supabase_client
 from app.modules.all_platform.services.supabase_categories_service import get_categories_by_type
 from app.modules.all_platform.services.supabase_kpi_service import VN_TZ, _vn_week_range_to_utc
+from app.modules.all_platform.services.unified_posts_service import _extract_phone_from_text
 
 logger = logging.getLogger(__name__)
 
@@ -485,11 +486,77 @@ def get_call_result_stats(
         commented_post_ids = {str(r["id_post"]) for r in rows if r.get("id_post") is not None}
         return len(commented_post_ids & suitable_post_ids)
 
+    def _count_unique_phones(gte_utc: str, lte_utc: str) -> int:
+        """"Tổng số điện thoại" (card Cuộc gọi/Zalo, 2026-11-25): COUNT(DISTINCT SĐT) trích
+        từ `content` của tập bài "phù hợp" trong kỳ (cùng định nghĩa "phù hợp" với
+        `_get_suitable_post_ids` — đã crawl theo `crawl_date`, KHÔNG bị đánh giá
+        'khong-phu-hop'). LUÔN toàn cục, KHÔNG thu hẹp theo `member_id` dù dropdown đang
+        chọn ai (xác nhận người dùng 2026-11-25): đây là con số mô tả QUY MÔ dữ liệu
+        ("tập bài này có bao nhiêu SĐT khác nhau"), không phải chỉ số hiệu suất theo người
+        như callOk/zaloSent — không có khái niệm "% so với kỳ trước" hay "*_prev" cho số này.
+
+        Dùng chung 1 con số cho CẢ "Cuộc gọi" lẫn "Zalo" (xác nhận người dùng 2026-11-25):
+        không có cột SĐT lưu sẵn ở bất kỳ bảng post nào (facebook_posts/linkedin_posts/
+        threads_posts/youtube_posts), và `post_call_results` cũng không lưu SĐT — SĐT chỉ
+        có thể suy ra bằng regex trên `content`, giống hệt cách PostCard hiển thị SĐT
+        (`_extract_phone_from_text` ở `unified_posts_service.py`). Nguồn thay thế
+        `auto_seeding_comments.phone_number`/`zalo_inbox_kpi.phone_number` KHÔNG dùng được
+        vì chỉ tồn tại cho Facebook+LinkedIn (không có Threads/YouTube) và chỉ có dòng cho
+        bài đã qua bot auto-seeding, không phải mọi bài "phù hợp".
+
+        Viết hàm riêng thay vì sửa `_get_suitable_post_ids` (trả `set[str]` id, đang được
+        nhiều nơi khác dùng) vì ở đây cần thêm cột `content` (text) — SELECT nặng hơn, nên
+        tách riêng thay vì đổi kiểu trả về của hàm dùng chung.
+        """
+        platform_table_pairs = (
+            [(platform, _POST_TABLE_BY_PLATFORM[platform])]
+            if platform in _POST_TABLE_BY_PLATFORM
+            else list(_POST_TABLE_BY_PLATFORM.items())
+        )
+        unique_phones: set[str] = set()
+        for plat, table in platform_table_pairs:
+            try:
+                post_rows = execute_supabase_query(
+                    lambda t=table: supabase.table(t)
+                    .select("id, content")
+                    .gte("crawl_date", gte_utc)
+                    .lte("crawl_date", lte_utc)
+                    .execute()
+                ).data or []
+            except Exception as exc:
+                logger.warning(f"get_call_result_stats: lỗi đọc bài để đếm SĐT ở bảng {table}: {exc}")
+                continue
+            if not post_rows:
+                continue
+            try:
+                unsuitable_rows = execute_supabase_query(
+                    lambda p=plat: supabase.table("post_quick_review")
+                    .select("post_id")
+                    .eq("platform", p)
+                    .eq("evaluation_code", "khong-phu-hop")
+                    .execute()
+                ).data or []
+            except Exception as exc:
+                logger.warning(
+                    f"get_call_result_stats: lỗi đọc post_quick_review (đếm SĐT, platform={plat}): {exc}"
+                )
+                unsuitable_rows = []
+            unsuitable_ids = {str(r["post_id"]) for r in unsuitable_rows if r.get("post_id") is not None}
+            for row in post_rows:
+                pid = row.get("id")
+                if pid is None or str(pid) in unsuitable_ids:
+                    continue
+                phone = _extract_phone_from_text(row.get("content"))
+                if phone:
+                    unique_phones.add(phone)
+        return len(unique_phones)
+
     total_posts_count = _count_crawled_posts(start_utc, end_utc)
     total_posts_count_prev = _count_crawled_posts(prev_start_utc, prev_end_utc)
     # Card "Tổng bài": LUÔN toàn cục, không lọc theo thành viên (giữ nguyên hành vi/tooltip cũ).
     suitable_post_ids = _get_suitable_post_ids(start_utc, end_utc)
     total_posts_suitable_count = len(suitable_post_ids)
+    total_unique_phones_count = _count_unique_phones(start_utc, end_utc)
 
     # Card "Comment" — Việc 3+4 (2026-11-23):
     # - X (comment_distinct_post_count): luôn so với tập "phù hợp" TOÀN CỤC ở trên (lý do xem
@@ -522,6 +589,7 @@ def get_call_result_stats(
         "total_posts_count": total_posts_count,
         "total_posts_count_prev": total_posts_count_prev,
         "total_posts_suitable_count": total_posts_suitable_count,
+        "total_unique_phones_count": total_unique_phones_count,
         "range": {"start": start_d.isoformat(), "end": end_d.isoformat()},
     }
 

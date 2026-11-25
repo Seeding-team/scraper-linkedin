@@ -3067,6 +3067,10 @@ export interface CallResultStats {
   /** Tử số của card "Tổng bài" (X/Y): trong total_posts_count, số bài KHÔNG bị đánh giá
    *  "Không phù hợp" (post_quick_review.evaluation_code != 'khong-phu-hop'). */
   total_posts_suitable_count: number;
+  /** "Tổng số điện thoại" (card Cuộc gọi/Zalo): COUNT(DISTINCT SĐT) trích từ content của tập bài
+   *  phù hợp trong kỳ — dùng CHUNG cho cả 2 card, LUÔN toàn cục (không lọc theo thành viên),
+   *  KHÔNG có bản *_prev/% (chỉ mô tả quy mô dữ liệu, không phải chỉ số hiệu suất). */
+  total_unique_phones_count: number;
   range: { start: string; end: string };
 }
 
