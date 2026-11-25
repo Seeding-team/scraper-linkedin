@@ -211,7 +211,7 @@ class ZaloCallGatewaySession {
       const sources = [this.remoteRelay, this.p2pTarget, ...this.relayServers].filter(Boolean);
       if (!sources.some((s) => s.host === rinfo.address && s.port === rinfo.port)) return;
 
-      // Kiểm tra gói tin ZrtcPacket (msgType=2 phản hồi InitZRTP/Echo hoặc msgType=3 Audio RTP)
+      // Kiểm tra gói tin ZrtcPacket (msgType=2 phản hồi control, msgType=4 Relay->Client Audio RTP, msgType=5/13/14/15 RTCP/Video)
       const zrtc = parseZrtcPacket(msg);
       if (zrtc && zrtc.msgType === 2) {
         if ((zrtc.cmd === 11 || zrtc.cmd === 12) && zrtc.res === 0 && zrtc.token) {
@@ -219,12 +219,15 @@ class ZaloCallGatewaySession {
         }
         return;
       }
+      if (zrtc && [5, 13, 14, 15].includes(zrtc.msgType)) {
+        return;
+      }
 
-      const rtpBuf = zrtc && zrtc.msgType === 3 && zrtc.rtpPayload ? zrtc.rtpPayload : msg;
+      const rtpBuf = zrtc && (zrtc.msgType === 3 || zrtc.msgType === 4) && zrtc.rtpPayload ? zrtc.rtpPayload : msg;
       const parsed = parseRtpPacket(rtpBuf);
       if (
         !parsed ||
-        (parsed.payloadType !== 112 && parsed.payloadType !== 113) ||
+        ![111, 112, 113].includes(parsed.payloadType) ||
         !parsed.payload.length ||
         parsed.ssrc === this.ssrc
       ) {
