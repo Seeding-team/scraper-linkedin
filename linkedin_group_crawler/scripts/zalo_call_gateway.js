@@ -17,7 +17,9 @@ const { WebSocketServer } = require("ws");
 const {
   CALL_V2_TRANSPORT_AES_KEY,
   buildZrtcInitZrtpPacket,
+  buildZrtcPingPacket,
   buildZrtcEchoPacket,
+  buildZrtcEndCallPacket,
   wrapZrtcAudioRtpPacket,
   parseZrtcPacket,
   encryptZCallTransportFrame,
@@ -288,13 +290,15 @@ class ZaloCallGatewaySession {
       this.sendHandshakeFrame();
     } else {
       this.echoSeq = (this.echoSeq + 1) & 0xff;
-      const echoPkt = buildZrtcEchoPacket({
-        callId: this.callId,
-        fromId: this.fromId,
-        token: this.zrtcToken,
-        seq: this.echoSeq,
-      });
-      this.udpSocket.send(echoPkt, this.remoteRelay.port, this.remoteRelay.host);
+      if (this.echoSeq % 3 === 0) {
+        // Gửi ZRTPPing thật (cmd=2, magic=0x01) mỗi 3 giây — tuyệt đối KHÔNG gửi cmd=3 (ZRTPEndCall)!
+        const pingPkt = buildZrtcPingPacket({
+          fromId: this.fromId,
+          token: this.zrtcToken,
+          sessId: this.sessId,
+        });
+        this.udpSocket.send(pingPkt, this.remoteRelay.port, this.remoteRelay.host);
+      }
     }
 
     if (this.status !== "connected") return;
@@ -417,6 +421,17 @@ class ZaloCallGatewaySession {
       this.keepaliveTimer = null;
     }
     if (this.udpSocket) {
+      if (this.remoteRelay && this.fromId && this.zrtcToken) {
+        try {
+          const endPkt = buildZrtcEndCallPacket({
+            callId: this.callId,
+            fromId: this.fromId,
+            token: this.zrtcToken,
+            subCmd: 0,
+          });
+          this.udpSocket.send(endPkt, this.remoteRelay.port, this.remoteRelay.host);
+        } catch (_) {}
+      }
       try {
         this.udpSocket.close();
       } catch (_) {}

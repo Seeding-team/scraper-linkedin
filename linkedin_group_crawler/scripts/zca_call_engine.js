@@ -62,7 +62,7 @@ function buildDefaultZrtcExtendData({ callType = 1, p2pList = [], serverAddrList
     srtcp: 0,
     srtpMode: 0,
     supportCallBusy: 1,
-    supportHevcDecode: 1,
+    supportHevcDecode: 0,
     tpType: 0,
     video: { codec: [{ name: "h264", payload: 97 }] },
   });
@@ -104,10 +104,11 @@ function buildZrtcInitZrtpPacket({
 }
 
 /**
- * Đóng gói gói tin nhị phân ZrtcPacket Echo / Keepalive (msgType=1, magic=0x7E, cmd=3)
- * Trích xuất từ ZrtcPacket::buildEcho (0x00894b8e).
+ * Đóng gói gói tin nhị phân ZrtcPacket EndCall (msgType=1, magic=0x7E, cmd=3).
+ * Trích xuất chính xác từ _sendRequestZRTPEndCall -> 0x00894b8e trong ZaloCall.exe.
+ * CHỈ gửi khi hủy/kết thúc cuộc gọi — TUYỆT ĐỐI KHÔNG gửi khi đang ringing/connected!
  */
-function buildZrtcEchoPacket({ callId, fromId, token = 0, seq = 1 }) {
+function buildZrtcEndCallPacket({ callId, fromId, token = 0, subCmd = 0 }) {
   const buf = Buffer.alloc(25);
   buf.writeUInt8(1, 0); // msgType = 1
   buf.writeUInt8(0x7e, 1); // magic = 0x7E
@@ -115,9 +116,49 @@ function buildZrtcEchoPacket({ callId, fromId, token = 0, seq = 1 }) {
   buf.writeUInt32LE(0, 6);
   buf.writeUInt32LE((Number(fromId) || 0) >>> 0, 10);
   buf.writeUInt32LE((Number(token) || Number(fromId) || 0) >>> 0, 14);
-  buf.writeUInt16LE(3, 18); // cmd = 3 (Echo)
-  buf.writeUInt8((Number(seq) || 1) & 0xff, 20);
+  buf.writeUInt16LE(3, 18); // cmd = 3 (ZRTPEndCall)
+  buf.writeUInt8((Number(subCmd) || 0) & 0xff, 20);
   buf.writeUInt32LE((Number(callId) || 0) >>> 0, 21);
+  return buf;
+}
+
+/**
+ * Đóng gói gói tin nhị phân ZrtcPacket ZRTPPing (msgType=1, magic=0x01, cmd=2, subCmd=1).
+ * Trích xuất chính xác từ _sendRequestZRTPPing -> 0x00894eb3 trong ZaloCall.exe.
+ */
+function buildZrtcPingPacket({ fromId, token = 0, sessId = "" }) {
+  const sessBytes = Buffer.from(String(sessId || ""), "utf8");
+  const buf = Buffer.alloc(23 + sessBytes.length);
+  buf.writeUInt8(1, 0); // msgType = 1
+  buf.writeUInt8(0x01, 1); // magic = 0x01
+  buf.writeUInt32LE(0, 2);
+  buf.writeUInt32LE(0, 6);
+  buf.writeUInt32LE((Number(fromId) || 0) >>> 0, 10);
+  buf.writeUInt32LE((Number(token) || Number(fromId) || 0) >>> 0, 14);
+  buf.writeUInt16LE(2, 18); // cmd = 2 (ZRTPPing)
+  buf.writeUInt8(1, 20); // subCmd = 1
+  buf.writeUInt16LE(sessBytes.length & 0xffff, 21);
+  sessBytes.copy(buf, 23);
+  return buf;
+}
+
+/**
+ * Đóng gói gói tin nhị phân ZrtcPacket Echo (msgType=1, magic=0x01, cmd=5, subCmd=0).
+ * Trích xuất chính xác từ _sendEchoRequestToServers -> 0x00894b2e trong ZaloCall.exe.
+ */
+function buildZrtcEchoPacket({ seq = 1, data = "4130" } = {}) {
+  const payload = Buffer.isBuffer(data) ? data : Buffer.from(String(data || "4130"), "utf8");
+  const buf = Buffer.alloc(23 + payload.length);
+  buf.writeUInt8(1, 0); // msgType = 1
+  buf.writeUInt8(0x01, 1); // magic = 0x01
+  buf.writeUInt32LE(0, 2);
+  buf.writeUInt32LE((Number(seq) || 0) >>> 0, 6);
+  buf.writeUInt32LE(0x003e9765, 10);
+  buf.writeUInt32LE(0x012f833c, 14);
+  buf.writeUInt16LE(5, 18); // cmd = 5 (Echo)
+  buf.writeUInt8(0, 20); // subCmd = 0
+  buf.writeUInt16LE(payload.length & 0xffff, 21);
+  payload.copy(buf, 23);
   return buf;
 }
 
@@ -141,12 +182,12 @@ function wrapZrtcAudioRtpPacket(rtpBuf, token = 0, isRtcp = false) {
 function parseZrtcPacket(buf) {
   if (!buf || buf.length < 5) return null;
   const msgType = buf.readUInt8(0);
-  if ((msgType === 1 || msgType === 2) && buf.length >= 25 && buf.readUInt8(1) === 0x7e) {
+  if ((msgType === 1 || msgType === 2) && buf.length >= 21 && (buf.readUInt8(1) === 0x7e || buf.readUInt8(1) === 0x01)) {
     const userId = buf.readUInt32LE(10);
     const headerToken = buf.readUInt32LE(14);
     const cmd = buf.readUInt16LE(18);
     const subCmd = buf.readUInt8(20);
-    const res = buf.readInt32LE(21);
+    const res = buf.length >= 25 ? buf.readInt32LE(21) : 0;
     let callId = 0;
     let token = headerToken;
     let publicAddr = "";
@@ -610,7 +651,8 @@ async function startDirectZaloCall(
       const stunIp = rtpStr.slice(0, lastColon);
       const stunPort = Number(rtpStr.slice(lastColon + 1));
       if (stunIp && stunPort > 0) {
-        p2pList.push({ ip: stunIp, port: stunPort, type: 0 });
+        const isPriv = /^(10\.|192\.168\.|127\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(stunIp);
+        p2pList.push({ ip: stunIp, port: stunPort, type: isPriv ? 0 : 1 });
       }
     }
   }
@@ -687,7 +729,9 @@ module.exports = {
   DEFAULT_VOIP_CODECS,
   buildDefaultZrtcExtendData,
   buildZrtcInitZrtpPacket,
+  buildZrtcPingPacket,
   buildZrtcEchoPacket,
+  buildZrtcEndCallPacket,
   wrapZrtcAudioRtpPacket,
   parseZrtcPacket,
   performUdpInitZrtpHandshake,

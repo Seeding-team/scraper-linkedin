@@ -168,14 +168,15 @@ def build_zrtc_init_zrtp_packet(
     return header + body
 
 
-def build_zrtc_echo_packet(
+def build_zrtc_end_call_packet(
     call_id: int,
     from_id: int,
     token: int = 0,
-    seq: int = 1,
+    sub_cmd: int = 0,
 ) -> bytes:
-    """Đóng gói gói tin nhị phân ZrtcPacket Echo / Keepalive (msgType=1, magic=0x7E, cmd=3).
-    Trích xuất từ ZrtcPacket::buildEcho (0x00894b8e).
+    """Đóng gói gói tin nhị phân ZrtcPacket EndCall (msgType=1, magic=0x7E, cmd=3).
+    Trích xuất chính xác từ _sendRequestZRTPEndCall -> 0x00894b8e trong ZaloCall.exe.
+    CHỈ gửi khi chủ động hủy/kết thúc cuộc gọi — TUYỆT ĐỐI KHÔNG gửi khi đang ringing/connected!
     """
     effective_token = (int(token) or int(from_id)) & 0xFFFFFFFF
     header = struct.pack(
@@ -187,9 +188,61 @@ def build_zrtc_echo_packet(
         int(from_id) & 0xFFFFFFFF,
         effective_token,
         3,
-        int(seq) & 0xFF,
+        int(sub_cmd) & 0xFF,
     )
     body = struct.pack("<I", int(call_id) & 0xFFFFFFFF)
+    return header + body
+
+
+def build_zrtc_ping_packet(
+    from_id: int,
+    token: int = 0,
+    sess_id: str = "",
+) -> bytes:
+    """Đóng gói gói tin nhị phân ZrtcPacket ZRTPPing (msgType=1, magic=0x01, cmd=2, subCmd=1).
+    Trích xuất chính xác từ _sendRequestZRTPPing -> 0x00894eb3 & ZrtcPacket::serialize (0x00893ba0) trong ZaloCall.exe.
+    """
+    effective_token = (int(token) or int(from_id)) & 0xFFFFFFFF
+    sess_bytes = (sess_id or "").encode("utf-8")
+    header = struct.pack(
+        "<BBIIIIHB",
+        1,
+        0x01,
+        0,
+        0,
+        int(from_id) & 0xFFFFFFFF,
+        effective_token,
+        2,
+        1,
+    )
+    body = struct.pack("<H", len(sess_bytes) & 0xFFFF) + sess_bytes
+    return header + body
+
+
+def build_zrtc_echo_packet(
+    call_id: int = 0,
+    from_id: int = 0,
+    token: int = 0,
+    seq: int = 1,
+    data: bytes = b"4130",
+) -> bytes:
+    """Đóng gói gói tin nhị phân ZrtcPacket Echo (msgType=1, magic=0x01, cmd=5, subCmd=0).
+    Trích xuất chính xác từ _sendEchoRequestToServers -> 0x00894b2e trong ZaloCall.exe.
+    """
+    del call_id, from_id, token
+    payload = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
+    header = struct.pack(
+        "<BBIIIIHB",
+        1,
+        0x01,
+        0,
+        int(seq) & 0xFFFFFFFF,
+        0x003E9765,
+        0x012F833C,
+        5,
+        0,
+    )
+    body = struct.pack("<H", len(payload) & 0xFFFF) + bytes(payload)
     return header + body
 
 
@@ -236,9 +289,9 @@ def parse_zrtc_packet(packet: bytes) -> Optional[Dict[str, Any]]:
     if not packet or len(packet) < 5:
         return None
     msg_type = packet[0]
-    if msg_type in (1, 2) and len(packet) >= 25 and packet[1] == 0x7E:
+    if msg_type in (1, 2) and len(packet) >= 21 and packet[1] in (0x7E, 0x01):
         _, _, _, _, user_id, header_token, cmd, sub_cmd = struct.unpack("<BBIIIIHB", packet[:21])
-        res = struct.unpack("<i", packet[21:25])[0]
+        res = struct.unpack("<i", packet[21:25])[0] if len(packet) >= 25 else 0
         call_id = 0
         token = header_token
         public_addr = ""
@@ -248,6 +301,7 @@ def parse_zrtc_packet(packet: bytes) -> Optional[Dict[str, Any]]:
                 public_addr = packet[35 : 35 + addr_len].decode("utf-8", errors="replace")
         return {
             "msg_type": msg_type,
+            "magic": packet[1],
             "user_id": user_id,
             "cmd": cmd,
             "sub_cmd": sub_cmd,
@@ -701,8 +755,19 @@ class ZaloCallSession:
         # Tương thích test/những gói nhỏ đơn lẻ (< 640B)
         self._send_encoded_rtp_frame(audio_frame, payload_type=payload_type)
 
-    def close_media(self) -> None:
+    def close_media(self, *, send_zrtc_end: bool = True) -> None:
         if self.udp_transport is not None:
+            if send_zrtc_end and self.remote_rtp_addr and self.zalo_from_id and self.zrtc_token:
+                try:
+                    end_pkt = build_zrtc_end_call_packet(
+                        self.call_id,
+                        self.zalo_from_id,
+                        self.zrtc_token,
+                        sub_cmd=0,
+                    )
+                    self.udp_transport.sendto(end_pkt, self.remote_rtp_addr)
+                except Exception:
+                    pass
             try:
                 self.udp_transport.close()
             except Exception:
@@ -888,9 +953,13 @@ def get_call_session(session_id: str) -> Optional[ZaloCallSession]:
 
 
 def _parse_host_port(addr_str: Any) -> Optional[Tuple[str, int]]:
-    if not addr_str or not isinstance(addr_str, str) or ":" not in addr_str:
+    if not addr_str or not isinstance(addr_str, str):
         return None
-    host, _, port_s = addr_str.rpartition(":")
+    raw = addr_str.strip()
+    sep = "|" if ("|" in raw and ":" not in raw) else (":" if ":" in raw else "")
+    if not sep:
+        return None
+    host, _, port_s = raw.rpartition(sep)
     host = host.strip()
     if not host or host == "0.0.0.0":
         return None
@@ -1020,6 +1089,20 @@ def _is_valid_ipv4(ip_str: str) -> bool:
         return False
 
 
+def _is_private_ipv4(ip_str: str) -> bool:
+    try:
+        b0, b1, _, _ = socket.inet_aton(ip_str)
+    except OSError:
+        return False
+    return (
+        b0 == 10
+        or (b0 == 172 and 16 <= b1 <= 31)
+        or (b0 == 192 and b1 == 168)
+        or (b0 == 100 and 64 <= b1 <= 127)
+        or b0 == 127
+    )
+
+
 def _unwrap_zca_signal_data(resp: Any) -> Optional[Dict[str, Any]]:
     """Bóc lớp vỏ {ok, signal_code, response: {callId, data: {...}}} của zca_api_server/zca_call_engine."""
     if not isinstance(resp, dict):
@@ -1052,7 +1135,8 @@ def _build_zrtc_extend_data(
         if not _is_valid_ipv4(ip):
             continue
         seen_p2p.add((ip, port))
-        p2p_list.append({"ip": ip, "port": int(port), "type": 0})
+        cand_type = 0 if _is_private_ipv4(ip) else 1
+        p2p_list.append({"ip": ip, "port": int(port), "type": cand_type})
 
     def _make_srv_entry(rtp_s: str, rtcp_s: str, srv: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         entry: Dict[str, Any] = {
@@ -1108,7 +1192,7 @@ def _build_zrtc_extend_data(
             "srtcp": 0,
             "srtpMode": 0,
             "supportCallBusy": 1,
-            "supportHevcDecode": 1,
+            "supportHevcDecode": 0,
             "tpType": 0,
             "video": {"codec": [{"name": "h264", "payload": 97}]},
         },
@@ -1215,9 +1299,9 @@ def _send_udp_keepalive_tick(
     if not relay_targets and not (session.status == "connected" and session.p2p_target):
         return
 
-    if tick_idx % 5 == 0 and session.zalo_from_id:
+    if session.zalo_from_id:
         try:
-            if not session.zrtc_token:
+            if not session.zrtc_token and tick_idx % 5 == 0:
                 init_sub2 = build_zrtc_init_zrtp_packet(
                     session.call_id,
                     session.zalo_from_id,
@@ -1228,16 +1312,16 @@ def _send_udp_keepalive_tick(
                 )
                 for addr in relay_targets:
                     session.udp_transport.sendto(init_sub2, addr)
-            else:
-                session.echo_seq = (session.echo_seq + 1) & 0xFF
-                echo_pkt = build_zrtc_echo_packet(
-                    session.call_id,
+            elif session.zrtc_token and tick_idx > 0 and tick_idx % 15 == 0:
+                # Gửi ZRTPPing thật (cmd=2, magic=0x01, subCmd=1 từ 0x00894eb3) mỗi 3 giây để giữ kênh NAT/Relay.
+                # TUYỆT ĐỐI KHÔNG gửi cmd=3 vì cmd=3 là ZRTPEndCall (hủy phiên Relay ngay lập tức!).
+                ping_pkt = build_zrtc_ping_packet(
                     session.zalo_from_id,
                     session.zrtc_token,
-                    session.echo_seq,
+                    session.zalo_sess_id,
                 )
                 for addr in relay_targets[:1] or relay_targets:
-                    session.udp_transport.sendto(echo_pkt, addr)
+                    session.udp_transport.sendto(ping_pkt, addr)
         except Exception as hs_exc:
             logger.debug(f"[VOIP-HANDSHAKE] ZrtcPacket keepalive error: {hs_exc}")
 
@@ -1956,8 +2040,8 @@ async def handle_incoming_voip_signal(
         # 1. Khách hàng thực sự bấm nghe: act == "answer" VÀ raw_status == "0"
         # 2. Hoặc có lệnh thao tác chủ động: act in ("mark_connected", "accept_call", "accept")
         # Tuyệt đối không cho phép answerack kích hoạt connected ảo khi máy khách chưa từng nhấc máy!
-        if act == "answerack" and matched.status != "connected":
-            logger.info(f"[VOIP] Ignoring premature answerack for session={matched.session_id} while status={matched.status}")
+        if act in ("answerack", "answer_ack") and matched.status != "connected":
+            logger.info(f"[VOIP] Ignoring premature {act} for session={matched.session_id} while status={matched.status}")
             return matched
         if act == "answer" and raw_status != "0":
             logger.info(f"[VOIP] Ignoring answer with non-zero status={raw_status!r} for session={matched.session_id}")
