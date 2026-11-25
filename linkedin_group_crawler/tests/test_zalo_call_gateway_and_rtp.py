@@ -13,10 +13,14 @@ from app.modules.all_platform.zalo.services.zalo_call_service import (
     _ZaloRtpDatagramProtocol,
     _build_stun_binding_request,
     _build_zrtc_extend_data,
+    _parse_host_port,
     _parse_stun_binding_response,
+    _send_udp_keepalive_tick,
     build_rtcp_sr_packet,
     build_zrtc_init_zrtp_packet,
+    build_zrtc_ping_packet,
     build_zrtc_echo_packet,
+    build_zrtc_end_call_packet,
     wrap_zrtc_audio_rtp_packet,
     parse_zrtc_packet,
     encrypt_zcall_transport_frame,
@@ -60,10 +64,62 @@ def test_build_and_parse_zrtc_packets():
     assert parsed_resp["token"] == 0x12345678
     assert parsed_resp["public_addr"] == "118.69.70.174:54321"
 
-    echo_pkt = build_zrtc_echo_packet(132236795, 462884481, token=0x12345678, seq=3)
-    assert len(echo_pkt) == 25
-    assert echo_pkt[0] == 1
-    assert echo_pkt[1] == 0x7E
+    # Real Zalo Relay returns public_addr with pipe '|' separator ('1.52.116.41|44811')
+    assert _parse_host_port("1.52.116.41|44811") == ("1.52.116.41", 44811)
+    assert _parse_host_port("42.119.138.116:4200") == ("42.119.138.116", 4200)
+
+    # cmd=2 (magic=0x01, subCmd=1) là ZRTPPing thật (0x00894eb3)
+    ping_pkt = build_zrtc_ping_packet(462884481, token=0x12345678, sess_id="abc_sess")
+    parsed_ping = parse_zrtc_packet(ping_pkt)
+    assert parsed_ping is not None
+    assert parsed_ping["msg_type"] == 1
+    assert parsed_ping["magic"] == 0x01
+    assert parsed_ping["cmd"] == 2
+    assert parsed_ping["sub_cmd"] == 1
+    assert parsed_ping["token"] == 0x12345678
+
+    # cmd=5 (magic=0x01, subCmd=0) là Echo thật (0x00894b2e) — khớp 27B byte-by-byte với ZaloCall.exe
+    echo_pkt = build_zrtc_echo_packet(seq=0, data=b"4130")
+    assert len(echo_pkt) == 27
+    assert echo_pkt.hex() == "0101000000000000000065973e003c832f01050000040034313330"
+
+    # cmd=3 (magic=0x7E) là ZRTPEndCall thật (0x00894b8e) — CHỈ gửi khi gác máy
+    end_pkt = build_zrtc_end_call_packet(132236795, 462884481, token=0x12345678, sub_cmd=0)
+    assert len(end_pkt) == 25
+    assert end_pkt[0] == 1
+    assert end_pkt[1] == 0x7E
+    assert struct.unpack("<H", end_pkt[18:20])[0] == 3
+
+    # REGRESSION GUARD: _send_udp_keepalive_tick trong ringing/connected TUYỆT ĐỐI KHÔNG gửi cmd=3 (ZRTPEndCall)!
+    ka_session = ZaloCallSession(
+        session_id="ka_guard",
+        account_id="acc",
+        call_id=132236795,
+        callee_id="202",
+        status="ringing",
+        remote_rtp_addr=("42.119.138.116", 4200),
+        zalo_from_id=462884481,
+        zrtc_token=0x3D86374E,
+    )
+    ka_tr = MagicMock()
+    ka_session.udp_transport = ka_tr
+    for tick in range(31):
+        _send_udp_keepalive_tick(ka_session, tick_idx=tick, send_rtp=False)
+    sent_pkts = [call.args[0] for call in ka_tr.sendto.call_args_list]
+    assert len(sent_pkts) == 2  # tick 15 & tick 30 (mỗi 3s), KHÔNG bắn ở tick 0!
+    for pkt in sent_pkts:
+        p = parse_zrtc_packet(pkt)
+        assert p is not None and p["cmd"] == 2 and p["magic"] == 0x01
+        assert p["cmd"] != 3  # NEVER ZRTPEndCall during ringing!
+
+    # Khi close_media -> mới gửi đúng 1 gói ZRTPEndCall (cmd=3, magic=0x7E) rồi đóng socket
+    ka_tr.reset_mock()
+    ka_session.close_media()
+    ka_tr.sendto.assert_called_once()
+    close_pkt = ka_tr.sendto.call_args[0][0]
+    p_close = parse_zrtc_packet(close_pkt)
+    assert p_close is not None and p_close["cmd"] == 3 and p_close["magic"] == 0x7E
+    ka_tr.close.assert_called_once()
 
     raw_rtp = build_rtp_packet(OPUS_SILENCE_FRAME, seq=10, timestamp=3200, ssrc=999)
     wrapped = wrap_zrtc_audio_rtp_packet(raw_rtp, token=0x12345678)
@@ -92,7 +148,8 @@ def test_build_zrtc_extend_data_and_stun_responder():
     assert ext["packetMode"] == 2
     assert ext["srtpMode"] == 0
     assert ext["sP2P"] == 0
-    assert ext["p2p"] == [{"ip": "118.69.70.174", "port": 54321, "type": 0}]
+    assert ext["p2p"] == [{"ip": "118.69.70.174", "port": 54321, "type": 1}]
+    assert ext["supportHevcDecode"] == 0
     assert ext["serverAddr"][0]["rtp"] == "171.244.25.89:4200"
     assert ext["serverAddr"][0]["rtpIPv6"] == "::FFFF:171.244.25.89:4200"
     assert ext["serverAddr"][0]["rtcpIPv6"] == "::FFFF:171.244.25.89:4200"
@@ -210,7 +267,7 @@ def test_start_call_session_unwraps_nested_zca_response_and_runs_init_zrtp():
                 if parsed and parsed.get("msg_type") == 1 and parsed.get("cmd") == 11:
                     sent_udp_subcmds.append((addr, parsed["sub_cmd"]))
                     if addr == ("222.255.179.228", 4200):
-                        pub_b = b"1.52.116.41:51111"
+                        pub_b = b"1.52.116.41|51111"
                         resp_pkt = (
                             struct.pack("<BBIIIIHB", 2, 0x7E, 0, 0, 462884481, 0x5A10C411, 11, 2)
                             + struct.pack("<iIIH", 0, 778899, 0x5A10C411, len(pub_b))
@@ -253,7 +310,7 @@ def test_start_call_session_unwraps_nested_zca_response_and_runs_init_zrtp():
             assert ext["srtpMode"] == 0
             assert ext["sP2P"] == 0
             assert ext["video"] == {"codec": [{"name": "h264", "payload": 97}]}
-            assert ext["p2p"][0] == {"ip": "1.52.116.41", "port": 51111, "type": 0}
+            assert ext["p2p"][0] == {"ip": "1.52.116.41", "port": 51111, "type": 1}
             assert len(ext["serverAddr"]) == 1
             assert ext["serverAddr"][0]["rtp"] == "222.255.179.228:4200"
             assert ext["serverAddr"][0]["rtpIPv6"] == "::FFFF:222.255.179.228:4200"

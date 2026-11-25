@@ -133,16 +133,17 @@ def test_answerack_and_negotiation_status_5_cannot_prematurely_promote_ringing()
         with patch("app.modules.all_platform.zalo.services.zalo_call_service.send_zca_call_signal", new_callable=AsyncMock) as signal, \
              patch("app.modules.all_platform.zalo.services.zalo_call_service.load_zca_auth", new_callable=AsyncMock, return_value={"test": True}):
             
-            # Case 1: act=answerack khi đang ringing -> phải giữ ringing
-            await calls.handle_incoming_voip_signal(
-                account_id="acc",
-                act="answerack",
-                mapped_status="connected",
-                call_id=789,
-                partner_id="callee",
-                data={"status": 0},
-            )
-            assert session.status == "ringing"
+            # Case 1: act=answerack và act=answer_ack khi đang ringing -> phải giữ ringing
+            for ack_act in ("answerack", "answer_ack"):
+                await calls.handle_incoming_voip_signal(
+                    account_id="acc",
+                    act=ack_act,
+                    mapped_status="connected",
+                    call_id=789,
+                    partner_id="callee",
+                    data={"status": 0},
+                )
+                assert session.status == "ringing"
             signal.assert_not_called()
 
             # Case 2: act=answer với status=5 (callee_init_zrtp_fail) -> chuyển sang failed,
