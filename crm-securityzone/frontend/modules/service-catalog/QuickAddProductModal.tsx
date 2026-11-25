@@ -728,7 +728,7 @@ export function QuickAddProductModal({
         <div className="flex-1 overflow-y-auto p-5">
           {activeTab === 'vendor' ? (
             <div className="bg-white border border-[#ead8df] rounded-xl p-5 shadow-sm">
-              <VendorImportFlow onClose={onClose} />
+              <VendorImportFlow onClose={onClose} initialGroupId={defaultGroupId || parentId || undefined} />
             </div>
           ) : (
             <div className="grid grid-cols-4 gap-6">
