@@ -15,8 +15,18 @@ logger = logging.getLogger(__name__)
 
 _UNREACHABLE_ID = "00000000-0000-0000-0000-000000000000"
 
+# Card "Tổng bài" (widget Kết quả liên hệ) — đếm bài crawl theo `crawl_date` (NOT NULL,
+# có index ở cả 4 bảng), KHÔNG lọc theo member/role (bài dùng chung để seeding, giống
+# đúng tiền lệ "totalPostsToday/totalPosts" ở unified_posts_service._fetch_stats).
+_POST_TABLE_BY_PLATFORM = {
+    "facebook": "facebook_posts",
+    "linkedin": "linkedin_posts",
+    "threads": "threads_posts",
+    "youtube": "youtube_posts",
+}
+
 POST_CALL_RESULT_COLUMNS = (
-    "id, post_id, platform, result_code, attempts, last_call_at, updated_by, created_at, updated_at, "
+    "id, post_id, platform, result_code, attempts, last_call_at, note, updated_by, created_at, updated_at, "
     "updated_by_user:app_users!updated_by(id, name, email)"
 )
 
@@ -123,6 +133,32 @@ def update_call_result(
         next_attempts,
     )
     return saved_result
+
+
+def update_call_result_note(
+    post_id: str,
+    platform: str,
+    note: Optional[str],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Việc 3 (BƯỚC 2/3): cập nhật riêng cột `note` của 1 bài — KHÔNG đổi result_code, KHÔNG
+    tăng attempts/last_call_at, KHÔNG tạo bản ghi mới. Bài phải đã có kết quả liên hệ từ
+    trước (post_call_results là upsert theo post_id+platform ở `update_call_result`, note chỉ
+    đi kèm 1 dòng đã tồn tại — không có gì để UPDATE nếu dòng đó chưa được tạo)."""
+    supabase = get_supabase_client()
+    existing = get_call_result(post_id, platform)
+    if not existing:
+        raise ValueError("Bài viết chưa có kết quả liên hệ nào để ghi chú.")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    execute_supabase_query(
+        lambda: supabase.table("post_call_results")
+        .update({"note": (note or "").strip() or None, "updated_by": user.get("id"), "updated_at": now_iso})
+        .eq("post_id", str(post_id))
+        .eq("platform", str(platform))
+        .execute()
+    )
+    return get_call_result(post_id, platform) or existing
 
 
 def _team_roster(team_id: str) -> list[str]:
@@ -330,6 +366,149 @@ def get_call_result_stats(
     comment_count = _count_seeding_comments(start_utc, end_utc)
     comment_count_prev = _count_seeding_comments(prev_start_utc, prev_end_utc)
 
+    def _count_crawled_posts(gte_utc: str, lte_utc: str) -> int:
+        tables = [_POST_TABLE_BY_PLATFORM[platform]] if platform in _POST_TABLE_BY_PLATFORM else list(_POST_TABLE_BY_PLATFORM.values())
+        total_count = 0
+        for table in tables:
+            try:
+                res = execute_supabase_query(
+                    lambda t=table: supabase.table(t)
+                    .select("id", count="exact")
+                    .gte("crawl_date", gte_utc)
+                    .lte("crawl_date", lte_utc)
+                    .execute()
+                )
+                total_count += res.count or 0
+            except Exception as exc:
+                logger.warning(f"get_call_result_stats: lỗi đếm bài crawl ở bảng {table}: {exc}")
+        return total_count
+
+    def _get_suitable_post_ids(gte_utc: str, lte_utc: str, scope_member_id: Optional[str] = None) -> set[str]:
+        """Tập id bài "phù hợp" trong kỳ (đã crawl theo `crawl_date`, KHÔNG bị đánh giá
+        'khong-phu-hop' trong `post_quick_review`) — lõi dùng chung giữa card "Tổng bài"
+        (`_count_crawled_posts_excluding_unsuitable`, Việc 2) và card "Comment"
+        (`_count_commented_posts_suitable`, Việc 3) để không viết lại logic loại trừ 2 lần.
+
+        Supabase REST không hỗ trợ JOIN SQL thật (xem _attach_group_lead_stats ở
+        supabase_groups_service.py) nên phải lấy riêng danh sách id bài trong kỳ (theo từng
+        bảng/platform) + danh sách post_id 'khong-phu-hop' của đúng platform đó, rồi loại trừ
+        bằng Python — cùng kỹ thuật với `can_lien_he_post_count` ở supabase_groups_service.py.
+
+        `scope_member_id` (Việc 4, 2026-11-23): None = không giới hạn (hành vi gốc — BẮT BUỘC
+        giữ nguyên cho card "Tổng bài", xem tooltip "không lọc theo thành viên" ở FE). Khi có
+        giá trị, thu hẹp về đúng phạm vi "bài của thành viên đó" theo ĐÚNG định nghĩa đã dùng ở
+        `unified_posts_service.MEMBER_SCOPED_TABLES`/`apply_scope` (không phát minh khái niệm
+        mới): facebook_posts/threads_posts/youtube_posts lọc trực tiếp theo cột `id_member`
+        (người bấm cào); linkedin_posts không có cột này, lọc gián tiếp qua
+        `linkedin_groups.id_member` (nhóm do thành viên đó sở hữu).
+        """
+        platform_table_pairs = (
+            [(platform, _POST_TABLE_BY_PLATFORM[platform])]
+            if platform in _POST_TABLE_BY_PLATFORM
+            else list(_POST_TABLE_BY_PLATFORM.items())
+        )
+
+        linkedin_group_ids: Optional[list[str]] = None
+        if scope_member_id:
+            try:
+                lg_rows = execute_supabase_query(
+                    lambda m=scope_member_id: supabase.table("linkedin_groups").select("id").eq("id_member", m).execute()
+                ).data or []
+                linkedin_group_ids = [str(r["id"]) for r in lg_rows if r.get("id")]
+            except Exception as exc:
+                logger.warning(
+                    f"get_call_result_stats: lỗi tra nhóm LinkedIn theo thành viên ({scope_member_id}): {exc}"
+                )
+                linkedin_group_ids = []
+
+        suitable_ids: set[str] = set()
+        for plat, table in platform_table_pairs:
+            def _run_posts_query(t=table, m=scope_member_id, lg_ids=linkedin_group_ids):
+                q = supabase.table(t).select("id").gte("crawl_date", gte_utc).lte("crawl_date", lte_utc)
+                if m:
+                    if t == "linkedin_posts":
+                        q = q.in_("id_group", lg_ids or [_UNREACHABLE_ID])
+                    else:
+                        q = q.eq("id_member", m)
+                return q.execute()
+
+            try:
+                post_rows = execute_supabase_query(_run_posts_query).data or []
+            except Exception as exc:
+                logger.warning(f"get_call_result_stats: lỗi đếm bài crawl (loại trừ không phù hợp) ở bảng {table}: {exc}")
+                continue
+            post_ids = {str(r["id"]) for r in post_rows if r.get("id") is not None}
+            if not post_ids:
+                continue
+            try:
+                unsuitable_rows = execute_supabase_query(
+                    lambda p=plat: supabase.table("post_quick_review")
+                    .select("post_id")
+                    .eq("platform", p)
+                    .eq("evaluation_code", "khong-phu-hop")
+                    .execute()
+                ).data or []
+            except Exception as exc:
+                logger.warning(
+                    f"get_call_result_stats: lỗi đọc post_quick_review (loại trừ không phù hợp, platform={plat}): {exc}"
+                )
+                unsuitable_rows = []
+            unsuitable_ids = {str(r["post_id"]) for r in unsuitable_rows if r.get("post_id") is not None}
+            suitable_ids |= post_ids - unsuitable_ids
+        return suitable_ids
+
+    def _count_commented_posts_suitable(gte_utc: str, lte_utc: str, suitable_post_ids: set[str]) -> int:
+        """Tử số X của card "Comment" (Việc 3, 2026-11-23): số BÀI khác nhau (COUNT(DISTINCT
+        id_post), không phải số lượt/dòng như `_count_seeding_comments`) có ít nhất 1 dòng
+        seeding/bình luận trong `seeding_content_kpi` trong kỳ, CHỈ TÍNH bài nằm trong
+        `suitable_post_ids` truyền vào (LUÔN là tập "phù hợp" TOÀN CỤC — không thu hẹp theo
+        thành viên — vì 1 thành viên vẫn có thể seeding bài ngoài phạm vi nhóm họ phụ trách,
+        bài dùng chung; thu hẹp ở đây sẽ đếm thiếu). Lọc theo `allowed_member_ids` giống hệt
+        `_count_seeding_comments` (cùng kỳ, cùng quyền xem).
+        """
+        try:
+            def _run_query():
+                q = (
+                    supabase.table("seeding_content_kpi")
+                    .select("id_post")
+                    .gte("created_at", gte_utc)
+                    .lte("created_at", lte_utc)
+                )
+                if allowed_member_ids is not None:
+                    q = q.in_("id_member", allowed_member_ids or [_UNREACHABLE_ID])
+                return q.execute()
+
+            rows = execute_supabase_query(_run_query).data or []
+        except Exception as exc:
+            logger.warning(f"get_call_result_stats: lỗi đếm bài đã comment (distinct) ở seeding_content_kpi: {exc}")
+            return 0
+        commented_post_ids = {str(r["id_post"]) for r in rows if r.get("id_post") is not None}
+        return len(commented_post_ids & suitable_post_ids)
+
+    total_posts_count = _count_crawled_posts(start_utc, end_utc)
+    total_posts_count_prev = _count_crawled_posts(prev_start_utc, prev_end_utc)
+    # Card "Tổng bài": LUÔN toàn cục, không lọc theo thành viên (giữ nguyên hành vi/tooltip cũ).
+    suitable_post_ids = _get_suitable_post_ids(start_utc, end_utc)
+    total_posts_suitable_count = len(suitable_post_ids)
+
+    # Card "Comment" — Việc 3+4 (2026-11-23):
+    # - X (comment_distinct_post_count): luôn so với tập "phù hợp" TOÀN CỤC ở trên (lý do xem
+    #   docstring _count_commented_posts_suitable). comment_distinct_post_count_prev dùng để
+    #   tính % xu hướng TRÊN X (quyết định đã chốt), không còn theo delta tuyệt đối của "lượt".
+    # - comment_post_pool_count (mẫu số Y RIÊNG cho card Comment, KHÔNG dùng chung với
+    #   total_posts_suitable_count): khi có `member_id` cụ thể (khác "Tất cả thành viên"), thu
+    #   hẹp về đúng phạm vi bài của thành viên đó; không thì bằng chính total_posts_suitable_count.
+    comment_distinct_post_count = _count_commented_posts_suitable(start_utc, end_utc, suitable_post_ids)
+    suitable_post_ids_prev = _get_suitable_post_ids(prev_start_utc, prev_end_utc)
+    comment_distinct_post_count_prev = _count_commented_posts_suitable(
+        prev_start_utc, prev_end_utc, suitable_post_ids_prev
+    )
+    comment_post_pool_count = (
+        total_posts_suitable_count
+        if not member_id
+        else len(_get_suitable_post_ids(start_utc, end_utc, scope_member_id=member_id))
+    )
+
     return {
         "by_type": by_type,
         "by_member": by_member,
@@ -337,6 +516,12 @@ def get_call_result_stats(
         "total": total,
         "comment_count": comment_count,
         "comment_count_prev": comment_count_prev,
+        "comment_distinct_post_count": comment_distinct_post_count,
+        "comment_distinct_post_count_prev": comment_distinct_post_count_prev,
+        "comment_post_pool_count": comment_post_pool_count,
+        "total_posts_count": total_posts_count,
+        "total_posts_count_prev": total_posts_count_prev,
+        "total_posts_suitable_count": total_posts_suitable_count,
         "range": {"start": start_d.isoformat(), "end": end_d.isoformat()},
     }
 

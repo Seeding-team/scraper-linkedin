@@ -80,6 +80,17 @@ export const FileText = makeIcon([
   { d: 'M16 17H8' },
   { d: 'M10 9H8' },
 ]);
+// "Xuất Excel" (nut tai bao gia .xlsx canh "Xem truoc/In PDF") - ve lai icon
+// chuan lucide "file-spreadsheet" (khong cai them lucide-react, dung tien le
+// makeIcon co san cua file nay).
+export const FileSpreadsheet = makeIcon([
+  { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' },
+  { d: 'M14 2v6h6' },
+  { d: 'M8 13h2' },
+  { d: 'M14 13h2' },
+  { d: 'M8 17h2' },
+  { d: 'M14 17h2' },
+]);
 export const LayoutGrid = makeIcon([
   { tag: 'rect', x: 3, y: 3, width: 7, height: 7, rx: 1 },
   { tag: 'rect', x: 14, y: 3, width: 7, height: 7, rx: 1 },

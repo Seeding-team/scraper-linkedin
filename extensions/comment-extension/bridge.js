@@ -176,6 +176,15 @@ window.addEventListener("message", function(event) {
                 payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." },
             }, "*");
         }, 60000);
+    } else if (action === "FB_FETCH_GROUP_INFO") {
+        // Tự động lấy Tên nhóm + Số thành viên khi dán URL ở modal "Thêm nhóm" Facebook
+        // (lib/fb-ext-bridge.ts) — cùng pattern request/response một lần với LI_FETCH_POST_INFO.
+        safeSendMessage({ action: "FB_FETCH_GROUP_INFO", url: payload?.url }, response => {
+            window.postMessage({
+                action: "FB_FETCH_GROUP_INFO_RESULT",
+                payload: response || { success: false, error: "Không nhận được phản hồi từ Extension." },
+            }, "*");
+        }, 25000);
     }
 });
 

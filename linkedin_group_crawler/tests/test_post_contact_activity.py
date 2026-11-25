@@ -274,6 +274,7 @@ def test_activity_log_merges_and_sorts_by_time_desc(patched_clients):
         {
             "post_id": "p1", "platform": "facebook", "result_code": "interested",
             "updated_by": "mem-a", "updated_at": t2.isoformat(), "updated_by_user": MEMBER_A,
+            "note": "Khách hẹn gọi lại tuần sau",
         },
     ]
     fake_db.store["zalo_inbox_kpi"] = [
@@ -295,8 +296,14 @@ def test_activity_log_merges_and_sorts_by_time_desc(patched_clients):
     assert types_in_order == ["call", "zalo", "seed"]  # t2 > t1 > t0
     call_event = res["items"][0]
     assert call_event["result_label"] == "Có nhu cầu"
+    # Việc 4 (2026-11-21): note chỉ có ở sự kiện "call" — lấy từ post_call_results (luôn là
+    # ghi chú của LẦN GỌI GẦN NHẤT, không phải lịch sử).
+    assert call_event["note"] == "Khách hẹn gọi lại tuần sau"
     zalo_event = res["items"][1]
     assert zalo_event["post_label"] == "url-2"
+    assert "note" not in zalo_event
+    seed_event = res["items"][2]
+    assert "note" not in seed_event
 
 
 def test_activity_log_action_type_filter_and_pagination(patched_clients):

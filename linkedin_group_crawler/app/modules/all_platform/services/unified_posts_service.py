@@ -1336,11 +1336,13 @@ def get_unified_posts(
                     p["call_result_code"] = call_res.get("result_code")
                     p["call_attempts"] = call_res.get("attempts", 0)
                     p["last_call_at"] = call_res.get("last_call_at")
+                    p["call_result_note"] = call_res.get("note")
                     p["updated_by_user"] = call_res.get("updated_by_user")
                 else:
                     p["call_result_code"] = None
                     p["call_attempts"] = 0
                     p["last_call_at"] = None
+                    p["call_result_note"] = None
                     p["updated_by_user"] = None
 
                 exc_info = compute_excluded_flag(p, rev, active_kws)

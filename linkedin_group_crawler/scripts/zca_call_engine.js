@@ -21,8 +21,7 @@ const CALL_V2_ZERO_IV = Buffer.from("0".repeat(32), "hex");
 
 /**
  * Zalo Native CallController::ctor (0x008ede19) & matchAudioCodec (0x008e9bec)
- * bắt buộc kiểm tra khớp cả tên codec "opus/16000/1" VÀ payload == 112 (0x70).
- * Giữ thêm "opus/48000/2" (payload: 113) ở vị trí thứ 2 để tương thích mở rộng.
+ * bắt buộc kiểm tra khớp tên codec "opus/16000/1" VÀ payload == 112 (0x70).
  */
 const DEFAULT_VOIP_CODECS = JSON.stringify([
   {
@@ -31,13 +30,30 @@ const DEFAULT_VOIP_CODECS = JSON.stringify([
     name: "opus/16000/1",
     payload: 112,
   },
-  {
-    dynamicFptime: 0,
-    frmPtime: 20,
-    name: "opus/48000/2",
-    payload: 113,
-  },
 ]);
+
+function buildDefaultZrtcExtendData({ callType = 1, p2pList = [], serverAddrList = [] } = {}) {
+  return JSON.stringify({
+    callType: Number(callType) === 2 || Number(callType) === 3 ? 1 : 0,
+    fecTP: 0,
+    gccAudio: 0,
+    gccEarlyCall: 0,
+    gccMode: 0,
+    gccSVLR: 0,
+    newZrtc: 1,
+    p2p: Array.isArray(p2pList) ? p2pList : [],
+    packetMode: 2,
+    platform: 2,
+    sP2P: 0,
+    serverAddr: Array.isArray(serverAddrList) ? serverAddrList : [],
+    spTcp: 1,
+    srtcp: 0,
+    srtpMode: 0,
+    supportCallBusy: 1,
+    supportHevcDecode: 1,
+    tpType: 0,
+  });
+}
 
 /**
  * Đóng gói gói tin nhị phân ZrtcPacket InitZRTP (msgType=1, magic=0x7E, cmd=11 cho Caller / 12 cho Callee)
@@ -93,12 +109,14 @@ function buildZrtcEchoPacket({ callId, fromId, token = 0, seq = 1 }) {
 }
 
 /**
- * Bọc 5-byte ZRTC Media Header (msgType=5 cho Audio RTP, msgType=3 cho Audio RTCP + uint32_le token)
- * Trích xuất từ ZrtcPacket::buildAudioRtpOrRtcp (0x008948ff) & serialize case 5 (0x00893e3e).
+ * Bọc 5-byte ZRTC Media Header (msgType=3 cho Audio RTP, msgType=5 cho Audio RTCP + uint32_le token).
+ * Xác thực trực tiếp từ gói UDP live của ZaloCall.exe:
+ *   - 03 <tok_4B_LE> 80 70 ... -> Audio RTP (PT=112, opus/16000/1)
+ *   - 05 <tok_4B_LE> 80 c8 ... -> Audio RTCP (SR/SDES)
  */
 function wrapZrtcAudioRtpPacket(rtpBuf, token = 0, isRtcp = false) {
   const hdr = Buffer.alloc(5);
-  hdr.writeUInt8(isRtcp ? 3 : 5, 0);
+  hdr.writeUInt8(isRtcp ? 5 : 3, 0);
   hdr.writeUInt32LE((Number(token) || 0) >>> 0, 1);
   return Buffer.concat([hdr, rtpBuf]);
 }
@@ -493,6 +511,7 @@ async function startDirectZaloCall(
     rtcpAddress = "",
     codec = DEFAULT_VOIP_CODECS,
     extendData = "",
+    skipUdpInitZrtp = false,
   },
 ) {
   let targetUid = String(calleeId || "").trim();
@@ -572,11 +591,11 @@ async function startDirectZaloCall(
       ? s1Data.servers
       : [{ rtpaddr: relayRtp, rtcpaddr: relayRtcp, bonus: 0.0 }]
   ).map((srv) => ({
-    bonus: Number(srv.bonus || 0),
     rtcp: String(srv.rtcpaddr || srv.rtcp || relayRtcp),
     ...(srv.rtcpIPv6 ? { rtcpIPv6: String(srv.rtcpIPv6) } : {}),
     rtp: String(srv.rtpaddr || srv.rtp || relayRtp),
     ...(srv.rtpIPv6 ? { rtpIPv6: String(srv.rtpIPv6) } : {}),
+    tpType: Number(srv.tpType ?? 0),
   }));
 
   const p2pList = [];
@@ -587,18 +606,17 @@ async function startDirectZaloCall(
       const stunIp = rtpStr.slice(0, lastColon);
       const stunPort = Number(rtpStr.slice(lastColon + 1));
       if (stunIp && stunPort > 0) {
-        p2pList.push({ ip: stunIp, port: stunPort, type: 1 });
+        p2pList.push({ ip: stunIp, port: stunPort, type: 0 });
       }
     }
   }
 
-  // TUYỆT ĐỐI KHÔNG tự bịa extendData với newZrtc=1 và sP2P=1 khi không có ZRTC Media Worker native!
-  // Khi không có ZRTC Worker native, 11301 request gửi sạch (không kèm extendData/subCommand=3)
-  // để Zalo di động của khách chạy chế độ Relay cuộc gọi chuẩn, không bị lỗi gãy ICE P2P làm ngắt chuông sau 1 tiếng.
+  // Luôn đính kèm extendData chuẩn ZRTC của ZaloCall.exe (newZrtc=1, sP2P=0, srtpMode=0, packetMode=2, serverAddr)
+  // kèm subCommand=3 ở 11301 để máy khách đàm phán codec/ZRTP thành công, không văng status=5 callee_init_zrtp_fail.
   const resolvedExtendData =
     extendData && String(extendData).trim() !== ""
       ? String(extendData)
-      : "";
+      : buildDefaultZrtcExtendData({ callType, p2pList, serverAddrList });
 
   const serverRtp = relayRtp;
   const serverRtcp = relayRtcp;
@@ -611,14 +629,14 @@ async function startDirectZaloCall(
   let step2 = null;
   let step2Error = null;
   if (!isRejectedOrBusy) {
-    // Khởi tạo phiên ZRTC InitZRTP (cmd=11) lên Media Relay (:4200) TRƯỚC KHI gửi 11301
-    // để khi điện thoại/Zalo PC của khách nhận 11301 và check Relay thì phiên đã sẵn sàng.
-    try {
-      zrtcInitResult = await performUdpInitZrtpHandshake(s1Data, {
-        callId: effectiveCallId,
-        timeoutMs: 600,
-      });
-    } catch (_) {}
+    if (!skipUdpInitZrtp) {
+      try {
+        zrtcInitResult = await performUdpInitZrtpHandshake(s1Data, {
+          callId: effectiveCallId,
+          timeoutMs: 600,
+        });
+      } catch (_) {}
+    }
 
     try {
       step2 = await zcallSendRequestCall(api, {
@@ -663,6 +681,7 @@ async function startDirectZaloCall(
 module.exports = {
   CALL_V2_TRANSPORT_AES_KEY,
   DEFAULT_VOIP_CODECS,
+  buildDefaultZrtcExtendData,
   buildZrtcInitZrtpPacket,
   buildZrtcEchoPacket,
   wrapZrtcAudioRtpPacket,

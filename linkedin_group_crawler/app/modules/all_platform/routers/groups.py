@@ -87,7 +87,7 @@ def fb_groups_add(
             payload["id_member"] = user["id"]
         elif "id_member" not in payload or not payload["id_member"]:
             payload["id_member"] = user["id"]
-        data = add_facebook_group(payload)
+        data = add_facebook_group(payload, current_user_id=user["id"])
         return BaseResponse(success=True, message="Group added", data=data)
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)
@@ -114,7 +114,7 @@ def fb_groups_update(
             if not group_res.data or group_res.data[0].get("id_member") != user["id"]:
                 return BaseResponse(success=False, message="You do not have permission to update this group.")
             payload["id_member"] = user["id"]
-        data = update_facebook_group(group_id, payload)
+        data = update_facebook_group(group_id, payload, current_user_id=user["id"])
         return BaseResponse(success=True, message="Group updated", data=data)
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

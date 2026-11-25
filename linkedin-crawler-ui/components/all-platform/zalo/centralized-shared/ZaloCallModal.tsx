@@ -155,10 +155,17 @@ export function ZaloCallModal({
   const callProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const isCallMutedRef = useRef<boolean>(false);
   const activeCallSessionRef = useRef<ZaloDirectCallSession | null>(null);
+  const accountIdRef = useRef<string>(accountId);
+  const nextPlayTimeRef = useRef<number>(0);
+  const terminalActionSentRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     activeCallSessionRef.current = activeCallSession;
   }, [activeCallSession]);
+
+  useEffect(() => {
+    accountIdRef.current = accountId;
+  }, [accountId]);
 
   useEffect(() => {
     setMounted(true);
@@ -173,6 +180,7 @@ export function ZaloCallModal({
   }, [isCallMuted]);
 
   const stopCallWsAndPolling = useCallback(() => {
+    nextPlayTimeRef.current = 0;
     if (callStatusPollRef.current) {
       clearInterval(callStatusPollRef.current);
       callStatusPollRef.current = null;
@@ -261,9 +269,57 @@ export function ZaloCallModal({
     setMicLevel(0);
   }, [stopCallWsAndPolling]);
 
-  // Dọn dẹp triệt để khi đóng modal
+  const cancelOrEndActiveCallIfOpen = useCallback((useBeacon = false) => {
+    const sess = activeCallSessionRef.current;
+    if (!sess) return;
+    if (!["initializing", "dialing", "ringing", "connected"].includes(sess.status)) {
+      return;
+    }
+    if (terminalActionSentRef.current.has(sess.session_id)) {
+      return;
+    }
+    terminalActionSentRef.current.add(sess.session_id);
+    const act: "end" | "cancel" = sess.status === "connected" ? "end" : "cancel";
+    const acc = accountIdRef.current || "default";
+    if (useBeacon && typeof window !== "undefined") {
+      try {
+        void fetch(`/api/all-platform/zalo/conversations/call/${encodeURIComponent(sess.session_id)}/action`, {
+          method: "POST",
+          keepalive: true,
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-ID": acc,
+          },
+          body: JSON.stringify({ action: act, result_code: act === "end" ? "called" : "noanswer" }),
+        });
+        return;
+      } catch {
+        /* fallback to controlZaloDirectCall */
+      }
+    }
+    void controlZaloDirectCall(
+      sess.session_id,
+      act,
+      act === "end" ? "called" : "noanswer",
+      acc,
+    ).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      cancelOrEndActiveCallIfOpen(true);
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      cancelOrEndActiveCallIfOpen(true);
+    };
+  }, [cancelOrEndActiveCallIfOpen]);
+
+  // Dọn dẹp triệt để khi đóng modal (tự động gửi 11305/11306 nếu cuộc gọi còn đang đổ chuông/đàm thoại)
   useEffect(() => {
     if (!open) {
+      cancelOrEndActiveCallIfOpen(false);
       void releaseBrowserAudioHardware();
       if (callTimerRef.current) {
         clearInterval(callTimerRef.current);
@@ -285,7 +341,7 @@ export function ZaloCallModal({
       setRecordedBlob(null);
       setRecordSec(0);
     }
-  }, [open, releaseBrowserAudioHardware, recordedUrl]);
+  }, [open, releaseBrowserAudioHardware, recordedUrl, cancelOrEndActiveCallIfOpen]);
 
   // ── Quản lý bộ đếm thời gian đàm thoại (Chỉ chạy khi trạng thái là "connected") ──
   useEffect(() => {
@@ -584,11 +640,15 @@ export function ZaloCallModal({
             return;
           }
 
-          // Binary PCM16 / audio frame từ Zalo UDP RTP Gateway đẩy về trình duyệt
+          // Binary PCM16 16kHz mono từ Backend PyAV Opus decoder đẩy về trình duyệt -> xếp lịch phát nối tiếp tránh rè/chồng tiếng
           if (ev.data instanceof ArrayBuffer && audioCtxRef.current && ev.data.byteLength >= 4) {
             try {
               const ctx = audioCtxRef.current;
-              const pcm16 = new Int16Array(ev.data);
+              if (ctx.state === "suspended") {
+                void ctx.resume();
+              }
+              const alignedLen = ev.data.byteLength - (ev.data.byteLength % 2);
+              const pcm16 = new Int16Array(ev.data, 0, alignedLen / 2);
               if (pcm16.length > 0) {
                 const audioBuf = ctx.createBuffer(1, pcm16.length, 16000);
                 const channel = audioBuf.getChannelData(0);
@@ -598,7 +658,12 @@ export function ZaloCallModal({
                 const src = ctx.createBufferSource();
                 src.buffer = audioBuf;
                 src.connect(ctx.destination);
-                src.start();
+                const now = ctx.currentTime;
+                if (nextPlayTimeRef.current < now || nextPlayTimeRef.current > now + 0.35) {
+                  nextPlayTimeRef.current = now + 0.04;
+                }
+                src.start(nextPlayTimeRef.current);
+                nextPlayTimeRef.current += audioBuf.duration;
               }
             } catch {
               /* ignore frame decode error */
@@ -624,6 +689,10 @@ export function ZaloCallModal({
             window.AudioContext ||
             (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
           const ctx = new AudioCtx({ sampleRate: 16000 });
+          if (ctx.state === "suspended") {
+            void ctx.resume();
+          }
+          nextPlayTimeRef.current = ctx.currentTime + 0.04;
           audioCtxRef.current = ctx;
 
           const source = ctx.createMediaStreamSource(stream);
@@ -710,7 +779,7 @@ export function ZaloCallModal({
         callee_id: !isGroup && conversationId ? conversationId : "",
         phone_number: cleanPhone || undefined,
         customer_name: customerName || undefined,
-        call_type: mode === "video" ? 2 : 1,
+        call_type: mode === "video" ? 3 : 1,
         source_post_id: sourcePostId,
         source_platform: sourcePlatform,
       });
@@ -724,7 +793,9 @@ export function ZaloCallModal({
         }
         setCallElapsedSec(0);
 
-        await connectDirectCallAudioGateway(res.session);
+        if (["initializing", "dialing", "ringing", "connected"].includes(res.session.status)) {
+          await connectDirectCallAudioGateway(res.session);
+        }
 
         if (res.session.status === "privacy_blocked") {
           toast.error(
@@ -760,6 +831,7 @@ export function ZaloCallModal({
   // ── Kết thúc / Hủy cuộc gọi Web Softphone (11305/11306 + 11311 + Auto +1 KPI) ─
   const handleEndDirectCall = async () => {
     if (!activeCallSession) return;
+    terminalActionSentRef.current.add(activeCallSession.session_id);
     setEndingDirectCall(true);
     try {
       const action =

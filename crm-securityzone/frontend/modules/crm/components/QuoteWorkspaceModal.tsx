@@ -29,7 +29,7 @@ import {
   quoteDisplayStatus,
   relativeTime,
 } from '../utils/quoteDisplay';
-import { ArrowDownToLine, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, FileText, GitBranchPlus, History, LayoutGrid, Link2, Mail, MapPin, Maximize2, Minimize2, Pencil, Phone, Plus, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Send, Trash2, User, X } from './icons';
+import { ArrowDownToLine, Building2, CheckCircle2, ChevronDown, ChevronUp, Eye, FileSpreadsheet, FileText, GitBranchPlus, History, LayoutGrid, Link2, Mail, MapPin, Maximize2, Minimize2, Pencil, Phone, Plus, Printer, RectangleHorizontal, RectangleVertical, RotateCcw, Send, Trash2, User, X } from './icons';
 import { usersService, projectsService, allPlatformCategoriesService, type QuoteBusinessRoleUser, type Project } from '@/services/all-platform.service';
 import { computeQuoteSla } from '../utils/quoteSla';
 import { SearchableSelect } from './SearchableSelect';
@@ -55,6 +55,7 @@ import type { SystemExchangeRate } from '@/modules/quotes/repositories/QuoteRepo
 import { VND_FX, convertQuoteItemsCurrency, fromQuoteMoney, toQuoteMoney, type QuoteFx } from '@/modules/quotes/utils/quoteCurrency';
 import { ACTIVITY_LABELS } from '@/modules/quotes/utils/quoteActivity';
 import { calculateQuoteTotals, calculateOverallDiscountSummary, clampDiscountPercent, calculateItemAfterDiscount, calculateItemDiscount, calculateItemTotal, calculateItemSubtotal, calculateSectionTotal, billingTermMultiplier, type QuotePriceMode } from '@/modules/quotes/utils/quoteCalculations';
+import { exportQuoteToExcel } from '@/modules/quotes/utils/quoteExcelExport';
 import { paymentPlanAmounts, paymentPlanPercent } from '@/modules/quotes/utils/paymentPlan';
 import type { BundleSnapshotComponent, BundleSnapshotValue, CustomBlock, PaymentPlanRow } from '@/modules/quotes/types';
 import { QuoteOutcomeSection } from './QuoteOutcomeSection';
@@ -1823,6 +1824,9 @@ export function QuoteWorkspaceModal({
   // nhat cua popup nay qua printPreviewMode/printOrientation, dung y het
   // PublicQuotePage.tsx/QuoteDetailPage.tsx).
   const [printOrientation, setPrintOrientation] = useState<'portrait' | 'landscape'>('portrait');
+  // "Xuất Excel" (yêu cầu CloudGate qua Zalo, 2026-11-20) - cờ rời cho đúng 1
+  // nút bấm, không chặn các action khác trong modal lúc đang xuất.
+  const [exportingExcel, setExportingExcel] = useState(false);
   const [printResetKey, setPrintResetKey] = useState(0);
   // Nut "Lưu" trong popup (y het toolbar in o QuoteDetailPage/PDF chinh
   // thuc): do rong cot keo tay moi nhat tu QuoteDocumentRenderer. Quote da
@@ -5487,6 +5491,37 @@ export function QuoteWorkspaceModal({
     window.open(url, '_blank', 'noopener,noreferrer');
   }
 
+  // "Xuất Excel" (.xlsx that, co format/merge/mau - yeu cau CloudGate qua
+  // Zalo "anh muốn convert từ form hiện tại sang excel luôn được hong",
+  // 2026-11-20) - dung lai o CA 2 cho co nut "Xem trước/In PDF" (toolbar
+  // preview VA toolbar sau khi da duyet/publish), dung CHUNG 1 nguon du
+  // lieu voi khoi QuoteDocumentRenderer (buildItemTree(itemsDraft),
+  // quote.data, calculateQuoteTotals) - khong tu tinh rieng.
+  async function handleExportQuoteExcel() {
+    setExportingExcel(true);
+    try {
+      await exportQuoteToExcel({
+        quoteNumber: quote?.quoteNumber,
+        quoteTitle: (quote ? quote.data?.quoteTitle : draftPreviewData?.quoteTitle) as string | undefined,
+        quoteData: quote ? quote.data : draftPreviewData,
+        quoteItems: buildItemTree(itemsDraft),
+        totals: isVillaLayout && quote ? {
+          subtotalAmount: quote.subtotalAmount ?? 0,
+          totalVatAmount: quote.vatAmount ?? 0,
+          totalAmount: quote.totalAmount ?? 0,
+        } : calculateQuoteTotals(itemsDraft, 0, workspaceCurrency, workspacePriceMode),
+        currency: workspaceCurrency,
+        priceMode: workspacePriceMode,
+        overallDiscountPercent: quote ? quote.overallDiscountPercent ?? null : draftOverallDiscountPercent ?? null,
+        contactPersonName: plainNameFor(quote ? quote.quoteOwnerId : draftQuoteOwnerId),
+      });
+    } catch (err) {
+      showToast(false, err instanceof Error ? err.message : 'Không xuất được file Excel.');
+    } finally {
+      setExportingExcel(false);
+    }
+  }
+
   async function printCustomerPreviewPdf() {
     const sourceRoot = previewPrintRootRef.current;
     if (!sourceRoot) return;
@@ -7079,8 +7114,23 @@ export function QuoteWorkspaceModal({
                     <col style={{ width: '96px' }} />
                     {hasAnyBillingCycleItem ? <col style={{ width: '112px' }} /> : null}
                     <col style={{ width: '104px' }} />
-                    <col style={{ width: '76px' }} />
-                    <col style={{ width: '70px' }} />
+                    {/* Fix (2026-11-20, "ô chữ đ bị khuất"): 76px vua du cho
+                     * input %+nut doi che do khi hien "%", nhung khi item o
+                     * che do 'amount' nut doi che do hien chu "đ" (shortCurrencyLabel)
+                     * bi cat mat phan duoi do khong con du cho - tang len 110px
+                     * (96px van bi cat - min-width tong cua table (xem
+                     * .qc-workspace-items-table--unified) dang STALE, nho hon
+                     * tong thuc te cac <col>, khien table-layout:fixed chia ty
+                     * le NHO HON px khai bao - da dong bo lai min-width o CSS). */}
+                    <col style={{ width: '110px' }} />
+                    {/* Fix (2026-11-20, "2 chấm đen phía sau %" o cot VAT):
+                     * nut spin len/xuong mac dinh cua input[type=number] bi ep
+                     * sat o cot 70px qua hep - thu an bang CSS
+                     * (-webkit-appearance:none) khong an dinh (van hien tren
+                     * Chromium thuc te du rule co trong bundle), nen doi sang
+                     * cach chac an da kiem chung o cot Giảm giá: tang do rong
+                     * cot len 92px. */}
+                    <col style={{ width: '92px' }} />
                     <col style={{ width: '104px' }} />
                     <col style={{ width: '82px' }} />
                     <col style={{ width: '84px' }} />
@@ -8867,6 +8917,11 @@ export function QuoteWorkspaceModal({
                           <button type="button" className="qc-btn" onClick={printPublicQuotePdf}>
                             <Printer className="qc-icon" /> In PDF
                           </button>
+                          {/* "cho nút xuất excel khi hoàn thành tới bước duyệt
+                           * trước chữ khóa link" (CloudGate qua Zalo, 2026-11-20) */}
+                          <button type="button" className="qc-btn" disabled={exportingExcel} onClick={() => void handleExportQuoteExcel()}>
+                            <FileSpreadsheet className="qc-icon" /> {exportingExcel ? 'Đang xuất...' : 'Xuất Excel'}
+                          </button>
                           <button type="button" className="qc-btn" disabled={busy} onClick={() => void revokePublicLinkFromWorkspace()}>
                             Khoá link
                           </button>
@@ -9200,6 +9255,21 @@ export function QuoteWorkspaceModal({
                     onClick={printCustomerPreviewPdf}
                   >
                     <Printer className="qc-icon" /> Xem trước / In PDF
+                  </button>
+                ) : null}
+                {/* "Xuất Excel" (.xlsx that, co format/merge/mau - yeu cau CloudGate
+                 * qua Zalo "anh muốn convert từ form hiện tại sang excel luôn
+                 * được hong", 2026-11-20) - dung CHUNG 1 nguon du lieu voi khoi
+                 * QuoteDocumentRenderer ngay duoi day (buildItemTree(itemsDraft),
+                 * quote.data, calculateQuoteTotals), khong tu tinh rieng. */}
+                {previewSchema ? (
+                  <button
+                    type="button"
+                    className="qc-mini-btn"
+                    disabled={exportingExcel}
+                    onClick={() => void handleExportQuoteExcel()}
+                  >
+                    <FileSpreadsheet className="qc-icon" /> {exportingExcel ? 'Đang xuất...' : 'Xuất Excel'}
                   </button>
                 ) : null}
                 {/* Nut "Lưu" giong het toolbar ban PDF chinh thuc

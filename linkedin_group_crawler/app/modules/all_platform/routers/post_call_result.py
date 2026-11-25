@@ -10,12 +10,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.modules.all_platform.auth_deps import get_current_user
 from app.modules.all_platform.schemas import BaseResponse
-from app.modules.all_platform.schemas.post_call_result import PostCallResultUpdate
+from app.modules.all_platform.schemas.post_call_result import PostCallResultNoteUpdate, PostCallResultUpdate
 from app.modules.all_platform.services.post_call_result_service import (
     get_call_result,
     get_call_result_stats,
     get_overdue_callbacks_count,
     update_call_result,
+    update_call_result_note,
 )
 from app.modules.all_platform.services.post_contact_activity_service import (
     get_activity_log,
@@ -285,4 +286,18 @@ def post_post_call_result(
 ) -> BaseResponse:
     """Alias cho PATCH: Cập nhật kết quả liên hệ của bài viết."""
     return patch_post_call_result(post_id, payload, user=user)
+
+
+@router.patch("/{post_id}/call-result-note")
+def patch_post_call_result_note(
+    post_id: str,
+    payload: PostCallResultNoteUpdate,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> BaseResponse:
+    """Việc 3: cập nhật riêng ghi chú lý do — KHÔNG đổi result_code, KHÔNG tạo bản ghi mới."""
+    try:
+        data = update_call_result_note(post_id, payload.platform or "facebook", payload.note, user=user)
+        return BaseResponse(success=True, data=data, message="Đã lưu ghi chú")
+    except Exception as exc:
+        return _error(exc)
 

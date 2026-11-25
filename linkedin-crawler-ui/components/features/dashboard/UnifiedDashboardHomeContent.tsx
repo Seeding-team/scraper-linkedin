@@ -10,6 +10,7 @@ import { FaThreads, FaYoutube } from "react-icons/fa6";
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { usePageHeaderSlot } from "@/components/all-platform/layout/AllPlatformShell";
 import { useSearchParams, useRouter } from "next/navigation";
 import { PostQuickViewModal } from "@/components/all-platform/components/PostQuickViewModal";
 import { FilterBar, type FilterState } from "@/components/all-platform/components/filter-bar";
@@ -27,8 +28,8 @@ import { MemberKpiRewardOverview } from "@/components/all-platform/kpi-rewards/K
 import { ScheduleCommentModal } from "@/components/all-platform/feed/ScheduleCommentModal";
 import { ScheduledCommentsPanel } from "@/components/all-platform/feed/ScheduledCommentsPanel";
 import { PostFeedSkeleton } from "@/components/all-platform/feed/PostFeedSkeleton";
-import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, allPlatformKpiService, type TeamMember } from "@/services/all-platform.service";
-import type { UnifiedPost, UnifiedStats, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
+import { allPlatformPostsService, allPlatformCategoriesService, teamsService, socialAccountsService, allPlatformUsersService, type TeamMember } from "@/services/all-platform.service";
+import type { UnifiedPost, Category, FeedPlatform, SocialAccount, PostSeedingRosterData } from "@/types/unified.types";
 
 // â”€â”€â”€ Retry helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async function fetchWithRetry<T>(
@@ -96,127 +97,6 @@ const getDatePart = (dateInput?: Date | string | null) => {
   }
 };
 
-// â”€â”€â”€ Stats Card (Redesigned & Premium & Softer) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-interface StatCardProps {
-  icon: string;
-  label: string;
-  value: string | number;
-  sub?: string;
-  accent?: "blue" | "green" | "amber" | "indigo" | string;
-  progress?: { value: number; label: string };
-  trend?: { value: number; isUp: boolean; label: string };
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  sub,
-  accent,
-  progress,
-  trend,
-}: StatCardProps) {
-  const [coords, setCoords] = useState({ x: 0, y: 0 });
-  const [isHovered, setIsHovered] = useState(false);
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    const card = e.currentTarget;
-    const rect = card.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const rotateX = (y - centerY) / 25;
-    const rotateY = (centerX - x) / 25;
-    setCoords({ x: rotateY, y: rotateX });
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-    setCoords({ x: 0, y: 0 });
-  };
-
-  const transformStyle = isHovered
-    ? {
-        transform: `perspective(1000px) rotateX(${coords.y}deg) rotateY(${coords.x}deg)`,
-        transition: "transform 0.05s ease",
-      }
-    : {
-        transform: "perspective(1000px) rotateX(0deg) rotateY(0deg)",
-        transition: "transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1)",
-      };
-
-  let iconCls = "bg-muted text-muted-foreground";
-  let barColor = "bg-muted-foreground/60";
-
-  if (accent === "blue") {
-    iconCls = "bg-blue-50/80 text-blue-500 dark:bg-blue-950/20 dark:text-blue-400";
-    barColor = "bg-blue-500";
-  } else if (accent === "green") {
-    iconCls = "bg-emerald-50/80 text-emerald-500 dark:bg-emerald-950/20 dark:text-emerald-400";
-    barColor = "bg-emerald-500";
-  } else if (accent === "amber") {
-    iconCls = "bg-amber-50/80 text-amber-500 dark:bg-amber-950/20 dark:text-amber-400";
-    barColor = "bg-amber-500";
-  } else if (accent === "indigo") {
-    iconCls = "bg-indigo-50/80 text-indigo-500 dark:bg-indigo-950/20 dark:text-indigo-400";
-    barColor = "bg-indigo-500";
-  }
-
-  return (
-    <div
-      className="bg-card border border-border p-4 rounded-xl shadow-none flex flex-col justify-between relative overflow-hidden group select-none"
-    >
-      <div className="flex justify-between items-start">
-        <div className="space-y-1">
-          <p className="text-[10px] font-bold text-muted-foreground capitalize">{label}</p>
-          <h3 className="text-xl font-bold text-foreground tracking-tight mt-1">
-            {typeof value === "number" ? value.toLocaleString("vi-VN") : value}
-          </h3>
-        </div>
-        <div
-          className={cn(
-            "w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-105",
-            iconCls,
-          )}
-        >
-          <span className="material-symbols-outlined text-[20px]">{icon}</span>
-        </div>
-      </div>
-
-      <div className="mt-4 pt-3 border-t border-border/60 flex items-center justify-between">
-        {trend ? (
-          <span
-            className={cn(
-              "text-[11px] font-bold flex items-center gap-1",
-              trend.isUp ? "text-emerald-500" : "text-amber-500",
-            )}
-          >
-            <span className="material-symbols-outlined text-[14px]">
-              {trend.isUp ? "arrow_upward" : "arrow_downward"}
-            </span>
-            {trend.label}
-          </span>
-        ) : progress ? (
-          <div className="flex-1 max-w-[140px]">
-            <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
-              <div
-                className={cn("h-full rounded-full transition-all duration-500", barColor)}
-                style={{ width: `${progress.value}%` }}
-              />
-            </div>
-            <span className="text-[9px] font-semibold text-muted-foreground mt-1 block leading-none">
-              {progress.label}
-            </span>
-          </div>
-        ) : sub ? (
-          <span className="text-[10px] text-muted-foreground font-medium leading-none">{sub}</span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
 // â”€â”€â”€ Menu doc lap theo TEAM (2026-09-30, sua tu ban cu loc theo mang dich vu) â”€â”€
 // Truoc day loc theo "industry" (CNTT rieng, luu tru/hotel rieng) bang so khop
 // tu khoa mo - doi sang loc THANG theo team that (Team Dev, Team Infra, Team
@@ -236,18 +116,30 @@ const INITIAL_FILTERS: FilterState = {
   search: "",
   intent: "",
   industry: "",
-  team: "",
   tier: "",
   icp: "",
   content_type: "",
   product_seeding: "",
   member: "",
   sort: "lead_score_high",
-  dateRange: "",
   seeding_status: "all",
 };
 
-export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boolean }) {
+export function UnifiedDashboardHomeContent({
+  hideHeader,
+  showHeaderBreadcrumb,
+}: {
+  hideHeader?: boolean;
+  /** Việc 1 (2026-11-21): CHỈ trang /all-platform/post-feed truyền true — thay tiêu đề mặc định
+   * ("Marketing Agents") ở topbar bằng breadcrumb 3 cấp + 3 nút hành động (Review Nhanh/Lọc sạch
+   * bài đối thủ/Từ khóa loại trừ), qua usePageHeaderSlot (AllPlatformShell.tsx). Component này
+   * còn dùng chung ở /all-platform/internal-engagement nên KHÔNG tự bật mặc định — tránh ảnh
+   * hưởng topbar của trang đó. */
+  showHeaderBreadcrumb?: boolean;
+}) {
+  // Việc 1 (2026-11-21): heading đã bỏ nên hideHeader không còn điều khiển gì ở component
+  // này nữa, nhưng vẫn giữ nguyên trong props vì DashboardHomeContent.tsx vẫn truyền vào.
+  void hideHeader;
   const { user } = useAppAuth();
   const CURRENT_USER_EMAIL = user?.email || "";
 
@@ -332,33 +224,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const [verifyModalPost, setVerifyModalPost] = useState<UnifiedPost | null>(null);
   // YouTube: modal gõ comment -> extension mở video + điền sẵn, tính KPI khi nhân viên bấm Bình luận.
   const [youtubeCommentPost, setYoutubeCommentPost] = useState<UnifiedPost | null>(null);
-
-  const handleCleanFeed = async () => {
-    setIsCleaningFeed(true);
-    try {
-      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-      });
-      const data = await res.json();
-      if (data.success) {
-        const total = data.data?.total_deleted || 0;
-        toast.success(
-          total > 0
-            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
-            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
-        );
-        fetchPosts();
-      } else {
-        toast.error(data.message || "Không thể dọn dẹp bài viết");
-      }
-    } catch (e: any) {
-      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
-    } finally {
-      setIsCleaningFeed(false);
-    }
-  };
 
   const [scheduleModalPost, setScheduleModalPost] = useState<UnifiedPost | null>(null);
   const [scheduleRefreshKey, setScheduleRefreshKey] = useState(0);
@@ -617,70 +482,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   }, [posts]);
   const [deletingPostId, setDeletingPostId] = useState<string | null>(null);
 
-  const [stats, setStats] = useState<UnifiedStats>({
-    totalPostsToday: 0,
-    postsYesterday: 0,
-    highScoreCount: 0,
-    highScorePercent: 0,
-    seededToday: 0,
-    kpiProgress: 0,
-    kpiTarget: 0,
-    kpiProgressPercent: 0,
-  });
-
-  // 4 Chỉ số StatCards cốt lõi theo yêu cầu của Master
-  const [newPostsCount, setNewPostsCount] = useState<number>(0);
-  const [inboxTodayCount, setInboxTodayCount] = useState<number>(0);
-
-  // Tính số bài mới kể từ lần cuối user vào trang (lưu timestamp trong localStorage)
-  useEffect(() => {
-    if (typeof window === "undefined" || !CURRENT_USER_EMAIL) return;
-    const storageKey = `markee_last_visit_${CURRENT_USER_EMAIL.replace(/[^a-zA-Z0-9]/g, "_")}`;
-    const rawLastVisit = localStorage.getItem(storageKey);
-    const lastVisitTs = rawLastVisit ? parseInt(rawLastVisit, 10) : 0;
-
-    if (posts && posts.length > 0) {
-      if (lastVisitTs > 0) {
-        const count = posts.filter((p) => {
-          const postTime = new Date(p.created_at || p.crawl_date || p.post_time || 0).getTime();
-          return postTime > lastVisitTs;
-        }).length;
-        setNewPostsCount(count);
-      } else {
-        setNewPostsCount(stats.totalPostsToday || posts.length);
-      }
-    }
-
-    // Đếm số bài đã nhắn tin (inbox Zalo) hôm nay từ mảng posts
-    const inboxInPosts = posts.filter((p) => {
-      return !!(p as any).zalo_sent_by || (p as any).status === "contacted" || p.verify_status === "yes";
-    }).length;
-    setInboxTodayCount((prev) => Math.max(prev, inboxInPosts));
-
-    // Cập nhật timestamp lần truy cập (sau khi người dùng đã nhìn thấy số liệu)
-    const timer = setTimeout(() => {
-      localStorage.setItem(storageKey, Date.now().toString());
-    }, 4000);
-
-    return () => clearTimeout(timer);
-  }, [posts, CURRENT_USER_EMAIL, stats.totalPostsToday]);
-
-  // Lấy thêm số lượng inbox hoàn thành từ API KPI của user để đảm bảo số liệu thực tế nhất
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    allPlatformKpiService
-      .getByEmail(CURRENT_USER_EMAIL)
-      .then((res) => {
-        if (res?.success && res.data) {
-          const data = res.data as any;
-          const currentInbox = Number(data.kpi_inbox_current || 0);
-          if (currentInbox > 0) {
-            setInboxTodayCount((prev) => Math.max(prev, currentInbox));
-          }
-        }
-      })
-      .catch(() => {});
-  }, [CURRENT_USER_EMAIL]);
   // Mac dinh true (khong phai false): luc moi mount, user/CURRENT_USER_EMAIL tu
   // AppAuthContext chua kip load xong nen fetchPosts() se return som (guard
   // !CURRENT_USER_EMAIL) va KHONG bao gio set isLoadingPosts=true - neu khoi
@@ -731,21 +532,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     } catch {}
   }, []);
 
-  // Fetch Stats
-  const fetchStats = useCallback(async () => {
-    if (!CURRENT_USER_EMAIL) return;
-    try {
-      const res = await allPlatformPostsService.getStats({
-        email: CURRENT_USER_EMAIL,
-        platform: feedPlatform,
-      });
-      if (res.success && res.data) {
-        setStats(res.data as UnifiedStats);
-      }
-    } catch {}
-  }, [CURRENT_USER_EMAIL, feedPlatform]);
-
-  // Fetch Posts (Phase 6: dùng luôn quick_stats từ response, tiết kiệm 1 round-trip)
+  // Fetch Posts
 
   const fetchPosts = useCallback(async () => {
     // Tránh stuck spinner khi auth chưa load xong / user không có email.
@@ -760,20 +547,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     setIsLoadingPosts(true);
     setPostsError(null);
     try {
-      let dateFrom: string | undefined;
-      let dateTo: string | undefined;
-
-      if (filters.dateRange === "today") {
-        dateFrom = getVietnamDateOffsetStr(0);
-      } else if (filters.dateRange === "yesterday") {
-        dateFrom = getVietnamDateOffsetStr(-1);
-        dateTo = dateFrom;
-      } else if (filters.dateRange === "7days") {
-        dateFrom = getVietnamDateOffsetStr(-7);
-      } else if (filters.dateRange === "30days") {
-        dateFrom = getVietnamDateOffsetStr(-30);
-      }
-
       // Mac dinh nap 50 bai/lan de luon co du du lieu san trong bo nho cho cac tab con
       // Backend da duoc toi uu batching 25 IDs nen 50-100 bai load chi ton ~1s.
       const requestPage = page;
@@ -783,11 +556,8 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         allPlatformPostsService.filter({
           email: CURRENT_USER_EMAIL,
           platform: feedPlatform,
-          date_from: dateFrom,
-          date_to: dateTo,
           intent: filters.intent || undefined,
           industry: filters.industry || undefined,
-          team: filters.team || undefined,
           tier: filters.tier || undefined,
           icp: filters.icp || undefined,
           content_type: filters.content_type || undefined,
@@ -850,13 +620,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         setTotalCount(res.data.total || 0);
         // Khi filter seeding: totalPages = 1 vì FE-side filter không có pagination thực
         setTotalPages(filters.seeding_status && filters.seeding_status !== "all" ? 1 : res.data.total_pages || 1);
-        // Phase 6: ưu tiên quick_stats từ response (1 round-trip), fallback /stats nếu thiếu
-        if (res.data.quick_stats) {
-          setStats(res.data.quick_stats as UnifiedStats);
-        } else {
-          // Backend cũ chưa trả quick_stats → gọi /unified/stats riêng
-          fetchStats();
-        }
       } else {
         setPostsError(res.message || "Không thể tải bài viết.");
       }
@@ -867,19 +630,42 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     }
   }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode, contactMemberId]);
 
-  
+  // Việc 1 (2026-11-21): chuyển xuống dưới `fetchPosts` (vốn ở ngay trên) + bọc useCallback —
+  // trước đây là hàm thường (tạo mới mỗi lần render), không vấn đề gì vì JSX gọi nó chỉ render
+  // inline. Giờ headerBreadcrumbNode (useMemo bên dưới) cần nó làm dependency ổn định, nếu
+  // không sẽ tự tính lại mỗi lần render dù không có gì đổi.
+  const handleCleanFeed = useCallback(async () => {
+    setIsCleaningFeed(true);
+    try {
+      const res = await fetch("/api/all-platform/posts/cleanup-feed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.success) {
+        const total = data.data?.total_deleted || 0;
+        toast.success(
+          total > 0
+            ? `Đã lọc và dọn dẹp ${total} bài đối thủ và bài trùng lặp thành công!`
+            : "Feed sạch hoàn toàn, không có bài đối thủ hay bài trùng nội dung!"
+        );
+        fetchPosts();
+      } else {
+        toast.error(data.message || "Không thể dọn dẹp bài viết");
+      }
+    } catch (e: any) {
+      toast.error("Lỗi khi dọn dẹp bài viết: " + (e?.message || e));
+    } finally {
+      setIsCleaningFeed(false);
+    }
+  }, [fetchPosts]);
 
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
     fetchPosts();
   }, [fetchPosts]);
 
-  useEffect(() => {
-    if (!CURRENT_USER_EMAIL) return;
-    fetchStats();
-  }, [fetchStats]);
-
-  
   useEffect(() => {
     if (!CURRENT_USER_EMAIL) return;
     fetchCategories();
@@ -904,9 +690,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
         if (f.search) params.set("q", f.search);
         if (f.intent) params.set("intent", f.intent);
         if (f.industry) params.set("industry", f.industry);
-        if (f.team) params.set("team", f.team);
         if (f.sort !== "lead_score_high") params.set("sort", f.sort);
-        if (f.dateRange) params.set("date", f.dateRange);
         if (f.seeding_status && f.seeding_status !== "all")
           params.set("seeding", f.seeding_status);
         const newUrl = params.toString()
@@ -934,9 +718,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
       search: params.get("q") || "",
       intent: params.get("intent") || "",
       industry: params.get("industry") || "",
-      team: params.get("team") || "",
       sort: (params.get("sort") as typeof prev.sort) || "lead_score_high",
-      dateRange: params.get("date") || "",
       seeding_status: (params.get("seeding") as typeof prev.seeding_status) || "all",
     }));
   }, []);
@@ -947,23 +729,12 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
   const icps = categories.filter((c) => c.category_type === "icp");
   const contentTypes = categories.filter((c) => c.category_type === "content_type");
   const productSeedings = categories.filter((c) => c.category_type === "product_seeding");
-  const teamCategories: Category[] = teams.map((t) => ({
-    id: t.id,
-    code: t.name,
-    name: t.name,
-    category_type: "team",
-    platform: "all",
-  }));
-
-  const fbDiff = stats.totalPostsToday - stats.postsYesterday;
 
   // Extension báo về sau khi nhân viên đã bấm "Bình luận" trên tab YouTube.
   useYouTubeCommentResults((result) => {
     if (result.success) {
       toast.success(result.message || "Đã ghi nhận comment YouTube và tính KPI.");
       fetchPosts();
-      fetchStats();
-      
     } else {
       toast.error(result.message || "Comment YouTube chưa được tính KPI.");
     }
@@ -1301,6 +1072,48 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     [teams],
   );
 
+  // Việc B (2026-11-21): label của 3 option dựa trên evaluation_code (pending/todo/skip —
+  // chua-danh-gia/can-lien-he/khong-phu-hop) lấy động từ categories thật (category_type=
+  // "post_evaluation", is_active) thay vì hardcode — khớp đúng tên đã cấu hình ở trang quản lý
+  // category (/all-platform/seeding-config). doing/done dựa trên call_result_code, không map
+  // tới category_type này nên vẫn giữ label cứng. Fallback về chữ cứng cũ nếu categories chưa
+  // tải xong hoặc thiếu dòng tương ứng (an toàn, không hiện label rỗng).
+  const postEvaluationLabels = useMemo(() => {
+    const map: Record<string, string> = {};
+    categories
+      .filter((c) => c.category_type === "post_evaluation" && c.is_active)
+      .forEach((c) => {
+        map[c.code] = c.name || c.code;
+      });
+    return map;
+  }, [categories]);
+
+  // Việc 2 (gộp hàng pill trạng thái vào dropdown FilterBar) — cùng state/logic lọc cũ
+  // (seedingStatusFilter), chỉ đổi UI nút pill sang option dropdown, kèm số đếm trong ngoặc.
+  // Việc A (2026-11-21): thêm lại option "pending" (Chưa đánh giá) — mặc định khi vào trang
+  // nhưng trước đây không chọn lại được vì thiếu option này trong dropdown.
+  // Việc (2026-11-21, rút gọn dropdown): bỏ hẳn 2 option "doing"/"done" khỏi dropdown này — KHÔNG
+  // đổi logic phân loại gốc (seedingStatusFilter/getPostRatingAndCall), 2 bucket đó vẫn tồn tại
+  // trong code/dữ liệu, chỉ là không còn chọn riêng qua dropdown được nữa (bài thuộc doing/done
+  // vẫn hiện bình thường khi chọn "Tất cả"). Đánh đổi đã chốt: mất khả năng lọc riêng 2 bucket
+  // này qua mọi đường trên UI (dropdown/sidebar/widget's chip).
+  const leadStatusDropdownOptions = useMemo(
+    () => [
+      { value: "all", label: "Tất cả bài viết", count: seedingMetrics.all },
+      { value: "pending", label: postEvaluationLabels["chua-danh-gia"] || "Chưa đánh giá", count: seedingMetrics.pending },
+      { value: "todo", label: postEvaluationLabels["can-lien-he"] || "Cần liên hệ", count: seedingMetrics.todo },
+      { value: "skip", label: postEvaluationLabels["khong-phu-hop"] || "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
+    ],
+    [seedingMetrics, postEvaluationLabels],
+  );
+
+  // Việc 2 (gộp hàng tab team thật vào dropdown FilterBar) — cùng state/logic lọc cũ
+  // (serviceArea/matchesServiceArea), chỉ đổi UI tab sang option dropdown.
+  const teamTabDropdownOptions = useMemo(
+    () => serviceAreaTabs.map((t) => ({ value: t.key, label: t.label })),
+    [serviceAreaTabs],
+  );
+
   // Tach rieng khoi khoi tieu de (!hideHeader) - day la CONTROL chuc nang
   // (chuyen Facebook/LinkedIn/Threads), khong phai trang tri. Bug da gap: khi nhung
   // trang "Seeding ben ngoai" render component nay voi hideHeader (gom vao
@@ -1337,14 +1150,7 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     </div>
   );
 
-  const platformHint =
-    feedPlatform === "youtube"
-      ? "Đang xem YouTube — tìm video theo từ khoá hoặc dán link, comment tính KPI theo kênh đã liên kết."
-      : feedPlatform === "threads"
-      ? "Đang xem Threads — tìm bài theo từ khoá."
-      : feedPlatform === "linkedin"
-        ? "Đang xem LinkedIn — cào theo nhóm đã thêm."
-        : "Đang xem Facebook — cào theo nhóm đã thêm.";
+  // Việc 1 (2026-11-21): bỏ hẳn platformHint ("Đang xem...") theo yêu cầu, không hiện ở đâu nữa.
 
   const isLeaderOrAdmin = user?.role === "admin" || user?.role === "leader";
   const SUB_TABS = [
@@ -1354,79 +1160,121 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
     { key: "queue" as const, label: "Lịch crawl & Hàng đợi", icon: "schedule" },
   ];
 
+  // Việc 1 (2026-11-21): breadcrumb topbar cho trang post-feed — cấp cuối đọc CHUNG
+  // `leadStatusDropdownOptions` (đã build cho dropdown "Trạng thái liên hệ" ở trên), không viết
+  // logic đồng bộ riêng. 3 nút hành động dời nguyên xi từ hàng filter lên đây (giữ nguyên style/
+  // màu/icon/logic, chỉ đổi vị trí).
+  const currentLeadStatusLabel =
+    leadStatusDropdownOptions.find((o) => o.value === seedingStatusFilter)?.label || "Chưa đánh giá";
+  const headerBreadcrumbNode = useMemo(
+    () => (
+      <div className="flex-1 min-w-0 flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-foreground truncate">
+          Seeding bên ngoài <span className="text-muted-foreground font-normal mx-1">›</span> Hoạt động seeding{" "}
+          <span className="text-muted-foreground font-normal mx-1">›</span> {currentLeadStatusLabel}
+        </span>
+        <div className="flex items-center gap-2 ml-auto">
+          <QuickReviewToolbar
+            posts={displayPosts}
+            onBatchRejectSuccess={(affectedIds) => {
+              setPosts((prev) =>
+                prev.map((p) =>
+                  affectedIds.includes(p.id)
+                    ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
+                    : p
+                )
+              );
+              setEvaluationsMap((prev) => {
+                const updated = { ...prev };
+                affectedIds.forEach((id) => {
+                  updated[id] = "khong-phu-hop";
+                });
+                return updated;
+              });
+            }}
+            onUndoSuccess={() => {
+              void fetchPosts();
+            }}
+            hasNextPage={currentPage < effectiveTotalPages}
+            onNextPage={() => handlePageChange(currentPage + 1)}
+          />
+
+          <button
+            type="button"
+            onClick={handleCleanFeed}
+            disabled={isCleaningFeed}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
+            title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
+          >
+            <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
+              {isCleaningFeed ? "sync" : "mop"}
+            </span>
+            {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
+          </button>
+
+          {(user?.role === "admin" || user?.role === "leader") && (
+            <button
+              type="button"
+              onClick={() => setShowKeywordsPanel((prev) => !prev)}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
+                showKeywordsPanel
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-card hover:bg-muted text-foreground border-border"
+              }`}
+              title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
+            >
+              <span className="material-symbols-outlined text-[16px]">filter_alt</span>
+              <span>Từ khóa loại trừ</span>
+            </button>
+          )}
+        </div>
+      </div>
+    ),
+    [
+      currentLeadStatusLabel,
+      displayPosts,
+      currentPage,
+      effectiveTotalPages,
+      handlePageChange,
+      handleCleanFeed,
+      isCleaningFeed,
+      showKeywordsPanel,
+      user?.role,
+      fetchPosts,
+    ],
+  );
+  usePageHeaderSlot(showHeaderBreadcrumb ? headerBreadcrumbNode : null);
+
   return (
     <div className="w-full space-y-6">
-      {!hideHeader ? (
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white p-6 rounded-2xl border border-gray-100 shadow-xs">
-          <div className="space-y-1">
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-              <span className="material-symbols-outlined text-[28px] text-[#be123c]">bolt</span>
-              Hoạt động Seeding bên ngoài
-            </h1>
-            <p className="text-xs text-gray-500 font-medium">
-              Quản lý và tương tác bài viết đa nền tảng (Facebook, LinkedIn, Threads, YouTube), hỗ trợ cào bài và comment tự động.
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
-          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
-
-      
-        {/* Chọn nền tảng */}
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-1">
+      {/* Việc 1 (2026-11-21): gộp tiêu đề + "Chọn nền tảng" + "Lịch comment" (fold → popover,
+          xem ScheduledCommentsPanel.tsx) còn 1 hàng ngang — bỏ dòng mô tả dài (lặp ý tên
+          trang) và bỏ hẳn ghi chú "Đang xem..." (platformHint, không hiện ở đâu nữa). "Markee
+          Seeding Extension" không còn tồn tại trong trang này (đã gỡ, thay bằng Public 4G
+          No-Acc tự động — xem comment dưới), nên không có gì để gộp thêm. Việc 1 (tiếp,
+          2026-11-21): bỏ hẳn heading "Hoạt động Seeding bên ngoài" — breadcrumb ở hàng trên
+          cùng đã nói rõ đang ở trang nào, chữ này dư thừa. `hideHeader` không còn dùng để ẩn
+          gì ở đây nữa nhưng giữ nguyên prop (nơi gọi component vẫn truyền vào). */}
+      <div className="flex flex-wrap items-center gap-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-xs">
         <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide shrink-0">
           Chọn nền tảng
         </span>
         {platformTabs}
-        <span className="text-xs text-muted-foreground sm:ml-auto">{platformHint}</span>
+        {CURRENT_USER_EMAIL && (
+          <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
+        )}
       </div>
 
-      
+      {/* 4 tab phụ: "Hoạt động seeding" (danh sách bài viết) / "Dashboard leader"
+          (admin+leader) / "Kho thư viện Group" / "Lịch crawl & Hàng đợi". */}
+
       <>
-          {/* 4 StatCard cốt lõi theo yêu cầu Master:
-              1. Tổng bài viết hôm nay
-              2. Bài viết mới (so với lần cuối vào của người đó)
-              3. Số bài viết đã bình luận trong ngày
-              4. Số bài viết đã được nhắn tin trong ngày */}
-          <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 mb-4 shadow-xs">
-            <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-              <StatCard
-                icon="description"
-                label="Tổng bài hôm nay"
-                value={stats.totalPostsToday || 0}
-                trend={{
-                  value: Math.abs(fbDiff),
-                  isUp: fbDiff >= 0,
-                  label: `${fbDiff >= 0 ? "+" : ""}${fbDiff} so với hôm qua`,
-                }}
-                sub="Cào về trong ngày hôm nay"
-                accent="blue"
-              />
-              <StatCard
-                icon="auto_awesome"
-                label="Bài viết mới"
-                value={newPostsCount}
-                sub={newPostsCount > 0 ? "Kể từ lần cuối bạn truy cập" : "Bạn đã xem hết bài mới"}
-                accent="amber"
-              />
-              <StatCard
-                icon="chat_bubble"
-                label="Đã bình luận hôm nay"
-                value={stats.seededToday || 0}
-                sub="Bài viết đã comment tương tác"
-                accent="green"
-              />
-              <StatCard
-                icon="send"
-                label="Đã nhắn tin hôm nay"
-                value={inboxTodayCount}
-                sub="Hội thoại Zalo & inbox kết nối"
-                accent="indigo"
-              />
-            </div>
-          </div>
+          {/* Việc (2026-11-21): hàng 4 StatCard tổng quan (Tổng bài hôm nay/Bài viết mới/Đã
+              bình luận hôm nay/Đã nhắn tin hôm nay) đã bị xoá hẳn — 2 card sau trùng ý nghĩa
+              với cột Comment/Zalo trong widget "Kết quả liên hệ" bên dưới (đã có, chi tiết
+              hơn, lọc được theo kỳ); 2 card đầu bỏ theo yêu cầu, không giữ lại. Cùng xoá state
+              stats/newPostsCount/inboxTodayCount, 2 effect tính riêng, fetchStats() và nhánh
+              quick_stats trong fetchPosts(), component StatCard — không còn chỗ nào dùng. */}
 
           {/* Phase 6: KPI personal progress — hiển thị cho cả member VÀ leader */}
           {CURRENT_USER_EMAIL && (user?.role === "member" || user?.role === "leader") && (
@@ -1445,138 +1293,13 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             <MemberKpiRewardOverview />
           )}
 
-          {CURRENT_USER_EMAIL && (
-            <ScheduledCommentsPanel refreshKey={scheduleRefreshKey} />
-          )}
+          {/* ScheduledCommentsPanel đã dời lên hàng header gộp phía trên (Việc 1). */}
           {/* SeedingExtensionPanel đã được gỡ bỏ - cào Public 4G No-Acc tự động */}
 
-          {/* Filter Pills Trạng Thái Seeding Tinh Gọn (Thay thế 5 Card cồng kềnh - Phẳng, Hiện đại) */}
-          <div className="flex flex-wrap items-center gap-2 mb-3 bg-white border border-gray-200/80 p-2 sm:p-2.5 rounded-2xl shadow-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("all");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "all"
-                  ? "bg-slate-900 text-white shadow-xs ring-2 ring-slate-900/10"
-                  : "bg-gray-100/80 text-gray-700 hover:bg-gray-200/80"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-[#6078eb]" />
-              <span>Tất cả bài viết</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "all" ? "bg-white/20 text-white" : "bg-white text-gray-800 shadow-2xs"
-              )}>
-                {seedingMetrics.all}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("todo");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "todo"
-                  ? "bg-amber-500 text-white shadow-xs ring-2 ring-amber-500/20"
-                  : "bg-amber-50 text-amber-800 border border-amber-200/60 hover:bg-amber-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              <span>Cần liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "todo" ? "bg-white/20 text-white" : "bg-amber-200/60 text-amber-900"
-              )}>
-                {seedingMetrics.todo}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("doing");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "doing"
-                  ? "bg-blue-600 text-white shadow-xs ring-2 ring-blue-600/20"
-                  : "bg-blue-50 text-blue-800 border border-blue-200/60 hover:bg-blue-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-blue-400" />
-              <span>Đang liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "doing" ? "bg-white/20 text-white" : "bg-blue-200/60 text-blue-900"
-              )}>
-                {seedingMetrics.doing}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("done");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "done"
-                  ? "bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-600/20"
-                  : "bg-emerald-50 text-emerald-800 border border-emerald-200/60 hover:bg-emerald-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>Đã liên hệ</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "done" ? "bg-white/20 text-white" : "bg-emerald-200/60 text-emerald-900"
-              )}>
-                {seedingMetrics.done}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSeedingStatusFilter("skip");
-                setCallFilter("all");
-                setPage(1);
-                setClientPage(1);
-              }}
-              className={cn(
-                "inline-flex items-center gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                seedingStatusFilter === "skip"
-                  ? "bg-rose-600 text-white shadow-xs ring-2 ring-rose-600/20"
-                  : "bg-rose-50 text-rose-800 border border-rose-200/60 hover:bg-rose-100/70"
-              )}
-            >
-              <span className="w-2 h-2 rounded-full bg-rose-400" />
-              <span>Chưa phù hợp (Bỏ qua)</span>
-              <span className={cn(
-                "px-2 py-0.5 rounded-full text-[11px] font-extrabold",
-                seedingStatusFilter === "skip" ? "bg-white/20 text-white" : "bg-rose-200/60 text-rose-900"
-              )}>
-                {seedingMetrics.skip}
-              </span>
-            </button>
-          </div>
+          {/* Việc 2 (2026-11-21): hàng pill "Trạng thái liên hệ" (Tất cả bài viết/Cần liên
+              hệ/Đang liên hệ/Đã liên hệ/Chưa phù hợp) đã gộp thành dropdown trong FilterBar
+              bên dưới (leadStatusOptions/leadStatusValue/onLeadStatusChange) — cùng state
+              seedingStatusFilter, không đổi logic lọc. */}
 
           {/* Filter Chips cho Kết Quả Cuộc Gọi (chỉ hiện khi đang xem "Cần liên hệ") */}
           {seedingStatusFilter === "todo" && (
@@ -1615,84 +1338,9 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             </div>
           )}
 
-          {/* Menu độc lập theo TEAM (2026-09-30) — mỗi tab là 1 team thật trong hệ
-              thống, xem ghi chú serviceAreaTabs/matchesServiceArea ở trên. */}
-          <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card p-1.5">
-            {serviceAreaTabs.map((tab) => (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => { setServiceArea(tab.key); setPage(1); setClientPage(1); }}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-                  serviceArea === tab.key
-                    ? "bg-primary text-primary-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Quản lý từ khóa loại trừ, Dọn dẹp feed & Review Nhanh */}
-          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
-            <QuickReviewToolbar
-              posts={displayPosts}
-              onBatchRejectSuccess={(affectedIds) => {
-                setPosts((prev) =>
-                  prev.map((p) =>
-                    affectedIds.includes(p.id)
-                      ? { ...p, evaluation_code: "khong-phu-hop", evaluation_status: "khong_phu_hop", evaluation: "khong_phu_hop" }
-                      : p
-                  )
-                );
-                setEvaluationsMap((prev) => {
-                  const updated = { ...prev };
-                  affectedIds.forEach((id) => {
-                    updated[id] = "khong-phu-hop";
-                  });
-                  return updated;
-                });
-              }}
-              onUndoSuccess={() => {
-                void fetchPosts();
-              }}
-              hasNextPage={currentPage < effectiveTotalPages}
-              onNextPage={() => handlePageChange(currentPage + 1)}
-            />
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleCleanFeed}
-                disabled={isCleaningFeed}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-secondary/80 hover:bg-secondary text-secondary-foreground transition shadow-2xs cursor-pointer border border-border"
-                title="Quét và xóa bỏ các bài viết trùng lặp nội dung hoặc bài đối thủ chào mời dịch vụ"
-              >
-                <span className={cn("material-symbols-outlined text-[16px] text-primary", isCleaningFeed && "animate-spin")}>
-                  {isCleaningFeed ? "sync" : "mop"}
-                </span>
-                {isCleaningFeed ? "Đang lọc..." : "Lọc sạch bài đối thủ"}
-              </button>
-
-              {(user?.role === "admin" || user?.role === "leader") && (
-                <button
-                  type="button"
-                  onClick={() => setShowKeywordsPanel((prev) => !prev)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition shadow-2xs cursor-pointer ${
-                    showKeywordsPanel
-                      ? "bg-primary text-primary-foreground border-primary"
-                      : "bg-card hover:bg-muted text-foreground border-border"
-                  }`}
-                  title="Quản lý danh sách từ khóa cấm / loại trừ và duyệt đề xuất"
-                >
-                  <span className="material-symbols-outlined text-[16px]">filter_alt</span>
-                  <span>Từ khóa loại trừ</span>
-                </button>
-              )}
-            </div>
-          </div>
+          {/* Việc 2 (2026-11-21): hàng tab TEAM (2026-09-30) đã gộp thành dropdown trong
+              FilterBar bên dưới (teamTabOptions/teamTabValue/onTeamTabChange) — cùng state
+              serviceArea/matchesServiceArea, không đổi logic lọc. */}
 
           {showKeywordsPanel && (user?.role === "admin" || user?.role === "leader") && (
             <PendingKeywordsPanel
@@ -1703,17 +1351,37 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
             />
           )}
 
-          <FilterBar
-            intents={intents}
-            industries={industries}
-            teams={teamCategories}
-            tiers={tiers}
-            icps={icps}
-            contentTypes={contentTypes}
-            productSeedings={productSeedings}
-            onFilter={handleFilter}
-            isLoading={isLoadingPosts}
-          />
+          {/* Việc 2 (2026-11-21): gộp FilterBar (ô tìm kiếm + 2 dropdown ghim + "Thêm bộ lọc" +
+              "Xóa lọc") thành 1 hàng flex-wrap. Việc 1 (tiếp, 2026-11-21): 3 nút hành động
+              (Review Nhanh/Lọc sạch bài đối thủ/Từ khóa loại trừ) đã DỜI lên breadcrumb ở
+              topbar (headerBreadcrumbNode, usePageHeaderSlot) — hàng này không còn 3 nút đó. */}
+          <div className="bg-[#F5F5F5]/50 flex flex-wrap items-center gap-3 rounded-2xl border border-[#E5E5E5] p-4 shadow-[0_4px_20px_rgba(0,0,0,0.015)]">
+            <FilterBar
+              intents={intents}
+              industries={industries}
+              tiers={tiers}
+              icps={icps}
+              contentTypes={contentTypes}
+              productSeedings={productSeedings}
+              onFilter={handleFilter}
+              isLoading={isLoadingPosts}
+              leadStatusOptions={leadStatusDropdownOptions}
+              leadStatusValue={seedingStatusFilter}
+              onLeadStatusChange={(value) => {
+                setSeedingStatusFilter(value);
+                setCallFilter("all");
+                setPage(1);
+                setClientPage(1);
+              }}
+              teamTabOptions={teamTabDropdownOptions}
+              teamTabValue={serviceArea}
+              onTeamTabChange={(value) => {
+                setServiceArea(value);
+                setPage(1);
+                setClientPage(1);
+              }}
+            />
+          </div>
 
           <CallResultStatsWidget
             selectedCode={selectedCallResultCode}
@@ -1756,7 +1424,6 @@ export function UnifiedDashboardHomeContent({ hideHeader }: { hideHeader?: boole
                         // dung ngay (khong doi F5 tay), giong het pattern onCommentDone cua
                         // SeedingExtensionPanel o tren.
                         fetchPosts();
-                        fetchStats();
                       }}
                       onVerify={() => {}}
                       onSchedule={post.platform === "threads" || post.platform === "youtube" ? undefined : (post) => setScheduleModalPost(post)}

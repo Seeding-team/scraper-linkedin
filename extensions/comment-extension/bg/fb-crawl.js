@@ -18,6 +18,33 @@
         return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    // Dung cho fetchOneGroupInfo() - cung pattern voi waitForTabLoad() trong bg/li-crawl.js
+    // (LI_FETCH_POST_INFO), chi doi file nay khong share module nen tu copy lai.
+    const GROUP_INFO_TAB_LOAD_TIMEOUT_MS = 20000;
+    const GROUP_INFO_SETTLE_DELAY_MS = 2500;
+
+    function waitForTabLoad(tabId, timeoutMs) {
+        return new Promise((resolve) => {
+            let done = false;
+            function finish(ok) {
+                if (done) return;
+                done = true;
+                chrome.tabs.onUpdated.removeListener(listener);
+                clearTimeout(timer);
+                resolve(ok);
+            }
+            function listener(updatedTabId, changeInfo) {
+                if (updatedTabId === tabId && changeInfo.status === "complete") finish(true);
+            }
+            chrome.tabs.get(tabId, (tab) => {
+                if (chrome.runtime.lastError) return finish(false);
+                if (tab && tab.status === "complete") return finish(true);
+                chrome.tabs.onUpdated.addListener(listener);
+            });
+            const timer = setTimeout(() => finish(false), timeoutMs);
+        });
+    }
+
     function notifyApp(message) {
         if (dashboardTabId != null) {
             chrome.tabs.sendMessage(dashboardTabId, message).catch(() => {});
@@ -298,6 +325,35 @@ if (shouldStop) break;
     self.__mkStopFbCrawl = () => { if (isRunning) shouldStop = true; };
     self.__mkFbCrawlStatus = () => isRunning;
 
+    // Viec con dang do (2026-11-22): tu dong lay Ten nhom + So thanh vien tu URL khi them
+    // nhom Facebook moi (modal "Them nhom"). Cung pattern voi fetchOnePostInfo() trong
+    // bg/li-crawl.js (LI_FETCH_POST_INFO) - mo 1 cua so popup rieng, thu nho/khong focus
+    // (dung session Facebook THAT dang dang nhap cua nguoi dung, KHONG phai guest/server-side
+    // nen khong bi chan nhu da kiem chung o BUOC 0), doc DOM, roi dong cua so lai. Khac voi
+    // LI_FETCH_POST_INFO o cho platforms/facebook/crawl.js KHONG phai static content script
+    // (chi inject khi can qua injectCrawlScript, xem dinh nghia o tren) nen phai tu inject
+    // truoc khi gui message.
+    async function fetchOneGroupInfo(url) {
+        let windowId = null;
+        try {
+            const win = await chrome.windows.create({ url, type: "popup", state: "minimized", focused: false });
+            windowId = win.id;
+            const tabId = win.tabs && win.tabs[0] ? win.tabs[0].id : null;
+            if (tabId == null) return { success: false, error: "Không mở được cửa sổ ẩn để lấy thông tin nhóm." };
+            const loaded = await waitForTabLoad(tabId, GROUP_INFO_TAB_LOAD_TIMEOUT_MS);
+            if (!loaded) return { success: false, error: "Trang Facebook tải quá lâu, vui lòng thử lại hoặc nhập tay." };
+            await sleep(GROUP_INFO_SETTLE_DELAY_MS);
+            const injected = await injectCrawlScript(tabId);
+            if (!injected) return { success: false, error: "Không tiêm được script đọc thông tin nhóm." };
+            const resp = await chrome.tabs.sendMessage(tabId, { action: "FB_GROUP_FETCH_ONE", url });
+            return resp || { success: false, error: "Không nhận được phản hồi từ content script." };
+        } catch (e) {
+            return { success: false, error: String(e) };
+        } finally {
+            if (windowId != null) chrome.windows.remove(windowId).catch(() => {});
+        }
+    }
+
     chrome.tabs.onRemoved.addListener((tabId) => {
         if (tabId === crawlTabId && isRunning) {
             shouldStop = true;
@@ -324,6 +380,9 @@ if (shouldStop) break;
             sendResponse({ success: true });
         } else if (request.action === "MK_FB_CRAWL_STATUS") {
             sendResponse({ running: isRunning });
+        } else if (request.action === "FB_FETCH_GROUP_INFO") {
+            fetchOneGroupInfo(request.url).then(sendResponse);
+            return true;
         }
     });
 })();

@@ -145,17 +145,27 @@ def test_answerack_and_negotiation_status_5_cannot_prematurely_promote_ringing()
             assert session.status == "ringing"
             signal.assert_not_called()
 
-            # Case 2: act=answer với status=5 (callee_init_zrtp_fail) -> chuyển sang failed, tuyệt đối không chuyển connected hay gửi 11304
-            await calls.handle_incoming_voip_signal(
-                account_id="acc",
-                act="answer",
-                mapped_status="connected",
-                call_id=789,
-                partner_id="callee",
-                data={"params": json.dumps({"status": 5, "callId": 789})},
-            )
-            assert session.status == "failed"
-            signal.assert_not_called()
+            # Case 2: act=answer với status=5 (callee_init_zrtp_fail) -> chuyển sang failed,
+            # tự động gửi 11305 cancel để tránh treo máy khách, tuyệt đối không chuyển connected hay gửi 11304
+            with patch("app.modules.all_platform.zalo.services.zalo_call_service.cancel_zca_voice_call", new_callable=AsyncMock) as cancel_fn, \
+                 patch("app.modules.all_platform.zalo.services.zalo_call_service.load_zca_auth", new_callable=AsyncMock, return_value={"imei": "test-imei"}):
+                await calls.handle_incoming_voip_signal(
+                    account_id="acc",
+                    act="answer",
+                    mapped_status="connected",
+                    call_id=789,
+                    partner_id="callee",
+                    data={"params": json.dumps({"status": 5, "callId": 789})},
+                )
+                await asyncio.sleep(0)
+                assert session.status == "failed"
+                signal.assert_not_called()
+                cancel_fn.assert_awaited_once_with(
+                    {"imei": "test-imei"},
+                    to_id="callee",
+                    call_id=789,
+                    call_type=1,
+                )
 
             session.status = "ended"
 

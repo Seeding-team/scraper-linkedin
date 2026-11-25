@@ -39,4 +39,6 @@ pywebpush
 # Telegram Chat (Quan ly kenh & CSKH) -- client MTProto thuan Python, khong can subprocess/Node
 # nhu zca-js cua Zalo.
 telethon
+# Zalo Web VoIP Realtime Opus Audio (prebuilt wheel tich hop san libopus/libswresample)
+av>=14.0.0
 

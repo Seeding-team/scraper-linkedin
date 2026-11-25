@@ -380,7 +380,7 @@ def test_module2_3_4_voip_gateway_rtp_stun_websocket_and_auto_kpi():
                 mapped_status="connected",
                 call_id=556677,
                 partner_id="uid_cust_999",
-                data={"callId": 556677, "rtpAddress": "127.0.0.1:49999"},
+                data={"callId": 556677, "status": 0, "rtpAddress": "127.0.0.1:49999"},
             )
         )
         status_r2 = client.get(

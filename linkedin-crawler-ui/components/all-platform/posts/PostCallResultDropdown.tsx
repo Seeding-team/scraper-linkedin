@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable react-hooks/set-state-in-effect */
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { Phone, ChevronDown } from "lucide-react";
@@ -25,6 +25,26 @@ export const FALLBACK_CALL_OPTIONS: CallResultOption[] = [
   { code: "nointerest", label: "Không có nhu cầu" },
   { code: "invalid", label: "Không phù hợp" },
 ];
+
+// Việc 2: 3 code hay dùng nhất ghim cứng luôn hiện (thay vì phải mở dropdown) — code còn
+// lại rơi vào popover "⋯", nhóm theo statusCategory ok/bad (khớp OK_CODES/BAD_CODES ở
+// call-result-stats-widget.tsx).
+export const PINNED_CALL_RESULT_CODES = ["interested", "noanswer", "refused"];
+
+const OK_CALL_RESULT_CODES = new Set(["interested", "callback", "consulting", "waiting"]);
+const BAD_CALL_RESULT_CODES = new Set(["noanswer", "refused", "nointerest", "invalid"]);
+
+function callResultPillClass(code: string, isActive: boolean): string {
+  const isOk = OK_CALL_RESULT_CODES.has(code);
+  const base = isOk
+    ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+    : "bg-red-50 text-red-700 border-red-200 hover:bg-red-100";
+  return cn(
+    "rounded-full border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+    base,
+    isActive && "ring-2 ring-offset-1 ring-current font-extrabold"
+  );
+}
 
 let cachedCallResultCategories: CallResultOption[] | null = null;
 let fetchCallPromise: Promise<CallResultOption[]> | null = null;
@@ -84,7 +104,12 @@ function formatRelativeOrDate(isoString?: string | null): string {
 }
 
 interface PostCallResultDropdownProps {
-  post: UnifiedPost & { call_result_code?: string; call_attempts?: number; last_call_at?: string };
+  post: UnifiedPost & {
+    call_result_code?: string;
+    call_attempts?: number;
+    last_call_at?: string;
+    call_result_note?: string | null;
+  };
   onResultChange?: (resultCode: string, attempts: number) => void;
   className?: string;
   disabled?: boolean;
@@ -97,12 +122,25 @@ export function PostCallResultDropdown({
   disabled,
 }: PostCallResultDropdownProps) {
   const [options, setOptions] = useState<CallResultOption[]>(cachedCallResultCategories || FALLBACK_CALL_OPTIONS);
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
+  // Việc 1 (revert desktop): dropdown/select gốc chỉ hiện ở desktop (sm:) — state riêng với
+  // isOverflowOpen (popover ghim, chỉ hiện ở mobile) để 2 nhánh không tranh nhau 1 state.
+  const [isDesktopOpen, setIsDesktopOpen] = useState(false);
   const [currentValue, setCurrentValue] = useState<string>(post.call_result_code || "");
   const [attempts, setAttempts] = useState<number>(post.call_attempts || 0);
   const [lastCall, setLastCall] = useState<string>(post.last_call_at || "");
   const [updatedUser, setUpdatedUser] = useState<EvaluatorUser | null | undefined>(post.updated_by_user);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Việc 3: ghi chú lý do. `noteStep` mở ngay sau khi vừa lưu 1 code (BƯỚC 2) — popover
+  // "Ghi chú lý do" dùng chung cho mọi lựa chọn (ghim lẫn overflow). `isNoteViewOpen` là
+  // popup XEM/SỬA note hiện tại độc lập (BƯỚC 3, icon 🗒️ cạnh nút kết quả).
+  const [currentNote, setCurrentNote] = useState<string>(post.call_result_note || "");
+  const [noteStep, setNoteStep] = useState<{ code: string; label: string } | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [isNoteViewOpen, setIsNoteViewOpen] = useState(false);
+  const [noteViewDraft, setNoteViewDraft] = useState("");
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -128,25 +166,52 @@ export function PostCallResultDropdown({
     if (post.last_call_at !== undefined) {
       setLastCall(post.last_call_at || "");
     }
+    if (post.call_result_note !== undefined) {
+      setCurrentNote(post.call_result_note || "");
+    }
     setUpdatedUser(post.updated_by_user);
-  }, [post.call_result_code, post.call_attempts, post.last_call_at, post.updated_by_user]);
+  }, [post.call_result_code, post.call_attempts, post.last_call_at, post.call_result_note, post.updated_by_user]);
 
-  // Đóng khi click ngoài
+  // Đóng dropdown desktop / popover "⋯" / "Ghi chú lý do" / xem-sửa note khi click ngoài
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isDesktopOpen && !isOverflowOpen && !noteStep && !isNoteViewOpen) return;
     const handleClickOutside = (event: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
+        setIsDesktopOpen(false);
+        setIsOverflowOpen(false);
+        setNoteStep(null);
+        setIsNoteViewOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [isOpen]);
+  }, [isDesktopOpen, isOverflowOpen, noteStep, isNoteViewOpen]);
 
   const activeOption = options.find((opt) => opt.code === currentValue);
   const displayLabel = activeOption ? activeOption.label : "Kết quả liên hệ...";
 
-  const handleSelect = async (opt: CallResultOption, e: React.MouseEvent) => {
+  // Việc 2: 3 code ghim luôn hiện (PINNED_CALL_RESULT_CODES) + các code còn lại rơi vào
+  // popover "⋯", nhóm theo ok/bad (OK_CALL_RESULT_CODES/BAD_CALL_RESULT_CODES).
+  const pinnedOptions = useMemo(
+    () =>
+      PINNED_CALL_RESULT_CODES.map((code) => options.find((opt) => opt.code === code)).filter(
+        (opt): opt is CallResultOption => !!opt
+      ),
+    [options]
+  );
+  const overflowOptions = useMemo(
+    () => options.filter((opt) => !PINNED_CALL_RESULT_CODES.includes(opt.code)),
+    [options]
+  );
+  const overflowOkOptions = useMemo(() => overflowOptions.filter((opt) => OK_CALL_RESULT_CODES.has(opt.code)), [overflowOptions]);
+  const overflowBadOptions = useMemo(() => overflowOptions.filter((opt) => BAD_CALL_RESULT_CODES.has(opt.code)), [overflowOptions]);
+  const isOverflowActive = !!currentValue && overflowOptions.some((opt) => opt.code === currentValue);
+
+  const handleSelect = async (
+    opt: CallResultOption,
+    e: React.MouseEvent,
+    selectOpts: { skipNoteStep?: boolean } = {}
+  ) => {
     e.stopPropagation();
     e.preventDefault();
 
@@ -161,7 +226,8 @@ export function PostCallResultDropdown({
     setCurrentValue(opt.code);
     setAttempts(nextAttempts);
     setLastCall(nowIso);
-    setIsOpen(false);
+    setIsDesktopOpen(false);
+    setIsOverflowOpen(false);
     onResultChange?.(opt.code, nextAttempts);
 
     setIsSaving(true);
@@ -187,6 +253,14 @@ export function PostCallResultDropdown({
           setLastCall(res.data.last_call_at);
         }
         toast.success(`✓ Đã lưu kết quả liên hệ: ${opt.label}`);
+        // Việc 3 (BƯỚC 2): code đã lưu xong — mở bước ghi chú lý do (tùy chọn) ngay trong
+        // popover, bất kể vừa chọn từ pill ghim hay popover "⋯". Việc 1 (revert desktop):
+        // nhánh desktop (dropdown/select gốc) KHÔNG mở bước này — note ở desktop chỉ qua
+        // icon 🗒️ xem/sửa độc lập, giống hiện tại.
+        if (!selectOpts.skipNoteStep) {
+          setNoteDraft("");
+          setNoteStep({ code: opt.code, label: opt.label });
+        }
       }
     } catch {
       setCurrentValue(prevValue);
@@ -200,29 +274,303 @@ export function PostCallResultDropdown({
     }
   };
 
+  // Việc 3: lưu riêng cột `note` (không đổi result_code, không tạo bản ghi mới). Dùng chung
+  // cho bước "Ghi chú lý do" (BƯỚC 2, ngay sau khi chọn code) và popup "Xem/Sửa ghi chú"
+  // (BƯỚC 3, độc lập — mở bất kỳ lúc nào qua icon 🗒️).
+  const saveNote = async (noteText: string): Promise<boolean> => {
+    const prevNote = currentNote;
+    setCurrentNote(noteText);
+    setIsSavingNote(true);
+    try {
+      const res = await postCallResultService.updateCallResultNote(post.id, {
+        note: noteText,
+        platform: post.platform || "facebook",
+      });
+      if (!res.success) {
+        setCurrentNote(prevNote);
+        toast.error(res.message || "Không thể lưu ghi chú.");
+        return false;
+      }
+      toast.success(noteText ? "✓ Đã lưu ghi chú" : "Đã bỏ ghi chú");
+      return true;
+    } catch {
+      setCurrentNote(prevNote);
+      toast.error("Lỗi kết nối khi lưu ghi chú.");
+      return false;
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  const handleNoteStepSave = async () => {
+    const text = noteDraft.trim();
+    if (await saveNote(text)) setNoteStep(null);
+  };
+
+  const handleNoteStepSkip = async () => {
+    // "Bỏ qua" vẫn gửi note rỗng (xoá note cũ nếu có từ lần gọi trước) — theo đúng yêu cầu.
+    if (await saveNote("")) setNoteStep(null);
+  };
+
+  const handleOpenNoteView = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setNoteViewDraft(currentNote);
+    setIsNoteViewOpen((v) => !v);
+  };
+
+  const handleNoteViewSave = async () => {
+    if (await saveNote(noteViewDraft.trim())) setIsNoteViewOpen(false);
+  };
+
   const formattedLastCall = lastCall ? new Date(lastCall).toLocaleString("vi-VN") : "";
 
   return (
-    <div ref={containerRef} className={cn("relative inline-flex items-center gap-1.5", className)}>
-      <button
-        type="button"
-        disabled={disabled || isSaving}
-        onClick={(e) => {
-          e.stopPropagation();
-          setIsOpen(!isOpen);
-        }}
-        className={cn(
-          // min-w-0: button cần tự co được theo flex-1 của wrapper (Việc 4 lượt trước),
-          // nếu không giữ nguyên max-content width và đẩy vỡ hàng.
-          "min-w-0 inline-flex items-center justify-between gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted/60 shadow-2xs cursor-pointer",
-          currentValue && "border-primary/40 font-bold text-foreground",
-          disabled && "opacity-60 cursor-not-allowed"
+    <div ref={containerRef} className={cn("relative inline-flex items-center gap-1.5 flex-wrap", className)}>
+      {/* Việc 1 (revert): DESKTOP — dropdown/select gốc như trước Việc 2, ẩn ở mobile. Dùng
+          chung handleSelect (skipNoteStep: true — desktop không mở bước "Ghi chú lý do" tự
+          động, chỉ có icon 🗒️ xem/sửa độc lập bên dưới). */}
+      <div className="hidden sm:inline-flex relative items-center">
+        <button
+          type="button"
+          disabled={disabled || isSaving}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsDesktopOpen(!isDesktopOpen);
+          }}
+          className={cn(
+            // min-w-0: button cần tự co được theo flex-1 của wrapper (Việc 4 lượt trước),
+            // nếu không giữ nguyên max-content width và đẩy vỡ hàng.
+            "min-w-0 inline-flex items-center justify-between gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-foreground transition hover:bg-muted/60 shadow-2xs cursor-pointer",
+            currentValue && "border-primary/40 font-bold text-foreground",
+            disabled && "opacity-60 cursor-not-allowed"
+          )}
+          title={formattedLastCall ? `Lần gọi gần nhất: ${formattedLastCall}` : undefined}
+        >
+          <span className="min-w-0 truncate max-w-[150px]">{displayLabel}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground opacity-70" />
+        </button>
+
+        {isDesktopOpen && (
+          <div
+            className="absolute left-0 bottom-full mb-1 z-50 w-52 rounded-xl border border-border bg-card py-1 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-[10px] font-bold text-muted-foreground px-3 py-1 uppercase tracking-wider">
+              Kết quả liên hệ
+            </div>
+            {options.map((opt) => {
+              const isSelected = opt.code === currentValue;
+              return (
+                <button
+                  key={opt.code}
+                  type="button"
+                  onClick={(e) => handleSelect(opt, e, { skipNoteStep: true })}
+                  className={cn(
+                    "flex w-full items-center justify-between px-3 py-1.5 text-left text-[12px] font-medium transition cursor-pointer",
+                    isSelected
+                      ? "bg-primary text-primary-foreground font-bold"
+                      : "text-foreground hover:bg-muted/70"
+                  )}
+                >
+                  <span className="truncate">{opt.label}</span>
+                  {isSelected && <span className="text-xs">✓</span>}
+                </button>
+              );
+            })}
+          </div>
         )}
-        title={formattedLastCall ? `Lần gọi gần nhất: ${formattedLastCall}` : undefined}
-      >
-        <span className="min-w-0 truncate max-w-[150px]">{displayLabel}</span>
-        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground opacity-70" />
-      </button>
+      </div>
+
+      {/* Việc 1 (revert): MOBILE — ghim (PINNED_CALL_RESULT_CODES) + overflow "⋯", ẩn ở
+          desktop. Giữ đúng pattern sm:hidden đã dùng cho mọi phần mobile-only khác trong
+          post-card.tsx (hàng pill cũ, nút "..." mobile...). */}
+      <div className="sm:hidden inline-flex items-center gap-1.5 flex-wrap">
+        {pinnedOptions.map((opt) => (
+          <button
+            key={opt.code}
+            type="button"
+            disabled={disabled || isSaving}
+            onClick={(e) => handleSelect(opt, e)}
+            className={callResultPillClass(opt.code, currentValue === opt.code)}
+            title={
+              formattedLastCall && currentValue === opt.code
+                ? `Lưu kết quả liên hệ: ${opt.label}. Lần gọi gần nhất: ${formattedLastCall}`
+                : `Lưu kết quả liên hệ: ${opt.label}`
+            }
+          >
+            {opt.label}
+          </button>
+        ))}
+
+        {overflowOptions.length > 0 && (
+          <div className="relative">
+            <button
+              type="button"
+              disabled={disabled || isSaving}
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsOverflowOpen((v) => !v);
+              }}
+              aria-label="Xem thêm kết quả liên hệ"
+              aria-expanded={isOverflowOpen}
+              className={cn(
+                "inline-flex items-center justify-center w-7 h-7 rounded-full border transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+                isOverflowOpen || isOverflowActive
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted"
+              )}
+              title={isOverflowActive && activeOption ? `Đang chọn: ${activeOption.label}` : "Xem thêm kết quả liên hệ"}
+            >
+              <span className="material-symbols-outlined text-[16px] leading-none block">more_horiz</span>
+            </button>
+
+            {isOverflowOpen && (
+              <div
+                className="absolute left-0 top-full mt-1 z-50 w-60 p-2.5 rounded-xl border border-border bg-card shadow-xl space-y-2.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {overflowOkOptions.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-extrabold tracking-wide text-emerald-600 mb-1 px-0.5">THÀNH CÔNG</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {overflowOkOptions.map((opt) => (
+                        <button
+                          key={opt.code}
+                          type="button"
+                          disabled={disabled || isSaving}
+                          onClick={(e) => handleSelect(opt, e)}
+                          className={callResultPillClass(opt.code, currentValue === opt.code)}
+                          title={`Lưu kết quả liên hệ: ${opt.label}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {overflowBadOptions.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-extrabold tracking-wide text-rose-600 mb-1 px-0.5">THẤT BẠI</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {overflowBadOptions.map((opt) => (
+                        <button
+                          key={opt.code}
+                          type="button"
+                          disabled={disabled || isSaving}
+                          onClick={(e) => handleSelect(opt, e)}
+                          className={callResultPillClass(opt.code, currentValue === opt.code)}
+                          title={`Lưu kết quả liên hệ: ${opt.label}`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Việc 3 (BƯỚC 2): popover "Ghi chú lý do" — mở ngay sau khi vừa lưu 1 code, bất kể
+          chọn từ pill ghim hay popover "⋯" (neo theo containerRef chung, không phải theo
+          từng nút riêng lẻ). */}
+      {noteStep && (
+        <div
+          className="absolute left-0 top-full mt-1 z-50 w-64 p-2.5 rounded-xl border border-border bg-card shadow-xl space-y-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="text-[11px] font-semibold text-muted-foreground">
+            ✓ Đã lưu: <span className="font-bold text-foreground">{noteStep.label}</span>
+          </div>
+          <textarea
+            autoFocus
+            rows={2}
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="Ghi chú lý do (tùy chọn)"
+            className="w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:border-primary/50"
+            disabled={isSavingNote}
+          />
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              disabled={isSavingNote}
+              onClick={handleNoteStepSkip}
+              className="rounded-md px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted transition cursor-pointer disabled:opacity-50"
+            >
+              Bỏ qua
+            </button>
+            <button
+              type="button"
+              disabled={isSavingNote}
+              onClick={handleNoteStepSave}
+              className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+            >
+              Lưu
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Việc 3 (BƯỚC 3): icon xem/sửa ghi chú hiện có — chỉ hiện khi bài đã có kết quả liên
+          hệ (post_call_results cần có dòng từ trước mới UPDATE được note). */}
+      {currentValue && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={handleOpenNoteView}
+            aria-label={currentNote ? "Xem/sửa ghi chú" : "Thêm ghi chú"}
+            aria-expanded={isNoteViewOpen}
+            className={cn(
+              "inline-flex items-center justify-center w-6 h-6 rounded-full border transition cursor-pointer",
+              currentNote
+                ? "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                : "border-border bg-card text-muted-foreground/50 hover:text-muted-foreground hover:bg-muted"
+            )}
+            title={currentNote ? `Ghi chú: ${currentNote}` : "Thêm ghi chú lý do"}
+          >
+            <span className="text-[12px] leading-none">🗒️</span>
+          </button>
+
+          {isNoteViewOpen && (
+            <div
+              className="absolute left-0 top-full mt-1 z-50 w-64 p-2.5 rounded-xl border border-border bg-card shadow-xl space-y-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-[11px] font-bold text-muted-foreground">Ghi chú lý do</div>
+              <textarea
+                autoFocus
+                rows={3}
+                value={noteViewDraft}
+                onChange={(e) => setNoteViewDraft(e.target.value)}
+                placeholder="Ghi chú lý do..."
+                className="w-full resize-none rounded-lg border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:border-primary/50"
+                disabled={isSavingNote}
+              />
+              <div className="flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  disabled={isSavingNote}
+                  onClick={() => setIsNoteViewOpen(false)}
+                  className="rounded-md px-2.5 py-1 text-[11px] font-semibold text-muted-foreground hover:bg-muted transition cursor-pointer disabled:opacity-50"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingNote}
+                  onClick={handleNoteViewSave}
+                  className="rounded-md bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-foreground hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+                >
+                  Lưu
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Attempts Badge */}
       {attempts > 0 && (
@@ -253,37 +601,6 @@ export function PostCallResultDropdown({
           </TooltipContent>
         </Tooltip>
       ) : null}
-
-      {/* Dropdown Menu */}
-      {isOpen && (
-        <div
-          className="absolute left-0 bottom-full mb-1 z-50 w-52 rounded-xl border border-border bg-card py-1 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="text-[10px] font-bold text-muted-foreground px-3 py-1 uppercase tracking-wider">
-            Kết quả liên hệ
-          </div>
-          {options.map((opt) => {
-            const isSelected = opt.code === currentValue;
-            return (
-              <button
-                key={opt.code}
-                type="button"
-                onClick={(e) => handleSelect(opt, e)}
-                className={cn(
-                  "flex w-full items-center justify-between px-3 py-1.5 text-left text-[12px] font-medium transition cursor-pointer",
-                  isSelected
-                    ? "bg-primary text-primary-foreground font-bold"
-                    : "text-foreground hover:bg-muted/70"
-                )}
-              >
-                <span className="truncate">{opt.label}</span>
-                {isSelected && <span className="text-xs">✓</span>}
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }

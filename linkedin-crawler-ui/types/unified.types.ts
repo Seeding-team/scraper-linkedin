@@ -5,7 +5,7 @@
    These types mirror the Supabase database schema. */
 
 export type FeedPlatform = "facebook" | "linkedin" | "threads" | "youtube";
-export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
+export type CategoryType = "intent" | "industry" | "tier" | "team" | "icp" | "content_type" | "product_seeding" | "post_evaluation" | "crm_source" | "crm_service_package" | "crm_package" | "crm_industry" | "crm_position" | "crm_city" | "crm_expected_timeline" | "crm_next_step" | "crm_nurture_reason" | "crm_follow_up_channel" | "crm_unqualified_reason" | "crm_quote_type" | "crm_contract_status" | "crm_payment_status" | "crm_billing_type" | "crm_won_reason" | "crm_lost_reason" | "crm_outcome_confidence" | "crm_outcome_trigger" | "crm_outcome_objection" | "crm_kb_reuse_level" | "crm_kb_owner" | "crm_kb_status";
 export type VerifyStatus = "pending" | "yes" | "no";
 export type UserRole = "member" | "leader" | "admin";
 
@@ -545,6 +545,30 @@ export interface FacebookGroup {
   last_public_crawled_at?: string | null;
   last_public_crawl_status?: string | null;
   last_public_posts_count?: number;
+  /** Việc 1 (2026-11-22): nhiều lĩnh vực/group (bảng group_intents, migration 236) — id_intent
+   * cũ vẫn được ghi song song = phần tử đầu tiên của mảng này (xem supabase_groups_service.py). */
+  intent_ids?: string[];
+  intent_names?: string[];
+  /** Việc 2 (2026-11-22): độ khó riêng Bình luận/Bài đăng (migration 237) — độc lập với health_score cũ. */
+  difficulty_comment?: "easy" | "hard" | null;
+  difficulty_post?: "easy" | "hard" | null;
+  pricing_tiers?: GroupPricingTier[];
+  /** Việc 3 (2026-11-22): mẫu bình luận/bài đăng riêng của group (migration 238) — độc lập
+   * với "Thư viện mẫu câu" dùng chung (quick_comment_templates). */
+  comment_templates?: GroupTemplateItem[];
+  post_templates?: GroupTemplateItem[];
+}
+
+export interface GroupPricingTier {
+  id?: string;
+  posts_count: number;
+  period: "week" | "month";
+  unit_price: number;
+}
+
+export interface GroupTemplateItem {
+  id?: string;
+  content: string;
 }
 
 export interface LinkedInGroup {
@@ -595,6 +619,16 @@ export interface LinkedInGroup {
   /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
    * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
   can_lien_he_stats_error?: boolean;
+  /** Việc 1 (2026-11-22): nhiều lĩnh vực/group — xem chú thích tương ứng ở FacebookGroup. */
+  intent_ids?: string[];
+  intent_names?: string[];
+  /** Việc 2 (2026-11-22): độ khó riêng Bình luận/Bài đăng — xem chú thích ở FacebookGroup. */
+  difficulty_comment?: "easy" | "hard" | null;
+  difficulty_post?: "easy" | "hard" | null;
+  pricing_tiers?: GroupPricingTier[];
+  /** Việc 3 (2026-11-22): mẫu bình luận/bài đăng riêng của group. */
+  comment_templates?: GroupTemplateItem[];
+  post_templates?: GroupTemplateItem[];
 }
 
 // ── Crawl Sessions ─────────────────────────────────────────────────────────────
@@ -836,6 +870,8 @@ export interface UnifiedPost {
   call_result_code?: string;
   call_attempts?: number;
   last_call_at?: string;
+  /** Việc 3: ghi chú lý do của LẦN GỌI GẦN NHẤT (post_call_results chỉ có 1 dòng/post). */
+  call_result_note?: string | null;
   evaluated_by_user?: EvaluatorUser | null;
   evaluated_at?: string | null;
   updated_by_user?: EvaluatorUser | null;
@@ -850,6 +886,7 @@ export interface PostCallResult {
   result_code: string;
   attempts: number;
   last_call_at?: string;
+  note?: string | null;
   updated_by?: string;
   updated_by_user?: EvaluatorUser | null;
   created_at?: string;

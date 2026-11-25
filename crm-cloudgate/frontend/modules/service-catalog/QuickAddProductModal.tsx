@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
 import type { BundleComponentInput, ServiceCatalogItem, ServiceCatalogItemInput, ServiceCatalogUnit, ServiceCatalogVatRate } from './types';
-import { usePricingLogic, effectiveCostPriceVnd } from './usePricingLogic';
+import { usePricingLogic } from './usePricingLogic';
 import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { emptyProductForm, formatSkuName, parseNullableNumber } from './catalog-form-utils';
 import { markupFromCustomerPrice } from './pricing-math';
@@ -221,7 +221,10 @@ export function QuickAddProductModal({
             costPriceVnd: editingItem.defaultCostPriceVnd ?? 0,
             markupPercent: editingItem.defaultMarkupPercent ?? 0,
             customerPriceVnd: editingItem.defaultCustomerPriceVnd ?? editingItem.defaultUnitPriceVnd ?? 0,
-            costVatRate: editingItem.defaultCostVatRate ?? 0,
+            // "VAT giá vốn" bỏ khỏi form này (xem comment ở Card "Giá mua / Giá
+            // vốn") - không đọc lại default_cost_vat_rate cũ nữa, Giá vốn ở
+            // đây luôn là 1 giá trị thuần duy nhất.
+            costVatRate: 0,
           });
           setBundleComponents([]);
           setComponentAnnualOptionEnabled(editingItem.annualCommitMonthlyPriceVnd != null);
@@ -585,11 +588,12 @@ export function QuickAddProductModal({
             defaultCostPriceVnd: pricing.costPriceVnd,
             defaultMarkupPercent: pricing.markupPercent,
             defaultCustomerPriceVnd: pricing.customerPriceVnd,
-            // "VAT giá vốn" (2026-10-13) - gui gia von THUAN (defaultCostPriceVnd
-            // o tren khong doi) + VAT rieng, backend luu nguyen 2 gia tri, KHONG
-            // gop lai (xem catalogItemToQuoteItem() o QuoteWorkspaceModal.tsx -
-            // noi THAT su nhan VAT vao gia von luc them vao bao gia).
-            defaultCostVatRate: pricing.costVatRate || null,
+            // "VAT giá vốn" bỏ khỏi form này (2026-11-20, xem comment ở Card
+            // "Giá mua / Giá vốn") - KHÔNG gửi default_cost_vat_rate nữa (omit,
+            // không gửi null) để giữ nguyên giá trị cũ đã lưu của sản phẩm
+            // trong DB (nếu có) cho các nơi khác vẫn đang dùng nó (vd
+            // catalogItemToQuoteItem() ở QuoteWorkspaceModal.tsx áp 1 LẦN lúc
+            // thêm vào báo giá) - chỉ ngừng cho nhập/sửa field này tại đây.
             pricingPolicy: cleanText(pricing.pricingPolicy || ''),
             // "Trả theo tháng" cho san pham le (xem comment o khai bao
             // componentAnnualOptionEnabled) - khi bat, monthlyPriceVnd = CHINH
@@ -640,11 +644,9 @@ export function QuickAddProductModal({
   if (!open) return null;
 
   const isBundleMode = itemType === 'bundle';
-  // "VAT giá vốn" (2026-10-13) - costVal (dung cho Tom tat gia/Markup/Margin)
-  // la gia von DA GOM VAT dau vao (pricing.costVatRate), KHAC pricing.costPriceVnd
-  // (van la gia von THUAN truoc VAT, giu nguyen de khong mat du lieu goc khi
-  // sua lai sau nay).
-  const costVal = isBundleMode ? (parseNullableNumber(bundleCostPrice) ?? 0) : effectiveCostPriceVnd(pricing);
+  // "VAT giá vốn" bỏ hẳn khỏi form này (2026-11-20) - costVal GIỜ LÀ đúng
+  // pricing.costPriceVnd (thuần), không còn nhân thêm VAT đầu vào ở đây nữa.
+  const costVal = isBundleMode ? (parseNullableNumber(bundleCostPrice) ?? 0) : pricing.costPriceVnd;
   const priceVal = isBundleMode ? (parseNullableNumber(bundleMonthlyPrice) ?? 0) : pricing.customerPriceVnd;
   const profit = isBundleMode ? priceVal - costVal : getProfit();
   const margin = priceVal > 0 ? (profit / priceVal) * 100 : 0;
@@ -1109,7 +1111,23 @@ export function QuickAddProductModal({
                     </div>
 
                     <div className="mt-5 p-4 bg-slate-50 border border-slate-100 rounded-lg">
-                      <div className="grid grid-cols-4 gap-6">
+                      {/* "VAT giá vốn" (2026-10-13 -> bỏ hẳn 2026-11-20, feedback
+                       * "ô vat trong sp đó bỏ luôn chỉ cho điền ở ngoài... đỡ lẫn
+                       * lộn hơn"): tung co 1 o VAT dau vao rieng tai day, chi
+                       * anh huong Gia von hien thi/Markup/Margin NOI BO - gay
+                       * nham lan voi VAT (%) dau ra o Buoc 2 bao gia (field
+                       * khac, defaultVatRate) vi 2 o giong ten nhung khac nghia,
+                       * them vao do Sale go nham Gia von DA GOM VAT vao thang
+                       * o GIA VON/DVT (vd 858.000 thay vi 780.000 thuan) roi VAN
+                       * set them VAT giá vốn=10% -> VAT bi tinh 2 LAN luc rap
+                       * vao bao gia (xem thao/CRM_KNOWN_BUGS_FIXED.md #67). Bo
+                       * han o nhap + Gia von trong form nay GIO LA 1 gia tri
+                       * duy nhat (thuan, khong con VAT dau vao). KHONG doi
+                       * default_cost_vat_rate da luu san cua san pham KHAC (DB
+                       * khong bi xoa, QuoteWorkspaceModal van ap dung dung 1
+                       * lan luc them vao bao gia moi) - chi bo cho nhap moi tai
+                       * day. */}
+                      <div className="grid grid-cols-3 gap-6">
                         <div>
                           <label className="block text-xs font-medium text-slate-500 mb-1">Tỷ giá VND/USD</label>
                           <input type="number" className="w-full h-8 px-2 border border-slate-300 rounded text-sm read-only:bg-slate-100 read-only:text-slate-500 read-only:cursor-not-allowed" value={pricing.supplierExchangeRate || ''} onChange={e => setPricingField('supplierExchangeRate', Number(e.target.value))} readOnly={systemUsdVndRate != null} title={systemUsdVndRate != null ? 'Tỷ giá hệ thống (Cài đặt báo giá → Tỷ giá USD/VND), không sửa tại đây' : undefined} placeholder="Nhập tỷ giá USD → VND" />
@@ -1123,17 +1141,6 @@ export function QuickAddProductModal({
                         <div>
                           <label className="block text-xs font-medium text-slate-700 mb-1">GIÁ VỐN / ĐVT (VND)</label>
                           <CurrencyInput className="w-full h-8 px-2 border border-[#f3b8ca] bg-[#fff1f6] rounded text-sm focus:border-[#c2185b] font-semibold text-[#a91549]" value={pricing.costPriceVnd || null} onChange={value => setPricingField('costPriceVnd', value ?? 0)} />
-                        </div>
-                        {/* "VAT cộng luôn vào Giá vốn hiển thị" (2026-10-13) -
-                         * VAT dau vao RIENG cho Gia von (khac VAT ban ra o dau
-                         * form), chi anh huong gia von hien thi/Markup/Margin,
-                         * KHONG dung chung field voi VAT (%) ban ra. */}
-                        <div>
-                          <label className="block text-xs font-medium text-slate-700 mb-1" title="VAT đầu vào khi mua hàng từ nhà cung cấp - khác VAT (%) đầu ra ở phần Thông tin sản phẩm. Giá vốn hiển thị/Markup/Margin sẽ tự tính theo giá vốn ĐÃ GỒM VAT này.">VAT giá vốn (%)</label>
-                          <div className="relative">
-                            <input type="number" min={0} max={100} step={0.5} className="w-full h-8 pl-2 pr-7 border border-slate-300 rounded text-sm focus:border-[#c2185b]" placeholder="0" value={pricing.costVatRate || ''} onChange={e => setPricingField('costVatRate', parseNullableNumber(e.target.value) ?? 0)} />
-                            <span className="absolute right-2 top-1.5 text-xs font-medium text-slate-400">%</span>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -1197,7 +1204,7 @@ export function QuickAddProductModal({
                   <div className="p-5">
                     <div className="flex items-center gap-4">
                       <div className="flex-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn (đã gồm VAT)</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">Giá vốn</label>
                         <div className="h-9 px-3 flex items-center border border-slate-200 bg-slate-50 rounded-md text-sm text-slate-500">
                           {formatCurrency(costVal)}
                         </div>

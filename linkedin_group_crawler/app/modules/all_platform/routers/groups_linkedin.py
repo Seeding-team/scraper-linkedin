@@ -81,7 +81,7 @@ def li_groups_add(
         elif "id_member" not in payload or not payload["id_member"]:
             payload["id_member"] = user["id"]
         print(f"li_groups_add enriched payload: {payload}")
-        data = add_linkedin_group(payload)
+        data = add_linkedin_group(payload, current_user_id=user["id"])
         print(f"li_groups_add success, data: {data}")
         return BaseResponse(success=True, message="Group added", data=data)
     except HTTPException as e:
@@ -112,7 +112,7 @@ def li_groups_update(
             if not group_res.data or group_res.data[0].get("id_member") != user["id"]:
                 return BaseResponse(success=False, message="You do not have permission to update this group.")
             payload["id_member"] = user["id"]
-        data = update_linkedin_group(group_id, payload)
+        data = update_linkedin_group(group_id, payload, current_user_id=user["id"])
         return BaseResponse(success=True, message="Group updated", data=data)
     except HTTPException as e:
         return BaseResponse(success=False, message=e.detail)

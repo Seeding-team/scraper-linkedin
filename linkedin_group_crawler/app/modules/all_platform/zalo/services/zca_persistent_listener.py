@@ -1192,6 +1192,7 @@ class ZcaPersistentListenerManager:
             "request": "incoming",
             "group_request": "incoming",
             "ringring": "ringing",
+            "ring_ring": "ringing",
             "answer": "connected",
             "answer_call": "connected",
             "accept_call": "connected",

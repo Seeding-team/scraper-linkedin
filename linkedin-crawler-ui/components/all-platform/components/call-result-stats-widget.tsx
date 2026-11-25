@@ -454,11 +454,36 @@ export function CallResultStatsWidget({
     () => (callStats?.by_type || []).filter((t) => OK_CODES.has(t.code)).reduce((s, t) => s + t.count, 0),
     [callStats]
   );
-  // Cột "Comment" (Bước 1): đếm seeding_content_kpi — xu hướng "+N"/"-N" so với kỳ trước,
-  // tính kiểu CHÊNH LỆCH TUYỆT ĐỐI (không phải %) theo đúng mô tả Bước 2 ("chỉ hiện số + badge
-  // xu hướng +N/-N", không có badge % vì Comment không có khái niệm tỷ lệ).
-  const commentCount = callStats?.comment_count ?? 0;
-  const commentDelta = commentCount - (callStats?.comment_count_prev ?? 0);
+  // Cột "Comment" dạng "X/Y" (Việc 3+4, 2026-11-23): X = comment_distinct_post_count (số BÀI
+  // khác nhau đã comment, COUNT DISTINCT id_post — không phải số lượt/dòng như comment_count
+  // cũ), Y = comment_post_pool_count (tổng bài phù hợp trong kỳ, đã thu hẹp theo thành viên
+  // đang lọc nếu có). % xu hướng tính trên X so với kỳ trước (comment_distinct_post_count_prev)
+  // theo đúng công thức đã dùng ở totalPostsPctChange — KHÔNG còn delta tuyệt đối "+N/-N" cũ.
+  const commentDistinctPostCount = callStats?.comment_distinct_post_count ?? 0;
+  const commentDistinctPostCountPrev = callStats?.comment_distinct_post_count_prev ?? 0;
+  const commentPostPoolCount = callStats?.comment_post_pool_count ?? 0;
+  const commentPostPctChange =
+    commentDistinctPostCountPrev > 0
+      ? Math.round(((commentDistinctPostCount - commentDistinctPostCountPrev) / commentDistinctPostCountPrev) * 100)
+      : commentDistinctPostCount > 0
+        ? 100
+        : 0;
+
+  // Card "Tổng bài" (Việc 1): số bài crawl trong kỳ + % so với kỳ trước liền kề cùng độ
+  // dài. Không có mẫu số cố định như callPctVal/zaloPctVal (đây là % TĂNG/GIẢM so với kỳ
+  // trước, không phải tỷ lệ thành công/tổng) nên tính riêng, +100% khi kỳ trước = 0 nhưng
+  // kỳ này > 0 (từ 0 lên có dữ liệu), 0% khi cả 2 kỳ đều = 0.
+  const totalPostsCount = callStats?.total_posts_count ?? 0;
+  const totalPostsCountPrev = callStats?.total_posts_count_prev ?? 0;
+  // Tử số "X/Y" (Việc 2): trong totalPostsCount, số bài KHÔNG bị đánh giá "Không phù hợp".
+  // % xu hướng bên dưới vẫn tính trên Y (totalPostsCount so với kỳ trước) — không đổi.
+  const totalPostsSuitableCount = callStats?.total_posts_suitable_count ?? 0;
+  const totalPostsPctChange =
+    totalPostsCountPrev > 0
+      ? Math.round(((totalPostsCount - totalPostsCountPrev) / totalPostsCountPrev) * 100)
+      : totalPostsCount > 0
+        ? 100
+        : 0;
 
   const sortedWho = useMemo(() => [...who].sort((a, b) => b.total - a.total), [who]);
 
@@ -517,10 +542,8 @@ export function CallResultStatsWidget({
     );
   }
 
-  // Bộ lọc thời gian: 1 bộ JSX duy nhất, render có điều kiện ở 1 trong 2 vị trí tùy `expanded`
-  // (header khi thu gọn, ngang hàng 3 tab khi mở rộng) — KHÔNG có 2 bản sao, chỉ 2 chỗ gọi
-  // `{filterBar}` cùng trỏ về 1 biến, nên state/handler (applyPreset, handleDraftDateChange,
-  // overflowRef...) vẫn là 1 bộ duy nhất dù hiện ở đâu.
+  // Bộ lọc thời gian (Việc 3, 2026-11-21): về lại đúng 1 vị trí duy nhất — trong header widget,
+  // luôn hiện bất kể thu gọn/mở rộng (đã bỏ tính năng đổi vị trí ngang hàng 3 tab khi mở rộng).
   const filterBar = (
     <div className="flex items-center gap-1.5 flex-wrap">
       {PINNED_PRESETS.map(([key, label]) => (
@@ -621,19 +644,51 @@ export function CallResultStatsWidget({
             ))}
           </select>
 
-          {!expanded && filterBar}
+          {filterBar}
         </div>
       </div>
 
-      {/* 3 thẻ số liệu — thiết kế mới (Bước 2): icon vuông màu + "X / Y" + badge % (Cuộc
-          gọi/Zalo) hoặc "+N/-N" (Comment) + progress bar mỏng (Cuộc gọi/Zalo). Cột Zalo hiển
-          thị "đã trả lời / đã gửi" (zaloStats.replied/sent — dữ liệu gốc KHÔNG đổi, chỉ gộp 2
-          số cũ ở cột 2+3 cũ vào chung 1 cột theo đúng tỷ lệ "X / Y"). */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 border-t border-border">
+      {/* 4 thẻ số liệu (Việc 1: thêm "Tổng bài" làm thẻ đầu) — icon vuông màu + "X / Y" +
+          badge % (Cuộc gọi/Zalo/Tổng bài) hoặc "+N/-N" (Comment) + progress bar mỏng (Cuộc
+          gọi/Zalo). Cột Zalo hiển thị "đã trả lời / đã gửi" (zaloStats.replied/sent — dữ
+          liệu gốc KHÔNG đổi, chỉ gộp 2 số cũ ở cột 2+3 cũ vào chung 1 cột theo đúng tỷ lệ
+          "X / Y"). */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 border-t border-border">
+        <div className="p-4 border-b lg:border-b-0 border-border">
+          <StatCardHeader
+            icon="feed"
+            iconBgClass="bg-blue-100"
+            iconTextClass="text-blue-600"
+            title="Tổng bài"
+            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[26px] font-extrabold leading-tight">
+              {totalPostsSuitableCount} / {totalPostsCount}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                totalPostsPctChange > 0
+                  ? "bg-emerald-50 text-emerald-700"
+                  : totalPostsPctChange < 0
+                    ? "bg-rose-50 text-rose-600"
+                    : "bg-muted text-muted-foreground"
+              )}
+            >
+              {totalPostsPctChange > 0 ? "+" : ""}
+              {totalPostsPctChange}%
+            </span>
+          </div>
+          <div className="text-[12px] text-muted-foreground mt-0.5">
+            {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
+          </div>
+        </div>
+
         {(() => {
           const callPctVal = pct(callOk, callTotal);
           return (
-            <div className="p-4 border-b sm:border-b-0 border-border">
+            <div className="p-4 border-b lg:border-b-0 border-l border-border">
               <StatCardHeader
                 icon="call"
                 iconBgClass="bg-rose-100"
@@ -664,7 +719,7 @@ export function CallResultStatsWidget({
           const zaloReplied = zaloStats?.replied ?? 0;
           const zaloPctVal = pct(zaloReplied, zaloSent);
           return (
-            <div className="p-4 border-b sm:border-b-0 sm:border-l border-border">
+            <div className="p-4 border-t lg:border-t-0 lg:border-l border-border">
               <StatCardHeader
                 icon="chat"
                 iconBgClass="bg-sky-100"
@@ -690,32 +745,34 @@ export function CallResultStatsWidget({
           );
         })()}
 
-        <div className="p-4 sm:border-l border-border">
+        <div className="p-4 border-t lg:border-t-0 border-l border-border">
           <StatCardHeader
             icon="chat_bubble"
             iconBgClass="bg-violet-100"
             iconTextClass="text-violet-600"
             title="Comment"
-            tooltip="Số lượt seeding/bình luận (ghi nhận KPI) trong kỳ đang chọn, so với cùng độ dài kỳ liền trước."
+            tooltip="Số bài đã có seeding/bình luận trên tổng số bài phù hợp trong kỳ đang chọn (mẫu số thu hẹp theo đúng thành viên nếu đang lọc 1 người), so với cùng độ dài kỳ liền trước."
           />
           <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">{commentCount}</span>
+            <span className="text-[26px] font-extrabold leading-tight">
+              {commentDistinctPostCount} / {commentPostPoolCount}
+            </span>
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px] font-bold",
-                commentDelta > 0
+                commentPostPctChange > 0
                   ? "bg-emerald-50 text-emerald-700"
-                  : commentDelta < 0
+                  : commentPostPctChange < 0
                     ? "bg-rose-50 text-rose-600"
                     : "bg-muted text-muted-foreground"
               )}
             >
-              {commentDelta > 0 ? "+" : ""}
-              {commentDelta}
+              {commentPostPctChange > 0 ? "+" : ""}
+              {commentPostPctChange}%
             </span>
           </div>
           <div className="text-[12px] text-muted-foreground mt-0.5">
-            {commentCount} lượt seeding/bình luận trong kỳ
+            {commentDistinctPostCount} bài đã comment / {commentPostPoolCount} bài phù hợp trong kỳ
           </div>
         </div>
       </div>
@@ -860,10 +917,11 @@ export function CallResultStatsWidget({
             )}
           </div>
 
-          {/* 3 tab con — bên trái; thanh lọc thời gian ngang hàng, bên phải (xuống hàng trên
-              màn hẹp vì flex-wrap). */}
+          {/* Việc 3 (2026-11-21): bỏ hẳn tính năng đổi vị trí bộ lọc thời gian theo trạng thái
+              thu gọn/mở rộng — filterBar giờ chỉ render đúng 1 chỗ, trong header widget (cạnh
+              tiêu đề + dropdown thành viên), luôn hiện bất kể expanded. */}
           <div className="p-4">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+            <div className="mb-3">
               <div className="inline-flex gap-1 bg-muted rounded-lg p-1">
                 {([
                   ["member", "Theo thành viên"],
@@ -883,10 +941,6 @@ export function CallResultStatsWidget({
                   </button>
                 ))}
               </div>
-
-              {/* filterBar — cùng 1 biến JSX với bản ở header, chỉ hiện 1 trong 2 chỗ vì khối
-                  này chỉ render khi expanded (xem điều kiện !expanded ở header). */}
-              {filterBar}
             </div>
 
             {activeTab === "member" && (
@@ -895,18 +949,15 @@ export function CallResultStatsWidget({
                   <thead>
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Thành viên</th>
-                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
                       <th className="py-1.5 text-right">Thành công</th>
-                      <th className="py-1.5 text-right">Thất bại</th>
-                      <th className="py-1.5 text-right">Zalo gửi</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Tổng</th>
+                      <th className="py-1.5 text-right">Bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
                     {memberTableRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Chưa có hoạt động nào trong kỳ này
                         </td>
                       </tr>
@@ -920,22 +971,24 @@ export function CallResultStatsWidget({
                               </span>
                               {m.name || m.email || m.member_id}
                             </td>
+                            <td className="py-1.5 text-right text-emerald-600 font-bold">
+                              {m.call_ok}/{m.call_ok + m.call_bad}
+                            </td>
+                            <td className="py-1.5 text-right">
+                              {m.zaloReplied}/{m.zalo}
+                            </td>
                             <td className="py-1.5 text-right">{m.seed}</td>
-                            <td className="py-1.5 text-right text-emerald-600 font-bold">{m.call_ok}</td>
-                            <td className="py-1.5 text-right text-rose-600 font-bold">{m.call_bad}</td>
-                            <td className="py-1.5 text-right">{m.zalo}</td>
-                            <td className="py-1.5 text-right">{m.zaloReplied}</td>
-                            <td className="py-1.5 text-right font-extrabold">{m.total}</td>
                           </tr>
                         ))}
                         <tr className="border-t border-border font-extrabold bg-muted/40">
                           <td className="py-1.5">Tổng</td>
+                          <td className="py-1.5 text-right text-emerald-600">
+                            {memberTableTotals.call_ok}/{memberTableTotals.call_ok + memberTableTotals.call_bad}
+                          </td>
+                          <td className="py-1.5 text-right">
+                            {memberTableTotals.zaloReplied}/{memberTableTotals.zalo}
+                          </td>
                           <td className="py-1.5 text-right">{memberTableTotals.seed}</td>
-                          <td className="py-1.5 text-right text-emerald-600">{memberTableTotals.call_ok}</td>
-                          <td className="py-1.5 text-right text-rose-600">{memberTableTotals.call_bad}</td>
-                          <td className="py-1.5 text-right">{memberTableTotals.zalo}</td>
-                          <td className="py-1.5 text-right">{memberTableTotals.zaloReplied}</td>
-                          <td className="py-1.5 text-right">{memberTableTotals.total}</td>
                         </tr>
                       </>
                     )}
@@ -950,24 +1003,21 @@ export function CallResultStatsWidget({
                   <thead>
                     <tr className="text-[11px] text-muted-foreground font-bold text-left">
                       <th className="py-1.5">Ngày</th>
-                      <th className="py-1.5 text-right">Seeding/Bình luận</th>
                       <th className="py-1.5 text-right">Thành công</th>
-                      <th className="py-1.5 text-right">Thất bại</th>
-                      <th className="py-1.5 text-right">Zalo gửi</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Tổng</th>
+                      <th className="py-1.5 text-right">Bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingDay ? (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Đang tải...
                         </td>
                       </tr>
                     ) : dayRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="py-4 text-center text-muted-foreground">
+                        <td colSpan={4} className="py-4 text-center text-muted-foreground">
                           Chưa có hoạt động nào trong kỳ này
                         </td>
                       </tr>
@@ -1002,23 +1052,23 @@ export function CallResultStatsWidget({
                                   {formatDay(d.day)}
                                 </div>
                               </td>
+                              <td className="py-1.5 text-right text-emerald-600 font-bold">
+                                {d.call_ok}/{d.call_ok + d.call_bad}
+                              </td>
+                              <td className="py-1.5 text-right">
+                                {d.zalo_replied}/{d.zalo_sent}
+                              </td>
                               <td className="py-1.5 text-right">{d.seed}</td>
-                              <td className="py-1.5 text-right text-emerald-600 font-bold">{d.call_ok}</td>
-                              <td className="py-1.5 text-right text-rose-600 font-bold">{d.call_bad}</td>
-                              <td className="py-1.5 text-right">{d.zalo_sent}</td>
-                              <td className="py-1.5 text-right">{d.zalo_replied}</td>
-                              <td className="py-1.5 text-right font-extrabold">{d.total}</td>
                             </tr>
                             {isExpanded && (
                               <tr className="bg-muted/30">
-                                <td colSpan={7} className="p-0">
+                                <td colSpan={4} className="p-0">
                                   <div className="pl-8 pr-3 py-2">
                                     <table className="w-full text-[12px]">
                                       <thead>
                                         <tr className="text-[10.5px] text-muted-foreground font-bold text-left">
                                           <th className="py-1">Thành viên</th>
-                                          <th className="py-1 text-right">Seeding/Bình luận</th>
-                                          <th className="py-1 text-right">Zalo gửi</th>
+                                          <th className="py-1 text-right">Bình luận</th>
                                           <th className="py-1 text-right">Tổng</th>
                                         </tr>
                                       </thead>
@@ -1034,7 +1084,6 @@ export function CallResultStatsWidget({
                                               </div>
                                             </td>
                                             <td className="py-1 text-right">{m.seed}</td>
-                                            <td className="py-1 text-right">{m.zalo_sent}</td>
                                             <td className="py-1 text-right font-bold">{m.total}</td>
                                           </tr>
                                         ))}
@@ -1049,12 +1098,13 @@ export function CallResultStatsWidget({
                       })}
                       <tr className="border-t border-border font-extrabold bg-muted/40">
                         <td className="py-1.5">Tổng {dayRows.length} ngày</td>
+                        <td className="py-1.5 text-right text-emerald-600">
+                          {dayTableTotals.call_ok}/{dayTableTotals.call_ok + dayTableTotals.call_bad}
+                        </td>
+                        <td className="py-1.5 text-right">
+                          {dayTableTotals.zalo_replied}/{dayTableTotals.zalo_sent}
+                        </td>
                         <td className="py-1.5 text-right">{dayTableTotals.seed}</td>
-                        <td className="py-1.5 text-right text-emerald-600">{dayTableTotals.call_ok}</td>
-                        <td className="py-1.5 text-right text-rose-600">{dayTableTotals.call_bad}</td>
-                        <td className="py-1.5 text-right">{dayTableTotals.zalo_sent}</td>
-                        <td className="py-1.5 text-right">{dayTableTotals.zalo_replied}</td>
-                        <td className="py-1.5 text-right">{dayTableTotals.total}</td>
                       </tr>
                       </>
                     )}
@@ -1140,7 +1190,26 @@ export function CallResultStatsWidget({
                             <td className="py-1.5 max-w-[220px] truncate" title={item.post_label || undefined}>
                               {item.post_label || "—"}
                             </td>
-                            <td className="py-1.5">{item.result_label}</td>
+                            <td className="py-1.5">
+                              <span className="inline-flex items-center gap-1">
+                                {item.result_label}
+                                {/* Việc 4: note chỉ có ở action_type="call" (ghi chú của LẦN
+                                    GỌI GẦN NHẤT — post_call_results không lưu lịch sử từng
+                                    lần) — hover icon để xem, không tự chế note cho dòng khác. */}
+                                {item.action_type === "call" && item.note ? (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-default opacity-80 hover:opacity-100 text-[12px]">🗒️</span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">
+                                      <span className="font-medium text-xs max-w-[240px] inline-block whitespace-pre-wrap">
+                                        {item.note}
+                                      </span>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                ) : null}
+                              </span>
+                            </td>
                           </tr>
                         ))
                       )}
