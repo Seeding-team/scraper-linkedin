@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, ChevronRight, FileText, Loader2, UploadCloud } from 'lucide-react';
 import { CrmVendorSelect } from '@/modules/crm/components/CrmVendorSelect';
 import { SearchableSelect } from '@/modules/crm/components/SearchableSelect';
-import { VendorImportRepository, VendorImportBatch, VendorImportItem } from '@/modules/crm/repositories/VendorImportRepository';
+import { VendorRepository } from '@/modules/crm/repositories/VendorRepository';
+import { VendorImportRepository, VendorImportBatch, VendorImportItem, VendorImportProjectOption } from '@/modules/crm/repositories/VendorImportRepository';
 import { usePricingLogic } from './usePricingLogic';
 import { useSystemUsdVndRate } from './useSystemExchangeRate';
 import { serviceCatalogRepository } from './repositories/ServiceCatalogRepository';
@@ -11,19 +12,50 @@ import { CRM_INSTANCE } from '@/modules/quotes/utils/publicQuoteUrl';
 
 type Step = 1 | 2 | 3 | 4;
 
-export function VendorImportFlow({ onClose }: { onClose: () => void }) {
+export function VendorImportFlow({ onClose, initialGroupId }: { onClose: () => void; initialGroupId?: string }) {
   const [step, setStep] = useState<Step>(1);
   const [file, setFile] = useState<File | null>(null);
+  const [sourceMode, setSourceMode] = useState<'file' | 'sheet'>('file');
+  const [sheetUrl, setSheetUrl] = useState('');
+  // Link Google Sheet da luu tren Vendor (dong bo gia lap lai) + lan dong bo gan nhat.
+  const [savedSheetUrl, setSavedSheetUrl] = useState('');
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [saveLink, setSaveLink] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [vendorId, setVendorId] = useState('');
   const [projectId, setProjectId] = useState('');
+  const [projects, setProjects] = useState<VendorImportProjectOption[]>([]);
+  useEffect(() => {
+    VendorImportRepository.listProjects().then(setProjects).catch(() => {});
+  }, []);
+  const projectLabel = (p: VendorImportProjectOption) => (p.projectCode ? `${p.projectCode} - ${p.name}` : p.name);
   const systemUsdVndRate = useSystemUsdVndRate();
   const [exchangeRate, setExchangeRate] = useState('');
   // Ty gia mac dinh = ty gia he thong (khong hard-code); nguoi dung van sua tay duoc.
   useEffect(() => {
     if (systemUsdVndRate) setExchangeRate(prev => (prev ? prev : String(systemUsdVndRate)));
   }, [systemUsdVndRate]);
+  useEffect(() => {
+    setSavedSheetUrl('');
+    setLastSyncedAt(null);
+    if (!vendorId) return;
+    let cancelled = false;
+    VendorRepository.listVendors({ limit: 500 }).then(list => {
+      if (cancelled) return;
+      const v = list.find(item => item.id === vendorId);
+      const url = (v?.price_sheet_url || '').trim();
+      setSavedSheetUrl(url);
+      setLastSyncedAt(v?.price_sheet_last_synced_at || null);
+      if (url) {
+        setSheetUrl(url);
+        setSaveLink(false);
+      } else {
+        setSaveLink(true);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [vendorId]);
   const [priceScope, setPriceScope] = useState<'project_only' | 'cost_price_book' | 'product_catalog'>('project_only');
   const [uploading, setUploading] = useState(false);
   const [batch, setBatch] = useState<VendorImportBatch | null>(null);
@@ -37,7 +69,8 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
   // danh sach rieng. Ap dung cho MOI SKU tu file Vendor - SKU khop san pham
   // co san van giu nguyen nhom canonical cua no (xem process_ocr_extraction).
   const [groups, setGroups] = useState<ServiceCatalogItem[]>([]);
-  const [defaultGroupId, setDefaultGroupId] = useState('');
+  // Dang o nhom nao (mo tu trang nhom / loc theo nhom) thi tu dien san nhom do.
+  const [defaultGroupId, setDefaultGroupId] = useState(initialGroupId || '');
   const [creatingDefaultGroup, setCreatingDefaultGroup] = useState(false);
   const [newDefaultGroupName, setNewDefaultGroupName] = useState('');
   const [savingDefaultGroup, setSavingDefaultGroup] = useState(false);
@@ -139,7 +172,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
   };
 
   const handleUpload = async () => {
-    if (!vendorId || !file) return;
+    if (!vendorId || (sourceMode === 'file' ? !file : !sheetUrl.trim())) return;
     setUploading(true);
     setError(null);
     try {
@@ -149,8 +182,15 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
       formData.append('exchange_rate', exchangeRate || '1');
       formData.append('target_scope', priceScope);
       if (defaultGroupId) formData.append('default_group_id', defaultGroupId);
-      formData.append('file', file);
-      const created = await VendorImportRepository.uploadBatch(formData);
+      let created: VendorImportBatch;
+      if (sourceMode === 'sheet') {
+        formData.append('sheet_url', sheetUrl.trim());
+        formData.append('save_link', saveLink && sheetUrl.trim() !== savedSheetUrl ? 'true' : 'false');
+        created = await VendorImportRepository.uploadBatchFromSheet(formData);
+      } else {
+        formData.append('file', file as File);
+        created = await VendorImportRepository.uploadBatch(formData);
+      }
       setBatch(created);
       setStep(2);
     } catch (err) {
@@ -273,6 +313,44 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
     pending: items.filter(item => item.review_status === 'pending').length,
   };
   const resolvedCount = items.length - reviewCounts.pending;
+
+  // Duyet nhanh nhieu item 1 lan: tick chon -> "Duyet N item da chon". Moi item
+  // giu nguyen gia/nhom da trich xuat; co san pham khop -> 'existing', con lai -> 'new'
+  // (nhom SKU moi da duoc tien dien tu "Nhom san pham mac dinh" luc OCR).
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkRunning, setBulkRunning] = useState(false);
+  const pendingItems = items.filter(i => i.review_status === 'pending');
+  const toggleBulk = (id: string) =>
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  const allPendingSelected = pendingItems.length > 0 && pendingItems.every(i => bulkSelected.has(i.id));
+  const toggleAllPending = () =>
+    setBulkSelected(allPendingSelected ? new Set() : new Set(pendingItems.map(i => i.id)));
+  const approveMany = async (targets: VendorImportItem[]) => {
+    if (!batch || targets.length === 0) return;
+    setBulkRunning(true);
+    setError(null);
+    let failed = 0;
+    for (const target of targets) {
+      try {
+        const updated = await VendorImportRepository.updateItem(batch.id, target.id, {
+          mapping_action: target.matched_catalog_item_id ? 'existing' : 'new',
+        });
+        setItems(prev => prev.map(item => (item.id === updated.id ? updated : item)));
+      } catch {
+        failed += 1;
+      }
+    }
+    setBulkSelected(new Set());
+    setSelectedItem(null);
+    if (failed > 0) setError(`${failed}/${targets.length} item duyệt không thành công, hãy thử lại.`);
+    setBulkRunning(false);
+  };
+  const handleBulkApprove = () => approveMany(items.filter(i => bulkSelected.has(i.id)));
+
   const allResolved = items.length > 0 && reviewCounts.pending === 0;
 
   // Step 4: mo ta THAT theo dung logic approve_batch()/_approve_cost_price_book()/
@@ -281,9 +359,11 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
   // hom nay, cost_price_book xu ly DONG DEU mapped+new, con product_catalog
   // thi item mapped ma KHONG co matched_catalog_item_id se bi BO QUA am tham).
   const mappedWithoutMatchCount = items.filter(item => item.review_status === 'mapped' && !item.matched_catalog_item_id).length;
+  const batchProject = projects.find(x => x.id === batch?.project_id);
+  const batchProjectText = batchProject ? projectLabel(batchProject) : (batch?.project_id || '');
   const SCOPE_META: Record<typeof priceScope, { label: string; explain: string }> = {
     project_only: {
-      label: 'Chỉ dùng cho Project này',
+      label: batchProjectText ? `Chỉ dùng cho Project: ${batchProjectText}` : 'Chỉ dùng cho Project này (chưa chọn Project)',
       explain: 'Dữ liệu giá chỉ áp dụng cho Project hiện tại. Không cập nhật Product Catalog hay Cost Price Book.',
     },
     cost_price_book: {
@@ -342,7 +422,15 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Project</label>
-                <input className="h-9 w-full rounded-md border border-slate-300 px-3 text-sm focus:border-[#c2185b]" value={projectId} onChange={e => setProjectId(e.target.value)} />
+                <SearchableSelect
+                  value={projectId}
+                  onChange={setProjectId}
+                  options={projects.map(p => ({ value: p.id, label: projectLabel(p) }))}
+                  placeholder="-- Không gắn Project --"
+                />
+                {priceScope === 'project_only' && !projectId ? (
+                  <p className="mt-1 text-xs text-amber-600">Phạm vi "Project only" cần chọn Project để biết giá áp dụng cho dự án nào.</p>
+                ) : null}
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-slate-700">Tỷ giá</label>
@@ -373,7 +461,29 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
             </div>
 
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-slate-700">File báo giá</label>
+              <label className="mb-1.5 block text-sm font-medium text-slate-700">Nguồn báo giá</label>
+              <div className="mb-2 inline-flex rounded-lg border border-slate-200 p-0.5 text-sm">
+                {([['file', 'Tải file'], ['sheet', 'Link Google Sheet']] as const).map(([mode, label]) => (
+                  <button key={mode} type="button" onClick={() => setSourceMode(mode)} className={`rounded-md px-3 py-1 font-medium ${sourceMode === mode ? 'bg-[#c2185b] text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{label}</button>
+                ))}
+              </div>
+              {sourceMode === 'sheet' ? (
+                <div>
+                  <input type="url" value={sheetUrl} onChange={e => setSheetUrl(e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/..." className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-[#c2185b]" />
+                  <p className="mt-1 text-xs text-slate-500">Sheet cần chia sẻ ở chế độ "Bất kỳ ai có đường liên kết đều xem được". Hệ thống đọc toàn bộ các tab.</p>
+                  {savedSheetUrl ? (
+                    <p className="mt-1 text-xs text-emerald-700">
+                      Vendor đã lưu link này{lastSyncedAt ? ` · đồng bộ gần nhất: ${new Date(lastSyncedAt).toLocaleString('vi-VN')}` : ' · chưa đồng bộ lần nào'}. Bấm "Tiếp tục" để đồng bộ lại giá.
+                    </p>
+                  ) : null}
+                  {sheetUrl.trim() && sheetUrl.trim() !== savedSheetUrl ? (
+                    <label className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                      <input type="checkbox" checked={saveLink} onChange={e => setSaveLink(e.target.checked)} />
+                      Lưu link này cho Vendor để đồng bộ lại lần sau
+                    </label>
+                  ) : null}
+                </div>
+              ) : (
               <div className="flex min-h-[128px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-4 text-center transition-colors hover:bg-slate-100" onClick={() => fileInputRef.current?.click()}>
                 <input type="file" className="hidden" ref={fileInputRef} onChange={handleSelectFile} accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg" />
                 {file ? (
@@ -395,6 +505,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
                   </>
                 )}
               </div>
+              )}
             </div>
 
             <div>
@@ -521,6 +632,15 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
               <div className="h-2 flex-1 min-w-[120px] overflow-hidden rounded-full bg-slate-200">
                 <div className="h-full rounded-full bg-[#c2185b] transition-all" style={{ width: `${items.length ? (resolvedCount / items.length) * 100 : 0}%` }} />
               </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-slate-700">
+                  <input type="checkbox" checked={allPendingSelected} onChange={toggleAllPending} disabled={pendingItems.length === 0 || bulkRunning} />
+                  Chọn tất cả chưa xử lý ({pendingItems.length})
+                </label>
+                <button type="button" className="rounded-lg bg-[#c2185b] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#a91549] disabled:opacity-50" disabled={bulkSelected.size === 0 || bulkRunning} onClick={handleBulkApprove}>
+                  {bulkRunning ? 'Đang duyệt...' : `Duyệt ${bulkSelected.size} item đã chọn`}
+                </button>
+              </div>
               <div className="flex flex-wrap gap-3 text-xs text-slate-600">
                 <span>Đã khớp: <b className="text-slate-800">{reviewCounts.mapped}</b></span>
                 <span>SKU mới: <b className="text-slate-800">{reviewCounts.new}</b></span>
@@ -536,7 +656,10 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
                   {items.map((item, index) => (
                     <div key={item.id} onClick={() => handleSelectItem(item)} className={`cursor-pointer rounded-lg border p-3 transition-colors ${selectedItem?.id === item.id ? 'border-[#f3b8ca] bg-[#fff1f6]' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                       <div className="mb-1 flex items-center justify-between">
-                        <span className="text-sm font-semibold text-slate-800">{item.sku || `ITEM-${index + 1}`}</span>
+                        <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                          <input type="checkbox" checked={bulkSelected.has(item.id)} disabled={bulkRunning} onClick={e => e.stopPropagation()} onChange={() => toggleBulk(item.id)} />
+                          {item.sku || `ITEM-${index + 1}`}
+                        </span>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${item.review_status === 'pending' ? 'bg-amber-100 text-amber-700' : item.review_status === 'ignored' ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
                           {REVIEW_STATUS_LABELS[item.review_status] || item.review_status}
                         </span>
@@ -679,7 +802,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-4">
-                      <button type="button" disabled={savingItem} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50" onClick={handleConfirmItem}>
+                      <button type="button" disabled={savingItem || bulkRunning} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50" onClick={handleConfirmItem}>
                         Xác nhận item
                       </button>
                       <button type="button" disabled={savingItem} className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50" onClick={handleSkipItem}>
@@ -739,7 +862,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
                 <div><span className="text-slate-500">Vendor: </span><span className="font-medium text-slate-800">{batch?.crm_vendors?.name || batch?.vendor_id || '—'}</span></div>
                 <div><span className="text-slate-500">File nguồn: </span><span className="font-medium text-slate-800">{batch?.source_file_name || '—'}</span></div>
                 <div><span className="text-slate-500">Tỷ giá: </span><span className="font-medium text-slate-800">{batch?.exchange_rate?.toLocaleString('vi-VN') || '—'}</span></div>
-                <div><span className="text-slate-500">Project: </span><span className="font-medium text-slate-800">{batch?.project_id || 'Không gắn Project'}</span></div>
+                <div><span className="text-slate-500">Project: </span><span className="font-medium text-slate-800">{(() => { const p = projects.find(x => x.id === batch?.project_id); return p ? projectLabel(p) : (batch?.project_id || 'Không gắn Project'); })()}</span></div>
               </div>
             </div>
 
@@ -778,7 +901,7 @@ export function VendorImportFlow({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         ) : step < 4 ? (
-          <button type="button" className="rounded-lg bg-[#c2185b] px-4 py-2 text-sm font-medium text-white hover:bg-[#a91549] disabled:opacity-50" onClick={step === 1 ? handleUpload : nextStep} disabled={(step === 1 && (!file || !vendorId || uploading)) || (step === 2 && (batch?.status !== 'review' || items.length === 0))}>
+          <button type="button" className="rounded-lg bg-[#c2185b] px-4 py-2 text-sm font-medium text-white hover:bg-[#a91549] disabled:opacity-50" onClick={step === 1 ? handleUpload : nextStep} disabled={(step === 1 && ((sourceMode === 'file' ? !file : !sheetUrl.trim()) || !vendorId || uploading)) || (step === 2 && (batch?.status !== 'review' || items.length === 0))}>
             {step === 1 ? (uploading ? 'Đang tải lên...' : 'Tiếp tục') : step === 2 ? 'Tiếp tục đến Review →' : 'Tiếp tục'}
           </button>
         ) : (

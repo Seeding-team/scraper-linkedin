@@ -79,9 +79,27 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface VendorImportProjectOption {
+  id: string;
+  projectCode?: string | null;
+  name: string;
+}
+
 export const VendorImportRepository = {
+  async listProjects(): Promise<VendorImportProjectOption[]> {
+    const res = await apiFetch<{ success?: boolean; data?: VendorImportProjectOption[] }>(`/api/all-platform/projects`);
+    return Array.isArray(res?.data) ? res.data : [];
+  },
+
   async uploadBatch(data: FormData): Promise<VendorImportBatch> {
     return apiFetch<VendorImportBatch>(`/api/all-platform/crm/vendor-imports/batches`, {
+      method: 'POST',
+      body: data,
+    });
+  },
+
+  async uploadBatchFromSheet(data: FormData): Promise<VendorImportBatch> {
+    return apiFetch<VendorImportBatch>(`/api/all-platform/crm/vendor-imports/batches/from-sheet`, {
       method: 'POST',
       body: data,
     });
