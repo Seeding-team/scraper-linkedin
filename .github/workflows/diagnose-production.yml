@@ -24,161 +24,54 @@ jobs:
           echo "=== DOCKER CONTAINERS STATUS ==="
           docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Image}}\t{{.Ports}}"
 
-      - name: 3. Docker Resource Usage (RAM/CPU)
+      - name: 3. Backend VoIP & Call Logs (Read-Only)
         run: |
-          echo "=== DOCKER STATS (NO STREAM) ==="
-          docker stats --no-stream
+          echo "=== ZALO VOIP / ZRTC / CALL LOGS (LAST 5000 LINES) ==="
+          docker logs --tail 5000 seeding-backend 2>&1 | grep -iE "CALL-START|ZRTC|VOIP|1130|answer|cancel|zcall|OPUS|NAT-KEEPALIVE|call-ws|call/start|call_session" | tail -n 200 || true
+          echo "=== LAST 80 LINES OF ROUTER LOGS (CALL/WS) ==="
+          docker logs --tail 2000 seeding-router 2>&1 | grep -iE "call|ws" | tail -n 80 || true
 
-      - name: 4. Backend Container Logs
+      - name: 4. Read-Only Runtime Check (PyAV Opus, UDP/STUN NAT, Listener)
         run: |
-          echo "=== ZALO VOIP & CALL LOGS IN LAST 1000 LINES ==="
-          docker logs --tail 1000 seeding-backend 2>&1 | grep -i -C 3 -E "call|voice|1130|zcall|requestcall|start_call" || true
-          echo "=== LAST 200 LINES OF BACKEND RAW LOGS ==="
-          docker logs --tail 200 seeding-backend || true
-
-      - name: 5. Router (Nginx) Logs
-        run: |
-          echo "=== LAST 50 LINES OF ROUTER LOGS ==="
-          docker logs --tail 50 seeding-router || true
-
-      - name: 6. Test Direct Call Signaling Matrix in Container
-        run: |
-          echo "=== EXPORTING ZCA AUTH TO /tmp/test_auth.json INSIDE CONTAINER ==="
           docker exec -i seeding-backend python -c '
-          import asyncio, json
-          from app.modules.all_platform.zalo.services.zca_auth_store import load_zca_auth
+          import asyncio, socket, struct, os
+          print("=== GIT / CODE CHECK ===")
+          import inspect
+          from app.modules.all_platform.zalo.services import zalo_call_service as zcs
+          print("OPUS_PAYLOAD_TYPE:", zcs.OPUS_PAYLOAD_TYPE)
+          print("Has _ZaloOpusCodec:", hasattr(zcs, "_ZaloOpusCodec"))
+          print("_av imported:", zcs._av is not None, getattr(zcs._av, "__version__", None))
+          codec = zcs._ZaloOpusCodec()
+          enc = codec.encode_pcm16_frame(b"\x00" * 640)
+          dec = codec.decode_opus_to_pcm16(enc)
+          print("Opus roundtrip OK:", len(enc), "bytes -> decoded", len(dec), "bytes")
 
-          async def export_auth():
-              auth = await load_zca_auth("zl_f2c46742")
-              if not auth:
-                  print("ERROR: No auth for zl_f2c46742")
-                  return
-              with open("/tmp/test_auth.json", "w") as f:
-                  json.dump(auth, f)
-              print("AUTH EXPORTED OK!")
+          print("=== UDP / STUN NAT CHECK (NO ZALO CALLS) ===")
+          s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          s.settimeout(2.0)
+          s.bind(("0.0.0.0", 0))
+          local_port = s.getsockname()[1]
+          print("Local bound port:", local_port)
+          for host, port in [("stun.l.google.com", 19302), ("stun1.l.google.com", 19302)]:
+              try:
+                  ip = socket.gethostbyname(host)
+                  req, tx = zcs._build_stun_binding_request()
+                  s.sendto(req, (ip, port))
+                  data, addr = s.recvfrom(2048)
+                  res = zcs._parse_stun_binding_response(data, tx)
+                  print(f"STUN {host}:{port} ({ip}) -> {res}")
+              except Exception as e:
+                  print(f"STUN {host}:{port} ERROR -> {e}")
+          s.close()
 
-          asyncio.run(export_auth())
-          '
-
-          echo "=== RUNNING NODE.JS SIGNALING PERMUTATION MATRIX ==="
-          docker exec -i seeding-backend node -e '
-          const fs = require("fs");
-          const { Zalo } = require("zca-js");
-
-          function normalizeCookieJar(cookies) {
-            if (!cookies) return null;
-            let parsed = typeof cookies === "string" ? JSON.parse(cookies) : cookies;
-            if (Array.isArray(parsed)) {
-              return parsed.map(c => {
-                let e = c.expires || c.expirationDate;
-                if (typeof e === "number") c.expires = new Date(e * 1000).toISOString();
-                return c;
-              });
-            }
-            if (parsed && Array.isArray(parsed.cookies)) {
-              parsed.cookies = parsed.cookies.map(c => {
-                let e = c.expires || c.expirationDate;
-                if (typeof e === "number") c.expires = new Date(e * 1000).toISOString();
-                return c;
-              });
-            }
-            return parsed;
-          }
-
-          async function main() {
-            const authRaw = fs.readFileSync("/tmp/test_auth.json", "utf-8");
-            const auth = JSON.parse(authRaw);
-            const cookie = normalizeCookieJar(auth.cookies);
-            const zalo = new Zalo({ selfListen: false, checkUpdate: false, logging: false });
-            const api = await zalo.login({ cookie, imei: auth.imei, userAgent: auth.userAgent });
-            console.log("ZALO LOGIN OK!");
-
-            let exec;
-            api.custom("__diagExec", async ({ ctx, utils, props }) => {
-              exec = async ({ endpointPath, paramsObj, method = "GET" }) => {
-                const baseDomain = "https://voicecall-wpa.chat.zalo.me";
-                const payloadWithImei = {
-                  ...paramsObj,
-                  ...(paramsObj && paramsObj.imei === undefined ? { imei: ctx.imei } : {}),
-                };
-                const encryptedParams = utils.encodeAES(JSON.stringify(payloadWithImei));
-                if (!encryptedParams) throw new Error("Failed to encodeAES");
-                if (method.toUpperCase() === "POST") {
-                  const url = utils.makeURL(`${baseDomain}${endpointPath}`);
-                  const res = await utils.request(url, {
-                    method: "POST",
-                    body: new URLSearchParams({ params: encryptedParams }),
-                  });
-                  return utils.resolve(res);
-                } else {
-                  const url = utils.makeURL(`${baseDomain}${endpointPath}`, { params: encryptedParams });
-                  const res = await utils.request(url, { method: "GET" });
-                  return utils.resolve(res);
-                }
-              };
-            });
-            await api.__diagExec();
-
-            const calleeId = "6363678867120121443";
-            const callId = Math.floor(Date.now() / 1000);
-
-            console.log("--- EXECUTING STEP 1: 11300 requestcall ---");
-            const s1 = await exec({
-              endpointPath: "/api/voicecall/requestcall",
-              paramsObj: { calleeId, callId, codec: "[]", typeRequest: 1 },
-              method: "GET"
-            });
-            console.log("STEP 1 RESULT:", JSON.stringify(s1));
-
-            const toIdStr = String(s1.toId || "");
-            const rtp = s1.rtpIP || "171.244.25.121:4200";
-            const rtcp = s1.rtcpIP || rtp;
-            const effCallId = Number(s1.id || callId);
-
-            const variants = [
-              // 1. GET vs POST with basic parameters
-              { name: "T01_GET_basic_uid", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-              { name: "T02_POST_basic_uid", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-              { name: "T03_GET_basic_toId", method: "GET", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-              { name: "T04_POST_basic_toId", method: "POST", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-
-              // 2. With extendData and subCommand 3
-              { name: "T05_GET_extendData_uid", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-              { name: "T06_POST_extendData_uid", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-              { name: "T07_GET_extendData_toId", method: "GET", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-              { name: "T08_POST_extendData_toId", method: "POST", params: { calleeId: toIdStr, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-
-              // 3. With both calleeId and toId
-              { name: "T09_GET_both_ids", method: "GET", params: { calleeId, toId: s1.toId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-              { name: "T10_POST_both_ids", method: "POST", params: { calleeId, toId: s1.toId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId, extendData: s1.sessId, subCommand: 3 } },
-
-              // 4. Session variations (session as sessId string)
-              { name: "T11_GET_sessId_as_session", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: s1.sessId, callId: effCallId } },
-              { name: "T12_POST_sessId_as_session", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: s1.sessId, callId: effCallId } },
-
-              // 5. Codec as full array object instead of string "[]"
-              { name: "T13_GET_codec_array_obj", method: "GET", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: [{ id: 111, name: "opus", clockrate: 48000, channels: 1 }], session: effCallId, callId: effCallId } },
-              { name: "T14_POST_codec_array_obj", method: "POST", params: { calleeId, rtcpAddress: rtcp, rtpAddress: rtp, codec: [{ id: 111, name: "opus", clockrate: 48000, channels: 1 }], session: effCallId, callId: effCallId } },
-
-              // 6. With callType: 1
-              { name: "T15_GET_callType1", method: "GET", params: { calleeId, callType: 1, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-              { name: "T16_POST_callType1", method: "POST", params: { calleeId, callType: 1, rtcpAddress: rtcp, rtpAddress: rtp, codec: "[]", session: effCallId, callId: effCallId } },
-            ];
-
-            console.log("--- TESTING 16 PERMUTATIONS FOR 11301 /api/voicecall/request ---");
-            for (const v of variants) {
-              try {
-                const res = await exec({
-                  endpointPath: "/api/voicecall/request",
-                  paramsObj: v.params,
-                  method: v.method
-                });
-                console.log(`>>> [PASS] ${v.name}:`, JSON.stringify(res));
-              } catch (err) {
-                console.log(`--- [FAIL] ${v.name}:`, err.message || JSON.stringify(err));
-              }
-            }
-          }
-
-          main().catch(e => console.error("FATAL_MAIN_ERR:", e));
+          print("=== CHECK ZCA PERSISTENT LISTENER & CALL SESSIONS ===")
+          from app.modules.all_platform.zalo.services import zca_persistent_listener as zpl
+          mgr = zpl._MANAGER
+          print("Active listeners:", list(getattr(mgr, "_states", {}).keys()))
+          for uid in list(getattr(mgr, "_states", {}).keys()):
+              st = zpl.get_listener_status(uid)
+              print("  listener", uid, st)
+          print("Active call sessions in memory:", len(zcs._CALL_SESSIONS))
+          for sid, sess in list(zcs._CALL_SESSIONS.items())[-10:]:
+              print("  session", sid, "status=", sess.status, "call_id=", sess.call_id, "zrtc_token=", hex(sess.zrtc_token), "tx=", sess.packets_sent, "rx=", sess.packets_received, "warn=", sess.warning)
           ' || true

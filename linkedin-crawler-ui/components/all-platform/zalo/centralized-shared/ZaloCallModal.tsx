@@ -156,6 +156,7 @@ export function ZaloCallModal({
   const isCallMutedRef = useRef<boolean>(false);
   const activeCallSessionRef = useRef<ZaloDirectCallSession | null>(null);
   const accountIdRef = useRef<string>(accountId);
+  const isOpenRef = useRef<boolean>(open);
   const nextPlayTimeRef = useRef<number>(0);
   const terminalActionSentRef = useRef<Set<string>>(new Set());
 
@@ -166,6 +167,10 @@ export function ZaloCallModal({
   useEffect(() => {
     accountIdRef.current = accountId;
   }, [accountId]);
+
+  useEffect(() => {
+    isOpenRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     setMounted(true);
@@ -671,20 +676,9 @@ export function ZaloCallModal({
           }
         };
 
-        // Mở luồng Mic (AEC + NS + AGC) truyền thẳng PCM16 qua WebSocket sang UDP RTP Gateway
-        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia) {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              ...(selectedMicId ? { deviceId: { exact: selectedMicId } } : {}),
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 1,
-              sampleRate: 16000,
-            },
-          });
-          mediaStreamRef.current = stream;
-
+        // Luôn khởi tạo AudioContext + Polling trạng thái TRƯỚC khi xin quyền Mic,
+        // đảm bảo kể cả khi máy không có/tắt Mic thì Sale vẫn nghe được loa khách & đồng bộ trạng thái cuộc gọi.
+        try {
           const AudioCtx =
             window.AudioContext ||
             (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -694,40 +688,8 @@ export function ZaloCallModal({
           }
           nextPlayTimeRef.current = ctx.currentTime + 0.04;
           audioCtxRef.current = ctx;
-
-          const source = ctx.createMediaStreamSource(stream);
-          const processor = ctx.createScriptProcessor(1024, 1, 1);
-          callProcessorRef.current = processor;
-
-          processor.onaudioprocess = (audioEv) => {
-            const input = audioEv.inputBuffer.getChannelData(0);
-            let sumSq = 0;
-            const pcm16 = new Int16Array(input.length);
-            for (let i = 0; i < input.length; i++) {
-              const s = Math.max(-1, Math.min(1, input[i]));
-              sumSq += s * s;
-              pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-            }
-            const rms = Math.sqrt(sumSq / input.length);
-            setMicLevel(isCallMutedRef.current ? 0 : Math.min(100, Math.round(rms * 320)));
-
-            // CHỐT CHẶN BẢO VỆ: Chỉ gửi âm thanh qua WebSocket khi cuộc gọi ĐÃ KẾT NỐI (connected).
-            // Tuyệt đối không gửi gói âm thanh khi đang dialing/ringing vì sẽ làm rách gói ZRTC của khách gây ngắt chuông tức thì!
-            if (
-              activeCallSessionRef.current?.status === "connected" &&
-              !isCallMutedRef.current &&
-              callWsRef.current &&
-              callWsRef.current.readyState === WebSocket.OPEN
-            ) {
-              callWsRef.current.send(pcm16.buffer);
-            }
-          };
-
-          const zeroGain = ctx.createGain();
-          zeroGain.gain.value = 0;
-          source.connect(processor);
-          processor.connect(zeroGain);
-          zeroGain.connect(ctx.destination);
+        } catch {
+          /* ignore audio context init failure */
         }
 
         // Đồng bộ trạng thái Signaling định kỳ (11300 -> 11301 -> 11302 -> 11303 -> 11306)
@@ -754,6 +716,83 @@ export function ZaloCallModal({
             /* ignore transient poll error */
           }
         }, 2000);
+
+        // Mở luồng Mic (AEC + NS + AGC) truyền thẳng PCM16 16kHz qua WebSocket sang UDP RTP Gateway
+        if (typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia && audioCtxRef.current) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              audio: {
+                ...(selectedMicId ? { deviceId: { exact: selectedMicId } } : {}),
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+                channelCount: 1,
+                sampleRate: 16000,
+              },
+            });
+            mediaStreamRef.current = stream;
+
+            const ctx = audioCtxRef.current;
+            if (ctx.state === "suspended") {
+              void ctx.resume();
+            }
+            const source = ctx.createMediaStreamSource(stream);
+            const processor = ctx.createScriptProcessor(1024, 1, 1);
+            callProcessorRef.current = processor;
+
+            processor.onaudioprocess = (audioEv) => {
+              const input = audioEv.inputBuffer.getChannelData(0);
+              const inRate = ctx.sampleRate || 16000;
+              let sumSq = 0;
+              for (let i = 0; i < input.length; i++) {
+                const s = Math.max(-1, Math.min(1, input[i]));
+                sumSq += s * s;
+              }
+              const rms = Math.sqrt(sumSq / input.length);
+              setMicLevel(isCallMutedRef.current ? 0 : Math.min(100, Math.round(rms * 320)));
+
+              // CHỐT CHẶN BẢO VỆ: Chỉ gửi âm thanh qua WebSocket khi cuộc gọi ĐÃ KẾT NỐI (connected).
+              // Tuyệt đối không gửi gói âm thanh khi đang dialing/ringing vì sẽ làm rách gói ZRTC của khách gây ngắt chuông tức thì!
+              if (
+                activeCallSessionRef.current?.status === "connected" &&
+                !isCallMutedRef.current &&
+                callWsRef.current &&
+                callWsRef.current.readyState === WebSocket.OPEN
+              ) {
+                let pcm16: Int16Array;
+                if (inRate !== 16000 && inRate > 0) {
+                  const ratio = inRate / 16000;
+                  const outLen = Math.max(1, Math.floor(input.length / ratio));
+                  pcm16 = new Int16Array(outLen);
+                  for (let i = 0; i < outLen; i++) {
+                    const idx = Math.min(input.length - 1, Math.floor(i * ratio));
+                    const s = Math.max(-1, Math.min(1, input[idx]));
+                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                  }
+                } else {
+                  pcm16 = new Int16Array(input.length);
+                  for (let i = 0; i < input.length; i++) {
+                    const s = Math.max(-1, Math.min(1, input[i]));
+                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+                  }
+                }
+                callWsRef.current.send(pcm16.buffer);
+              }
+            };
+
+            const zeroGain = ctx.createGain();
+            zeroGain.gain.value = 0;
+            source.connect(processor);
+            processor.connect(zeroGain);
+            zeroGain.connect(ctx.destination);
+          } catch (micErr) {
+            setMicError(
+              micErr instanceof Error
+                ? `Mic không khả dụng (${micErr.message}) — vẫn duy trì loa nghe và tín hiệu cuộc gọi.`
+                : "Mic không khả dụng — vẫn duy trì loa nghe và tín hiệu cuộc gọi.",
+            );
+          }
+        }
       } catch {
         /* ignore audio gateway setup error */
       }
@@ -785,6 +824,17 @@ export function ZaloCallModal({
       });
 
       if (res?.session) {
+        if (!isOpenRef.current) {
+          if (["initializing", "dialing", "ringing", "connected"].includes(res.session.status)) {
+            void controlZaloDirectCall(
+              res.session.session_id,
+              res.session.status === "connected" ? "end" : "cancel",
+              "noanswer",
+              accountId || "default",
+            ).catch(() => {});
+          }
+          return;
+        }
         setActiveCallSession(res.session);
         setCallLaunched(true);
         if (callTimerRef.current) {

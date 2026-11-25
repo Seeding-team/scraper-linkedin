@@ -1177,14 +1177,41 @@ class ZcaPersistentListenerManager:
         và đồng bộ sang cả Call Session Manager lẫn SSE Event Bus cho Web Softphone."""
         act = str(voip.get("act") or "").strip().lower()
         data = voip.get("data") if isinstance(voip.get("data"), dict) else {}
-        call_id = data.get("callId") or data.get("call_id") or data.get("id")
+        raw_status = ""
+        params_obj: Dict[str, Any] = {}
+        if isinstance(data, dict):
+            if data.get("status") not in (None, ""):
+                raw_status = str(data.get("status")).strip()
+            raw_params = data.get("params")
+            if isinstance(raw_params, str) and raw_params.strip():
+                try:
+                    params_obj = json.loads(raw_params)
+                except Exception:
+                    params_obj = {}
+            elif isinstance(raw_params, dict):
+                params_obj = raw_params
+            if not isinstance(params_obj, dict):
+                params_obj = {}
+            if not raw_status and params_obj.get("status") not in (None, ""):
+                raw_status = str(params_obj.get("status")).strip()
+
+        call_id = (
+            data.get("callId")
+            or data.get("call_id")
+            or data.get("id")
+            or params_obj.get("callId")
+            or params_obj.get("call_id")
+            or params_obj.get("id")
+        )
         partner_id = str(
-            data.get("callerId")
-            or data.get("calleeId")
+            data.get("calleeId")
+            or data.get("callerId")
             or data.get("uidFrom")
             or data.get("uidTo")
             or data.get("uidN")
             or data.get("partnerId")
+            or params_obj.get("calleeId")
+            or params_obj.get("callerId")
             or ""
         ).strip()
 
@@ -1205,21 +1232,6 @@ class ZcaPersistentListenerManager:
             "end_call": "ended",
             "busy": "busy",
         }
-        raw_status = ""
-        params_obj = {}
-        if isinstance(data, dict):
-            if data.get("status") is not None:
-                raw_status = str(data.get("status")).strip()
-            raw_params = data.get("params")
-            if isinstance(raw_params, str) and raw_params.strip():
-                try:
-                    params_obj = json.loads(raw_params)
-                except Exception:
-                    params_obj = {}
-            elif isinstance(raw_params, dict):
-                params_obj = raw_params
-            if not raw_status and isinstance(params_obj, dict) and params_obj.get("status") is not None:
-                raw_status = str(params_obj.get("status")).strip()
 
         if act == "answer":
             if raw_status == "0":

@@ -454,6 +454,9 @@ export function CallResultStatsWidget({
     () => (callStats?.by_type || []).filter((t) => OK_CODES.has(t.code)).reduce((s, t) => s + t.count, 0),
     [callStats]
   );
+  // "Tổng số điện thoại" (Việc 2026-11-25): dùng CHUNG cho cả "Cuộc gọi" và "Zalo" (cùng 1 con số
+  // Z) — luôn toàn cục, không đổi theo dropdown thành viên, không có %/so kỳ trước.
+  const totalUniquePhonesCount = callStats?.total_unique_phones_count ?? 0;
   // Cột "Comment" dạng "X/Y" (Việc 3+4, 2026-11-23): X = comment_distinct_post_count (số BÀI
   // khác nhau đã comment, COUNT DISTINCT id_post — không phải số lượt/dòng như comment_count
   // cũ), Y = comment_post_pool_count (tổng bài phù hợp trong kỳ, đã thu hẹp theo thành viên
@@ -694,11 +697,13 @@ export function CallResultStatsWidget({
                 iconBgClass="bg-rose-100"
                 iconTextClass="text-rose-600"
                 title="Cuộc gọi"
-                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn."
+                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
               />
               <div className="flex items-center gap-2">
                 <span className="text-[26px] font-extrabold leading-tight">
                   {callOk} / {callTotal}
+                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
+                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
                 </span>
                 <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
                   {callPctVal}%
@@ -725,11 +730,13 @@ export function CallResultStatsWidget({
                 iconBgClass="bg-sky-100"
                 iconTextClass="text-sky-600"
                 title="Zalo"
-                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn."
+                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
               />
               <div className="flex items-center gap-2">
                 <span className="text-[26px] font-extrabold leading-tight">
                   {zaloReplied} / {zaloSent}
+                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
+                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
                 </span>
                 <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
                   {zaloPctVal}%
