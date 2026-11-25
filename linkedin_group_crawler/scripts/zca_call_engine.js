@@ -210,7 +210,15 @@ function parseZrtcPacket(buf) {
       publicAddr,
     };
   }
-  if ((msgType === 5 || msgType === 3) && buf.length >= 17) {
+  if ((msgType === 4 || msgType === 7 || msgType === 14) && buf.length >= 13) {
+    // Relay -> Client Audio RTP (4), Video RTP (14), Data/P2P (7): 1-byte header (ZrtcPacket::deserialize 0x0089419a)
+    return {
+      msgType,
+      token: 0,
+      rtpPayload: buf.subarray(1),
+    };
+  }
+  if ((msgType === 3 || msgType === 5 || msgType === 13 || msgType === 15) && buf.length >= 17) {
     return {
       msgType,
       token: buf.readUInt32LE(1),

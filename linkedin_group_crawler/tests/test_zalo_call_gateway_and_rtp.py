@@ -126,15 +126,65 @@ def test_build_and_parse_zrtc_packets():
     assert len(wrapped) == 5 + len(raw_rtp)
     parsed_media = parse_zrtc_packet(wrapped)
     assert parsed_media is not None
-    assert parsed_media["msg_type"] == 3  # Verified from ZaloCall.exe wire capture: msgType=3 is Audio RTP
+    assert parsed_media["msg_type"] == 3  # Client -> Relay Audio RTP: 5-byte header (0x03 + token_4B + RTP)
     assert parsed_media["token"] == 0x12345678
     assert parsed_media["rtp_payload"] == raw_rtp
+
+    # Relay -> Client Audio RTP (ZrtcPacket::deserialize 0x0089419a): 1-byte header (0x04 + raw RTP, NO token!)
+    relay_rx_audio = b"\x04" + raw_rtp
+    parsed_rx_audio = parse_zrtc_packet(relay_rx_audio)
+    assert parsed_rx_audio is not None
+    assert parsed_rx_audio["msg_type"] == 4
+    assert parsed_rx_audio["rtp_payload"] == raw_rtp
+
+    # Relay -> Client Video RTP (msgType=14, 1-byte header) must be parsed and ignored by audio RX
+    relay_rx_video = b"\x0e" + build_rtp_packet(b"\x01\x02\x03\x04", seq=1, timestamp=9000, ssrc=888, payload_type=97)
+    parsed_rx_video = parse_zrtc_packet(relay_rx_video)
+    assert parsed_rx_video is not None and parsed_rx_video["msg_type"] == 14
 
     rtcp_raw = build_rtcp_sr_packet(ssrc=999, packets_sent=5)
     wrapped_rtcp = wrap_zrtc_audio_rtp_packet(rtcp_raw, token=0x12345678, is_rtcp=True)
     parsed_rtcp = parse_zrtc_packet(wrapped_rtcp)
     assert parsed_rtcp is not None
     assert parsed_rtcp["msg_type"] == 5  # Verified from ZaloCall.exe wire capture: msgType=5 is Audio RTCP
+
+
+def test_datagram_received_decodes_relay_msgtype_4_audio_rtp():
+    """Đảm bảo gói Audio RTP thật Relay đẩy về (1-byte header 0x04 + RTP) được đếm packets_received và giải mã PCM16."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    async def run():
+        sess = ZaloCallSession(
+            session_id="rx_mt4_test",
+            account_id="acc",
+            call_id=405699309,
+            callee_id="6363678867120121443",
+            status="connected",
+            remote_rtp_addr=("203.12.252.6", 4200),
+            ssrc=462884481,
+            warning="Chưa nhận được tín hiệu âm thanh từ máy khách qua Relay Zalo. Đang tiếp tục giữ thông luồng UDP RTP.",
+        )
+        sess.broadcast_audio_to_browsers = AsyncMock()
+        sess.broadcast_json = AsyncMock()
+        proto = _ZaloRtpDatagramProtocol(sess)
+
+        # Real Zalo Opus PT=112 frame wrapped in Relay -> Client 1-byte header 0x04
+        zalo_opus = bytes.fromhex("480a7ae6398d501054a57f0b0979833caf2780c79dc4842cac1661047fc5f5")
+        rtp = build_rtp_packet(zalo_opus, seq=1, timestamp=320, ssrc=327635537, payload_type=112)
+        proto.datagram_received(b"\x04" + rtp, ("203.12.252.6", 4200))
+        # Video RTP (msgType=14) and RTCP (msgType=5) must NOT increment packets_received
+        proto.datagram_received(b"\x0e" + build_rtp_packet(b"\x65\x88\x84", seq=2, timestamp=9000, ssrc=327635537, payload_type=97), ("203.12.252.6", 4200))
+        proto.datagram_received(wrap_zrtc_audio_rtp_packet(build_rtcp_sr_packet(327635537, 1), token=123, is_rtcp=True), ("203.12.252.6", 4200))
+        await asyncio.sleep(0.05)
+
+        assert sess.packets_received == 1
+        assert sess.warning is None  # Watchdog warning cleared automatically once RX audio flows!
+        sess.broadcast_audio_to_browsers.assert_awaited_once()
+        pcm_sent = sess.broadcast_audio_to_browsers.await_args.args[0]
+        assert len(pcm_sent) > 0 and len(pcm_sent) % 2 == 0
+
+    asyncio.run(run())
 
 
 def test_build_zrtc_extend_data_and_stun_responder():

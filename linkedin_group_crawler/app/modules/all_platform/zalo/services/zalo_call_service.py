@@ -310,7 +310,17 @@ def parse_zrtc_packet(packet: bytes) -> Optional[Dict[str, Any]]:
             "token": token,
             "public_addr": public_addr,
         }
-    if msg_type in (3, 5) and len(packet) >= 17:
+    if msg_type in (4, 7, 14) and len(packet) >= 13:
+        # Theo ZrtcPacket::deserialize (0x0089419a..0x008941cf) trong ZaloCall.exe:
+        # Relay -> Client Audio RTP (msgType=4), Video RTP (msgType=14), Data/P2P (msgType=7)
+        # chỉ mang 1-byte header (KHÔNG có 4-byte token; payload_len = total - 1 -> packet[1:]).
+        return {
+            "msg_type": msg_type,
+            "token": 0,
+            "rtp_payload": packet[1:],
+        }
+    if msg_type in (3, 5, 13, 15) and len(packet) >= 17:
+        # Client -> Relay Audio RTP (3), Audio RTCP (5), Video RTP (13), Video RTCP (15): 5-byte header.
         _, token = struct.unpack("<BI", packet[:5])
         return {
             "msg_type": msg_type,
@@ -468,6 +478,8 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
         self.session = session
         self.transport: Optional[asyncio.DatagramTransport] = None
         self.stun_waiter: Optional[Tuple[bytes, asyncio.Future]] = None
+        self._logged_first_rx_rtp: bool = False
+        self._logged_unknown_rx_count: int = 0
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport  # type: ignore[assignment]
@@ -498,7 +510,8 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
             allowed_sources.add(self.session.remote_rtp_addr)
         if self.session.p2p_target:
             allowed_sources.add(self.session.p2p_target)
-        if addr not in allowed_sources:
+        same_p2p_ip = bool(self.session.p2p_target and addr[0] == self.session.p2p_target[0])
+        if addr not in allowed_sources and not same_p2p_ip:
             return
 
         # Kiểm tra gói tin ZrtcPacket từ Media Relay (:4200)
@@ -527,31 +540,51 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                     )
             return
 
-        # msgType=5 là RTCP (SR/SDES) -> bỏ qua; msgType=3 mới là Audio RTP
-        if zrtc is not None and zrtc.get("msg_type") == 5:
+        # msgType=5/15 là RTCP, msgType=13/14 là Video RTP -> bỏ qua không giải mã Opus
+        if zrtc is not None and zrtc.get("msg_type") in (5, 13, 14, 15):
             return
 
+        # Relay -> Client Audio RTP mang msgType=4 (1-byte header); Client/Loopback có thể mang msgType=3 (5-byte header)
         rtp_bytes = (
             zrtc["rtp_payload"]
-            if (zrtc is not None and zrtc.get("msg_type") == 3 and zrtc.get("rtp_payload"))
+            if (zrtc is not None and zrtc.get("msg_type") in (3, 4) and zrtc.get("rtp_payload"))
             else data
         )
 
         # Transport/STUN/RTCP replies are not evidence that the callee answered.
         parsed = parse_rtp_packet(rtp_bytes)
-        if not parsed or parsed["payload_type"] not in (112, 113) or not parsed["payload"]:
+        if not parsed or parsed["payload_type"] not in (111, 112, 113) or not parsed["payload"]:
+            if self.session.status == "connected" and self._logged_unknown_rx_count < 3:
+                self._logged_unknown_rx_count += 1
+                logger.info(
+                    f"[VOIP-RX-SKIP] Ignored UDP from={addr} len={len(data)} "
+                    f"mt={data[0] if data else -1} head={data[:16].hex()} session={self.session.session_id}"
+                )
             return
         if parsed["ssrc"] == self.session.ssrc:
             return  # Ignore our own RTP reflected by the relay.
 
         if self.session.status in ("dialing", "ringing", "connected") and len(rtp_bytes) >= 12:
             self.session.packets_received += 1
+            if self.session.warning and "Chưa nhận được tín hiệu âm thanh" in self.session.warning:
+                self.session.warning = None
+                asyncio.create_task(
+                    self.session.broadcast_json({"type": "call_state", "session": self.session.to_dict(), **self.session.to_dict()})
+                )
             if not self.session.remote_rtp_addr and addr in self.session.relay_servers:
                 self.session.remote_rtp_addr = addr
             if self.session.status == "ringing":
                 asyncio.create_task(_promote_connected_from_media(self.session))
 
             pcm_audio = self.session.decode_rx_opus(parsed["payload"])
+            if not self._logged_first_rx_rtp:
+                self._logged_first_rx_rtp = True
+                logger.info(
+                    f"[VOIP-RX] First audio RTP received: session={self.session.session_id} from={addr} "
+                    f"zrtc_mt={zrtc.get('msg_type') if zrtc else 'raw'} pt={parsed['payload_type']} "
+                    f"ssrc={parsed['ssrc']} opus_len={len(parsed['payload'])} pcm_len={len(pcm_audio)} "
+                    f"ws_clients={len(self.session.ws_clients)}"
+                )
             if pcm_audio:
                 asyncio.create_task(self.session.broadcast_audio_to_browsers(pcm_audio))
 
