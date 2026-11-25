@@ -697,18 +697,20 @@ export function CallResultStatsWidget({
                 iconBgClass="bg-rose-100"
                 iconTextClass="text-rose-600"
                 title="Cuộc gọi"
-                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn."
+                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
               />
               <div className="flex items-center gap-2">
                 <span className="text-[26px] font-extrabold leading-tight">
                   {callOk} / {callTotal}
+                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
+                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
                 </span>
                 <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
                   {callPctVal}%
                 </span>
               </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">
-                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện / {totalUniquePhonesCount} số điện thoại
+                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className={cn("block h-full", ratioBarClass(callPctVal))} style={{ width: `${callPctVal}%` }} />
@@ -728,18 +730,20 @@ export function CallResultStatsWidget({
                 iconBgClass="bg-sky-100"
                 iconTextClass="text-sky-600"
                 title="Zalo"
-                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn."
+                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
               />
               <div className="flex items-center gap-2">
                 <span className="text-[26px] font-extrabold leading-tight">
                   {zaloReplied} / {zaloSent}
+                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
+                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
                 </span>
                 <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
                   {zaloPctVal}%
                 </span>
               </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">
-                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi / {totalUniquePhonesCount} số điện thoại
+                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className={cn("block h-full", ratioBarClass(zaloPctVal))} style={{ width: `${zaloPctVal}%` }} />
