@@ -209,7 +209,7 @@ class ZaloCallGatewaySession {
       const sources = [this.remoteRelay, this.p2pTarget, ...this.relayServers].filter(Boolean);
       if (!sources.some((s) => s.host === rinfo.address && s.port === rinfo.port)) return;
 
-      // Kiểm tra gói tin ZrtcPacket (msgType=2 phản hồi InitZRTP/Echo hoặc msgType=5 Audio RTP)
+      // Kiểm tra gói tin ZrtcPacket (msgType=2 phản hồi InitZRTP/Echo hoặc msgType=3 Audio RTP)
       const zrtc = parseZrtcPacket(msg);
       if (zrtc && zrtc.msgType === 2) {
         if ((zrtc.cmd === 11 || zrtc.cmd === 12) && zrtc.res === 0 && zrtc.token) {
@@ -218,7 +218,7 @@ class ZaloCallGatewaySession {
         return;
       }
 
-      const rtpBuf = zrtc && zrtc.msgType === 5 && zrtc.rtpPayload ? zrtc.rtpPayload : msg;
+      const rtpBuf = zrtc && zrtc.msgType === 3 && zrtc.rtpPayload ? zrtc.rtpPayload : msg;
       const parsed = parseRtpPacket(rtpBuf);
       if (
         !parsed ||

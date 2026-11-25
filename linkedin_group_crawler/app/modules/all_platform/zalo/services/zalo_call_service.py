@@ -17,6 +17,7 @@ from loguru import logger
 from app.modules.all_platform.zalo.services.zca_api_bridge import (
     cancel_zca_voice_call,
     end_zca_voice_call,
+    find_zca_user_by_phone,
     send_zca_call_signal,
     start_zca_voice_call,
 )
@@ -26,6 +27,11 @@ import base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 
+try:
+    import av as _av  # type: ignore[import-untyped]
+except Exception:
+    _av = None
+
 CALL_V2_TRANSPORT_AES_KEY = "yjAF9oqMWl6XfXYJn9mA7w=="
 CALL_V2_ZERO_IV = b"\x00" * 16
 
@@ -33,6 +39,96 @@ CALL_V2_ZERO_IV = b"\x00" * 16
 OPUS_PAYLOAD_TYPE = 112
 OPUS_TIMESTAMP_STEP = 320  # 16000 Hz * 0.02s
 OPUS_SILENCE_FRAME = bytes([0xF8, 0xFF, 0xFE])
+PCM16_16K_20MS_BYTES = 640  # 320 samples * 2 bytes (mono s16 @ 16kHz)
+
+
+class _ZaloOpusCodec:
+    """Bộ mã hóa/giải mã Opus 16kHz mono 20ms dùng PyAV (libopus/libswresample)."""
+
+    def __init__(self) -> None:
+        self._enc: Any = None
+        self._dec: Any = None
+        self._rx_resampler: Any = None
+        self._tx_pts: int = 0
+
+    def _ensure_encoder(self) -> Any:
+        if self._enc is False or _av is None:
+            return None
+        if self._enc is None:
+            try:
+                enc = _av.CodecContext.create("libopus", "w")
+                enc.sample_rate = 16000
+                enc.layout = "mono"
+                enc.format = "s16"
+                enc.bit_rate = 20000
+                enc.options = {"application": "voip", "frame_duration": "20"}
+                enc.open()
+                self._enc = enc
+            except Exception as exc:
+                logger.warning(f"[OPUS-CODEC] Cannot initialize libopus encoder: {exc}")
+                self._enc = False
+                return None
+        return self._enc
+
+    def _ensure_decoder(self) -> Tuple[Any, Any]:
+        if self._dec is False or _av is None:
+            return None, None
+        if self._dec is None:
+            try:
+                dec = _av.CodecContext.create("libopus", "r")
+                dec.sample_rate = 48000
+                dec.layout = "mono"
+                dec.format = "s16"
+                dec.open()
+                self._dec = dec
+                self._rx_resampler = _av.AudioResampler(format="s16", layout="mono", rate=16000)
+            except Exception as exc:
+                logger.warning(f"[OPUS-CODEC] Cannot initialize libopus decoder: {exc}")
+                self._dec = False
+                self._rx_resampler = None
+                return None, None
+        return self._dec, self._rx_resampler
+
+    def encode_pcm16_frame(self, pcm_bytes: bytes) -> bytes:
+        """Mã hóa đúng 1 khung 20ms (640B) PCM16 16kHz mono -> Opus payload PT=112."""
+        enc = self._ensure_encoder()
+        if enc is None or len(pcm_bytes) != PCM16_16K_20MS_BYTES or _av is None:
+            return pcm_bytes
+        try:
+            af = _av.AudioFrame(format="s16", layout="mono", samples=320)
+            af.sample_rate = 16000
+            af.pts = self._tx_pts
+            self._tx_pts += 320
+            af.planes[0].update(pcm_bytes)
+            pkts = enc.encode(af)
+            if pkts:
+                return bytes(pkts[0])
+        except Exception as exc:
+            logger.debug(f"[OPUS-CODEC] Encode error: {exc}")
+        return pcm_bytes
+
+    def decode_opus_to_pcm16(self, opus_bytes: bytes) -> bytes:
+        """Giải mã 1 gói Opus nhận từ Relay/P2P -> PCM16 16kHz mono để trình duyệt phát trực tiếp."""
+        dec, resampler = self._ensure_decoder()
+        if dec is None or not opus_bytes or _av is None:
+            return opus_bytes
+        try:
+            frames = dec.decode(_av.Packet(opus_bytes))
+            chunks: List[bytes] = []
+            for frame in frames:
+                if resampler is not None:
+                    for rf in resampler.resample(frame):
+                        n_bytes = rf.samples * 2
+                        if n_bytes > 0:
+                            chunks.append(bytes(rf.planes[0])[:n_bytes])
+                else:
+                    n_bytes = frame.samples * 2
+                    if n_bytes > 0:
+                        chunks.append(bytes(frame.planes[0])[:n_bytes])
+            return b"".join(chunks)
+        except Exception as exc:
+            logger.debug(f"[OPUS-CODEC] Decode error: {exc}")
+            return b""
 
 
 def build_zrtc_init_zrtp_packet(
@@ -103,11 +199,34 @@ def wrap_zrtc_audio_rtp_packet(
     *,
     is_rtcp: bool = False,
 ) -> bytes:
-    """Bọc 5-byte ZRTC Media Header (msgType=5 cho Audio RTP, msgType=3 cho Audio RTCP + uint32_le token).
-    Trích xuất từ ZrtcPacket::buildAudioRtpOrRtcp (0x008948ff) & serialize case 5 (0x00893e3e).
+    """Bọc 5-byte ZRTC Media Header (msgType=3 cho Audio RTP, msgType=5 cho Audio RTCP + uint32_le token).
+    Xác thực trực tiếp từ gói UDP live của ZaloCall.exe:
+      - 03 <tok_4B_LE> 80 70 ... -> Audio RTP (PT=112, opus/16000/1)
+      - 05 <tok_4B_LE> 80 c8 ... -> Audio RTCP (SR PT=200 + SDES PT=202)
     """
-    msg_type = 3 if is_rtcp else 5
+    msg_type = 5 if is_rtcp else 3
     return struct.pack("<BI", msg_type, int(token) & 0xFFFFFFFF) + rtp_packet
+
+
+def build_rtcp_sr_packet(ssrc: int, packets_sent: int = 0) -> bytes:
+    """Đóng gói gói tin RTCP Sender Report (PT=200) + SDES (PT=202) chuẩn RFC 3550."""
+    now = time.time()
+    ntp_sec = int(now) + 2208988800
+    ntp_frac = int((now - int(now)) * (1 << 32)) & 0xFFFFFFFF
+    sr = struct.pack(
+        "!BBHIIIIII",
+        0x80,
+        200,
+        6,
+        int(ssrc) & 0xFFFFFFFF,
+        ntp_sec & 0xFFFFFFFF,
+        ntp_frac,
+        0,
+        int(packets_sent) & 0xFFFFFFFF,
+        0,
+    )
+    sdes = struct.pack("!BBHIBBBB", 0x81, 202, 2, int(ssrc) & 0xFFFFFFFF, 1, 0, 0, 0)
+    return sr + sdes
 
 
 def parse_zrtc_packet(packet: bytes) -> Optional[Dict[str, Any]]:
@@ -267,6 +386,29 @@ def _parse_stun_binding_response(data: bytes, expected_tx_id: bytes) -> Optional
     return None
 
 
+def _parse_stun_binding_request(data: bytes) -> Optional[bytes]:
+    """Nhận diện RFC 5389 STUN Binding Request (0x0001) để phản hồi ICE/P2P từ máy khách."""
+    if not data or len(data) < 20:
+        return None
+    msg_type, _msg_len, cookie, tx_id = struct.unpack("!HHI12s", data[:20])
+    if msg_type == 0x0001 and cookie == _STUN_MAGIC_COOKIE:
+        return tx_id
+    return None
+
+
+def _build_stun_binding_response(tx_id: bytes, peer_ip: str, peer_port: int) -> bytes:
+    """Đóng gói RFC 5389 STUN Binding Success Response (0x0101) kèm XOR-MAPPED-ADDRESS."""
+    try:
+        ip_int = struct.unpack("!I", socket.inet_aton(peer_ip))[0]
+    except OSError:
+        ip_int = struct.unpack("!I", socket.inet_aton("127.0.0.1"))[0]
+    xport = (int(peer_port) & 0xFFFF) ^ (_STUN_MAGIC_COOKIE >> 16)
+    xip = ip_int ^ _STUN_MAGIC_COOKIE
+    attr = struct.pack("!HHBBHI", 0x0020, 8, 0, 0x01, xport, xip)
+    header = struct.pack("!HHI12s", 0x0101, len(attr), _STUN_MAGIC_COOKIE, tx_id[:12].ljust(12, b"\x00"))
+    return header + attr
+
+
 class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
     def __init__(self, session: "ZaloCallSession") -> None:
         self.session = session
@@ -277,7 +419,7 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
         self.transport = transport  # type: ignore[assignment]
 
     def datagram_received(self, data: bytes, addr: Tuple[str, int]) -> None:
-        # Kiểm tra nếu là gói phản hồi STUN
+        # Kiểm tra nếu là gói phản hồi STUN của chính socket lúc khởi tạo
         if self.stun_waiter is not None:
             tx_id, fut = self.stun_waiter
             if not fut.done():
@@ -285,6 +427,17 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                 if parsed_stun:
                     fut.set_result(parsed_stun)
                     return
+
+        # Phản hồi STUN Binding Request từ máy khách để thông lỗ NAT P2P (ICE)
+        peer_stun_tx = _parse_stun_binding_request(data)
+        if peer_stun_tx is not None and self.transport is not None:
+            try:
+                self.transport.sendto(_build_stun_binding_response(peer_stun_tx, addr[0], addr[1]), addr)
+                if not self.session.p2p_target:
+                    self.session.p2p_target = addr
+            except Exception:
+                pass
+            return
 
         allowed_sources = set(self.session.relay_servers)
         if self.session.remote_rtp_addr:
@@ -304,15 +457,23 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                 and zrtc.get("token")
             ):
                 self.session.zrtc_token = int(zrtc["token"]) & 0xFFFFFFFF
+                pub_addr = str(zrtc.get("public_addr") or "").strip()
+                if pub_addr:
+                    self.session.zrtc_public_addr = pub_addr
+                self.session.notify_init_zrtp()
                 logger.info(
                     f"[ZRTC-INIT] Received InitZRTP token={self.session.zrtc_token:#x} "
-                    f"public_addr={zrtc.get('public_addr')!r} for session={self.session.session_id}"
+                    f"public_addr={pub_addr!r} for session={self.session.session_id}"
                 )
+            return
+
+        # msgType=5 là RTCP (SR/SDES) -> bỏ qua; msgType=3 mới là Audio RTP
+        if zrtc is not None and zrtc.get("msg_type") == 5:
             return
 
         rtp_bytes = (
             zrtc["rtp_payload"]
-            if (zrtc is not None and zrtc.get("msg_type") == 5 and zrtc.get("rtp_payload"))
+            if (zrtc is not None and zrtc.get("msg_type") == 3 and zrtc.get("rtp_payload"))
             else data
         )
 
@@ -325,12 +486,14 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
 
         if self.session.status in ("dialing", "ringing", "connected") and len(rtp_bytes) >= 12:
             self.session.packets_received += 1
-            if not self.session.remote_rtp_addr:
+            if not self.session.remote_rtp_addr and addr in self.session.relay_servers:
                 self.session.remote_rtp_addr = addr
             if self.session.status == "ringing":
                 asyncio.create_task(_promote_connected_from_media(self.session))
 
-            asyncio.create_task(self.session.broadcast_audio_to_browsers(parsed["payload"]))
+            pcm_audio = self.session.decode_rx_opus(parsed["payload"])
+            if pcm_audio:
+                asyncio.create_task(self.session.broadcast_audio_to_browsers(pcm_audio))
 
 
 # ── Active Call Session Model ─────────────────────────────────────────────────
@@ -373,11 +536,23 @@ class ZaloCallSession:
     zalo_from_id: int = 0
     zalo_to_id: int = 0
     zrtc_token: int = 0
+    zrtc_public_addr: str = ""
     echo_seq: int = 0
+    last_browser_audio_at: float = 0.0
     zrtc_worker_id: Optional[str] = None
     udp_transport: Optional[asyncio.DatagramTransport] = None
     ws_clients: Set[WebSocket] = field(default_factory=set)
     p2p_target: Optional[Tuple[str, int]] = None
+    _init_zrtp_event: Optional[asyncio.Event] = field(default=None, repr=False, compare=False)
+    _pcm_tx_buffer: bytearray = field(default_factory=bytearray, repr=False, compare=False)
+    _opus_codec: _ZaloOpusCodec = field(default_factory=_ZaloOpusCodec, repr=False, compare=False)
+
+    def notify_init_zrtp(self) -> None:
+        if self._init_zrtp_event is not None and not self._init_zrtp_event.is_set():
+            self._init_zrtp_event.set()
+
+    def decode_rx_opus(self, opus_payload: bytes) -> bytes:
+        return self._opus_codec.decode_opus_to_pcm16(opus_payload)
 
     @property
     def zalo_sess_id(self) -> str:
@@ -468,19 +643,13 @@ class ZaloCallSession:
         for ws in dead:
             self.ws_clients.discard(ws)
 
-    def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = OPUS_PAYLOAD_TYPE) -> None:
-        """Nhận khung âm thanh PCM16/Opus từ trình duyệt Sale -> đẩy qua ZRTC Media Worker (nếu kết nối) hoặc UDP RTP."""
-        if self.status != "connected":
-            return
+    def _send_encoded_rtp_frame(self, encoded_payload: bytes, payload_type: int = OPUS_PAYLOAD_TYPE) -> None:
         self.seq = (self.seq + 1) & 0xFFFF
         self.rtp_timestamp = (self.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
         self.packets_sent += 1
-        if self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS and audio_frame:
-            _schedule_zrtc_worker_audio(self.zrtc_worker_id, self.session_id, audio_frame)
-            return
         if self.udp_transport and (self.remote_rtp_addr or self.p2p_target):
             pkt = build_rtp_packet(
-                audio_frame or OPUS_SILENCE_FRAME,
+                encoded_payload,
                 seq=self.seq,
                 timestamp=self.rtp_timestamp,
                 ssrc=self.ssrc,
@@ -497,6 +666,32 @@ class ZaloCallSession:
                     self.udp_transport.sendto(pkt, self.p2p_target)
                 except Exception as exc:
                     logger.debug(f"UDP RTP sendto P2P failed for session={self.session_id}: {exc}")
+
+    def send_audio_from_browser(self, audio_frame: bytes, payload_type: int = OPUS_PAYLOAD_TYPE) -> None:
+        """Nhận khung âm thanh PCM16 16kHz (hoặc Opus) từ trình duyệt Sale -> nén Opus PT=112 20ms và đẩy qua UDP RTP."""
+        if self.status != "connected":
+            return
+        if self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS and audio_frame:
+            self.seq = (self.seq + 1) & 0xFFFF
+            self.rtp_timestamp = (self.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
+            self.packets_sent += 1
+            _schedule_zrtc_worker_audio(self.zrtc_worker_id, self.session_id, audio_frame)
+            return
+        if not audio_frame or audio_frame == OPUS_SILENCE_FRAME or payload_type != OPUS_PAYLOAD_TYPE:
+            self._send_encoded_rtp_frame(audio_frame or OPUS_SILENCE_FRAME, payload_type=payload_type)
+            return
+        # Với khung PCM16 16kHz từ trình duyệt (>= 640B), gom thành từng chunk 20ms (640B = 320 samples) và encode libopus
+        if len(audio_frame) >= PCM16_16K_20MS_BYTES:
+            self.last_browser_audio_at = time.time()
+            self._pcm_tx_buffer.extend(audio_frame)
+            while len(self._pcm_tx_buffer) >= PCM16_16K_20MS_BYTES:
+                pcm_chunk = bytes(self._pcm_tx_buffer[:PCM16_16K_20MS_BYTES])
+                del self._pcm_tx_buffer[:PCM16_16K_20MS_BYTES]
+                opus_payload = self._opus_codec.encode_pcm16_frame(pcm_chunk)
+                self._send_encoded_rtp_frame(opus_payload, payload_type=payload_type)
+            return
+        # Tương thích test/những gói nhỏ đơn lẻ (< 640B)
+        self._send_encoded_rtp_frame(audio_frame, payload_type=payload_type)
 
     def close_media(self) -> None:
         if self.udp_transport is not None:
@@ -735,7 +930,7 @@ async def _allocate_rtp_udp_endpoint(session: ZaloCallSession) -> Tuple[str, str
         protocol.stun_waiter = None
 
     rtp_addr = f"{public_ip}:{public_port}"
-    rtcp_addr = f"{public_ip}:{public_port + 1}"
+    rtcp_addr = rtp_addr  # RFC 5761 RTP/RTCP mux trên cùng socket UDP đang mở
     return rtp_addr, rtcp_addr
 
 
@@ -804,10 +999,120 @@ async def _record_session_kpi_and_history(
 _DEFAULT_ZRTC_CODECS_JSON = json.dumps(
     [
         {"dynamicFptime": 0, "frmPtime": 20, "name": "opus/16000/1", "payload": 112},
-        {"dynamicFptime": 0, "frmPtime": 20, "name": "opus/48000/2", "payload": 113},
     ],
     separators=(",", ":"),
 )
+
+
+def _build_zrtc_extend_data(
+    *,
+    call_type: int = 1,
+    p2p_addrs: Optional[List[Tuple[str, int]]] = None,
+    server_items: Optional[List[Dict[str, Any]]] = None,
+    remote_rtp_addr: Optional[Tuple[str, int]] = None,
+) -> str:
+    """Đóng gói extendData chuẩn ZaloCall.exe 416 để máy khách đàm phán ZRTC/codec thành công."""
+    p2p_list: List[Dict[str, Any]] = []
+    seen_p2p: Set[Tuple[str, int]] = set()
+    for ip, port in p2p_addrs or []:
+        if not ip or ip in ("0.0.0.0", "127.0.0.1") or port <= 0 or (ip, port) in seen_p2p:
+            continue
+        seen_p2p.add((ip, port))
+        p2p_list.append({"ip": ip, "port": int(port), "type": 0})
+
+    srv_list: List[Dict[str, Any]] = []
+    for srv in server_items or []:
+        if not isinstance(srv, dict):
+            continue
+        rtp_s = str(srv.get("rtpaddr") or srv.get("rtp") or "").strip()
+        rtcp_s = str(srv.get("rtcpaddr") or srv.get("rtcp") or rtp_s).strip()
+        if not rtp_s:
+            continue
+        entry: Dict[str, Any] = {
+            "rtcp": rtcp_s,
+            "rtp": rtp_s,
+            "tpType": int(srv.get("tpType") or 0),
+        }
+        if srv.get("rtcpIPv6"):
+            entry["rtcpIPv6"] = str(srv["rtcpIPv6"])
+        if srv.get("rtpIPv6"):
+            entry["rtpIPv6"] = str(srv["rtpIPv6"])
+        srv_list.append(entry)
+
+    if not srv_list and remote_rtp_addr:
+        addr_s = f"{remote_rtp_addr[0]}:{remote_rtp_addr[1]}"
+        srv_list.append({"rtcp": addr_s, "rtp": addr_s, "tpType": 0})
+
+    return json.dumps(
+        {
+            "callType": 1 if int(call_type or 1) in (2, 3) else 0,
+            "fecTP": 0,
+            "gccAudio": 0,
+            "gccEarlyCall": 0,
+            "gccMode": 0,
+            "gccSVLR": 0,
+            "newZrtc": 1,
+            "p2p": p2p_list,
+            "packetMode": 2,
+            "platform": 2,
+            "sP2P": 0,
+            "serverAddr": srv_list,
+            "spTcp": 1,
+            "srtcp": 0,
+            "srtpMode": 0,
+            "supportCallBusy": 1,
+            "supportHevcDecode": 1,
+            "tpType": 0,
+        },
+        separators=(",", ":"),
+    )
+
+
+async def _perform_python_init_zrtp(session: ZaloCallSession, *, timeout_sec: float = 0.9) -> bool:
+    """Thực hiện bắt tay InitZRTP (cmd=11) trực tiếp trên socket UDP sống của Python trước khi gọi 11301."""
+    if not session.udp_transport or not session.remote_rtp_addr or not session.zalo_from_id:
+        return False
+    session._init_zrtp_event = asyncio.Event()
+    init_sub1 = build_zrtc_init_zrtp_packet(
+        session.call_id,
+        session.zalo_from_id,
+        session.zalo_to_id,
+        session.zalo_sess_id,
+        is_caller=True,
+        sub_cmd=1,
+    )
+    init_sub2 = build_zrtc_init_zrtp_packet(
+        session.call_id,
+        session.zalo_from_id,
+        session.zalo_to_id,
+        session.zalo_sess_id,
+        is_caller=True,
+        sub_cmd=2,
+    )
+    targets: List[Tuple[str, int]] = [session.remote_rtp_addr] + [
+        srv for srv in session.relay_servers[:2] if srv != session.remote_rtp_addr
+    ]
+    for srv in targets:
+        try:
+            session.udp_transport.sendto(init_sub1, srv)
+            session.udp_transport.sendto(init_sub2, srv)
+        except Exception:
+            pass
+    try:
+        await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=min(0.4, timeout_sec))
+        return bool(session.zrtc_token)
+    except asyncio.TimeoutError:
+        for srv in targets:
+            try:
+                session.udp_transport.sendto(init_sub1, srv)
+                session.udp_transport.sendto(init_sub2, srv)
+            except Exception:
+                pass
+        try:
+            await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=max(0.2, timeout_sec - 0.4))
+        except asyncio.TimeoutError:
+            pass
+    return bool(session.zrtc_token)
 
 
 async def _promote_connected_from_media(session: ZaloCallSession) -> None:
@@ -837,8 +1142,16 @@ async def _promote_connected_from_media(session: ZaloCallSession) -> None:
     await session.broadcast_json({"type": "call_state", "session": session.to_dict(), **session.to_dict()})
 
 
-def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
-    """Bắn gói UDP ZrtcPacket InitZRTP / Echo keepalive và Audio RTP 5-byte ZRTC header tới Relay :4200."""
+def _send_udp_keepalive_tick(
+    session: ZaloCallSession,
+    *,
+    tick_idx: int = 0,
+    send_rtp: bool = True,
+) -> None:
+    """Duy trì kênh ZRTC trên Relay :4200:
+    - Giai đoạn ringing (send_rtp=False): chỉ gửi InitZRTP (nếu chưa có token) hoặc Echo (cmd=3).
+    - Giai đoạn connected (send_rtp=True): gửi Echo (cmd=3), RTCP SR (msgType=5) và Opus silence RTP (msgType=3) khi rảnh.
+    """
     if not session.udp_transport:
         return
     relay_targets: List[Tuple[str, int]] = []
@@ -850,9 +1163,7 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
     if not relay_targets and not (session.status == "connected" and session.p2p_target):
         return
 
-    # Gửi gói nhị phân ZrtcPacket InitZRTP (cmd=11) cho đến khi nhận được zrtc_token từ Relay,
-    # sau đó gửi gói ZrtcPacket Echo (cmd=3) mỗi 5 nhịp để duy trì phiên ZRTC trên Relay :4200.
-    if session.packets_sent % 5 == 0 and session.zalo_from_id:
+    if tick_idx % 5 == 0 and session.zalo_from_id:
         try:
             if not session.zrtc_token:
                 init_sub1 = build_zrtc_init_zrtp_packet(
@@ -887,6 +1198,23 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
         except Exception as hs_exc:
             logger.debug(f"[VOIP-HANDSHAKE] ZrtcPacket keepalive error: {hs_exc}")
 
+    if session.status == "connected" and tick_idx % 10 == 0 and session.zalo_from_id:
+        try:
+            rtcp_pkt = wrap_zrtc_audio_rtp_packet(
+                build_rtcp_sr_packet(session.ssrc, session.packets_sent),
+                session.zrtc_token or session.zalo_from_id,
+                is_rtcp=True,
+            )
+            for addr in relay_targets:
+                session.udp_transport.sendto(rtcp_pkt, addr)
+        except Exception:
+            pass
+
+    if not send_rtp:
+        return
+    if session.status == "connected" and (time.time() - session.last_browser_audio_at) < 0.25:
+        return
+
     session.seq = (session.seq + 1) & 0xFFFF
     session.rtp_timestamp = (session.rtp_timestamp + OPUS_TIMESTAMP_STEP) & 0xFFFFFFFF
     session.packets_sent += 1
@@ -903,7 +1231,6 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
             session.udp_transport.sendto(zrtc_pkt, addr)
         except Exception:
             pass
-    # Trong giai đoạn đổ chuông (ringing), TUYỆT ĐỐI KHÔNG bắn gói tin tới p2p_target của điện thoại khách!
     if session.status == "connected" and session.p2p_target and session.p2p_target not in relay_targets:
         try:
             session.udp_transport.sendto(pkt, session.p2p_target)
@@ -912,28 +1239,17 @@ def _send_udp_keepalive_tick(session: ZaloCallSession) -> None:
 
 
 async def _auto_answer_ack_loop(session: ZaloCallSession, auth: Dict[str, Any]) -> None:
-    """Duy trì lỗ thông NAT UDP định kỳ trong suốt thời gian đổ chuông:
-    - Bắn nhịp UDP keepalive (Opus silence + 49$ AES transport frame) tới Relay để giữ thông NAT.
-    - TUYỆT ĐỐI KHÔNG gửi 11304 answerack khi chuông chưa nhấc máy để tránh làm điện thoại khách văng lỗi ngắt cuộc gọi nhỡ.
-    - Chỉ dừng vòng lặp khi cuộc gọi thực sự chuyển sang connected/ended/cancelled/rejected.
-    """
-    await asyncio.sleep(0.5)
+    """Duy trì lỗ thông NAT UDP & phiên ZRTC xuyên suốt từ lúc đổ chuông tới khi kết thúc đàm thoại."""
+    await asyncio.sleep(0.2)
 
-    attempts = 0
-    while session.status == "ringing" and attempts < 45:
-        attempts += 1
+    tick_idx = 0
+    while session.status in ("dialing", "ringing", "connected") and tick_idx < 18000:
+        is_connected = session.status == "connected"
+        _send_udp_keepalive_tick(session, tick_idx=tick_idx, send_rtp=is_connected)
+        tick_idx += 1
+        await asyncio.sleep(0.2)
 
-        # Bắn 4 nhịp UDP keepalive (mỗi 250ms = 1s) để giữ thông NAT & kích hoạt nhận gói Relay
-        for _ in range(4):
-            if session.status != "ringing":
-                break
-            _send_udp_keepalive_tick(session)
-            await asyncio.sleep(0.25)
-
-        if session.status != "ringing":
-            break
-
-    logger.info(f"[NAT-KEEPALIVE] Loop exited for session={session.session_id} status={session.status} attempts={attempts}")
+    logger.info(f"[NAT-KEEPALIVE] Loop exited for session={session.session_id} status={session.status} ticks={tick_idx}")
 
 
 async def start_call_session(
@@ -1008,19 +1324,40 @@ async def start_call_session(
     except Exception as udp_exc:
         logger.warning(f"Could not allocate UDP RTP socket ({udp_exc}); continuing with signaling")
 
-    # Bước 2: Phát lệnh 11300 (/api/voicecall/requestcall) + 11301 (/api/voicecall/request)
-    # Nếu có ZRTC Media Worker đang online -> lấy extendData ZRTC thật từ Worker trước khi phát 11301!
+    # Bước 2: Phát lệnh 11300 (/api/voicecall/requestcall) -> InitZRTP trên socket UDP sống -> 11301 (/api/voicecall/request)
     try:
         worker_extend_data = ""
         active_worker = get_active_zrtc_worker()
         pre_s1_data: Optional[Dict[str, Any]] = None
-        if active_worker and initial_callee and len(initial_callee) >= 5:
+        resolved_profile: Optional[Dict[str, Any]] = None
+        target_callee = initial_callee
+
+        if (not target_callee or len(target_callee) < 5) and phone_number:
+            clean_digits = "".join(ch for ch in str(phone_number) if ch.isdigit())
+            if len(clean_digits) >= 9:
+                lookup_phone = f"84{clean_digits[1:]}" if clean_digits.startswith("0") else clean_digits
+                try:
+                    found_u = await find_zca_user_by_phone(auth, lookup_phone)
+                    if isinstance(found_u, dict) and found_u.get("uid"):
+                        target_callee = str(found_u["uid"]).strip()
+                        session.callee_id = target_callee
+                        if not session.conversation_id:
+                            session.conversation_id = target_callee
+                        resolved_profile = {
+                            "uid": target_callee,
+                            "display_name": found_u.get("display_name") or found_u.get("zalo_name") or clean_digits,
+                            "avatar": found_u.get("avatar"),
+                        }
+                except Exception as lookup_err:
+                    logger.debug(f"[CALL-START] Phone lookup fallback needed for {clean_digits}: {lookup_err}")
+
+        if active_worker and target_callee and len(target_callee) >= 5:
             try:
                 s1_resp = await send_zca_call_signal(
                     auth,
                     11300,
                     {
-                        "calleeId": initial_callee,
+                        "calleeId": target_callee,
                         "callId": session.call_id,
                         "codec": _DEFAULT_ZRTC_CODECS_JSON,
                         "typeRequest": session.call_type,
@@ -1035,7 +1372,7 @@ async def start_call_session(
                             {
                                 "session_id": session.session_id,
                                 "call_id": session.call_id,
-                                "callee_id": initial_callee,
+                                "callee_id": target_callee,
                                 "call_type": session.call_type,
                                 "s1_data": pre_s1_data,
                             },
@@ -1049,10 +1386,34 @@ async def start_call_session(
                                 f"to session={session.session_id} extendData_len={len(worker_extend_data)}"
                             )
             except Exception as w_exc:
-                logger.warning(f"[ZRTC-WORKER] Pre-call attach failed, falling back to signaling-only: {w_exc}")
+                logger.warning(f"[ZRTC-WORKER] Pre-call attach failed, falling back to native Python ZRTC: {w_exc}")
 
-        if pre_s1_data is not None and worker_extend_data:
-            # Đã chạy 11300 và lấy extendData từ ZRTC Worker -> gửi thẳng 11301
+        if not worker_extend_data and pre_s1_data is None and target_callee and len(target_callee) >= 5:
+            try:
+                s1_resp = await send_zca_call_signal(
+                    auth,
+                    11300,
+                    {
+                        "calleeId": target_callee,
+                        "callId": session.call_id,
+                        "codec": _DEFAULT_ZRTC_CODECS_JSON,
+                        "typeRequest": session.call_type,
+                    },
+                )
+                if isinstance(s1_resp, dict) and isinstance(s1_resp.get("response"), dict):
+                    pre_s1_data = s1_resp["response"]
+            except Exception as s1_exc:
+                logger.warning(f"[CALL-START] Direct 11300 failed, using fallback bridge: {s1_exc}")
+
+        if pre_s1_data is not None:
+            s1_raw_status = pre_s1_data.get("status")
+            is_s1_blocked = s1_raw_status is not None and int(s1_raw_status) != 0
+            eff_call_id = int(pre_s1_data.get("id") or pre_s1_data.get("callId") or session.call_id)
+            session.call_id = eff_call_id
+            if pre_s1_data.get("fromId"):
+                session.zalo_from_id = int(pre_s1_data["fromId"]) & 0xFFFFFFFF
+            if pre_s1_data.get("toId"):
+                session.zalo_to_id = int(pre_s1_data["toId"]) & 0xFFFFFFFF
             relay_rtp = (
                 pre_s1_data.get("rtpIP")
                 or pre_s1_data.get("rtpAddress")
@@ -1061,39 +1422,92 @@ async def start_call_session(
                 or "171.244.25.121:4200"
             )
             relay_rtcp = pre_s1_data.get("rtcpIP") or pre_s1_data.get("rtcpAddress") or relay_rtp
-            server_sess = pre_s1_data.get("sessId") or pre_s1_data.get("session") or session.call_id
-            s2_resp = await send_zca_call_signal(
-                auth,
-                11301,
-                {
-                    "calleeId": initial_callee,
-                    "rtcpAddress": relay_rtcp,
-                    "rtpAddress": relay_rtp,
-                    "codec": _DEFAULT_ZRTC_CODECS_JSON,
-                    "extendData": worker_extend_data,
+            parsed_remote = _parse_host_port(relay_rtp)
+            if parsed_remote:
+                session.remote_rtp_addr = parsed_remote
+            for srv_item in pre_s1_data.get("servers") or []:
+                if isinstance(srv_item, dict):
+                    srv_addr = _parse_host_port(srv_item.get("rtpaddr") or srv_item.get("rtcpaddr"))
+                    if srv_addr and srv_addr not in session.relay_servers:
+                        session.relay_servers.append(srv_addr)
+            server_sess = pre_s1_data.get("sessId") or pre_s1_data.get("session") or eff_call_id
+            session.signaling_data = {"requestcall_result": pre_s1_data, "session": server_sess}
+
+            if is_s1_blocked:
+                sig_res = {
+                    "ok": True,
+                    "call_ok": False,
+                    "call_id": eff_call_id,
+                    "callee_id": target_callee,
                     "session": server_sess,
-                    "callId": int(pre_s1_data.get("id") or pre_s1_data.get("callId") or session.call_id),
-                },
-            )
-            sig_res = {
-                "ok": True,
-                "call_ok": True,
-                "call_id": int(pre_s1_data.get("id") or pre_s1_data.get("callId") or session.call_id),
-                "callee_id": initial_callee,
-                "session": server_sess,
-                "call_type": session.call_type,
-                "status": "ringing",
-                "rtp_address": relay_rtp,
-                "rtcp_address": relay_rtcp,
-                "relay_servers": pre_s1_data.get("servers") or [],
-                "requestcall_result": pre_s1_data,
-                "request_result": s2_resp.get("response") if isinstance(s2_resp, dict) else s2_resp,
-                "request_warning": None,
-            }
+                    "call_type": session.call_type,
+                    "status": "privacy_blocked" if int(s1_raw_status) == 7 else "rejected",
+                    "profile": resolved_profile,
+                    "requestcall_result": pre_s1_data,
+                    "request_warning": pre_s1_data.get("msg"),
+                }
+            else:
+                effective_extend = worker_extend_data
+                if not effective_extend:
+                    await _perform_python_init_zrtp(session, timeout_sec=0.9)
+                    p2p_candidates: List[Tuple[str, int]] = []
+                    for raw_cand in (session.zrtc_public_addr, session.local_rtp_address):
+                        parsed_cand = _parse_host_port(raw_cand)
+                        if parsed_cand and parsed_cand not in p2p_candidates:
+                            p2p_candidates.append(parsed_cand)
+                    effective_extend = _build_zrtc_extend_data(
+                        call_type=session.call_type,
+                        p2p_addrs=p2p_candidates,
+                        server_items=pre_s1_data.get("servers") or [],
+                        remote_rtp_addr=session.remote_rtp_addr,
+                    )
+                s2_resp: Optional[Dict[str, Any]] = None
+                s2_error: Optional[str] = None
+                try:
+                    s2_resp = await send_zca_call_signal(
+                        auth,
+                        11301,
+                        {
+                            "calleeId": target_callee,
+                            "rtcpAddress": relay_rtcp,
+                            "rtpAddress": relay_rtp,
+                            "codec": _DEFAULT_ZRTC_CODECS_JSON,
+                            "extendData": effective_extend,
+                            "session": server_sess,
+                            "callId": eff_call_id,
+                        },
+                    )
+                except Exception as s2_exc:
+                    s2_error = str(s2_exc)
+                    try:
+                        await cancel_zca_voice_call(
+                            auth,
+                            to_id=target_callee,
+                            call_id=eff_call_id,
+                            call_type=session.call_type,
+                        )
+                    except Exception:
+                        pass
+                sig_res = {
+                    "ok": True,
+                    "call_ok": s2_error is None,
+                    "call_id": eff_call_id,
+                    "callee_id": target_callee,
+                    "session": server_sess,
+                    "call_type": session.call_type,
+                    "status": "failed" if s2_error else "ringing",
+                    "profile": resolved_profile,
+                    "rtp_address": relay_rtp,
+                    "rtcp_address": relay_rtcp,
+                    "relay_servers": pre_s1_data.get("servers") or [],
+                    "requestcall_result": pre_s1_data,
+                    "request_result": s2_resp.get("response") if isinstance(s2_resp, dict) else s2_resp,
+                    "request_warning": s2_error,
+                }
         else:
             sig_res = await start_zca_voice_call(
                 auth,
-                callee_id=initial_callee,
+                callee_id=target_callee,
                 phone=phone_number,
                 call_id=session.call_id,
                 call_type=session.call_type,
@@ -1182,41 +1596,13 @@ async def start_call_session(
             if sig_res.get("request_warning"):
                 session.warning = str(sig_res["request_warning"])
 
-            # Gửi gói bắt tay nhị phân ZrtcPacket InitZRTP (cmd=11, subCmd=1 & 2) tới Relay :4200
-            if session.udp_transport and session.remote_rtp_addr and session.zalo_from_id:
+            # Đảm bảo socket UDP sống của Python đã bắt tay ZrtcPacket InitZRTP (chỉ gửi thêm nếu chưa có token)
+            if not session.zrtc_token and session.udp_transport and session.remote_rtp_addr and session.zalo_from_id:
                 try:
-                    init_sub1 = build_zrtc_init_zrtp_packet(
-                        session.call_id,
-                        session.zalo_from_id,
-                        session.zalo_to_id,
-                        session.zalo_sess_id,
-                        is_caller=True,
-                        sub_cmd=1,
-                    )
-                    init_sub2 = build_zrtc_init_zrtp_packet(
-                        session.call_id,
-                        session.zalo_from_id,
-                        session.zalo_to_id,
-                        session.zalo_sess_id,
-                        is_caller=True,
-                        sub_cmd=2,
-                    )
-                    session.udp_transport.sendto(init_sub1, session.remote_rtp_addr)
-                    session.udp_transport.sendto(init_sub2, session.remote_rtp_addr)
-                    for srv in session.relay_servers[:2]:
-                        session.udp_transport.sendto(init_sub1, srv)
-                        session.udp_transport.sendto(init_sub2, srv)
-                    logger.info(
-                        f"[VOIP-HANDSHAKE] Initial ZrtcPacket InitZRTP sent to relay {session.remote_rtp_addr} "
-                        f"fromId={session.zalo_from_id} toId={session.zalo_to_id} sessId={session.zalo_sess_id}"
-                    )
+                    await _perform_python_init_zrtp(session, timeout_sec=0.45)
                 except Exception as hs_err:
-                    logger.debug(f"[VOIP-HANDSHAKE] Initial ZrtcPacket InitZRTP error: {hs_err}")
-            
-            # Tự động gửi 11304 answerack và keepalive RTP định kỳ mỗi giây:
-            # Khi khách hàng bấm 'Trả lời' trên điện thoại di động, Zalo Voice Server sẽ ngay lập tức
-            # khớp gói 11304 từ Caller, chuyển màn hình điện thoại khách từ 'Đang vào cuộc gọi...'
-            # sang màn hình đàm thoại đếm giây (00:01, 00:02...) trong 0ms!
+                    logger.debug(f"[VOIP-HANDSHAKE] Post-11301 ZrtcPacket InitZRTP error: {hs_err}")
+
             asyncio.create_task(_auto_answer_ack_loop(session, auth))
     except Exception as sig_exc:
         session.warning = str(sig_exc)
@@ -1417,16 +1803,30 @@ async def handle_incoming_voip_signal(
     if is_callee_zrtp_fail:
         # Theo ZCallInfoSignal::receiveAnswer (0x007ec17f) trong ZaloCall.exe:
         # act="answer" với status=5 là mã lỗi "callee_init_zrtp_fail" (thiết bị của khách thất bại
-        # khởi tạo ZRTP/codec và đã tự động ngắt cuộc gọi ngay lập tức).
-        # Tuyệt đối KHÔNG chuyển sang connected, KHÔNG gửi 11304, và đóng phiên để Web App không treo ở "Đang đổ chuông...".
+        # khởi tạo ZRTP/codec). Đóng phiên và chủ động phát 11305 cancel để điện thoại khách không bị treo chuông/màn hình!
         matched.status = "failed"
         matched.warning = "Thiết bị khách không thể khởi tạo kênh thoại ZRTC (callee_init_zrtp_fail - status 5)."
         matched.ended_at = time.time()
         matched.close_media()
         asyncio.create_task(notify_zrtc_worker_event(matched.zrtc_worker_id, "end_call", {"session_id": matched.session_id}))
+
+        async def _cancel_on_zrtp_fail() -> None:
+            try:
+                auth = await load_zca_auth(matched.account_id)
+                if auth and (auth.get("imei") or auth.get("cookies") or auth.get("cookie") or auth.get("zpw_enk")) and matched.callee_id:
+                    await cancel_zca_voice_call(
+                        auth,
+                        to_id=matched.callee_id,
+                        call_id=matched.call_id,
+                        call_type=matched.call_type,
+                    )
+            except Exception as cancel_err:
+                logger.debug(f"[VOIP-ZRTP-FAIL] 11305 cancel skipped: {cancel_err}")
+
+        asyncio.create_task(_cancel_on_zrtp_fail())
         logger.warning(
             f"[VOIP-ZRTP-FAIL] Callee reported callee_init_zrtp_fail (status=5) for session={matched.session_id} "
-            f"call_id={matched.call_id}. Marking call failed and closing media."
+            f"call_id={matched.call_id}. Marking call failed, dispatching 11305 cancel, and closing media."
         )
         await matched.broadcast_json({"type": "call_state", "session": matched.to_dict(), **matched.to_dict()})
         return matched
