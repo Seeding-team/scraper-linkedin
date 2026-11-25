@@ -454,6 +454,9 @@ export function CallResultStatsWidget({
     () => (callStats?.by_type || []).filter((t) => OK_CODES.has(t.code)).reduce((s, t) => s + t.count, 0),
     [callStats]
   );
+  // "Tổng số điện thoại" (Việc 2026-11-25): dùng CHUNG cho cả "Cuộc gọi" và "Zalo" (cùng 1 con số
+  // Z) — luôn toàn cục, không đổi theo dropdown thành viên, không có %/so kỳ trước.
+  const totalUniquePhonesCount = callStats?.total_unique_phones_count ?? 0;
   // Cột "Comment" dạng "X/Y" (Việc 3+4, 2026-11-23): X = comment_distinct_post_count (số BÀI
   // khác nhau đã comment, COUNT DISTINCT id_post — không phải số lượt/dòng như comment_count
   // cũ), Y = comment_post_pool_count (tổng bài phù hợp trong kỳ, đã thu hẹp theo thành viên
@@ -705,7 +708,7 @@ export function CallResultStatsWidget({
                 </span>
               </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">
-                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện
+                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện / {totalUniquePhonesCount} số điện thoại
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className={cn("block h-full", ratioBarClass(callPctVal))} style={{ width: `${callPctVal}%` }} />
@@ -736,7 +739,7 @@ export function CallResultStatsWidget({
                 </span>
               </div>
               <div className="text-[12px] text-muted-foreground mt-0.5">
-                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi
+                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi / {totalUniquePhonesCount} số điện thoại
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className={cn("block h-full", ratioBarClass(zaloPctVal))} style={{ width: `${zaloPctVal}%` }} />
