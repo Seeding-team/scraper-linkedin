@@ -33,6 +33,18 @@ const DEFAULT_VOIP_CODECS = JSON.stringify([
 ]);
 
 function buildDefaultZrtcExtendData({ callType = 1, p2pList = [], serverAddrList = [] } = {}) {
+  const normalizedServers = (Array.isArray(serverAddrList) ? serverAddrList : []).map((srv) => {
+    const rtp = String(srv.rtp || srv.rtpaddr || "").trim();
+    const rtcp = String(srv.rtcp || srv.rtcpaddr || rtp).trim();
+    const isIpv4Addr = (a) => /^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(a);
+    return {
+      rtcp,
+      ...(srv.rtcpIPv6 ? { rtcpIPv6: String(srv.rtcpIPv6) } : isIpv4Addr(rtcp) ? { rtcpIPv6: `::FFFF:${rtcp}` } : {}),
+      rtp,
+      ...(srv.rtpIPv6 ? { rtpIPv6: String(srv.rtpIPv6) } : isIpv4Addr(rtp) ? { rtpIPv6: `::FFFF:${rtp}` } : {}),
+      tpType: Number(srv.tpType ?? 0),
+    };
+  });
   return JSON.stringify({
     callType: Number(callType) === 2 || Number(callType) === 3 ? 1 : 0,
     fecTP: 0,
@@ -45,13 +57,14 @@ function buildDefaultZrtcExtendData({ callType = 1, p2pList = [], serverAddrList
     packetMode: 2,
     platform: 2,
     sP2P: 0,
-    serverAddr: Array.isArray(serverAddrList) ? serverAddrList : [],
+    serverAddr: normalizedServers,
     spTcp: 1,
     srtcp: 0,
     srtpMode: 0,
     supportCallBusy: 1,
     supportHevcDecode: 1,
     tpType: 0,
+    video: { codec: [{ name: "h264", payload: 97 }] },
   });
 }
 
@@ -205,14 +218,6 @@ async function performUdpInitZrtpHandshake(s1Data, { callId, timeoutMs = 600 } =
     addTarget("171.244.25.121:4200");
   }
 
-  const pktSub1 = buildZrtcInitZrtpPacket({
-    callId: effectiveCallId,
-    fromId,
-    toId,
-    sessId,
-    isCaller: true,
-    subCmd: 1,
-  });
   const pktSub2 = buildZrtcInitZrtpPacket({
     callId: effectiveCallId,
     fromId,
@@ -266,7 +271,6 @@ async function performUdpInitZrtpHandshake(s1Data, { callId, timeoutMs = 600 } =
     sock.bind(0, () => {
       for (const t of targets) {
         try {
-          sock.send(pktSub1, t.port, t.host);
           sock.send(pktSub2, t.port, t.host);
         } catch (_) {}
       }

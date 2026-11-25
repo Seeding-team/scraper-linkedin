@@ -556,9 +556,16 @@ async function main() {
   }
 
   // Hook bảo đảm 100% bắt trọn sự kiện VoIP (cmd 601 + 602 act_type 'voip' -> answer, ringring, endcall...)
+  // Dùng readUInt16LE(1) chuẩn Little-Endian của Zalo WS (trùng khớp listen.cjs getHeader) và chống emit trùng.
   function ensureVoipListenerHook(l) {
     if (!l || l.__voipHooked) return;
     l.__voipHooked = true;
+    let voipEmitSeq = 0;
+    const origEmit = l.emit.bind(l);
+    l.emit = function (evName, ...rest) {
+      if (evName === "voip") voipEmitSeq += 1;
+      return origEmit(evName, ...rest);
+    };
     const origStart = l.start.bind(l);
     l.start = function (opts) {
       const res = origStart(opts);
@@ -566,6 +573,7 @@ async function main() {
         this.ws.__voipHooked = true;
         const prevOnMessage = this.ws.onmessage;
         this.ws.onmessage = async (event) => {
+          const seqBefore = voipEmitSeq;
           if (prevOnMessage) {
             try {
               await prevOnMessage.call(this.ws, event);
@@ -573,11 +581,13 @@ async function main() {
               debugLog("prev_onmessage_error", { error: String(err) });
             }
           }
+          // Nếu vendor/zca-js đã emit sự kiện voip trong prevOnMessage thì không phát trùng lần 2
+          if (voipEmitSeq > seqBefore) return;
           try {
             const { data } = event;
             if (data && typeof data === "object" && Buffer.isBuffer(data) && data.length > 4 && this.cipherKey) {
               const header = data.subarray(0, 4);
-              const cmd = (header[1] << 8) | header[2];
+              const cmd = header.readUInt16LE(1);
               if (cmd === 601 || cmd === 602) {
                 const text = new TextDecoder("utf-8").decode(data.subarray(4));
                 if (text) {

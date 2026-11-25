@@ -84,7 +84,7 @@ def test_build_and_parse_zrtc_packets():
 def test_build_zrtc_extend_data_and_stun_responder():
     ext_raw = _build_zrtc_extend_data(
         call_type=1,
-        p2p_addrs=[("118.69.70.174", 54321), ("127.0.0.1", 5000)],
+        p2p_addrs=[("118.69.70.174", 54321), ("127.0.0.1", 5000), ("fd7a:115c::1", 54321)],
         server_items=[{"rtpaddr": "171.244.25.89:4200", "rtcpaddr": "171.244.25.89:4200"}],
     )
     ext = json.loads(ext_raw)
@@ -94,6 +94,9 @@ def test_build_zrtc_extend_data_and_stun_responder():
     assert ext["sP2P"] == 0
     assert ext["p2p"] == [{"ip": "118.69.70.174", "port": 54321, "type": 0}]
     assert ext["serverAddr"][0]["rtp"] == "171.244.25.89:4200"
+    assert ext["serverAddr"][0]["rtpIPv6"] == "::FFFF:171.244.25.89:4200"
+    assert ext["serverAddr"][0]["rtcpIPv6"] == "::FFFF:171.244.25.89:4200"
+    assert ext["video"] == {"codec": [{"name": "h264", "payload": 97}]}
 
     session = ZaloCallSession(session_id="stun_test", account_id="acc", call_id=101, callee_id="202", status="ringing")
     protocol = _ZaloRtpDatagramProtocol(session)
@@ -162,48 +165,62 @@ def test_session_audio_increment_and_payload_type():
     assert session.packets_sent == 1
 
 
-def test_start_call_session_runs_python_init_zrtp_and_sends_extend_data():
+def test_start_call_session_unwraps_nested_zca_response_and_runs_init_zrtp():
+    """Khớp đúng hình dạng trả về thật của zca_api_server.js: {ok, signal_code, response: {callId, data: {...}}}."""
     import asyncio
     from unittest.mock import AsyncMock, patch
     from app.modules.all_platform.zalo.services import zalo_call_service as calls
 
     sent_signals = []
+    sent_udp_subcmds = []
 
     async def fake_send_signal(_auth, code, payload):
         sent_signals.append((code, payload))
         if code == 11300:
             return {
                 "ok": True,
+                "signal_code": 11300,
                 "response": {
-                    "id": 778899,
-                    "fromId": 462884481,
-                    "toId": 327635537,
-                    "sessId": "778899_1763_401",
-                    "rtpIP": "171.244.25.89:4200",
-                    "rtcpIP": "171.244.25.89:4200",
-                    "status": 0,
-                    "servers": [{"rtpaddr": "171.244.25.89:4200", "rtcpaddr": "171.244.25.89:4200"}],
+                    "callId": 778899,
+                    "data": {
+                        "id": 778899,
+                        "fromId": 462884481,
+                        "toId": 327635537,
+                        "sessId": "778899_1763_401",
+                        "rtpIP": "171.244.25.89:4200",
+                        "rtcpIP": "171.244.25.89:4200",
+                        "status": 0,
+                        "servers": [
+                            {"rtpaddr": "171.244.25.89:4200", "rtcpaddr": "171.244.25.89:4200"},
+                            {"rtpaddr": "222.255.179.228:4200", "rtcpaddr": "222.255.179.228:4200"},
+                        ],
+                    },
                 },
             }
-        return {"ok": True, "response": {"status": 0}}
+        return {"ok": True, "signal_code": code, "response": {"callId": 778899, "data": {"status": 0}}}
 
     async def run():
-        created_sessions = []
-
         async def fake_alloc(sess):
-            created_sessions.append(sess)
+            protocol = calls._ZaloRtpDatagramProtocol(sess)
             mock_tr = MagicMock()
+            protocol.connection_made(mock_tr)
 
             def _on_sendto(pkt, addr):
                 parsed = calls.parse_zrtc_packet(pkt)
                 if parsed and parsed.get("msg_type") == 1 and parsed.get("cmd") == 11:
-                    sess.zrtc_token = 0x5A10C411
-                    sess.zrtc_public_addr = "118.69.70.174:51111"
-                    sess.notify_init_zrtp()
+                    sent_udp_subcmds.append((addr, parsed["sub_cmd"]))
+                    if addr == ("222.255.179.228", 4200):
+                        pub_b = b"1.52.116.41:51111"
+                        resp_pkt = (
+                            struct.pack("<BBIIIIHB", 2, 0x7E, 0, 0, 462884481, 0x5A10C411, 11, 2)
+                            + struct.pack("<iIIH", 0, 778899, 0x5A10C411, len(pub_b))
+                            + pub_b
+                        )
+                        protocol.datagram_received(resp_pkt, addr)
 
             mock_tr.sendto.side_effect = _on_sendto
             sess.udp_transport = mock_tr
-            return ("118.69.70.174:51111", "118.69.70.174:51111")
+            return ("1.52.116.41:51111", "1.52.116.41:51111")
 
         with patch.dict(calls._CALL_SESSIONS, {}, clear=True), \
              patch.object(calls, "load_zca_auth", new_callable=AsyncMock, return_value={"imei": "i1"}), \
@@ -212,17 +229,95 @@ def test_start_call_session_runs_python_init_zrtp_and_sends_extend_data():
              patch.object(calls, "_auto_answer_ack_loop", new_callable=AsyncMock):
             sess = await calls.start_call_session(
                 account_id="acc_zrtp",
-                callee_id="327635537",
-                call_type=1,
+                callee_id="7198431234567890123",
+                call_type=3,
             )
             assert sess.status == "ringing"
+            assert sess.zalo_from_id == 462884481
+            assert sess.zalo_to_id == 327635537
+            assert sess.ssrc == 462884481
+            assert sess.zalo_sess_id == "778899_1763_401"
             assert sess.zrtc_token == 0x5A10C411
+            assert sess.zrtc_selected_server == ("222.255.179.228", 4200)
+            assert sess.remote_rtp_addr == ("222.255.179.228", 4200)
+            assert sent_udp_subcmds and all(sc == 2 for _, sc in sent_udp_subcmds)
             assert [c for c, _ in sent_signals] == [11300, 11301]
-            ext = json.loads(sent_signals[1][1]["extendData"])
+            # 11301 phải trỏ đúng vào server đã bắt tay InitZRTP thành công + mang đầy đủ video codec & IPv6
+            s2_payload = sent_signals[1][1]
+            assert s2_payload["rtpAddress"] == "222.255.179.228:4200"
+            assert s2_payload["rtcpAddress"] == "222.255.179.228:4200"
+            assert s2_payload["session"] == "778899_1763_401"
+            ext = json.loads(s2_payload["extendData"])
+            assert ext["callType"] == 1
             assert ext["newZrtc"] == 1
             assert ext["srtpMode"] == 0
             assert ext["sP2P"] == 0
-            assert ext["p2p"][0] == {"ip": "118.69.70.174", "port": 51111, "type": 0}
-            assert ext["serverAddr"][0]["rtp"] == "171.244.25.89:4200"
+            assert ext["video"] == {"codec": [{"name": "h264", "payload": 97}]}
+            assert ext["p2p"][0] == {"ip": "1.52.116.41", "port": 51111, "type": 0}
+            assert len(ext["serverAddr"]) == 1
+            assert ext["serverAddr"][0]["rtp"] == "222.255.179.228:4200"
+            assert ext["serverAddr"][0]["rtpIPv6"] == "::FFFF:222.255.179.228:4200"
+
+            # Verify answer: không bị ghi đè remote_rtp_addr bởi IP LAN, bỏ qua IPv6 p2p, ưu tiên matched.callee_id cho 11304
+            callee_ext = json.dumps({
+                "p2p": [
+                    {"ip": "fd7a:115c:a1e0::1", "port": 50700, "type": 0},
+                    {"ip": "192.168.1.9", "port": 50700, "type": 0},
+                    {"ip": "113.160.1.2", "port": 50700, "type": 1},
+                ],
+                "serverAddr": [{"rtp": "222.255.179.228:4200", "rtcp": "222.255.179.228:4200", "tpType": 0}],
+            })
+            await calls.handle_incoming_voip_signal(
+                account_id="acc_zrtp",
+                act="answer",
+                mapped_status="connected",
+                call_id=778899,
+                partner_id="327635537",
+                data={
+                    "callId": 778899,
+                    "calleeId": "327635537",
+                    "rtpAddress": "192.168.1.9:50700",
+                    "params": json.dumps({"callId": 778899, "status": 0, "extendData": callee_ext}),
+                },
+            )
+            await asyncio.sleep(0.05)
+            assert sess.status == "connected"
+            assert sess.remote_rtp_addr == ("222.255.179.228", 4200)
+            assert sess.p2p_target == ("113.160.1.2", 50700)
+            ack_calls = [p for c, p in sent_signals if c == 11304]
+            assert len(ack_calls) == 1
+            assert ack_calls[0]["calleeId"] == "7198431234567890123"
+            assert ack_calls[0]["callId"] == 778899
+
+    asyncio.run(run())
+
+
+def test_start_call_session_detects_nested_privacy_blocked_status_7():
+    """Đảm bảo status=7 nằm trong response.data được nhận diện đúng thành privacy_blocked (không gọi 11301)."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from app.modules.all_platform.zalo.services import zalo_call_service as calls
+
+    sent_codes = []
+
+    async def fake_send_signal(_auth, code, _payload):
+        sent_codes.append(code)
+        return {
+            "ok": True,
+            "signal_code": 11300,
+            "response": {
+                "callId": 889900,
+                "data": {"id": 889900, "status": 7, "msg": "Người này chặn cuộc gọi từ người lạ"},
+            },
+        }
+
+    async def run():
+        with patch.dict(calls._CALL_SESSIONS, {}, clear=True), \
+             patch.object(calls, "load_zca_auth", new_callable=AsyncMock, return_value={"imei": "i1"}), \
+             patch.object(calls, "_allocate_rtp_udp_endpoint", new_callable=AsyncMock, return_value=("1.2.3.4:5000", "1.2.3.4:5000")), \
+             patch.object(calls, "send_zca_call_signal", side_effect=fake_send_signal):
+            sess = await calls.start_call_session(account_id="acc_priv", callee_id="7198431234567890123", call_type=1)
+            assert sess.status == "privacy_blocked"
+            assert sent_codes == [11300]
 
     asyncio.run(run())

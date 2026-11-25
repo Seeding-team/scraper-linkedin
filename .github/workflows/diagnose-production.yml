@@ -66,10 +66,11 @@ jobs:
 
           print("=== CHECK ZCA PERSISTENT LISTENER & CALL SESSIONS ===")
           from app.modules.all_platform.zalo.services import zca_persistent_listener as zpl
-          mgr = zpl.get_zca_listener_manager()
-          print("Active listeners:", list(getattr(mgr, "_listeners", {}).keys()))
-          for uid, st in getattr(mgr, "_listeners", {}).items():
-              print("  listener", uid, "connected=", getattr(st, "connected", None), "running=", getattr(st, "running", None), "pid=", getattr(getattr(st, "proc", None), "pid", None))
+          mgr = zpl._MANAGER
+          print("Active listeners:", list(getattr(mgr, "_states", {}).keys()))
+          for uid in list(getattr(mgr, "_states", {}).keys()):
+              st = zpl.get_listener_status(uid)
+              print("  listener", uid, st)
           print("Active call sessions in memory:", len(zcs._CALL_SESSIONS))
           for sid, sess in list(zcs._CALL_SESSIONS.items())[-10:]:
               print("  session", sid, "status=", sess.status, "call_id=", sess.call_id, "zrtc_token=", hex(sess.zrtc_token), "tx=", sess.packets_sent, "rx=", sess.packets_received, "warn=", sess.warning)

@@ -450,21 +450,27 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
         # Kiểm tra gói tin ZrtcPacket từ Media Relay (:4200)
         zrtc = parse_zrtc_packet(data)
         if zrtc is not None and zrtc.get("msg_type") in (1, 2):
-            if (
-                zrtc.get("msg_type") == 2
-                and zrtc.get("cmd") in (11, 12)
-                and zrtc.get("res") == 0
-                and zrtc.get("token")
-            ):
-                self.session.zrtc_token = int(zrtc["token"]) & 0xFFFFFFFF
-                pub_addr = str(zrtc.get("public_addr") or "").strip()
-                if pub_addr:
-                    self.session.zrtc_public_addr = pub_addr
-                self.session.notify_init_zrtp()
-                logger.info(
-                    f"[ZRTC-INIT] Received InitZRTP token={self.session.zrtc_token:#x} "
-                    f"public_addr={pub_addr!r} for session={self.session.session_id}"
-                )
+            if zrtc.get("msg_type") == 2 and zrtc.get("cmd") in (11, 12):
+                if zrtc.get("res") == 0 and zrtc.get("token"):
+                    tok = int(zrtc["token"]) & 0xFFFFFFFF
+                    self.session.zrtc_ready_servers[addr] = tok
+                    pub_addr = str(zrtc.get("public_addr") or "").strip()
+                    if pub_addr and not self.session.zrtc_public_addr:
+                        self.session.zrtc_public_addr = pub_addr
+                    if not self.session.zrtc_token or self.session.remote_rtp_addr == addr:
+                        self.session.zrtc_token = tok
+                        self.session.zrtc_selected_server = addr
+                        self.session.remote_rtp_addr = addr
+                    self.session.notify_init_zrtp()
+                    logger.info(
+                        f"[ZRTC-INIT] Received InitZRTP token={tok:#x} from={addr} "
+                        f"public_addr={pub_addr!r} for session={self.session.session_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[ZRTC-INIT] Relay returned error from={addr} cmd={zrtc.get('cmd')} "
+                        f"sub_cmd={zrtc.get('sub_cmd')} res={zrtc.get('res')} session={self.session.session_id}"
+                    )
             return
 
         # msgType=5 là RTCP (SR/SDES) -> bỏ qua; msgType=3 mới là Audio RTP
@@ -537,6 +543,8 @@ class ZaloCallSession:
     zalo_to_id: int = 0
     zrtc_token: int = 0
     zrtc_public_addr: str = ""
+    zrtc_selected_server: Optional[Tuple[str, int]] = None
+    zrtc_ready_servers: Dict[Tuple[str, int], int] = field(default_factory=dict)
     echo_seq: int = 0
     last_browser_audio_at: float = 0.0
     zrtc_worker_id: Optional[str] = None
@@ -1004,6 +1012,30 @@ _DEFAULT_ZRTC_CODECS_JSON = json.dumps(
 )
 
 
+def _is_valid_ipv4(ip_str: str) -> bool:
+    try:
+        socket.inet_aton(ip_str)
+        return True
+    except OSError:
+        return False
+
+
+def _unwrap_zca_signal_data(resp: Any) -> Optional[Dict[str, Any]]:
+    """Bóc lớp vỏ {ok, signal_code, response: {callId, data: {...}}} của zca_api_server/zca_call_engine."""
+    if not isinstance(resp, dict):
+        return None
+    inner = resp.get("response")
+    if not isinstance(inner, dict):
+        return None
+    nested = inner.get("data")
+    if isinstance(nested, dict):
+        merged = dict(nested)
+        if "id" not in merged and "callId" not in merged and inner.get("callId") is not None:
+            merged["callId"] = inner["callId"]
+        return merged
+    return inner
+
+
 def _build_zrtc_extend_data(
     *,
     call_type: int = 1,
@@ -1017,31 +1049,46 @@ def _build_zrtc_extend_data(
     for ip, port in p2p_addrs or []:
         if not ip or ip in ("0.0.0.0", "127.0.0.1") or port <= 0 or (ip, port) in seen_p2p:
             continue
+        if not _is_valid_ipv4(ip):
+            continue
         seen_p2p.add((ip, port))
         p2p_list.append({"ip": ip, "port": int(port), "type": 0})
 
+    def _make_srv_entry(rtp_s: str, rtcp_s: str, srv: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        entry: Dict[str, Any] = {
+            "rtcp": rtcp_s,
+            "rtp": rtp_s,
+            "tpType": int((srv or {}).get("tpType") or 0),
+        }
+        rtcp_v6 = str((srv or {}).get("rtcpIPv6") or "").strip()
+        rtp_v6 = str((srv or {}).get("rtpIPv6") or "").strip()
+        parsed_rtcp = _parse_host_port(rtcp_s)
+        parsed_rtp = _parse_host_port(rtp_s)
+        if not rtcp_v6 and parsed_rtcp and _is_valid_ipv4(parsed_rtcp[0]):
+            rtcp_v6 = f"::FFFF:{parsed_rtcp[0]}:{parsed_rtcp[1]}"
+        if not rtp_v6 and parsed_rtp and _is_valid_ipv4(parsed_rtp[0]):
+            rtp_v6 = f"::FFFF:{parsed_rtp[0]}:{parsed_rtp[1]}"
+        if rtcp_v6:
+            entry["rtcpIPv6"] = rtcp_v6
+        if rtp_v6:
+            entry["rtpIPv6"] = rtp_v6
+        return entry
+
     srv_list: List[Dict[str, Any]] = []
+    seen_srv: Set[str] = set()
     for srv in server_items or []:
         if not isinstance(srv, dict):
             continue
         rtp_s = str(srv.get("rtpaddr") or srv.get("rtp") or "").strip()
         rtcp_s = str(srv.get("rtcpaddr") or srv.get("rtcp") or rtp_s).strip()
-        if not rtp_s:
+        if not rtp_s or rtp_s in seen_srv:
             continue
-        entry: Dict[str, Any] = {
-            "rtcp": rtcp_s,
-            "rtp": rtp_s,
-            "tpType": int(srv.get("tpType") or 0),
-        }
-        if srv.get("rtcpIPv6"):
-            entry["rtcpIPv6"] = str(srv["rtcpIPv6"])
-        if srv.get("rtpIPv6"):
-            entry["rtpIPv6"] = str(srv["rtpIPv6"])
-        srv_list.append(entry)
+        seen_srv.add(rtp_s)
+        srv_list.append(_make_srv_entry(rtp_s, rtcp_s, srv))
 
     if not srv_list and remote_rtp_addr:
         addr_s = f"{remote_rtp_addr[0]}:{remote_rtp_addr[1]}"
-        srv_list.append({"rtcp": addr_s, "rtp": addr_s, "tpType": 0})
+        srv_list.append(_make_srv_entry(addr_s, addr_s))
 
     return json.dumps(
         {
@@ -1063,24 +1110,34 @@ def _build_zrtc_extend_data(
             "supportCallBusy": 1,
             "supportHevcDecode": 1,
             "tpType": 0,
+            "video": {"codec": [{"name": "h264", "payload": 97}]},
         },
         separators=(",", ":"),
     )
 
 
-async def _perform_python_init_zrtp(session: ZaloCallSession, *, timeout_sec: float = 0.9) -> bool:
-    """Thực hiện bắt tay InitZRTP (cmd=11) trực tiếp trên socket UDP sống của Python trước khi gọi 11301."""
-    if not session.udp_transport or not session.remote_rtp_addr or not session.zalo_from_id:
+async def _perform_python_init_zrtp(
+    session: ZaloCallSession,
+    *,
+    timeout_sec: float = 1.2,
+    target_override: Optional[Tuple[str, int]] = None,
+) -> bool:
+    """Thực hiện bắt tay InitZRTP (cmd=11, sub_cmd=2 — khớp byte-by-byte ZaloCall.exe) trên socket UDP sống của Python."""
+    if not session.udp_transport or not session.zalo_from_id:
         return False
+    targets: List[Tuple[str, int]] = []
+    if target_override:
+        targets.append(target_override)
+    else:
+        if session.remote_rtp_addr:
+            targets.append(session.remote_rtp_addr)
+        for srv in session.relay_servers[:6]:
+            if srv not in targets:
+                targets.append(srv)
+    if not targets:
+        return False
+
     session._init_zrtp_event = asyncio.Event()
-    init_sub1 = build_zrtc_init_zrtp_packet(
-        session.call_id,
-        session.zalo_from_id,
-        session.zalo_to_id,
-        session.zalo_sess_id,
-        is_caller=True,
-        sub_cmd=1,
-    )
     init_sub2 = build_zrtc_init_zrtp_packet(
         session.call_id,
         session.zalo_from_id,
@@ -1089,27 +1146,22 @@ async def _perform_python_init_zrtp(session: ZaloCallSession, *, timeout_sec: fl
         is_caller=True,
         sub_cmd=2,
     )
-    targets: List[Tuple[str, int]] = [session.remote_rtp_addr] + [
-        srv for srv in session.relay_servers[:2] if srv != session.remote_rtp_addr
-    ]
     for srv in targets:
         try:
-            session.udp_transport.sendto(init_sub1, srv)
             session.udp_transport.sendto(init_sub2, srv)
         except Exception:
             pass
     try:
-        await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=min(0.4, timeout_sec))
+        await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=min(0.5, timeout_sec))
         return bool(session.zrtc_token)
     except asyncio.TimeoutError:
         for srv in targets:
             try:
-                session.udp_transport.sendto(init_sub1, srv)
                 session.udp_transport.sendto(init_sub2, srv)
             except Exception:
                 pass
         try:
-            await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=max(0.2, timeout_sec - 0.4))
+            await asyncio.wait_for(session._init_zrtp_event.wait(), timeout=max(0.25, timeout_sec - 0.5))
         except asyncio.TimeoutError:
             pass
     return bool(session.zrtc_token)
@@ -1166,14 +1218,6 @@ def _send_udp_keepalive_tick(
     if tick_idx % 5 == 0 and session.zalo_from_id:
         try:
             if not session.zrtc_token:
-                init_sub1 = build_zrtc_init_zrtp_packet(
-                    session.call_id,
-                    session.zalo_from_id,
-                    session.zalo_to_id,
-                    session.zalo_sess_id,
-                    is_caller=True,
-                    sub_cmd=1,
-                )
                 init_sub2 = build_zrtc_init_zrtp_packet(
                     session.call_id,
                     session.zalo_from_id,
@@ -1183,7 +1227,6 @@ def _send_udp_keepalive_tick(
                     sub_cmd=2,
                 )
                 for addr in relay_targets:
-                    session.udp_transport.sendto(init_sub1, addr)
                     session.udp_transport.sendto(init_sub2, addr)
             else:
                 session.echo_seq = (session.echo_seq + 1) & 0xFF
@@ -1193,7 +1236,7 @@ def _send_udp_keepalive_tick(
                     session.zrtc_token,
                     session.echo_seq,
                 )
-                for addr in relay_targets:
+                for addr in relay_targets[:1] or relay_targets:
                     session.udp_transport.sendto(echo_pkt, addr)
         except Exception as hs_exc:
             logger.debug(f"[VOIP-HANDSHAKE] ZrtcPacket keepalive error: {hs_exc}")
@@ -1363,8 +1406,9 @@ async def start_call_session(
                         "typeRequest": session.call_type,
                     },
                 )
-                if isinstance(s1_resp, dict) and isinstance(s1_resp.get("response"), dict):
-                    pre_s1_data = s1_resp["response"]
+                unwrapped_s1 = _unwrap_zca_signal_data(s1_resp)
+                if isinstance(unwrapped_s1, dict):
+                    pre_s1_data = unwrapped_s1
                     if pre_s1_data.get("status") in (None, 0):
                         rpc_res = await dispatch_zrtc_worker_rpc(
                             active_worker.worker_id,
@@ -1400,8 +1444,9 @@ async def start_call_session(
                         "typeRequest": session.call_type,
                     },
                 )
-                if isinstance(s1_resp, dict) and isinstance(s1_resp.get("response"), dict):
-                    pre_s1_data = s1_resp["response"]
+                unwrapped_s1 = _unwrap_zca_signal_data(s1_resp)
+                if isinstance(unwrapped_s1, dict):
+                    pre_s1_data = unwrapped_s1
             except Exception as s1_exc:
                 logger.warning(f"[CALL-START] Direct 11300 failed, using fallback bridge: {s1_exc}")
 
@@ -1412,6 +1457,7 @@ async def start_call_session(
             session.call_id = eff_call_id
             if pre_s1_data.get("fromId"):
                 session.zalo_from_id = int(pre_s1_data["fromId"]) & 0xFFFFFFFF
+                session.ssrc = session.zalo_from_id
             if pre_s1_data.get("toId"):
                 session.zalo_to_id = int(pre_s1_data["toId"]) & 0xFFFFFFFF
             relay_rtp = (
@@ -1449,19 +1495,41 @@ async def start_call_session(
             else:
                 effective_extend = worker_extend_data
                 if not effective_extend:
-                    await _perform_python_init_zrtp(session, timeout_sec=0.9)
+                    init_ok = await _perform_python_init_zrtp(session, timeout_sec=1.2)
+                    logger.info(
+                        f"[CALL-START] Python InitZRTP done: session={session.session_id} ok={init_ok} "
+                        f"token={session.zrtc_token:#x} selected={session.zrtc_selected_server} "
+                        f"pub={session.zrtc_public_addr!r} from_id={session.zalo_from_id} "
+                        f"to_id={session.zalo_to_id} sess_id={server_sess!r}"
+                    )
+                    if session.zrtc_selected_server:
+                        selected_str = f"{session.zrtc_selected_server[0]}:{session.zrtc_selected_server[1]}"
+                        relay_rtp = selected_str
+                        relay_rtcp = selected_str
+                        session.remote_rtp_addr = session.zrtc_selected_server
                     p2p_candidates: List[Tuple[str, int]] = []
                     for raw_cand in (session.zrtc_public_addr, session.local_rtp_address):
                         parsed_cand = _parse_host_port(raw_cand)
-                        if parsed_cand and parsed_cand not in p2p_candidates:
+                        if parsed_cand and _is_valid_ipv4(parsed_cand[0]) and parsed_cand not in p2p_candidates:
                             p2p_candidates.append(parsed_cand)
+                    raw_servers = pre_s1_data.get("servers") or []
+                    if session.zrtc_selected_server:
+                        selected_str = f"{session.zrtc_selected_server[0]}:{session.zrtc_selected_server[1]}"
+                        matched_srvs = [
+                            s for s in raw_servers
+                            if isinstance(s, dict) and str(s.get("rtpaddr") or s.get("rtp") or "").strip() == selected_str
+                        ]
+                        chosen_server_items = matched_srvs or [{"rtpaddr": selected_str, "rtcpaddr": selected_str, "tpType": 0}]
+                    else:
+                        chosen_server_items = raw_servers
                     effective_extend = _build_zrtc_extend_data(
                         call_type=session.call_type,
                         p2p_addrs=p2p_candidates,
-                        server_items=pre_s1_data.get("servers") or [],
+                        server_items=chosen_server_items,
                         remote_rtp_addr=session.remote_rtp_addr,
                     )
                 s2_resp: Optional[Dict[str, Any]] = None
+                s2_data: Optional[Dict[str, Any]] = None
                 s2_error: Optional[str] = None
                 try:
                     s2_resp = await send_zca_call_signal(
@@ -1477,6 +1545,9 @@ async def start_call_session(
                             "callId": eff_call_id,
                         },
                     )
+                    s2_data = _unwrap_zca_signal_data(s2_resp)
+                    if isinstance(s2_data, dict) and s2_data.get("status") not in (None, 0):
+                        s2_error = str(s2_data.get("msg") or f"11301 rejected (status={s2_data.get('status')})")
                 except Exception as s2_exc:
                     s2_error = str(s2_exc)
                     try:
@@ -1501,7 +1572,7 @@ async def start_call_session(
                     "rtcp_address": relay_rtcp,
                     "relay_servers": pre_s1_data.get("servers") or [],
                     "requestcall_result": pre_s1_data,
-                    "request_result": s2_resp.get("response") if isinstance(s2_resp, dict) else s2_resp,
+                    "request_result": s2_data if s2_data is not None else (s2_resp.get("response") if isinstance(s2_resp, dict) else s2_resp),
                     "request_warning": s2_error,
                 }
         else:
@@ -1542,14 +1613,14 @@ async def start_call_session(
             if req_res.get("toId"):
                 session.zalo_to_id = int(req_res["toId"]) & 0xFFFFFFFF
             remote_candidate = (
-                req_res.get("rtpIP")
+                sig_res.get("rtp_address")
+                or req_res.get("rtpIP")
                 or req_res.get("rtpAddress")
                 or req_res.get("rtp_address")
                 or req_res.get("relayAddress")
-                or sig_res.get("rtp_address")
             )
             parsed_remote = _parse_host_port(remote_candidate)
-            if parsed_remote:
+            if parsed_remote and not session.zrtc_selected_server:
                 session.remote_rtp_addr = parsed_remote
             for srv_item in req_res.get("servers") or sig_res.get("relay_servers") or []:
                 if isinstance(srv_item, dict):
@@ -1743,17 +1814,7 @@ async def handle_incoming_voip_signal(
     if matched.status not in ("dialing", "ringing", "connected"):
         return matched
 
-    remote_rtp = (
-        data.get("rtpAddress")
-        or data.get("rtp_address")
-        or data.get("relayAddress")
-        or data.get("rtpIP")
-    )
-    parsed_addr = _parse_host_port(remote_rtp)
-    if parsed_addr:
-        matched.remote_rtp_addr = parsed_addr
-
-    # Bóc tách và cập nhật candidate P2P từ Callee nếu có
+    # Bóc tách params & cập nhật Relay / P2P candidate từ Callee một cách an toàn
     params_obj: Dict[str, Any] = {}
     raw_params = data.get("params")
     if isinstance(raw_params, str) and raw_params.strip():
@@ -1765,25 +1826,81 @@ async def handle_incoming_voip_signal(
         params_obj = raw_params
     if not isinstance(params_obj, dict):
         params_obj = {}
-    raw_status = str(data.get("status") if data.get("status") is not None else params_obj.get("status", "")).strip()
+
+    status_val = data.get("status")
+    if status_val in (None, ""):
+        status_val = params_obj.get("status")
+    raw_status = "" if status_val is None else str(status_val).strip()
     is_callee_zrtp_fail = act == "answer" and raw_status == "5"
     if act == "answer" and raw_status in ("1", "3"):
         mapped_status = "busy" if raw_status == "1" else "rejected"
     elif act == "answer" and raw_status not in ("0", "5"):
         logger.info(f"[VOIP] Ignoring unconfirmed answer status={raw_status!r} call_id={matched.call_id}")
         return matched
+
     callee_extend = data.get("extendData") or params_obj.get("extendData") or ""
+    callee_relay_candidates: List[Tuple[str, int]] = []
     if isinstance(callee_extend, str) and callee_extend.strip():
         try:
             ext_json = json.loads(callee_extend)
+            for srv in ext_json.get("serverAddr") or []:
+                if isinstance(srv, dict):
+                    srv_addr = _parse_host_port(srv.get("rtp") or srv.get("rtpaddr") or srv.get("rtcp"))
+                    if srv_addr and _is_valid_ipv4(srv_addr[0]):
+                        if srv_addr not in matched.relay_servers:
+                            matched.relay_servers.append(srv_addr)
+                        if srv_addr not in callee_relay_candidates:
+                            callee_relay_candidates.append(srv_addr)
             p2p_list = ext_json.get("p2p") or []
             if isinstance(p2p_list, list) and len(p2p_list) > 0:
-                p2p_first = p2p_list[0]
-                if isinstance(p2p_first, dict) and p2p_first.get("ip") and p2p_first.get("port"):
-                    p2p_addr = (str(p2p_first["ip"]), int(p2p_first["port"]))
-                    matched.p2p_target = p2p_addr
+                valid_p2p: List[Tuple[int, Tuple[str, int]]] = []
+                for cand in p2p_list:
+                    if isinstance(cand, dict) and cand.get("ip") and cand.get("port"):
+                        ip_s = str(cand["ip"]).strip()
+                        try:
+                            port_i = int(cand["port"])
+                        except (TypeError, ValueError):
+                            continue
+                        if _is_valid_ipv4(ip_s) and ip_s not in ("0.0.0.0", "127.0.0.1") and 1 <= port_i <= 65535:
+                            prio = 0 if int(cand.get("type") or 0) == 1 else 1
+                            valid_p2p.append((prio, (ip_s, port_i)))
+                if valid_p2p:
+                    valid_p2p.sort(key=lambda x: x[0])
+                    matched.p2p_target = valid_p2p[0][1]
         except Exception:
             pass
+
+    for raw_remote in (
+        params_obj.get("rtpSerIp"),
+        data.get("relayAddress"),
+        data.get("rtpIP"),
+        params_obj.get("rtpIP"),
+        data.get("rtpAddress"),
+        data.get("rtp_address"),
+    ):
+        parsed_addr = _parse_host_port(raw_remote)
+        if parsed_addr and _is_valid_ipv4(parsed_addr[0]):
+            is_known_relay = (
+                parsed_addr in matched.relay_servers
+                or parsed_addr == matched.remote_rtp_addr
+                or parsed_addr[1] == 4200
+            )
+            if is_known_relay and parsed_addr not in callee_relay_candidates:
+                callee_relay_candidates.append(parsed_addr)
+
+    if callee_relay_candidates:
+        chosen_relay = callee_relay_candidates[0]
+        if chosen_relay not in matched.relay_servers:
+            matched.relay_servers.append(chosen_relay)
+        if chosen_relay != matched.remote_rtp_addr:
+            matched.remote_rtp_addr = chosen_relay
+            if chosen_relay in matched.zrtc_ready_servers:
+                matched.zrtc_token = matched.zrtc_ready_servers[chosen_relay]
+                matched.zrtc_selected_server = chosen_relay
+            elif matched.udp_transport and matched.zalo_from_id:
+                asyncio.create_task(
+                    _perform_python_init_zrtp(matched, timeout_sec=0.8, target_override=chosen_relay)
+                )
 
     # Nếu có ZRTC Media Worker, chuyển ngay codec & extendData của máy khách vào Worker
     if matched.zrtc_worker_id and (data.get("codec") or callee_extend):
@@ -1870,32 +1987,35 @@ async def handle_incoming_voip_signal(
                 logger.debug(f"[VOIP] Keepalive burst error: {e}")
         asyncio.create_task(_keepalive_burst())
 
-        # Tự động gửi ACK 11304 (answerack) giống Zalo PC
-        target_callee = str(data.get("calleeId") or matched.callee_id or partner_id)
-        effective_call_id = int(data.get("callId") or matched.call_id)
+        # Tự động gửi ACK 11304 (answerack) giống Zalo PC — luôn ưu tiên matched.callee_id đã thành công ở 11300/11301
+        ack_targets: List[str] = []
+        for raw_cid in (matched.callee_id, data.get("calleeId"), params_obj.get("calleeId"), partner_id):
+            cid_s = str(raw_cid or "").strip()
+            if cid_s and cid_s not in ack_targets:
+                ack_targets.append(cid_s)
+        effective_call_id = int(matched.call_id or data.get("callId") or params_obj.get("callId") or 0)
 
         async def _dispatch_answer_ack() -> None:
             try:
                 auth = await load_zca_auth(matched.account_id)
                 if not auth:
                     return
-                logger.info(
-                    f"[VOIP-ANSWERACK] Sending 11304 for session={matched.session_id} "
-                    f"calleeId={target_callee} callId={effective_call_id}"
-                )
-                ack_res = await send_zca_call_signal(
-                    auth,
-                    11304,
-                    {"calleeId": target_callee, "callId": effective_call_id},
-                )
-                logger.info(f"[VOIP-ANSWERACK] Result: {ack_res}")
-
-                if matched.callee_id and str(matched.callee_id) != target_callee:
-                    await send_zca_call_signal(
-                        auth,
-                        11304,
-                        {"calleeId": str(matched.callee_id), "callId": effective_call_id},
-                    )
+                for idx, cid in enumerate(ack_targets[:2]):
+                    try:
+                        logger.info(
+                            f"[VOIP-ANSWERACK] Sending 11304 (#{idx + 1}) for session={matched.session_id} "
+                            f"calleeId={cid} callId={effective_call_id} relay={matched.remote_rtp_addr} "
+                            f"token={matched.zrtc_token:#x}"
+                        )
+                        ack_res = await send_zca_call_signal(
+                            auth,
+                            11304,
+                            {"calleeId": cid, "callId": effective_call_id},
+                        )
+                        logger.info(f"[VOIP-ANSWERACK] Result (#{idx + 1}): {ack_res}")
+                        break
+                    except Exception as inner_err:
+                        logger.warning(f"[VOIP-ANSWERACK] Attempt #{idx + 1} failed (calleeId={cid}): {inner_err}")
             except Exception as ack_err:
                 logger.warning(f"[VOIP-ANSWERACK] Dispatch failed for session={matched.session_id}: {ack_err}")
 

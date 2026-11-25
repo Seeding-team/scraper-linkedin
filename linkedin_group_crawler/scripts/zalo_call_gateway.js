@@ -265,14 +265,6 @@ class ZaloCallGatewaySession {
   sendHandshakeFrame() {
     if (!this.udpSocket || !this.remoteRelay) return;
     try {
-      const pktSub1 = buildZrtcInitZrtpPacket({
-        callId: this.callId,
-        fromId: this.fromId,
-        toId: this.toId,
-        sessId: this.sessId,
-        isCaller: true,
-        subCmd: 1,
-      });
       const pktSub2 = buildZrtcInitZrtpPacket({
         callId: this.callId,
         fromId: this.fromId,
@@ -281,10 +273,8 @@ class ZaloCallGatewaySession {
         isCaller: true,
         subCmd: 2,
       });
-      this.udpSocket.send(pktSub1, this.remoteRelay.port, this.remoteRelay.host);
       this.udpSocket.send(pktSub2, this.remoteRelay.port, this.remoteRelay.host);
-      for (const srv of this.relayServers.slice(0, 2)) {
-        this.udpSocket.send(pktSub1, srv.port, srv.host);
+      for (const srv of this.relayServers.slice(0, 4)) {
         this.udpSocket.send(pktSub2, srv.port, srv.host);
       }
     } catch (err) {
@@ -306,6 +296,8 @@ class ZaloCallGatewaySession {
       });
       this.udpSocket.send(echoPkt, this.remoteRelay.port, this.remoteRelay.host);
     }
+
+    if (this.status !== "connected") return;
 
     this.seq = (this.seq + 1) & 0xffff;
     this.timestamp = (this.timestamp + OPUS_TIMESTAMP_STEP) >>> 0;
