@@ -12,6 +12,8 @@ export interface CrmVendor {
   address: string | null;
   status: string;
   note: string | null;
+  price_sheet_url?: string | null;
+  price_sheet_last_synced_at?: string | null;
 }
 
 function getDefaultHeaders(isFormData = false): Record<string, string> {
