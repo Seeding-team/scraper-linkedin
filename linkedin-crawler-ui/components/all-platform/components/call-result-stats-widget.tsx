@@ -77,11 +77,6 @@ function ratioBadgeClass(pctVal: number, hasDenominator: boolean): string {
   return "bg-rose-50 text-rose-600";
 }
 
-// Progress bar mỏng dưới mỗi cột — xanh lá nếu tỷ lệ cao (>=50%), xám nếu thấp/0%.
-function ratioBarClass(pctVal: number): string {
-  return pctVal >= 50 ? "bg-emerald-500" : "bg-muted-foreground/30";
-}
-
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -651,112 +646,19 @@ export function CallResultStatsWidget({
         </div>
       </div>
 
-      {/* 4 thẻ số liệu (Việc 1: thêm "Tổng bài" làm thẻ đầu) — icon vuông màu + "X / Y" +
-          badge % (Cuộc gọi/Zalo/Tổng bài) hoặc "+N/-N" (Comment) + progress bar mỏng (Cuộc
-          gọi/Zalo). Cột Zalo hiển thị "đã trả lời / đã gửi" (zaloStats.replied/sent — dữ
-          liệu gốc KHÔNG đổi, chỉ gộp 2 số cũ ở cột 2+3 cũ vào chung 1 cột theo đúng tỷ lệ
-          "X / Y"). */}
+      {/* 4 thẻ số liệu, thứ tự Comment → Zalo → Cuộc gọi → Tổng bài (2026-11-25) — icon vuông
+          màu + "X / Y" + badge % (Cuộc gọi/Zalo/Tổng bài) hoặc "+N/-N" (Comment) + progress bar
+          mỏng (Cuộc gọi/Zalo). Cột Zalo hiển thị "đã trả lời / đã gửi" (zaloStats.replied/sent).
+          Viền trên + nền icon + icon + thanh tiến trình mỗi card dùng 1 màu chủ đề riêng (viền
+          trên gắn bằng inline style để luôn hiện ở mọi breakpoint, không phụ thuộc border-t/
+          border-b vốn chỉ là divider lưới xám giữa các ô — giữ nguyên, không đổi). Badge % và
+          chip Thành công/Thất bại KHÔNG đổi (vẫn xanh/đỏ/xám theo tỷ lệ, độc lập màu chủ đề). */}
       <div className="grid grid-cols-2 lg:grid-cols-4 border-t border-border">
-        <div className="p-4 border-b lg:border-b-0 border-border">
-          <StatCardHeader
-            icon="feed"
-            iconBgClass="bg-blue-100"
-            iconTextClass="text-blue-600"
-            title="Tổng bài"
-            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">
-              {totalPostsSuitableCount} / {totalPostsCount}
-            </span>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-bold",
-                totalPostsPctChange > 0
-                  ? "bg-emerald-50 text-emerald-700"
-                  : totalPostsPctChange < 0
-                    ? "bg-rose-50 text-rose-600"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {totalPostsPctChange > 0 ? "+" : ""}
-              {totalPostsPctChange}%
-            </span>
-          </div>
-          <div className="text-[12px] text-muted-foreground mt-0.5">
-            {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
-          </div>
-        </div>
-
-        {(() => {
-          const callPctVal = pct(callOk, callTotal);
-          return (
-            <div className="p-4 border-b lg:border-b-0 border-l border-border">
-              <StatCardHeader
-                icon="call"
-                iconBgClass="bg-rose-100"
-                iconTextClass="text-rose-600"
-                title="Cuộc gọi"
-                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) trên tổng số cuộc gọi đã ghi nhận trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
-              />
-              <div className="flex items-center gap-2">
-                <span className="text-[26px] font-extrabold leading-tight">
-                  {callOk} / {callTotal}
-                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
-                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
-                </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
-                  {callPctVal}%
-                </span>
-              </div>
-              <div className="text-[12px] text-muted-foreground mt-0.5">
-                {callOk} cuộc gọi thành công / {callTotal} cuộc gọi đã thực hiện
-              </div>
-              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
-                <span className={cn("block h-full", ratioBarClass(callPctVal))} style={{ width: `${callPctVal}%` }} />
-              </div>
-            </div>
-          );
-        })()}
-
-        {(() => {
-          const zaloSent = zaloStats?.sent ?? 0;
-          const zaloReplied = zaloStats?.replied ?? 0;
-          const zaloPctVal = pct(zaloReplied, zaloSent);
-          return (
-            <div className="p-4 border-t lg:border-t-0 lg:border-l border-border">
-              <StatCardHeader
-                icon="chat"
-                iconBgClass="bg-sky-100"
-                iconTextClass="text-sky-600"
-                title="Zalo"
-                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời trên tổng số tin nhắn Zalo đã gửi từ bài seeding trong kỳ đang chọn. Số mờ sau dấu '·' là tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ."
-              />
-              <div className="flex items-center gap-2">
-                <span className="text-[26px] font-extrabold leading-tight">
-                  {zaloReplied} / {zaloSent}
-                  <span className="mx-1 text-muted-foreground/40 font-normal">·</span>
-                  <span className="text-[16px] font-semibold text-muted-foreground align-baseline">{totalUniquePhonesCount}</span>
-                </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
-                  {zaloPctVal}%
-                </span>
-              </div>
-              <div className="text-[12px] text-muted-foreground mt-0.5">
-                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi
-              </div>
-              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
-                <span className={cn("block h-full", ratioBarClass(zaloPctVal))} style={{ width: `${zaloPctVal}%` }} />
-              </div>
-            </div>
-          );
-        })()}
-
-        <div className="p-4 border-t lg:border-t-0 border-l border-border">
+        <div className="p-4 border-b lg:border-b-0 border-border" style={{ borderTop: "3px solid #993556" }}>
           <StatCardHeader
             icon="chat_bubble"
-            iconBgClass="bg-violet-100"
-            iconTextClass="text-violet-600"
+            iconBgClass="bg-[#FBEAF0]"
+            iconTextClass="text-[#993556]"
             title="Comment"
             tooltip="Số bài đã có seeding/bình luận trên tổng số bài phù hợp trong kỳ đang chọn (mẫu số thu hẹp theo đúng thành viên nếu đang lọc 1 người), so với cùng độ dài kỳ liền trước."
           />
@@ -780,6 +682,97 @@ export function CallResultStatsWidget({
           </div>
           <div className="text-[12px] text-muted-foreground mt-0.5">
             {commentDistinctPostCount} bài đã comment / {commentPostPoolCount} bài phù hợp trong kỳ
+          </div>
+        </div>
+
+        {(() => {
+          const zaloSent = zaloStats?.sent ?? 0;
+          const zaloReplied = zaloStats?.replied ?? 0;
+          const zaloPctVal = pct(zaloReplied, zaloSent);
+          return (
+            <div className="p-4 border-b lg:border-b-0 border-l border-border" style={{ borderTop: "3px solid #0F6E56" }}>
+              <StatCardHeader
+                icon="chat"
+                iconBgClass="bg-[#E1F5EE]"
+                iconTextClass="text-[#0F6E56]"
+                title="Zalo"
+                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời / tổng số tin nhắn Zalo đã gửi từ bài seeding / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-[26px] font-extrabold leading-tight">
+                  {zaloReplied} / {zaloSent} / {totalUniquePhonesCount}
+                </span>
+                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
+                  {zaloPctVal}%
+                </span>
+              </div>
+              <div className="text-[12px] text-muted-foreground mt-0.5">
+                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi / {totalUniquePhonesCount} số điện thoại
+              </div>
+              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+                <span className="block h-full" style={{ width: `${zaloPctVal}%`, backgroundColor: "#0F6E56" }} />
+              </div>
+            </div>
+          );
+        })()}
+
+        {(() => {
+          const callPctVal = pct(callOk, callTotal);
+          return (
+            <div className="p-4 border-t lg:border-t-0 lg:border-l border-border" style={{ borderTop: "3px solid #D85A30" }}>
+              <StatCardHeader
+                icon="call"
+                iconBgClass="bg-[#FAECE7]"
+                iconTextClass="text-[#D85A30]"
+                title="Cuộc gọi"
+                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) / tổng số cuộc gọi đã ghi nhận / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
+              />
+              <div className="flex items-center gap-2">
+                <span className="text-[26px] font-extrabold leading-tight">
+                  {callOk} / {callTotal} / {totalUniquePhonesCount}
+                </span>
+                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
+                  {callPctVal}%
+                </span>
+              </div>
+              <div className="text-[12px] text-muted-foreground mt-0.5">
+                {callOk} cuộc gọi thành công / {callTotal} đã thực hiện / {totalUniquePhonesCount} số điện thoại
+              </div>
+              <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+                <span className="block h-full" style={{ width: `${callPctVal}%`, backgroundColor: "#D85A30" }} />
+              </div>
+            </div>
+          );
+        })()}
+
+        <div className="p-4 border-t lg:border-t-0 border-l border-border" style={{ borderTop: "3px solid #534AB7" }}>
+          <StatCardHeader
+            icon="feed"
+            iconBgClass="bg-[#EEEDFE]"
+            iconTextClass="text-[#534AB7]"
+            title="Tổng bài"
+            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[26px] font-extrabold leading-tight">
+              {totalPostsSuitableCount} / {totalPostsCount}
+            </span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                totalPostsPctChange > 0
+                  ? "bg-emerald-50 text-emerald-700"
+                  : totalPostsPctChange < 0
+                    ? "bg-rose-50 text-rose-600"
+                    : "bg-muted text-muted-foreground"
+              )}
+            >
+              {totalPostsPctChange > 0 ? "+" : ""}
+              {totalPostsPctChange}%
+            </span>
+          </div>
+          <div className="text-[12px] text-muted-foreground mt-0.5">
+            {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
           </div>
         </div>
       </div>

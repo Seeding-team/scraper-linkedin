@@ -466,12 +466,21 @@ def get_call_result_stats(
         thành viên — vì 1 thành viên vẫn có thể seeding bài ngoài phạm vi nhóm họ phụ trách,
         bài dùng chung; thu hẹp ở đây sẽ đếm thiếu). Lọc theo `allowed_member_ids` giống hệt
         `_count_seeding_comments` (cùng kỳ, cùng quyền xem).
+
+        Dòng `id_member IS NULL` (dữ liệu cũ từ trước khi bảng có cột liên kết `id_member`
+        đáng tin cậy — xem `ALTER TABLE seeding_content_kpi ADD COLUMN app_user_id` ở
+        `001_auth_social_accounts.sql`) LUÔN bị loại trừ khỏi `commented_post_ids`, kể cả khi
+        `allowed_member_ids is None` ("Tất cả thành viên" — trước đây KHÔNG lọc id_member chút
+        nào trong nhánh này). Đồng bộ 2026-11-25 với `get_who_did_what`/`get_day_breakdown`
+        (post_contact_activity_service.py, `if not mid: continue`) — nếu không, X ("Bài đã
+        comment") có thể tính cả bài mà lượt bình luận DUY NHẤT là dòng NULL id_member, trong
+        khi bảng "Lượt bình luận" bỏ qua hoàn toàn dòng đó, khiến X > Tổng "Lượt bình luận".
         """
         try:
             def _run_query():
                 q = (
                     supabase.table("seeding_content_kpi")
-                    .select("id_post")
+                    .select("id_post, id_member")
                     .gte("created_at", gte_utc)
                     .lte("created_at", lte_utc)
                 )
@@ -483,7 +492,9 @@ def get_call_result_stats(
         except Exception as exc:
             logger.warning(f"get_call_result_stats: lỗi đếm bài đã comment (distinct) ở seeding_content_kpi: {exc}")
             return 0
-        commented_post_ids = {str(r["id_post"]) for r in rows if r.get("id_post") is not None}
+        commented_post_ids = {
+            str(r["id_post"]) for r in rows if r.get("id_post") is not None and r.get("id_member")
+        }
         return len(commented_post_ids & suitable_post_ids)
 
     def _count_unique_phones(gte_utc: str, lte_utc: str) -> int:
