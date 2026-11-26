@@ -487,6 +487,15 @@ export const PostCard = memo(function PostCard({ post, userRole, onVerify, onSee
               </span>
             )}
 
+            {leadScore === null && (
+              <span
+                title="Bài chưa được AI chấm điểm tiềm năng seeding (không có nghĩa là điểm thấp) — có thể do lỗi tạm thời khi gọi AI hoặc luồng cào này chưa hỗ trợ chấm điểm"
+                className="shrink-0 inline-flex items-center gap-1 rounded-full border border-dashed border-border bg-muted/60 px-2 py-0.5 text-[10px] font-bold text-muted-foreground"
+              >
+                ⏳ Chưa chấm điểm AI
+              </span>
+            )}
+
             {(post.platform === "threads" || isYouTube) && post.search_keyword && (
               <span className="shrink-0 rounded bg-neutral-100 px-2 py-0.5 text-[10px] font-bold text-neutral-700" title="Từ khoá đã tìm ra bài này">
                 🔎 {post.search_keyword}

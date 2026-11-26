@@ -304,6 +304,32 @@ def auto_reject_if_excluded(
     if not exc_info["is_excluded"]:
         return None
 
+    matched_str = ", ".join(exc_info["matched_keywords"])
+    return _apply_auto_not_suitable(
+        post_id,
+        platform,
+        review,
+        reason=f"Tự động loại trừ do khớp từ khóa cấm: {matched_str}",
+        action_type="auto_exclude_keyword",
+        log_extra={"matched": exc_info["matched_keywords"]},
+    )
+
+
+def _apply_auto_not_suitable(
+    post_id: str,
+    platform: str,
+    review: Optional[dict[str, Any]],
+    *,
+    reason: str,
+    action_type: str,
+    log_extra: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Gắn 'khong-phu-hop' tự động cho 1 bài, tôn trọng đánh giá thủ công đã có.
+
+    Tách từ `auto_reject_if_excluded()` để `auto_reject_legacy_low_lead_score_posts()`
+    (Việc C, 2026-11-26) tái dùng đúng cơ chế upsert `post_quick_review` + ghi
+    `post_evaluation_history`, không viết lại logic song song.
+    """
     current_code = review.get("evaluation_code") if review else None
     if current_code not in (None, "chua-danh-gia"):
         # Đã có đánh giá (thủ công hoặc đã tự động gắn 'khong-phu-hop' từ lần gọi trước) ->
@@ -312,13 +338,12 @@ def auto_reject_if_excluded(
 
     supabase = get_supabase_client()
     now_iso = datetime.now(timezone.utc).isoformat()
-    matched_str = ", ".join(exc_info["matched_keywords"])
 
     upsert_data: dict[str, Any] = {
         "post_id": str(post_id),
         "platform": platform,
         "evaluation_code": "khong-phu-hop",
-        "reason": f"Tự động loại trừ do khớp từ khóa cấm: {matched_str}",
+        "reason": reason,
         "evaluated_by": None,
         "evaluated_at": now_iso,
         "updated_at": now_iso,
@@ -338,8 +363,8 @@ def auto_reject_if_excluded(
         "platform": platform,
         "previous_evaluation_code": current_code,
         "evaluation_code": "khong-phu-hop",
-        "reason": f"Tự động loại trừ do khớp từ khóa cấm: {matched_str}",
-        "action_type": "auto_exclude_keyword",
+        "reason": reason,
+        "action_type": action_type,
         "evaluated_by": None,
         "created_at": now_iso,
     }
@@ -348,11 +373,77 @@ def auto_reject_if_excluded(
     )
 
     logger.info(
-        "auto_reject_if_excluded post_id=%s platform=%s matched=%s",
+        "%s post_id=%s platform=%s %s",
+        action_type,
         post_id,
         platform,
-        exc_info["matched_keywords"],
+        log_extra or {},
     )
 
     return saved_review
+
+
+# ── Việc C (2026-11-26): backfill bài CŨ có lead_score 1-39 XÁC ĐỊNH (không phải NULL) ──
+# Phạm vi nhỏ, có giới hạn: chỉ còn tồn tại do 1 cửa sổ lịch sử ngắn (commit 2026-10-02 ->
+# 2026-11-04) từng loại trừ threads_posts/bài cào theo từ khóa khỏi việc XOÁ bài điểm thấp
+# (xem lead_score_service.py::score_and_save_posts — hiện tại MỌI bài điểm <40 đều bị xoá
+# thẳng, không còn exemption nào, nên KHÔNG có "bài mới" nào rơi vào trường hợp này nữa).
+# KHÔNG đụng tới bài lead_score IS NULL (chưa từng được chấm điểm — xem Việc B, khác hẳn
+# bản chất với "điểm thấp xác định").
+_LEGACY_LOW_SCORE_TABLES = ("facebook_posts", "linkedin_posts", "threads_posts")
+
+
+def auto_reject_legacy_low_lead_score_posts(
+    min_score: int = 1,
+    max_score: int = 39,
+) -> dict[str, Any]:
+    """Quét 1 lần (idempotent — gọi lại không tạo thêm history thừa) các bài đã có sẵn
+    `lead_score` xác định trong khoảng [min_score, max_score] và tự động gắn
+    'khong-phu-hop', tôn trọng đánh giá thủ công đã có (giống hệt `auto_reject_if_excluded`).
+    """
+    from app.modules.all_platform.services.post_evaluation_service import get_review
+
+    supabase = get_supabase_client()
+    summary: dict[str, Any] = {"scanned": 0, "marked": 0, "skipped_already_reviewed": 0, "errors": []}
+
+    for table in _LEGACY_LOW_SCORE_TABLES:
+        platform = "threads" if table == "threads_posts" else ("linkedin" if table == "linkedin_posts" else "facebook")
+        try:
+            res = execute_supabase_query(
+                lambda t=table: supabase.table(t)
+                .select("id, lead_score")
+                .gte("lead_score", min_score)
+                .lte("lead_score", max_score)
+                .execute()
+            )
+        except Exception as exc:
+            summary["errors"].append(f"{table}: {exc}")
+            continue
+
+        rows = res.data or []
+        summary["scanned"] += len(rows)
+
+        for row in rows:
+            post_id = row.get("id")
+            if not post_id:
+                continue
+            try:
+                review = get_review(post_id, platform)
+                result = _apply_auto_not_suitable(
+                    post_id,
+                    platform,
+                    review,
+                    reason=f"Tự động loại trừ do điểm AI thấp (lead_score={row.get('lead_score')} < 40)",
+                    action_type="auto_exclude_low_score",
+                    log_extra={"lead_score": row.get("lead_score")},
+                )
+                current_code = review.get("evaluation_code") if review else None
+                if current_code not in (None, "chua-danh-gia"):
+                    summary["skipped_already_reviewed"] += 1
+                elif result:
+                    summary["marked"] += 1
+            except Exception as exc:
+                summary["errors"].append(f"{table}#{post_id}: {exc}")
+
+    return summary
 

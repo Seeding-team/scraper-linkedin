@@ -272,10 +272,17 @@ def _fetch_posts(
 
     # Sort
     if sort == "lead_score_high":
-        # Mac dinh khi vao trang (yeu cau 2026-10-02): CHI hien bai diem cao (>=80) -
-        # bai diem thap/chua cham bi loai hoan toan khoi view nay - roi sap xep theo
+        # Mac dinh khi vao trang (yeu cau 2026-10-02): CHI hien bai diem cao (>=40) -
+        # bai diem thap da biet (khong NULL) bi loai khoi view nay - roi sap xep theo
         # THOI GIAN bai viet moi nhat truoc (khong phai theo diem).
-        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order("crawl_date", desc=True, nullsfirst=False)
+        # Viec B (2026-11-26): bai lead_score=NULL (CHUA tung duoc AI cham diem - vd luong
+        # cao nao đo chua/khong goi AI, hoac AI loi) KHONG duoc coi la "diem thap" -> KHONG
+        # an di, de FE hien kem nhan "Chua cham diem AI" (post-card.tsx) thay vi bi mat hoan
+        # toan khoi feed mac dinh trong khi van tinh vao "Tong bai" (xem bao cao dieu tra
+        # 2026-11-26: NULL >= 40 = NULL/false trong Postgres -> .gte() don thuan an ca NULL).
+        query = query.or_(
+            f"lead_score.gte.{_DEFAULT_MIN_LEAD_SCORE},lead_score.is.null"
+        ).order("crawl_date", desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
@@ -704,7 +711,12 @@ def _fetch_keyword_posts(
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if sort == "lead_score_high":
-        query = query.gte("lead_score", _DEFAULT_MIN_LEAD_SCORE).order(time_col, desc=True, nullsfirst=False)
+        # Viec B (2026-11-26): giong het nhanh facebook_posts/linkedin_posts o tren -
+        # KHONG an bai lead_score=NULL (chua tung duoc AI cham diem), chi an dung bai
+        # diem thap DA XAC DINH.
+        query = query.or_(
+            f"lead_score.gte.{_DEFAULT_MIN_LEAD_SCORE},lead_score.is.null"
+        ).order(time_col, desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":

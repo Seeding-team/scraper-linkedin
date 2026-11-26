@@ -16,6 +16,7 @@ import {
 } from "@/services/all-platform.service";
 import { getInitials } from "@/components/all-platform/layout/AllPlatformSidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { vnTodayIso } from "@/lib/vnDate";
 
 interface CallResultStatsWidgetProps {
   selectedCode: string | null;
@@ -78,7 +79,7 @@ function ratioBadgeClass(pctVal: number, hasDenominator: boolean): string {
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  return vnTodayIso();
 }
 
 function addDaysIso(baseIso: string, days: number): string {
