@@ -1,8 +1,10 @@
 "use client";
 
-import { useZaloCrawlerFlow } from "@/hooks/useZaloCrawlerFlow";
-import { ZaloDashboardView } from "./ZaloDashboardView";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useZaloCrawlerFlow } from "@/hooks/useZaloCrawlerFlow";
+import { ZaloAccountsModal } from "../chat/ZaloAccountsModal";
+import { ZaloDashboardView } from "./ZaloDashboardView";
 
 interface ZaloAccountsPageContentProps {
   onEnterChat?: (accountId: string) => void;
@@ -11,6 +13,8 @@ interface ZaloAccountsPageContentProps {
 export function ZaloAccountsPageContent({ onEnterChat }: ZaloAccountsPageContentProps = {}) {
   const flow = useZaloCrawlerFlow();
   const router = useRouter();
+  const [connectModalAccountId, setConnectModalAccountId] = useState<string | null>(null);
+  const [dismissedStartingOverlay, setDismissedStartingOverlay] = useState(false);
 
   function handleEnterChat(accountId: string) {
     if (onEnterChat) {
@@ -22,20 +26,50 @@ export function ZaloAccountsPageContent({ onEnterChat }: ZaloAccountsPageContent
     }
   }
 
+  function handleConnectAccount(accountId: string) {
+    setDismissedStartingOverlay(false);
+    setConnectModalAccountId(accountId);
+  }
+
+  function handleCloseStartingOverlay() {
+    // CHỈ đóng trạng thái UI và hủy tiến trình đợi Extension — TUYỆT ĐỐI KHÔNG gọi flow.endSession() / deleteZaloAccountFull()!
+    setDismissedStartingOverlay(true);
+    try {
+      void window.__zaloExtension?.cancelImport?.();
+    } catch {
+      // ignore if extension bridge is not loaded
+    }
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6 bg-white">
-      <ZaloDashboardView flow={flow} onEnterChat={handleEnterChat} />
+      <ZaloDashboardView
+        flow={flow}
+        onEnterChat={handleEnterChat}
+        onConnectAccount={handleConnectAccount}
+      />
 
-      {/* Modal "Đăng nhập lại" (Zalo tập trung — đăng nhập CHỈ còn qua Extension,
-          đã bỏ hẳn QR/Playwright, xem restartSession() trong useZaloCrawlerFlow.ts).
-          Chỉ còn hiện trạng thái đang kết nối Extension + cảnh báo nếu có. */}
-      {flow.isStartingSession && (
+      {/* Unified 3-Zone Zalo Connect Modal (Server QR + Extension 1-Chạm) */}
+      {connectModalAccountId !== null && (
+        <ZaloAccountsModal
+          initialAccountId={connectModalAccountId || null}
+          initialTab="qr"
+          onClose={() => setConnectModalAccountId(null)}
+          onChanged={() => {
+            void flow.refreshLoginStatus();
+          }}
+        />
+      )}
+
+      {/* Overlay đang kết nối Extension (chỉ hiện nếu flow.isStartingSession được kích hoạt trực tiếp) */}
+      {flow.isStartingSession && !dismissedStartingOverlay && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-[340px] rounded-xl bg-white p-6 shadow-2xl flex flex-col items-center">
+          <div className="w-full max-w-[360px] rounded-xl bg-white p-6 shadow-2xl flex flex-col items-center">
             <button
-              onClick={() => void flow.endSession()}
-              className="self-end -mt-2 -mr-2 mb-1 text-slate-400 hover:text-slate-600 text-sm font-bold"
-              title="Đóng"
+              type="button"
+              onClick={handleCloseStartingOverlay}
+              className="self-end -mt-2 -mr-2 mb-1 text-slate-400 hover:text-slate-600 text-sm font-bold cursor-pointer"
+              title="Đóng hộp thoại (không xóa tài khoản)"
             >
               ✕
             </button>
@@ -48,10 +82,16 @@ export function ZaloAccountsPageContent({ onEnterChat }: ZaloAccountsPageContent
                 </span>
               </div>
             </div>
-            <h3 className="text-base font-bold text-slate-800 mb-1.5 mt-2 text-center">Đăng nhập lại Zalo</h3>
-            <p className="text-slate-500 text-[11px] text-center mb-1 leading-relaxed">
-              Extension sẽ mở tab chat.zalo.me và tự lấy phiên đăng nhập hiện có.
+            <h3 className="text-base font-bold text-slate-800 mb-1.5 mt-2 text-center">
+              Đăng nhập lại Zalo
+            </h3>
+            <p className="text-slate-500 text-[11px] text-center mb-2 leading-relaxed">
+              Extension sẽ mở tab chat.zalo.me, trích xuất phiên và tự động đóng tab sau khi đồng
+              bộ xong.
             </p>
+            <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10.5px] font-medium text-amber-900 text-center">
+              ⚠️ Kết nối xong HÃY ĐÓNG TAB (✕), TUYỆT ĐỐI KHÔNG bấm Đăng xuất trên chat.zalo.me.
+            </div>
 
             {flow.warningMessage && (
               <p className="mt-3 text-[11px] text-red-600 text-center">{flow.warningMessage}</p>

@@ -21,7 +21,13 @@ from app.modules.all_platform.zalo.services.zca_api_bridge import (
     list_zca_groups,
     list_zca_friends,
 )
-from app.modules.all_platform.zalo.services.zca_auth_store import list_zca_auth_users, load_zca_auth
+from app.modules.all_platform.zalo.services.zca_auth_store import (
+    get_cached_zca_auth,
+    get_effective_proxy_url,
+    inspect_zca_auth_health,
+    list_zca_auth_users,
+    load_zca_auth,
+)
 
 # Cache tên từ Supabase để fallback khi ZCA không có (tránh hiển thị mã số).
 # Key: (user_id, group_id) → group_name
@@ -287,6 +293,43 @@ def _looks_like_auth_expired(text: Optional[str]) -> bool:
     return any(marker in lowered for marker in _AUTH_EXPIRED_MARKERS)
 
 
+WEB_SLOT_CONFLICT_MESSAGE = (
+    "Phát hiện đang mở song song chat.zalo.me ở trình duyệt — "
+    "hãy ĐÓNG tab chat.zalo.me (không bấm Đăng xuất) rồi bấm Kết nối lại."
+)
+
+_WEB_SLOT_CONFLICT_MARKERS = (
+    "code=3000",
+    "code=3003",
+    "cmd=3000",
+    "cmd=3003",
+    "duplicateconnection",
+    "duplicate connection",
+    "duplicate_connection",
+    "kickconnection",
+    "another connection is opened",
+    "overlimit",
+    "over limit",
+)
+
+
+def _is_web_slot_conflict(
+    code: Any = None,
+    reason: Optional[str] = None,
+    text: Optional[str] = None,
+) -> bool:
+    if code is not None:
+        try:
+            if int(code) in (3000, 3003):
+                return True
+        except (ValueError, TypeError):
+            pass
+    combined = f"{reason or ''} {text or ''}".lower()
+    if not combined.strip():
+        return False
+    return any(marker in combined for marker in _WEB_SLOT_CONFLICT_MARKERS)
+
+
 def _backend_root() -> Path:
     return Path(__file__).resolve().parents[5]
 
@@ -411,6 +454,10 @@ class ListenerState:
     messages_seen: int = 0
     restart_attempt: int = 0
     auth_expired: bool = False
+    conflict_type: Optional[str] = None
+    last_close_code: Optional[int] = None
+    last_exit_code: Optional[int] = None
+    conflict_notified: bool = False
     group_names: Dict[str, str] = field(default_factory=dict)
     reconnect_sync_task: Optional[asyncio.Task] = None
     backfill_task: Optional[asyncio.Task] = None
@@ -443,6 +490,10 @@ class ZcaPersistentListenerManager:
             state.connected = False
             state.last_error = None
             state.auth_expired = False
+            state.conflict_type = None
+            state.last_close_code = None
+            state.last_exit_code = None
+            state.conflict_notified = False
             state.restart_attempt = 0
             self._states[user_id] = state
             state.task = asyncio.create_task(self._run_supervised(state))
@@ -491,7 +542,11 @@ class ZcaPersistentListenerManager:
                 await asyncio.sleep(30.0)
                 for user_id in await list_zca_auth_users():
                     st = self.status(user_id)
-                    if not st.get("running") and not st.get("auth_expired"):
+                    if (
+                        not st.get("running")
+                        and not st.get("auth_expired")
+                        and st.get("conflict_type") != "web_slot_conflict"
+                    ):
                         auth = await load_zca_auth(user_id)
                         if auth:
                             logger.info(f"ZCA Watchdog: auto-restarting disconnected listener for user={user_id}")
@@ -514,6 +569,9 @@ class ZcaPersistentListenerManager:
 
     def status(self, user_id: str) -> Dict[str, Any]:
         state = self._states.get(user_id)
+        health = inspect_zca_auth_health(
+            (state.auth if state and state.auth else None) or get_cached_zca_auth(user_id)
+        )
         if not state:
             return {
                 "user_id": user_id,
@@ -524,6 +582,8 @@ class ZcaPersistentListenerManager:
                 "last_error": None,
                 "messages_seen": 0,
                 "auth_expired": False,
+                "conflict_type": None,
+                **health,
             }
         running = False
         if state.proc and state.proc.returncode is None:
@@ -545,6 +605,8 @@ class ZcaPersistentListenerManager:
             "last_error": state.last_error,
             "messages_seen": state.messages_seen,
             "auth_expired": state.auth_expired,
+            "conflict_type": state.conflict_type,
+            **health,
         }
 
     def get_cached_messages(self, user_id: str, group_id: str, limit: int = 500) -> List[Message]:
@@ -871,25 +933,69 @@ class ZcaPersistentListenerManager:
         state.proc = None
         state.pid = None
 
+    async def _notify_web_slot_conflict(self, state: ListenerState, code: Any = None) -> None:
+        state.connected = False
+        state.conflict_type = "web_slot_conflict"
+        state.last_error = WEB_SLOT_CONFLICT_MESSAGE
+        if state.conflict_notified:
+            return
+        state.conflict_notified = True
+        logger.warning(
+            f"ZCA web slot conflict detected for user={state.user_id} code={code}: "
+            f"{WEB_SLOT_CONFLICT_MESSAGE}"
+        )
+        try:
+            from app.modules.all_platform.zalo.services.message_events import (
+                publish_auth_expired,
+                publish_zalo_message_event,
+            )
+
+            await publish_auth_expired(state.user_id, WEB_SLOT_CONFLICT_MESSAGE)
+            await publish_zalo_message_event(
+                state.user_id,
+                {
+                    "type": "web_slot_conflict",
+                    "account_id": state.user_id,
+                    "conflict_type": "web_slot_conflict",
+                    "code": code,
+                    "message": WEB_SLOT_CONFLICT_MESSAGE,
+                },
+            )
+        except Exception as exc:
+            logger.warning(f"Could not publish web_slot_conflict SSE for user={state.user_id}: {exc}")
+
     async def _run_supervised(self, state: ListenerState) -> None:
         while state.desired:
             try:
                 await self._run_once(state)
                 if not state.desired:
                     return
-                state.last_error = "listener_exited"
+                if state.conflict_type == "web_slot_conflict":
+                    state.desired = False
+                    await self._notify_web_slot_conflict(
+                        state, code=state.last_close_code or state.last_exit_code
+                    )
+                    return
+                if not state.auth_expired:
+                    state.last_error = "listener_exited"
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 state.connected = False
                 state.last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(f"ZCA listener crashed for user={state.user_id}: {exc}")
+                if _is_web_slot_conflict(text=str(exc)):
+                    state.desired = False
+                    await self._notify_web_slot_conflict(state)
+                    return
                 if _looks_like_auth_expired(str(exc)):
                     state.auth_expired = True
+                    state.conflict_type = "logged_out"
 
-            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại qua Chrome Extension.
+            # Cookie hết hạn: dừng hẳn, không restart vô ích. Chờ user đăng nhập lại qua QR / Extension.
             if state.auth_expired:
                 state.desired = False
+                state.conflict_type = state.conflict_type or "logged_out"
                 reason = state.last_error or "unknown"
                 logger.warning(
                     f"ZCA session expired for user={state.user_id} — stopping listener until re-login (QR)"
@@ -948,6 +1054,13 @@ class ZcaPersistentListenerManager:
             str(int(getattr(settings, "zca_old_message_interval_ms", 60000))),
         ]
 
+        proc_env = {**os.environ}
+        proxy_url = get_effective_proxy_url(state.auth)
+        if proxy_url:
+            proc_env["ZALO_PROXY_URL"] = proxy_url
+        else:
+            proc_env.pop("ZALO_PROXY_URL", None)
+
         if sys.platform == "win32":
             from app.modules.all_platform.zalo.services.win_subprocess import WindowsSubprocessWrapper
             stdin_payload = json.dumps(
@@ -956,7 +1069,7 @@ class ZcaPersistentListenerManager:
             proc = WindowsSubprocessWrapper(
                 cmd,
                 cwd=str(_backend_root()),
-                env={**os.environ},
+                env=proc_env,
                 stdin_input=stdin_payload,
             )
             state.proc = proc
@@ -968,7 +1081,7 @@ class ZcaPersistentListenerManager:
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env={**os.environ},
+                env=proc_env,
             )
             state.proc = proc
             state.pid = proc.pid
@@ -1025,7 +1138,18 @@ class ZcaPersistentListenerManager:
                         raise
             except Exception:
                 pass
-            await proc.wait()
+            exit_code = await proc.wait()
+            state.last_exit_code = exit_code
+            if (
+                state.desired
+                and exit_code == 5
+                and (
+                    state.conflict_type == "web_slot_conflict"
+                    or state.last_close_code in (None, 3000, 3003)
+                    or _is_web_slot_conflict(code=state.last_close_code, text=state.last_error)
+                )
+            ):
+                await self._notify_web_slot_conflict(state, code=state.last_close_code or exit_code)
         finally:
             stderr_task.cancel()
             try:
@@ -1153,6 +1277,9 @@ class ZcaPersistentListenerManager:
             state.connected = True
             state.restart_attempt = 0
             state.last_error = None
+            state.conflict_type = None
+            state.conflict_notified = False
+            state.last_close_code = None
             if event_name == "connected":
                 logger.info(f"ZCA listener connected user={state.user_id} pid={state.pid}")
                 await self._sync_recent_groups_after_connect(state)
@@ -1162,14 +1289,24 @@ class ZcaPersistentListenerManager:
             if event_name != "stopping":
                 code = event.get("code")
                 reason = str(event.get("reason") or "").strip()
-                state.last_error = f"socket_{event_name}: code={code} reason={reason}"[:1000]
-                logger.warning(f"ZCA listener socket {event_name} user={state.user_id}: {state.last_error}")
+                try:
+                    state.last_close_code = int(code) if code is not None else None
+                except (ValueError, TypeError):
+                    state.last_close_code = None
+                if _is_web_slot_conflict(code=code, reason=reason):
+                    await self._notify_web_slot_conflict(state, code=code)
+                else:
+                    state.last_error = f"socket_{event_name}: code={code} reason={reason}"[:1000]
+                    logger.warning(f"ZCA listener socket {event_name} user={state.user_id}: {state.last_error}")
             return
         if event_name in {"error", "fatal", "login_failed"}:
             detail = event.get("error_detail") or event.get("error") or event
             state.last_error = json.dumps(detail, ensure_ascii=False)[:1000]
-            if _looks_like_auth_expired(state.last_error):
+            if _is_web_slot_conflict(text=state.last_error):
+                await self._notify_web_slot_conflict(state)
+            elif _looks_like_auth_expired(state.last_error):
                 state.auth_expired = True
+                state.conflict_type = "logged_out"
             logger.warning(f"ZCA listener event error user={state.user_id}: {state.last_error}")
             return
         if event_name == "message":
@@ -1739,5 +1876,9 @@ def reset_listener_auth_expired(user_id: str) -> None:
     state = _MANAGER._states.get(user_id)
     if state:
         state.auth_expired = False
+        state.conflict_type = None
+        state.last_close_code = None
+        state.last_exit_code = None
+        state.conflict_notified = False
 
 

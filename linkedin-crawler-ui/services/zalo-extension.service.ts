@@ -1,22 +1,23 @@
 /**
- * Helper gọi Chrome Extension để lấy Zalo cookies + import session.
+ * Helper gọi Chrome Extension để lấy Zalo cookies + import session,
+ * và gọi API Server-Side Zalo QR Login (`/api/all-platform/zalo/auth/qr/*`).
  *
- * Cách hoạt động (qua Content Script Bridge):
+ * Cách hoạt động Extension (qua Content Script Bridge):
  *   1. Web page gọi: window.postMessage({ __zaloExt: true, type, requestId, data }, "*")
- *   2. content-script-bridge.js (inject trên localhost:3000 + markeeai.com) nhận,
- *      forward tới background: chrome.runtime.sendMessage(...)
+ *   2. content-script-bridge.js nhận và forward tới background: chrome.runtime.sendMessage(...)
  *   3. Background respond → Bridge postMessage về web với cùng requestId.
- *
- * Tại sao KHÔNG gọi trực tiếp chrome.runtime.sendMessage từ web page:
- *   - Chrome chặn vì web page không phải extension context.
- *   - Chỉ content script (chạy trong extension) mới gọi được.
- *
- * Extension ID: cách detect tự động qua window.__zaloExtensionAvailable (set bởi bridge).
  */
 
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 
-declare const window: any;
+interface ZaloBridgeWindow extends Window {
+  __zaloExtensionAvailable?: boolean;
+}
+
+function getBridgeWindow(): ZaloBridgeWindow | null {
+  if (typeof window === "undefined") return null;
+  return window as ZaloBridgeWindow;
+}
 
 export interface ZaloCookie {
   key: string;
@@ -44,11 +45,21 @@ export interface ImportZaloSessionParams {
   owner_id?: string;
   backend_url?: string;
   api_key?: string;
+  login_timeout_ms?: number;
+}
+
+export interface ImportZaloSessionBackendResult {
+  ok?: boolean;
+  status?: string;
+  session_id?: string;
+  detail?: unknown;
+  message?: string;
+  [key: string]: unknown;
 }
 
 export interface ImportZaloSessionResult {
   status: number;
-  backend: any;
+  backend: ImportZaloSessionBackendResult;
   cookies_count: number;
   keys: string[];
 }
@@ -86,6 +97,64 @@ export interface SyncZaloDomMessagesResult {
   };
 }
 
+// ── Zalo Server-Side QR Login Contracts (@zalo-session-be) ───────────────────
+
+export type ZaloQrSessionStatus =
+  | "starting"
+  | "qr_ready"
+  | "scanned"
+  | "confirmed"
+  | "expired"
+  | "declined"
+  | "cancelled"
+  | "error";
+
+export interface ZaloQrScannedUser {
+  display_name?: string | null;
+  avatar?: string | null;
+}
+
+export interface StartZaloQrLoginParams {
+  account_id?: string;
+  label?: string;
+  proxy_url?: string | null;
+}
+
+export interface ZaloQrStartResponse {
+  qr_session_id: string;
+  status: ZaloQrSessionStatus;
+  qr_data_url?: string | null;
+  account_id?: string | null;
+  attempt: number;
+  max_attempts: number;
+  expires_in_s: number;
+  has_proxy: boolean;
+  proxy_masked?: string | null;
+  error?: string | null;
+}
+
+export interface ZaloQrStatusResponse {
+  qr_session_id: string;
+  status: ZaloQrSessionStatus;
+  qr_data_url?: string | null;
+  scanned_user?: ZaloQrScannedUser | null;
+  account_id?: string | null;
+  display_name?: string | null;
+  avatar?: string | null;
+  attempt: number;
+  max_attempts: number;
+  expires_in_s: number;
+  has_proxy?: boolean;
+  proxy_masked?: string | null;
+  error?: string | null;
+}
+
+export interface ZaloQrCancelResponse {
+  ok: boolean;
+  qr_session_id: string;
+  status: "cancelled" | string;
+}
+
 export class ZaloExtensionError extends Error {
   readonly code: string;
   constructor(code: string, message: string) {
@@ -99,12 +168,24 @@ function makeExtensionMissingError(): ZaloExtensionError {
   return new ZaloExtensionError(
     "extension_missing",
     "Chưa cài Chrome Extension lấy Zalo cookies. Hãy:\n" +
-      "  1. Mở chrome://extensions/\n" +
-      "  2. Bật Developer mode\n" +
+      "  1. Tải file /extension-login-zalo.zip và giải nén\n" +
+      "  2. Mở chrome://extensions/ → bật Developer mode\n" +
       "  3. Bấm 'Load unpacked' → chọn thư mục extension-login-zalo\n" +
-      "  4. Reload lại trang web này.\n" +
-      "Sau đó bấm 'Đăng nhập lại' lần nữa.",
+      "  4. Reload lại trang web này rồi thử kết nối lại.",
   );
+}
+
+interface BridgePostPayload {
+  __zaloExt?: boolean;
+  type?: string;
+  requestId?: string;
+  installed?: boolean;
+  success?: boolean;
+  error?: string;
+  data?: {
+    installed?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 /**
@@ -112,44 +193,37 @@ function makeExtensionMissingError(): ZaloExtensionError {
  * Bridge tự set window.__zaloExtensionAvailable = true khi inject xong.
  */
 export async function isZaloExtensionAvailable(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  // Nhanh: check flag do bridge set
-  if (window.__zaloExtensionAvailable === true) {
+  const win = getBridgeWindow();
+  if (!win) return false;
+  if (win.__zaloExtensionAvailable === true) {
     return true;
   }
-  // Chậm: gửi PING qua postMessage và đợi PONG
   return new Promise<boolean>((resolve) => {
-    if (typeof window === "undefined") {
-      resolve(false);
-      return;
-    }
     const requestId = `ping-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== window) return;
-      const data = event.data;
+      if (event.source !== win) return;
+      const data = event.data as BridgePostPayload | null | undefined;
       if (!data || data.__zaloExt !== true) return;
       const isPong = data.type === "PONG" && data.requestId === requestId;
       const isBridgeResponse = data.type === "RESPONSE" && data.requestId === requestId;
       if (isPong || isBridgeResponse) {
-        window.removeEventListener("message", onMessage);
-        window.__zaloExtensionAvailable = true;
-        resolve(data.installed === true || data.data?.installed === true || data.success === true);
+        win.removeEventListener("message", onMessage);
+        win.__zaloExtensionAvailable = true;
+        resolve(
+          data.installed === true || data.data?.installed === true || data.success === true,
+        );
       }
     };
-    window.addEventListener("message", onMessage);
+    win.addEventListener("message", onMessage);
     try {
-      window.postMessage(
-        { __zaloExt: true, type: "PING", requestId },
-        "*",
-      );
-    } catch (e) {
-      window.removeEventListener("message", onMessage);
+      win.postMessage({ __zaloExt: true, type: "PING", requestId }, "*");
+    } catch {
+      win.removeEventListener("message", onMessage);
       resolve(false);
       return;
     }
-    // Timeout 1s
     setTimeout(() => {
-      window.removeEventListener("message", onMessage);
+      win.removeEventListener("message", onMessage);
       resolve(false);
     }, 1000);
   });
@@ -158,25 +232,28 @@ export async function isZaloExtensionAvailable(): Promise<boolean> {
 /**
  * Gửi message tới extension qua postMessage bridge, đợi response.
  */
-async function sendViaBridge<T = any>(type: string, data?: any, timeoutMs = 30000): Promise<T> {
-  if (typeof window === "undefined") {
+async function sendViaBridge<T = unknown>(
+  type: string,
+  data?: Record<string, unknown>,
+  timeoutMs = 30000,
+): Promise<T> {
+  const win = getBridgeWindow();
+  if (!win) {
     throw makeExtensionMissingError();
   }
-  // Quick check
-  if (window.__zaloExtensionAvailable !== true) {
-    // Thử ping lại
+  if (win.__zaloExtensionAvailable !== true) {
     const ok = await isZaloExtensionAvailable();
     if (!ok) throw makeExtensionMissingError();
   }
   const requestId = `${type}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return new Promise<T>((resolve, reject) => {
     const onMessage = (event: MessageEvent) => {
-      if (event.source !== window) return;
-      const payload = event.data;
+      if (event.source !== win) return;
+      const payload = event.data as BridgePostPayload | null | undefined;
       if (!payload || payload.__zaloExt !== true) return;
       if (payload.type !== "RESPONSE") return;
       if (payload.requestId !== requestId) return;
-      window.removeEventListener("message", onMessage);
+      win.removeEventListener("message", onMessage);
       clearTimeout(timer);
       if (payload.success) {
         resolve(payload.data as T);
@@ -184,9 +261,9 @@ async function sendViaBridge<T = any>(type: string, data?: any, timeoutMs = 3000
         reject(new ZaloExtensionError("extension_error", payload.error || "Extension error"));
       }
     };
-    window.addEventListener("message", onMessage);
+    win.addEventListener("message", onMessage);
     const timer = setTimeout(() => {
-      window.removeEventListener("message", onMessage);
+      win.removeEventListener("message", onMessage);
       reject(
         new ZaloExtensionError(
           "timeout",
@@ -195,12 +272,9 @@ async function sendViaBridge<T = any>(type: string, data?: any, timeoutMs = 3000
       );
     }, timeoutMs);
     try {
-      window.postMessage(
-        { __zaloExt: true, type, requestId, data: data || {} },
-        "*",
-      );
-    } catch (e) {
-      window.removeEventListener("message", onMessage);
+      win.postMessage({ __zaloExt: true, type, requestId, data: data || {} }, "*");
+    } catch {
+      win.removeEventListener("message", onMessage);
       clearTimeout(timer);
       reject(makeExtensionMissingError());
     }
@@ -208,7 +282,7 @@ async function sendViaBridge<T = any>(type: string, data?: any, timeoutMs = 3000
 }
 
 /**
- * Lấy cookies Zalo từ extension. Trả về null nếu extension chưa cài.
+ * Lấy cookies Zalo từ extension.
  */
 export async function getZaloCookiesFromExtension(): Promise<ZaloCookiesFromExtension> {
   return await sendViaBridge<ZaloCookiesFromExtension>("GET_ZALO_COOKIES", undefined, 20000);
@@ -227,15 +301,13 @@ export async function checkZaloLoginViaExtension(): Promise<{
 }
 
 /**
- * Gọi extension import session: extension tự lấy cookies + gửi lên backend.
+ * Gọi extension import session: extension tự mở tab chat.zalo.me, chờ đăng nhập (tối đa 90s),
+ * trích xuất cookies, gửi lên backend và tự động đóng tab sau khi đồng bộ xong.
+ * Timeout 115000ms (> 90000ms của extension) để không cắt ngang trước khi extension hoàn tất.
  */
 export async function importZaloSessionViaExtension(
   params: ImportZaloSessionParams,
 ): Promise<ImportZaloSessionResult> {
-  // Extension tự chờ cookie xuất hiện tới 50s (đủ thời gian quét QR nếu chưa
-  // đăng nhập) rồi mới POST backend + trả response — timeout ở đây phải lớn
-  // hơn hẳn 50s đó (không phải bằng/nhỏ hơn) để không cắt ngang khi extension
-  // gần xong.
   return await sendViaBridge<ImportZaloSessionResult>(
     "IMPORT_ZALO_SESSION",
     {
@@ -243,7 +315,7 @@ export async function importZaloSessionViaExtension(
       backend_url: params.backend_url || API_BASE_URL,
       api_key: params.api_key ?? API_KEY,
     },
-    70000,
+    115000,
   );
 }
 
@@ -262,5 +334,116 @@ export async function syncZaloDomMessagesViaExtension(
       api_key: API_KEY,
     },
     600000,
+  );
+}
+
+// ── Zalo Server-Side QR API Helpers ──────────────────────────────────────────
+
+function buildZaloQrHeaders(accountId?: string): HeadersInit {
+  const callerEmail =
+    typeof window !== "undefined" ? window.localStorage?.getItem("app_user_email") : null;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (API_KEY) headers["x-api-key"] = API_KEY;
+  if (callerEmail) headers["X-Caller-Email"] = callerEmail;
+  if (accountId) headers["X-User-ID"] = accountId;
+  return headers;
+}
+
+async function requestZaloQrJson<T>(
+  path: string,
+  init: RequestInit,
+  accountId?: string,
+  timeoutMs = 30000,
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      credentials: "include",
+      headers: {
+        ...buildZaloQrHeaders(accountId),
+        ...(init.headers || {}),
+      },
+      signal: init.signal ?? controller.signal,
+    });
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error(`Yêu cầu máy chủ Zalo QR quá thời gian (${Math.round(timeoutMs / 1000)}s).`);
+    }
+    throw err instanceof Error ? err : new Error("Không thể kết nối máy chủ Zalo QR.");
+  } finally {
+    globalThis.clearTimeout(timer);
+  }
+
+  const rawText = await response.text();
+  let parsed: Record<string, unknown> | null = null;
+  if (rawText) {
+    try {
+      parsed = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (!response.ok) {
+    const detail =
+      (parsed &&
+        (typeof parsed.detail === "string"
+          ? parsed.detail
+          : typeof parsed.error === "string"
+            ? parsed.error
+            : typeof parsed.message === "string"
+              ? parsed.message
+              : null)) ||
+      (rawText.trim() || `Lỗi máy chủ Zalo QR (${response.status})`);
+    throw new Error(detail);
+  }
+
+  return (parsed ?? {}) as T;
+}
+
+export async function startZaloQrLogin(
+  params?: StartZaloQrLoginParams,
+): Promise<ZaloQrStartResponse> {
+  const body: Record<string, unknown> = {};
+  if (params?.account_id?.trim()) body.account_id = params.account_id.trim();
+  if (params?.label?.trim()) body.label = params.label.trim();
+  if (params?.proxy_url !== undefined) body.proxy_url = params.proxy_url;
+
+  return await requestZaloQrJson<ZaloQrStartResponse>(
+    "/api/all-platform/zalo/auth/qr/start",
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+    params?.account_id,
+    35000,
+  );
+}
+
+export async function getZaloQrStatus(qrSessionId: string): Promise<ZaloQrStatusResponse> {
+  return await requestZaloQrJson<ZaloQrStatusResponse>(
+    `/api/all-platform/zalo/auth/qr/status/${encodeURIComponent(qrSessionId)}`,
+    {
+      method: "GET",
+      cache: "no-store",
+    },
+    undefined,
+    15000,
+  );
+}
+
+export async function cancelZaloQrLogin(qrSessionId: string): Promise<ZaloQrCancelResponse> {
+  return await requestZaloQrJson<ZaloQrCancelResponse>(
+    `/api/all-platform/zalo/auth/qr/cancel/${encodeURIComponent(qrSessionId)}`,
+    {
+      method: "POST",
+    },
+    undefined,
+    10000,
   );
 }

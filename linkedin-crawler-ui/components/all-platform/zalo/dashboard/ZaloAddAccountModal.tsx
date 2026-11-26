@@ -64,8 +64,8 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
   // Form states
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
-  const [ownerId, setOwnerId] = useState("");
-  const [ownerName, setOwnerName] = useState("");
+  const [ownerId, setOwnerId] = useState(() => user?.id || "");
+  const [ownerName, setOwnerName] = useState(() => user?.name || user?.email || "");
   const [simLocation, setSimLocation] = useState("owner");
   const [simLocationDetail, setSimLocationDetail] = useState("");
 
@@ -97,13 +97,25 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
     // Load staff
     allPlatformUsersService
       .getAllProfiles()
-      .then((res: any) => {
+      .then((res) => {
         if (res.success && Array.isArray(res.data) && res.data.length > 0) {
-          const list = res.data.map((u: any) => ({
-            id: u.id || u.user_id || u.email,
-            name: u.name || u.display_name || u.email,
-            email: u.email || "",
-          }));
+          const list: UserOption[] = res.data.map((u) => {
+            const rec = u as unknown as Record<string, unknown>;
+            const emailStr = typeof rec.email === "string" ? rec.email : "";
+            const idStr =
+              (typeof rec.id === "string" && rec.id) ||
+              (typeof rec.user_id === "string" && rec.user_id) ||
+              emailStr;
+            const nameStr =
+              (typeof rec.name === "string" && rec.name) ||
+              (typeof rec.display_name === "string" && rec.display_name) ||
+              emailStr;
+            return {
+              id: idStr,
+              name: nameStr,
+              email: emailStr,
+            };
+          });
           setStaffList(list);
         } else {
           setStaffList([
@@ -120,12 +132,6 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
           { id: "u3", name: "Lê Thu Hà", email: "halt@markeeai.com" },
         ]);
       });
-
-    // Default owner to current logged-in user
-    if (user?.id) {
-      setOwnerId(user.id);
-      setOwnerName(user.name || user.email || "");
-    }
 
     // Load categories
     allPlatformCategoriesService
@@ -146,11 +152,22 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
       .getAll("facebook")
       .then((res) => {
         if (res.success && Array.isArray(res.data) && res.data.length > 0) {
-          const liveGroups = res.data.slice(0, 30).map((g) => ({
-            id: g.id,
-            name: (g as any).group_name || (g as any).name || "Nhóm",
-            domain: (g as any).category_id || (g as any).intent || "it",
-          }));
+          const liveGroups: GroupItem[] = res.data.slice(0, 30).map((g) => {
+            const rec = g as unknown as Record<string, unknown>;
+            const gName =
+              (typeof rec.group_name === "string" && rec.group_name) ||
+              (typeof rec.name === "string" && rec.name) ||
+              "Nhóm";
+            const gDomain =
+              (typeof rec.category_id === "string" && rec.category_id) ||
+              (typeof rec.intent === "string" && rec.intent) ||
+              "it";
+            return {
+              id: g.id,
+              name: gName,
+              domain: gDomain,
+            };
+          });
           setGroups((prev) => [...liveGroups, ...prev.filter((p) => !liveGroups.some((l) => l.id === p.id))]);
         }
       })
@@ -303,7 +320,7 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
               <h2 className="text-xl font-bold text-foreground">Thêm tài khoản Zalo</h2>
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Thư viện Markee Seeding · Demo
+                Markee Seeding · Quản lý Zalo
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -626,7 +643,7 @@ export function ZaloAddAccountModal({ open, onClose, onSubmit }: ZaloAddAccountM
           <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 text-blue-900 text-xs leading-relaxed flex items-start gap-2.5">
             <MaterialIcon name="info" className="text-blue-600 text-[18px] shrink-0 mt-0.5" />
             <div>
-              <b>Danh mục minh họa mô phỏng dữ liệu Markee Seeding:</b> Khi tích hợp thật, hệ thống sẽ lấy ID lĩnh vực và ID Group từ thư viện chung, áp dụng phân quyền và tự động cập nhật tên nhóm. Không nhập mật khẩu hoặc OTP tại đây.
+              <b>Lưu ý bảo mật:</b> Biểu mẫu này chỉ khởi tạo hồ sơ quản lý tài khoản, phân công nhân sự và nhóm phụ trách (không nhập mật khẩu hoặc OTP tại đây). Sau khi thêm, bấm <b>Kết nối ngay</b> để quét mã QR trực tiếp hoặc dùng Extension 1-chạm.
             </div>
           </div>
 

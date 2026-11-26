@@ -58,6 +58,7 @@ const ALLOWED_SENDER_ORIGINS = new Set([
   "https://auto-fb.zenithglobal.dev",
   "https://seeding.zenithglobal.dev",
   "https://seeding.markeeai.com",
+  "https://dev.seeding.markeeai.com",
 ]);
 
 function isTrustedSender(sender) {
@@ -114,9 +115,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleAction(action, data) {
   logStep("action.start", { action });
 
-  // Mutex: chỉ cho phép 1 action IMPORT_ZALO_SESSION chạy tại một thời điểm
+  // Mutex: chỉ cho phép 1 action IMPORT_ZALO_SESSION / AUTO_IMPORT_ON_LOGIN chạy tại một thời điểm
   // để tránh 2 request cùng lúc đóng tab chồng lên nhau
-  if (action === "IMPORT_ZALO_SESSION") {
+  if (action === "IMPORT_ZALO_SESSION" || action === "AUTO_IMPORT_ON_LOGIN") {
     if (_importInProgress) {
       const msg = "Another IMPORT_ZALO_SESSION is already in progress. Please wait for it to finish.";
       logStep("action.rejected_concurrent", { action, reason: msg });
@@ -184,6 +185,29 @@ function getTab(tabId) {
       if (err) reject(new Error(err));
       else resolve(tab);
     });
+  });
+}
+
+function removeTab(tabId) {
+  return new Promise((resolve) => {
+    if (!tabId) {
+      resolve(false);
+      return;
+    }
+    try {
+      chrome.tabs.remove(tabId, () => {
+        const err = chromeLastError();
+        if (err) {
+          console.warn("[zalo-extension] could not close Zalo tab", tabId, err);
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    } catch (error) {
+      console.warn("[zalo-extension] removeTab threw", tabId, error);
+      resolve(false);
+    }
   });
 }
 
@@ -659,22 +683,47 @@ function backendError(result, fallback) {
 }
 
 // Ưu tiên imei content script tìm được từ localStorage Zalo (đúng nhất, do
-// chính Zalo cấp). Nếu không tìm được, dùng 1 giá trị TỰ SINH nhưng LƯU LẠI
-// trong chrome.storage.local để dùng lại y nguyên cho mọi lần sau — tuyệt đối
-// không sinh UUID random mới mỗi lần gọi (đó là bug cũ ở backend, xem comment
-// trong importZaloSession).
-async function getStableImei(contentScriptImei) {
+// chính Zalo cấp). Lưu riêng theo từng accountId trong cachedImeiByAccount[accountId]
+// (kèm fallback tương thích ngược cachedImei) để nhiều tài khoản Zalo trên cùng
+// trình duyệt KHÔNG ghi đè IMEI của nhau.
+async function getStableImei(contentScriptImei, accountId = "default") {
+  const key = String(accountId || "default").trim().toLowerCase() || "default";
+  const stored = await chrome.storage.local.get(["cachedImeiByAccount", "cachedImei"]);
+  const map =
+    stored && typeof stored.cachedImeiByAccount === "object" && stored.cachedImeiByAccount !== null
+      ? { ...stored.cachedImeiByAccount }
+      : {};
+
   if (contentScriptImei) {
-    await chrome.storage.local.set({ cachedImei: contentScriptImei });
+    map[key] = contentScriptImei;
+    await chrome.storage.local.set({
+      cachedImeiByAccount: map,
+      cachedImei: contentScriptImei,
+    });
     return contentScriptImei;
   }
-  const stored = await chrome.storage.local.get(["cachedImei"]);
-  if (stored.cachedImei) return stored.cachedImei;
+
+  if (map[key]) {
+    return map[key];
+  }
+
+  // Fallback tương thích ngược từ bản cũ (1 cachedImei duy nhất) nếu map trống hoặc default
+  if (stored && stored.cachedImei && (key === "default" || Object.keys(map).length === 0)) {
+    map[key] = stored.cachedImei;
+    await chrome.storage.local.set({ cachedImeiByAccount: map });
+    return stored.cachedImei;
+  }
+
   const generated =
     typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  await chrome.storage.local.set({ cachedImei: generated });
+  map[key] = generated;
+  const nextStorage = { cachedImeiByAccount: map };
+  if (key === "default" || !stored?.cachedImei) {
+    nextStorage.cachedImei = generated;
+  }
+  await chrome.storage.local.set(nextStorage);
   return generated;
 }
 
@@ -682,10 +731,12 @@ async function importZaloSession(data) {
   const accountId = String(data.account_id || data.user_id || "default").trim() || "default";
   const backendUrl = data.backend_url || DEFAULT_BACKEND_URL;
   const apiKey = data.api_key || "";
+  const keepTab = data.keepTab === true || data.keep_tab === true;
 
-  logStep("import.start", { accountId, backendUrl });
+  logStep("import.start", { accountId, backendUrl, keepTab });
 
   let tabIdToClose = null;
+  let tabClosed = false;
   try {
     // 1. Mở (hoặc tái dùng) tab Zalo Web, đợi tab load xong — bounded ~30s,
     //    không phải poll chờ "đăng nhập xong" (đã bỏ hoàn toàn hình thức đó).
@@ -694,8 +745,7 @@ async function importZaloSession(data) {
     lastZaloTabId = tabIdToClose;
 
     // 2. Chờ cookie xuất hiện — nếu user CHƯA đăng nhập, tab vẫn mở để họ kịp
-    //    quét QR (bounded ~50s, không phải chờ vô hạn). Không yêu cầu đúng
-    //    tên key cụ thể — hễ có ÍT NHẤT 1 cookie zalo.me là coi như đủ.
+    //    quét QR (bounded ~90s, không phải chờ vô hạn).
     const cookies = await waitForZaloLoginCookies(data.login_timeout_ms || 90000);
     const context = tabIdToClose ? await getZaloPageContext(tabIdToClose) : {};
     logStep("import.cookies_grabbed", { count: cookies.length, keys: cookieKeys(cookies) });
@@ -706,15 +756,9 @@ async function importZaloSession(data) {
       );
     }
 
-    // imei PHẢI ổn định qua nhiều lần gọi — Zalo coi zpsid/zpw_sek là "session
-    // key" gắn với 1 imei cụ thể lúc phát hành; nếu mỗi lần import gửi 1 imei
-    // KHÁC nhau (trước đây: content script cố đoán imei từ localStorage,
-    // thường không tìm được -> backend tự sinh uuid.uuid4() MỚI mỗi lần gọi),
-    // Zalo sẽ luôn từ chối với "session key improperly submitted" dù cookie
-    // đúng 100% - đây là nguyên nhân thực tế của lỗi login_failed lặp lại,
-    // không phải lỗi đơn vị thời gian (đã kiểm tra kỹ: normalizeCookieJar
-    // *1000 đúng, tough-cookie parse đúng, giờ hệ thống container đúng).
-    const imei = await getStableImei(context.imei);
+    // imei PHẢI ổn định theo từng account qua nhiều lần gọi — Zalo coi zpsid/zpw_sek
+    // là "session key" gắn với đúng 1 imei lúc phát hành.
+    const imei = await getStableImei(context.imei, accountId);
 
     const body = {
       account_id: accountId,
@@ -737,16 +781,22 @@ async function importZaloSession(data) {
 
     logStep("import.success", { status: result.status, cookiesCount: cookies.length });
 
+    // Sau khi backend nhận session (200 OK), TỰ ĐỘNG ĐÓNG tab chat.zalo.me
+    // (trừ khi caller truyền keepTab === true) để tránh Zalo kick WebSocket
+    // cmd=3000 (tranh 1 slot Web) và tránh người dùng bấm nhầm Đăng xuất.
+    if (tabIdToClose && !keepTab) {
+      tabClosed = await removeTab(tabIdToClose);
+      logStep("import.tab_closed", { tabId: tabIdToClose, closed: tabClosed });
+    }
+
     return {
       status: result.status,
       backend: result.data,
       cookies_count: cookies.length,
       keys: cookieKeys(cookies),
+      tab_closed: tabClosed,
     };
   } finally {
-    // KHÔNG tự đóng tab Zalo Web của người dùng:
-    // 1. Tránh làm ngắt socket kết nối trực tiếp của trình duyệt khiến Zalo kick phiên.
-    // 2. Cho phép người dùng giữ tab để kiểm tra hoặc xác nhận 2FA trên điện thoại nếu cần.
     lastZaloTabId = null;
   }
 }

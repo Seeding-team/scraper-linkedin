@@ -32,6 +32,7 @@ services:
     image: scraper-linkedin-backend-dev:latest
     container_name: seeding-backend-dev
     restart: unless-stopped
+    stop_grace_period: 25s
     init: true
     env_file:
       - ./linkedin_group_crawler/.env
@@ -62,6 +63,7 @@ services:
       - "8000"
     volumes:
       - backend-storage:/app/storage
+      - backend-dev-whatsapp:/app/storage/whatsapp_auth
       - backend-dev-artifacts:/app/artifacts
     networks:
       seeding-net:
@@ -102,5 +104,7 @@ volumes:
     external: true
   backend-dev-artifacts:
     name: scraper-linkedin_backend-dev-artifacts
+  backend-dev-whatsapp:
+    name: scraper-linkedin_backend-dev-whatsapp
   messenger-bridge-dev-data:
     name: scraper-linkedin_messenger-bridge-dev-data

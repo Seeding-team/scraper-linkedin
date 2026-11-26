@@ -21,9 +21,13 @@ from loguru import logger
 
 from app.core.supabase_client import get_supabase_client
 from app.modules.all_platform.whatsapp.config import (
+    decrypt_proxy_url,
     encrypt_cloud_token,
+    encrypt_proxy_url,
     get_auth_dir,
     get_media_dir,
+    normalize_whatsapp_phone,
+    resolve_effective_proxy_url,
     sanitize_account,
     settings,
 )
@@ -144,12 +148,34 @@ async def _reset_stale_auth_dir(account_id: str, existing_auth_dir: Optional[str
     return str(get_auth_dir(account_id))
 
 
+def _prepare_proxy_update(proxy_url: Optional[str]) -> Tuple[bool, Optional[str], Optional[str]]:
+    """Parse optional proxy_url update.
+
+    Returns ``(has_change, encrypted_value, raw_trimmed)``:
+    - ``None`` (omitted/null) -> ``(False, None, None)`` (keep existing proxy)
+    - ``""`` (empty/whitespace) -> ``(True, None, None)`` (clear proxy)
+    - non-empty string -> validate & Fernet-encrypt -> ``(True, ciphertext, raw)``
+    """
+    if proxy_url is None:
+        return False, None, None
+    raw = str(proxy_url).strip()
+    if not raw:
+        return True, None, None
+    try:
+        return True, encrypt_proxy_url(raw), raw
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 async def connect_qr(
     user: Dict[str, Any],
     *,
     label: Optional[str] = None,
     account_id: Optional[str] = None,
+    proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
+    has_proxy_change, proxy_enc, _ = _prepare_proxy_update(proxy_url)
+
     if account_id:
         acc = await ensure_account_access(user, account_id)
         auth_dir = await _reset_stale_auth_dir(account_id, acc.get("auth_dir"))
@@ -163,6 +189,8 @@ async def connect_qr(
         }
         if label is not None:
             fields["label"] = label.strip() or None
+        if has_proxy_change:
+            fields["proxy_url_enc"] = proxy_enc
         acc = await whatsapp_repo.update_account(account_id, **fields)
     else:
         acc = await whatsapp_repo.create_account(
@@ -170,19 +198,26 @@ async def connect_qr(
             auth_mode="qr",
             label=label,
             status="connecting",
+            proxy_url_enc=proxy_enc if has_proxy_change else None,
         )
         auth_dir = str(get_auth_dir(acc["id"]))
         acc = await whatsapp_repo.update_account(acc["id"], auth_dir=auth_dir)
 
     aid = acc["id"]
+    effective_proxy = resolve_effective_proxy_url(acc)
     try:
-        await bridge_manager.start_bridge(aid, id_member=acc.get("id_member"), force_restart=True)
+        await bridge_manager.start_bridge(
+            aid,
+            id_member=acc.get("id_member"),
+            proxy_url=effective_proxy,
+            force_restart=True,
+        )
     except Exception as exc:
         await whatsapp_repo.update_account(aid, status="error", last_error=str(exc)[:500])
         raise HTTPException(500, f"Không khởi chạy được tiến trình WhatsApp bridge: {exc}")
 
-    # Give bridge a short window to emit the first QR frame synchronously
-    await bridge_manager.wait_for_auth_artifact(aid, kind="qr", timeout=2.0)
+    # Give bridge up to 8s to emit the first QR frame (or wake early on error/connected/qr_expired)
+    await bridge_manager.wait_for_auth_artifact(aid, kind="qr", timeout=8.0)
     refreshed = await whatsapp_repo.get_account(aid) or acc
     return _enrich_account(refreshed)
 
@@ -193,13 +228,15 @@ async def connect_pairing(
     phone_number: str,
     label: Optional[str] = None,
     account_id: Optional[str] = None,
+    proxy_url: Optional[str] = None,
 ) -> Dict[str, Any]:
-    digits = _digits_only(phone_number)
+    digits = normalize_whatsapp_phone(phone_number)
     if len(digits) < 7 or len(digits) > 15:
         raise HTTPException(
             400,
-            "Số điện thoại không hợp lệ — nhập mã quốc gia + số điện thoại (vd: 84901234567).",
+            "Số điện thoại không hợp lệ — nhập số VN (vd: 0901234567) hoặc mã quốc gia + số (vd: 84901234567).",
         )
+    has_proxy_change, proxy_enc, _ = _prepare_proxy_update(proxy_url)
 
     if account_id:
         acc = await ensure_account_access(user, account_id)
@@ -215,6 +252,8 @@ async def connect_pairing(
         }
         if label is not None:
             fields["label"] = label.strip() or None
+        if has_proxy_change:
+            fields["proxy_url_enc"] = proxy_enc
         acc = await whatsapp_repo.update_account(account_id, **fields)
     else:
         acc = await whatsapp_repo.create_account(
@@ -223,23 +262,26 @@ async def connect_pairing(
             label=label,
             phone_number=digits,
             status="connecting",
+            proxy_url_enc=proxy_enc if has_proxy_change else None,
         )
         auth_dir = str(get_auth_dir(acc["id"]))
         acc = await whatsapp_repo.update_account(acc["id"], auth_dir=auth_dir)
 
     aid = acc["id"]
+    effective_proxy = resolve_effective_proxy_url(acc)
     try:
         await bridge_manager.start_bridge(
             aid,
             id_member=acc.get("id_member"),
             pairing_phone=digits,
+            proxy_url=effective_proxy,
             force_restart=True,
         )
     except Exception as exc:
         await whatsapp_repo.update_account(aid, status="error", last_error=str(exc)[:500])
         raise HTTPException(500, f"Không khởi chạy được tiến trình WhatsApp bridge: {exc}")
 
-    await bridge_manager.wait_for_auth_artifact(aid, kind="pairing_code", timeout=3.0)
+    await bridge_manager.wait_for_auth_artifact(aid, kind="pairing_code", timeout=8.0)
     refreshed = await whatsapp_repo.get_account(aid) or acc
     return _enrich_account(refreshed)
 
@@ -250,6 +292,17 @@ async def update_account_settings(
     payload: UpdateAccountSettingsRequest,
 ) -> Dict[str, Any]:
     acc = await ensure_account_access(user, account_id)
+    has_proxy_change, new_proxy_enc, new_proxy_raw = _prepare_proxy_update(payload.proxy_url)
+
+    old_proxy_raw: Optional[str] = None
+    if acc.get("proxy_url_enc"):
+        try:
+            old_proxy_raw = decrypt_proxy_url(acc.get("proxy_url_enc"))
+        except ValueError:
+            old_proxy_raw = "<unreadable>"
+
+    proxy_actually_changed = has_proxy_change and (old_proxy_raw != new_proxy_raw)
+
     fields: Dict[str, Any] = {}
     if payload.label is not None:
         fields["label"] = payload.label.strip() or None
@@ -271,8 +324,47 @@ async def update_account_settings(
             fields["cloud_access_token_enc"] = None
         else:
             fields["cloud_access_token_enc"] = encrypt_cloud_token(raw_token)
+    if has_proxy_change:
+        fields["proxy_url_enc"] = new_proxy_enc
 
     updated = await whatsapp_repo.update_account(account_id, **fields) if fields else acc
+
+    # If proxy changed while account is connected/active, restart bridge with the new proxy
+    is_active = bridge_manager.is_bridge_running(account_id) or str(acc.get("status") or "") in (
+        "connected",
+        "connecting",
+        "reconnecting",
+        "qr_ready",
+        "pairing_ready",
+    )
+    if proxy_actually_changed and is_active:
+        effective_proxy = resolve_effective_proxy_url(updated)
+        pairing_phone = (
+            updated.get("phone_number")
+            if updated.get("auth_mode") == "pairing"
+            and not updated.get("jid")
+            and str(updated.get("status") or "") in ("connecting", "pairing_ready")
+            else None
+        )
+        try:
+            await bridge_manager.start_bridge(
+                account_id,
+                id_member=updated.get("id_member"),
+                pairing_phone=pairing_phone,
+                proxy_url=effective_proxy,
+                force_restart=True,
+            )
+        except Exception as exc:
+            updated = await whatsapp_repo.update_account(
+                account_id,
+                status="error",
+                last_error=str(exc)[:500],
+            )
+            raise HTTPException(
+                500,
+                f"Đã lưu cấu hình proxy nhưng không khởi động lại được bridge WhatsApp: {exc}",
+            )
+
     enriched = _enrich_account(updated)
     await message_events.publish_whatsapp_event(
         account_id,
@@ -286,8 +378,14 @@ async def update_account_settings(
 async def reconnect_account(user: Dict[str, Any], account_id: str) -> Dict[str, Any]:
     acc = await ensure_account_access(user, account_id)
     await whatsapp_repo.update_account(account_id, status="connecting", last_error=None)
+    effective_proxy = resolve_effective_proxy_url(acc)
     try:
-        await bridge_manager.start_bridge(account_id, id_member=acc.get("id_member"), force_restart=True)
+        await bridge_manager.start_bridge(
+            account_id,
+            id_member=acc.get("id_member"),
+            proxy_url=effective_proxy,
+            force_restart=True,
+        )
     except Exception as exc:
         await whatsapp_repo.update_account(account_id, status="error", last_error=str(exc)[:500])
         raise HTTPException(500, f"Không thể kết nối lại WhatsApp: {exc}")
@@ -355,7 +453,7 @@ async def sync_conversations(user: Dict[str, Any], account_id: str) -> List[Dict
 
 async def start_chat(user: Dict[str, Any], account_id: str, phone_number: str) -> Dict[str, Any]:
     acc = await ensure_account_access(user, account_id)
-    digits = _digits_only(phone_number)
+    digits = normalize_whatsapp_phone(phone_number)
     if len(digits) < 7 or len(digits) > 15:
         raise HTTPException(400, "Số điện thoại không hợp lệ (cần mã quốc gia, vd: 84901234567).")
 

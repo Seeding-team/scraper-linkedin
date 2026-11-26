@@ -18,31 +18,48 @@
 
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { Boom } from "@hapi/boom";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import pino from "pino";
 import QRCode from "qrcode";
+import { SocksProxyAgent } from "socks-proxy-agent";
+import { ProxyAgent as UndiciProxyAgent } from "undici";
 import makeWASocket, {
   Browsers,
+  BufferJSON,
   DEFAULT_CONNECTION_CONFIG,
   DisconnectReason,
   downloadMediaMessage,
-  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   isLidUser,
   isPnUser,
+  makeCacheableSignalKeyStore,
   proto,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
 
 import {
+  acquireBridgeLock,
+  buildProxyTransports,
+  BUNDLED_WA_VERSION,
+  classifyDisconnectDecision,
+  cleanDirtyUnregisteredAuthDir,
   formatPairingCode,
   mapAckStatus,
+  maskProxyUrl,
+  MAX_UNSCANNED_AUTH_CYCLES,
   normalizeBaileysMessage,
   normalizeCallStatus,
+  normalizePairingPhone,
   parseVCard,
+  releaseBridgeLock,
+  writeJsonAtomic,
 } from "./wa_persistent_bridge.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,12 +89,13 @@ await runCheck("1. node --check scripts/wa_persistent_bridge.mjs", () => {
   assert.equal(res.status, 0, `Syntax check failed: ${res.stderr}`);
 });
 
-// 2. Baileys v7 ESM exports + supporting libs
-await runCheck("2. Baileys v7 ESM exports + qrcode/pino/@hapi/boom", async () => {
+// 2. Baileys v7 ESM exports + supporting libs + proxy transports
+await runCheck("2. Baileys v7 ESM exports + qrcode/pino/@hapi/boom + proxy libs", async () => {
   assert.equal(typeof makeWASocket, "function", "makeWASocket must be a function");
   assert.equal(typeof useMultiFileAuthState, "function", "useMultiFileAuthState must be a function");
+  assert.equal(typeof makeCacheableSignalKeyStore, "function", "makeCacheableSignalKeyStore must be a function");
   assert.equal(typeof downloadMediaMessage, "function", "downloadMediaMessage must be a function");
-  assert.equal(typeof fetchLatestBaileysVersion, "function", "fetchLatestBaileysVersion must be a function");
+  assert.equal(typeof fetchLatestWaWebVersion, "function", "fetchLatestWaWebVersion must be a function");
   assert.equal(typeof DisconnectReason, "object", "DisconnectReason must be an object");
   assert.equal(DisconnectReason.loggedOut, 401);
   assert.equal(DisconnectReason.restartRequired, 515);
@@ -85,8 +103,12 @@ await runCheck("2. Baileys v7 ESM exports + qrcode/pino/@hapi/boom", async () =>
   assert.equal(typeof isPnUser, "function");
   assert.equal(typeof isLidUser, "function");
   assert.equal(Array.isArray(DEFAULT_CONNECTION_CONFIG.version), true);
+  assert.deepEqual(BUNDLED_WA_VERSION, [2, 3000, 1043857760]);
   assert.equal(proto.Message.ProtocolMessage.Type.REVOKE, 0);
   assert.equal(proto.Message.ProtocolMessage.Type.MESSAGE_EDIT, 14);
+  assert.equal(typeof HttpsProxyAgent, "function");
+  assert.equal(typeof SocksProxyAgent, "function");
+  assert.equal(typeof UndiciProxyAgent, "function");
 
   const testBoom = new Boom("test", { statusCode: 401 });
   assert.equal(testBoom.output.statusCode, 401);
@@ -394,6 +416,189 @@ await runCheck("5. Zero regression on Zalo zca_api_bridge.js & CommonJS require(
   const requireCjs = createRequire(path.join(crawlerRoot, "package.json"));
   const zca = requireCjs("zca-js");
   assert.equal(typeof zca.Zalo, "function", "require('zca-js').Zalo must remain intact");
+});
+
+// 6. Dual-transport proxy parsing, masking & zero credential leak in --dry-run
+await runCheck("6. Dual-transport proxy parsing, masking & zero WA_PROXY_URL leak", async () => {
+  const empty = buildProxyTransports("");
+  assert.equal(empty.enabled, false);
+  assert.equal(empty.agent, undefined);
+  assert.equal(empty.fetchAgent, undefined);
+  assert.equal(empty.dispatcher, undefined);
+
+  const httpT = buildProxyTransports("http://alice:s3cr3tPass@1.2.3.4:8080");
+  assert.equal(httpT.enabled, true);
+  assert.equal(httpT.protocol, "http:");
+  assert.equal(httpT.maskedUrl, "http://***@1.2.3.4:8080");
+  assert.ok(httpT.agent instanceof HttpsProxyAgent);
+  assert.equal(httpT.fetchAgent, httpT.agent);
+  assert.ok(httpT.dispatcher instanceof UndiciProxyAgent);
+  await httpT.dispatcher.close();
+
+  const socksT = buildProxyTransports("socks5://bob:topSecret@5.6.7.8:1080");
+  assert.equal(socksT.enabled, true);
+  assert.equal(socksT.protocol, "socks5:");
+  assert.equal(socksT.maskedUrl, "socks5://***@5.6.7.8:1080");
+  assert.ok(socksT.agent instanceof SocksProxyAgent);
+  assert.equal(socksT.fetchAgent, socksT.agent);
+  assert.equal(socksT.dispatcher, undefined);
+
+  assert.equal(maskProxyUrl("http://10.20.30.40:3128"), "http://10.20.30.40:3128");
+  assert.throws(() => buildProxyTransports("ftp://1.2.3.4:21"), /Unsupported WA_PROXY_URL/i);
+  assert.throws(() => buildProxyTransports("not-a-url"), /Invalid WA_PROXY_URL/i);
+
+  // Verify WA_PROXY_URL via env works in --dry-run and NEVER leaks password to stdout or stderr
+  const child = spawn(
+    process.execPath,
+    [bridgePath, "--account-id", "acc-proxy-smoke", "--dry-run"],
+    {
+      cwd: crawlerRoot,
+      env: { ...process.env, WA_PROXY_URL: "http://proxyuser:UltraSecret99@198.51.100.7:8080" },
+      stdio: ["pipe", "pipe", "pipe"],
+    }
+  );
+  let stdoutRaw = "";
+  let stderrRaw = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (c) => (stdoutRaw += c));
+  child.stderr.on("data", (c) => (stderrRaw += c));
+  await new Promise((r) => setTimeout(r, 250));
+  child.stdin.write(`${JSON.stringify({ req_id: "s1", cmd: "get_status" })}\n`);
+  child.stdin.write(`${JSON.stringify({ req_id: "s2", cmd: "shutdown" })}\n`);
+  child.stdin.end();
+  const exitCode = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(exitCode, 0, `Proxy dry-run failed: ${stderrRaw}`);
+  assert.equal(stdoutRaw.includes("UltraSecret99"), false, "Raw proxy password leaked to stdout!");
+  assert.equal(stderrRaw.includes("UltraSecret99"), false, "Raw proxy password leaked to stderr!");
+  const lines = stdoutRaw.trim().split(/\r?\n/).map((l) => JSON.parse(l));
+  const readyEv = lines.find((x) => x.event === "ready");
+  assert.equal(readyEv?.has_proxy, true);
+  assert.equal(readyEv?.proxy_masked, "http://***@198.51.100.7:8080");
+  const statusRes = lines.find((x) => x.req_id === "s1");
+  assert.equal(statusRes?.data?.proxy_masked, "http://***@198.51.100.7:8080");
+});
+
+// 7. Atomic creds write & dirty unregistered creds.me wipe preserving .bridge.lock
+await runCheck("7. Atomic creds write & dirty creds.me wipe preserving .bridge.lock", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wa-atomic-smoke-"));
+  try {
+    const credsPath = path.join(tmpDir, "creds.json");
+    const sampleCreds = {
+      registered: false,
+      me: { id: "84901234567@s.whatsapp.net", name: "~" },
+      noiseKey: { public: Buffer.from([10, 20, 30, 40]) },
+    };
+    await writeJsonAtomic(credsPath, sampleCreds);
+    const remainingTmp = fs.readdirSync(tmpDir).filter((f) => f.endsWith(".tmp"));
+    assert.equal(remainingTmp.length, 0, "Atomic write must not leave .tmp files");
+
+    const parsed = JSON.parse(fs.readFileSync(credsPath, "utf8"), BufferJSON.reviver);
+    assert.equal(parsed.me.id, "84901234567@s.whatsapp.net");
+    assert.ok(Buffer.isBuffer(parsed.noiseKey.public));
+    assert.deepEqual(Array.from(parsed.noiseKey.public), [10, 20, 30, 40]);
+
+    // Dirty unregistered creds.me + session file + .bridge.lock
+    fs.writeFileSync(path.join(tmpDir, "pre-key-1.json"), "{}", "utf8");
+    fs.writeFileSync(path.join(tmpDir, ".bridge.lock"), JSON.stringify({ pid: process.pid }), "utf8");
+    const wiped = cleanDirtyUnregisteredAuthDir(tmpDir);
+    assert.equal(wiped, true);
+    assert.equal(fs.existsSync(credsPath), false, "Dirty creds.json must be wiped");
+    assert.equal(fs.existsSync(path.join(tmpDir, "pre-key-1.json")), false, "Stale key files must be wiped");
+    assert.equal(fs.existsSync(path.join(tmpDir, ".bridge.lock")), true, ".bridge.lock must be preserved");
+
+    // Registered creds.json must NEVER be wiped
+    await writeJsonAtomic(credsPath, { registered: true, me: { id: "84901234567@s.whatsapp.net" } });
+    assert.equal(cleanDirtyUnregisteredAuthDir(tmpDir), false);
+    assert.equal(fs.existsSync(credsPath), true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+// 8. Pairing phone normalization (VN 0xx -> 84xx, strip 00 / + / spaces)
+await runCheck("8. Pairing phone normalization (VN 0xx -> 84xx & strip 00/+/spaces)", () => {
+  assert.equal(normalizePairingPhone("0901234567"), "84901234567");
+  assert.equal(normalizePairingPhone("0901 234 567"), "84901234567");
+  assert.equal(normalizePairingPhone("+84 901-234-567"), "84901234567");
+  assert.equal(normalizePairingPhone("0084 901 234 567"), "84901234567");
+  assert.equal(normalizePairingPhone("001 (415) 555-2671"), "14155552671");
+  assert.equal(normalizePairingPhone("+1 415 555 2671"), "14155552671");
+  assert.equal(normalizePairingPhone("84901234567"), "84901234567");
+});
+
+// 9. QR expiry cap (max 2 cycles) & fatal disconnect stop (401/403/405/411/440/515)
+await runCheck("9. QR expiry cap (max 2 cycles) & fatal disconnect classification", () => {
+  assert.equal(MAX_UNSCANNED_AUTH_CYCLES, 2);
+
+  // Cycle 1 unscanned 408 -> reconnect once
+  const c1 = classifyDisconnectDecision({
+    statusCode: 408,
+    errMessage: "QR refs attempts ended",
+    isRegistered: false,
+    authArtifactEmitted: true,
+    unscannedAuthCycles: 0,
+  });
+  assert.equal(c1.willReconnect, true);
+  assert.equal(c1.nextUnscannedCycles, 1);
+
+  // Cycle 2 unscanned 408 -> qr_expired & STOP reconnecting
+  const c2 = classifyDisconnectDecision({
+    statusCode: 408,
+    errMessage: "QR refs attempts ended",
+    isRegistered: false,
+    authArtifactEmitted: true,
+    unscannedAuthCycles: c1.nextUnscannedCycles,
+  });
+  assert.equal(c2.status, "qr_expired");
+  assert.equal(c2.willReconnect, false);
+  assert.equal(c2.error, "Mã QR đã hết hạn — bấm Làm mới QR để tạo mã mới.");
+
+  // Fatal codes must STOP infinite retry loop
+  const d401 = classifyDisconnectDecision({ statusCode: 401, isRegistered: true });
+  assert.equal(d401.status, "logged_out");
+  assert.equal(d401.willReconnect, false);
+
+  for (const code of [403, 405, 411, 440]) {
+    const d = classifyDisconnectDecision({ statusCode: code, isRegistered: false });
+    assert.equal(d.status, "error", `Code ${code} must emit status=error`);
+    assert.equal(d.willReconnect, false, `Code ${code} must stop reconnecting`);
+    if (code === 403 || code === 405) {
+      assert.match(d.error, /Proxy/i, `Code ${code} must hint Sticky Proxy`);
+    }
+  }
+
+  // 515 restartRequired -> reconnect immediately
+  const d515 = classifyDisconnectDecision({ statusCode: 515, isRegistered: false, pairSuccessReceived: true });
+  assert.equal(d515.willReconnect, true);
+  assert.equal(d515.isRestartRequired, true);
+});
+
+// 10. Advisory lockfile (.bridge.lock): recovers stale PID, blocks live PID conflict
+await runCheck("10. Advisory .bridge.lock recovers stale PID & blocks live PID", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "wa-lock-smoke-"));
+  try {
+    const lockFile = path.join(tmpDir, ".bridge.lock");
+    // 1) Stale lock from dead PID -> auto-recovered
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: 999999, account_id: "old" }), "utf8");
+    const acquired = acquireBridgeLock(tmpDir, "acc-lock-1");
+    assert.equal(acquired, lockFile);
+    const lockData = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+    assert.equal(lockData.pid, process.pid);
+    releaseBridgeLock(acquired);
+    assert.equal(fs.existsSync(lockFile), false);
+
+    // 2) Live lock from parent PID -> blocks duplicate spawn to prevent 440
+    if (process.ppid && process.ppid !== process.pid) {
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.ppid, account_id: "live" }), "utf8");
+      assert.throws(() => acquireBridgeLock(tmpDir, "acc-lock-1"), /440|đang chạy/i);
+      // releaseBridgeLock must NOT remove another live PID's lock
+      releaseBridgeLock(lockFile);
+      assert.equal(fs.existsSync(lockFile), true);
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 const failed = results.filter((r) => r.status === "FAIL");

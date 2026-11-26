@@ -1,21 +1,20 @@
-"""Zalo auth routes — Zalo tập trung (port ZALO_CENTRALIZED_MODULE_GUIDE.md).
+"""Zalo auth routes — Zalo tập trung (Server-Side QR + Extension 1-chạm dự phòng).
 
-Đăng nhập CHỈ còn 1 luồng duy nhất: import cookie qua Chrome extension
-(`POST /import-session`) — đã bỏ hẳn luồng QR/Playwright cũ (không còn
-`/init`, `/qr/refresh`, `/manual-login/*`, `/qr-image/{id}`) theo đúng kiến
-trúc `zalo-bridge` trong guide (Mục 3.6: cookie-based là luồng chính, QR chỉ
-là dự phòng — guide gốc còn chưa build UI QR nên bỏ luôn ở đây).
+Hỗ trợ 2 luồng đăng nhập an toàn (không dùng Playwright):
+1. Server-Side QR Login (`POST /qr/start`, `GET /qr/status/{qr_session_id}`,
+   `POST /qr/cancel/{qr_session_id}`) qua `scripts/zca_qr_login.js` + Sticky VN Proxy
+   và tái dùng `imei`/`proxy_url` khi re-link.
+2. Chrome Extension 1-chạm (`POST /import-session`) — dự phòng khi Zalo yêu cầu
+   xác minh tương tác; extension tự đóng tab `chat.zalo.me` sau khi đồng bộ.
 
 `POST /reconnect` (force-restart listener khi bị Zalo kick "Overlimit
-connection", Mục 3.3.1 guide) đã tồn tại sẵn ở
-`accounts.py::POST /{account_id}/listener/restart` (gọi thẳng
-`zca_persistent_listener.restart_listener`) — không thêm endpoint trùng ở
-đây, tránh 2 chỗ cùng lộ 1 hành động.
+connection") nằm ở `accounts.py::POST /{account_id}/listener/restart`.
 """
 
 from typing import Any, Dict, List, Optional
 import asyncio
 import re
+import secrets
 import uuid
 from datetime import datetime
 import time
@@ -25,6 +24,7 @@ import json
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from loguru import logger
+from pydantic import BaseModel
 
 from app.modules.all_platform.zalo.schemas.session import SessionData
 from app.modules.all_platform.zalo.services.session_store import (
@@ -46,17 +46,27 @@ from app.modules.all_platform.zalo.schemas.message import Message
 from app.modules.all_platform.zalo.services.zca_auth_store import (
     delete_zca_auth,
     ensure_session_zca_auth,
+    inspect_zca_auth_health,
     load_zca_auth,
     save_zca_auth,
+    validate_proxy_url,
 )
 from app.modules.all_platform.zalo.services.zca_persistent_listener import (
+    WEB_SLOT_CONFLICT_MESSAGE,
     get_listener_status,
     start_listener,
     stop_listener,
     reset_listener_auth_expired,
 )
+from app.modules.all_platform.zalo.services.zca_qr_service import (
+    ZaloQrSession,
+    get_qr_manager,
+)
 from app.modules.all_platform.auth_deps import get_authenticated_caller_email
-from app.modules.all_platform.zalo.api.routes.accounts import _require_admin_leader_or_self
+from app.modules.all_platform.zalo.api.routes.accounts import (
+    _require_admin_leader_or_self,
+    invalidate_zalo_accounts_cache,
+)
 from app.modules.all_platform.zalo.api.security import verify_zalo_api_key
 
 router = APIRouter(
@@ -119,6 +129,7 @@ async def _remember_zalo_user(
     cookie: Optional[str] = None,
     owner_id: Optional[str] = None,
     id_member: Optional[str] = None,
+    label: Optional[str] = None,
 ) -> None:
     # id_member là cột UUID (app_users.id) ở cả zalo_users lẫn zalo_accounts —
     # extension gửi email nên phải resolve về UUID thật (hoặc bỏ qua), tránh 22P02.
@@ -139,11 +150,12 @@ async def _remember_zalo_user(
         existing = await get_zalo_account_by_id(user_id) or {}
         resolved_owner_id = owner_id or existing.get("owner_id") or user_id
         resolved_member_id = safe_member_id or existing.get("id_member")
+        resolved_label = (label or "").strip() or existing.get("label") or user_id
         await upsert_zalo_account(
             account_id=user_id,
             owner_id=resolved_owner_id,
             id_member=resolved_member_id,
-            label=existing.get("label") or user_id,
+            label=resolved_label,
             phone=existing.get("phone"),
             status=status,
         )
@@ -209,28 +221,50 @@ async def _persist_first_time_sync_result(user_id: str, result: Dict[str, Any]) 
         logger.warning(f"Could not persist first-time-sync messages for user={user_id}: {exc}")
 
 
-def _serialize_login_state(user_id: str, session: Optional[SessionData], status: str) -> dict:
-    return {
+def _serialize_login_state(
+    user_id: str,
+    session: Optional[SessionData],
+    status: str,
+    *,
+    health: Optional[Dict[str, Any]] = None,
+    conflict_type: Optional[str] = None,
+    message: Optional[str] = None,
+) -> dict:
+    safe_health = health or {
+        "cookie_expires_at": None,
+        "cookie_expiring_soon": False,
+        "has_proxy": False,
+        "proxy_masked": None,
+    }
+    payload = {
         "user_id": user_id,
         "session_id": session.session_id if session else None,
         "status": status,
         "is_logged_in": status == "confirmed",
         "can_crawl": status == "confirmed",
         "session_expired": status == "session_expired",
+        "cookie_expires_at": safe_health.get("cookie_expires_at"),
+        "cookie_expiring_soon": bool(safe_health.get("cookie_expiring_soon", False)),
+        "conflict_type": conflict_type,
+        "has_proxy": bool(safe_health.get("has_proxy", False)),
+        "proxy_masked": safe_health.get("proxy_masked"),
     }
+    if message:
+        payload["message"] = message
+    return payload
 
 
 async def _build_current_status_payload(user_id: str) -> dict:
-    """Trạng thái đăng nhập — CHỈ dựa vào zca auth (cookie import qua extension).
-
-    Không còn nhánh Playwright/session.page nào — session chỉ tồn tại để giữ
-    zca_auth + status, không còn mở browser thật.
-    """
+    """Trạng thái đăng nhập + sức khỏe phiên (cookie expiry, sticky proxy, conflict_type)."""
     session = await get_latest_session_for_user(user_id)
+    persisted_auth = await load_zca_auth(user_id)
+    listener = get_listener_status(user_id)
+    effective_auth = (session.zca_auth if session and session.zca_auth else None) or persisted_auth
+    health = inspect_zca_auth_health(effective_auth)
+
     if not session:
-        auth = await load_zca_auth(user_id)
-        if not auth:
-            return _serialize_login_state(user_id, None, "not_logged_in")
+        if not persisted_auth:
+            return _serialize_login_state(user_id, None, "not_logged_in", health=health)
         session = SessionData(
             session_id=_build_session_id(user_id),
             user_id=user_id,
@@ -240,30 +274,55 @@ async def _build_current_status_payload(user_id: str) -> dict:
             status="confirmed",
             qr_base64=None,
             qr_signature=None,
-            zca_auth=auth,
+            zca_auth=persisted_auth,
             created_at=datetime.utcnow(),
             last_used=datetime.utcnow(),
         )
         await save_session(session)
         logger.info(f"Restored confirmed ZCA session from auth store for user={user_id}")
 
-    if not await ensure_session_zca_auth(session):
-        return _serialize_login_state(user_id, session, "not_logged_in")
+    # Kiểm tra xung đột 1-Web-Slot hoặc auth_expired TRƯỚC ensure_session_zca_auth
+    # để phiên đang bị đánh dấu session_expired không bị tụt thành not_logged_in,
+    # đồng thời giữ nguyên file zca-auth (imei + proxy_url) cho lần kết nối lại.
+    listener_conflict = listener.get("conflict_type")
+    if listener_conflict == "web_slot_conflict" and not listener.get("connected"):
+        return _serialize_login_state(
+            user_id,
+            session,
+            "session_expired",
+            health=health,
+            conflict_type="web_slot_conflict",
+            message=WEB_SLOT_CONFLICT_MESSAGE,
+        )
 
-    # Cookie vẫn còn nhưng listener báo phiên Zalo đã hết hạn (bị kick/logout
-    # thật) — KHÔNG xóa auth ngay, chỉ đánh dấu session_expired để FE hiện nút
-    # đăng nhập lại qua extension. Auth sẽ bị ghi đè khi import cookie mới.
-    listener = get_listener_status(user_id)
     if listener.get("auth_expired") and not listener.get("connected"):
         if session.status != "session_expired":
             logger.warning(
-                f"ZCA session expired for user={user_id} — keeping auth file but marking "
-                f"session_expired; user must re-import cookie via extension to refresh"
+                f"ZCA session expired for user={user_id} — keeping auth file (imei + proxy_url) "
+                f"and marking session_expired"
             )
             session.status = "session_expired"
             session.last_used = datetime.utcnow()
             await save_session(session)
-        return _serialize_login_state(user_id, session, "session_expired")
+        return _serialize_login_state(
+            user_id,
+            session,
+            "session_expired",
+            health=health,
+            conflict_type=listener_conflict or "logged_out",
+        )
+
+    if session.status == "session_expired" and not listener.get("connected"):
+        return _serialize_login_state(
+            user_id,
+            session,
+            "session_expired",
+            health=health,
+            conflict_type=listener_conflict or "logged_out",
+        )
+
+    if not await ensure_session_zca_auth(session):
+        return _serialize_login_state(user_id, session, "not_logged_in", health=health)
 
     if session.status != "confirmed":
         session.status = "confirmed"
@@ -271,7 +330,7 @@ async def _build_current_status_payload(user_id: str) -> dict:
         session.qr_signature = None
         session.last_used = datetime.utcnow()
         await save_session(session)
-    return _serialize_login_state(user_id, session, "confirmed")
+    return _serialize_login_state(user_id, session, "confirmed", health=health, conflict_type=None)
 
 
 @router.get("/current-status")
@@ -280,6 +339,214 @@ async def get_current_status(
 ):
     user_id = _normalize_user_id(x_user_id)
     return await _build_current_status_payload(user_id)
+
+
+@router.get("/status")
+async def get_auth_status_health(
+    account_id: Optional[str] = Query(None),
+    user_id: Optional[str] = Query(None),
+    x_user_id: str = Header("default", alias="X-User-ID"),
+):
+    """Status + session health endpoint (cookie_expires_at, cookie_expiring_soon, conflict_type, proxy_masked)."""
+    resolved = _normalize_user_id(account_id or user_id or x_user_id)
+    return await _build_current_status_payload(resolved)
+
+
+async def _start_listener_and_first_sync(uid: str, uauth: dict, source_label: str = "extension") -> None:
+    import time as _time
+
+    t0 = _time.time()
+    try:
+        logger.info(f"{source_label}: [1/2] starting persistent listener for user={uid}...")
+        await start_listener(uid, uauth, force_restart=True)
+        logger.info(f"{source_label}: [1/2] persistent listener started for {uid} in {_time.time() - t0:.1f}s")
+    except Exception as start_exc:
+        logger.warning(f"{source_label}: [1/2] could not start listener for user={uid}: {start_exc}")
+
+    t1 = _time.time()
+    try:
+        logger.info(f"{source_label}: [2/2] starting first-time sync for user={uid}...")
+        from app.modules.all_platform.zalo.services.zca_api_bridge import first_time_sync
+
+        result = await first_time_sync(
+            auth=uauth,
+            zalo_account_id=uid,
+            messages_per_chat=50,
+            group_limit=8,
+            include_friends=True,
+        )
+        logger.info(f"{source_label}: [2/2] first-time sync done for {uid} in {_time.time() - t1:.1f}s")
+        await _persist_first_time_sync_result(uid, result)
+    except Exception as sync_exc:
+        logger.warning(f"{source_label}: [2/2] first-time sync non-fatal error for {uid}: {sync_exc}")
+
+
+class ZaloQrStartRequest(BaseModel):
+    account_id: Optional[str] = None
+    label: Optional[str] = None
+    proxy_url: Optional[str] = None
+
+
+async def _allocate_unique_zalo_account_id() -> str:
+    for _ in range(10):
+        candidate = f"zl_{secrets.token_hex(4)}"
+        try:
+            existing = await get_zalo_account_by_id(candidate)
+            if not existing:
+                return candidate
+        except Exception:
+            return candidate
+    return f"zl_{secrets.token_hex(6)}"
+
+
+async def _persist_confirmed_qr_session(qr_session: ZaloQrSession, auth: Dict[str, Any]) -> str:
+    account_id = qr_session.account_id or await _allocate_unique_zalo_account_id()
+    auth_to_save = dict(auth)
+    if not auth_to_save.get("zaloId"):
+        auth_to_save["zaloId"] = account_id
+
+    profile_lock = await get_profile_lock(account_id)
+    async with profile_lock:
+        await delete_sessions_for_user(account_id)
+
+    session_id = _build_session_id(account_id)
+    session = SessionData(
+        session_id=session_id,
+        user_id=account_id,
+        browser=None,
+        context=None,
+        page=None,
+        status="confirmed",
+        qr_base64=None,
+        qr_signature=None,
+        zca_auth=auth_to_save,
+        created_at=datetime.utcnow(),
+        last_used=datetime.utcnow(),
+    )
+    await save_session(session)
+    await save_zca_auth(account_id, auth_to_save)
+
+    parsed_cookies = auth_to_save.get("cookies") or []
+    cookie_str = "; ".join(
+        f"{c.get('key')}={c.get('value')}"
+        for c in (parsed_cookies if isinstance(parsed_cookies, list) else [])
+        if isinstance(c, dict) and c.get("key") and c.get("value") is not None
+    )
+    resolved_label = (qr_session.label or qr_session.display_name or "").strip() or None
+    await _remember_zalo_user(
+        account_id,
+        "confirmed",
+        None,
+        cookie=cookie_str or None,
+        owner_id=qr_session.owner_id,
+        id_member=qr_session.id_member or qr_session.owner_id,
+        label=resolved_label,
+    )
+    invalidate_zalo_accounts_cache()
+    reset_listener_auth_expired(account_id)
+    asyncio.create_task(_start_listener_and_first_sync(account_id, auth_to_save, source_label="Server QR"))
+    logger.info(
+        f"Persisted server-side QR login for account={account_id} qr_session={qr_session.qr_session_id} "
+        f"has_proxy={bool(auth_to_save.get('proxy_url'))}"
+    )
+    return account_id
+
+
+async def _authorize_qr_session_access(caller_email: Optional[str], qr_session: ZaloQrSession) -> None:
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Cần đăng nhập để thao tác phiên QR Zalo")
+    if qr_session.owner_email and qr_session.owner_email.lower() == caller_email.strip().lower():
+        return
+    await _require_admin_leader_or_self(caller_email, qr_session.id_member or qr_session.owner_id)
+
+
+@router.post("/qr/start")
+async def start_zalo_qr_login(
+    body: Optional[ZaloQrStartRequest] = None,
+    x_user_id: str = Header("default", alias="X-User-ID"),
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Khởi tạo phiên quét mã QR Zalo trực tiếp phía server (tái dùng imei & proxy_url nếu re-link)."""
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Cần đăng nhập để tạo mã QR Zalo")
+
+    req = body or ZaloQrStartRequest()
+    target_account_id = _normalize_user_id(req.account_id) if (req.account_id and req.account_id.strip()) else None
+
+    target_id_member: Optional[str] = None
+    if target_account_id:
+        target_account = None
+        try:
+            target_account = await get_zalo_account_by_id(target_account_id)
+        except Exception:
+            target_account = None
+        existing_auth = await load_zca_auth(target_account_id)
+        target_owner = (
+            (target_account.get("id_member") or target_account.get("owner_id"))
+            if target_account
+            else ((existing_auth or {}).get("idMember") or (existing_auth or {}).get("ownerId"))
+        )
+        await _require_admin_leader_or_self(caller_email, target_owner)
+        target_id_member = (target_account or {}).get("id_member") or (existing_auth or {}).get("idMember")
+    else:
+        try:
+            target_id_member = await get_app_user_id_by_email(caller_email)
+        except Exception:
+            target_id_member = None
+
+    proxy_explicitly_cleared = req.proxy_url is not None and req.proxy_url.strip() == ""
+    raw_proxy: Optional[str] = None
+    if req.proxy_url is not None and not proxy_explicitly_cleared:
+        try:
+            raw_proxy = validate_proxy_url(req.proxy_url)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    owner_id = _normalize_user_id(caller_email or x_user_id)
+    try:
+        qr_session = await get_qr_manager().start_session(
+            account_id=target_account_id,
+            label=req.label,
+            proxy_url=raw_proxy,
+            proxy_explicitly_cleared=proxy_explicitly_cleared,
+            owner_id=owner_id,
+            owner_email=caller_email,
+            id_member=target_id_member,
+            on_confirmed=_persist_confirmed_qr_session,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=429 if "quá nhiều" in str(exc).lower() else 500, detail=str(exc))
+
+    return qr_session.to_start_response()
+
+
+@router.get("/qr/status/{qr_session_id}")
+async def get_zalo_qr_status(
+    qr_session_id: str,
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Kiểm tra trạng thái phiên quét mã QR Zalo (starting/qr_ready/scanned/confirmed/expired/declined/cancelled/error)."""
+    qr_session = get_qr_manager().get_session(qr_session_id)
+    if not qr_session:
+        raise HTTPException(status_code=404, detail="Không tìm thấy phiên mã QR Zalo")
+    await _authorize_qr_session_access(caller_email, qr_session)
+    return qr_session.to_status_response()
+
+
+@router.post("/qr/cancel/{qr_session_id}")
+async def cancel_zalo_qr_login(
+    qr_session_id: str,
+    caller_email: Optional[str] = Depends(get_authenticated_caller_email),
+):
+    """Huỷ phiên quét mã QR Zalo và kết thúc tiến trình con ngay lập tức."""
+    if not caller_email:
+        raise HTTPException(status_code=401, detail="Cần đăng nhập để huỷ phiên QR Zalo")
+    qr_session = get_qr_manager().get_session(qr_session_id)
+    if qr_session is not None:
+        await _authorize_qr_session_access(caller_email, qr_session)
+    return await get_qr_manager().cancel_session(qr_session_id)
 
 
 @router.get("/events")
@@ -313,27 +580,44 @@ async def auth_status_events(
             # wait_for_auth_expired_user chỉ đọc queue của normalized_user_id này.
             expired_event = await wait_for_auth_expired_user(normalized_user_id, timeout=_POLL_INTERVAL)
             if expired_event is not None:
-                # Dọn dẹp auth và build payload "session_expired" để push ngay về FE.
+                # KHÔNG gọi delete_zca_auth() khi auth_expired/web_slot_conflict!
+                # Giữ nguyên file zca-auth (imei + proxy_url) để lần kết nối lại
+                # tái sử dụng đúng định danh thiết bị & Sticky VN Proxy.
+                session = None
                 try:
                     session = await get_latest_session_for_user(normalized_user_id)
                     if session:
                         session.status = "session_expired"
-                        session.zca_auth = None
                         await save_session(session)
-                    await delete_zca_auth(normalized_user_id)
                 except Exception as cleanup_exc:
-                    logger.warning(f"Could not cleanup expired auth for user={normalized_user_id}: {cleanup_exc}")
+                    logger.warning(f"Could not mark expired session for user={normalized_user_id}: {cleanup_exc}")
 
+                persisted_auth = await load_zca_auth(normalized_user_id)
+                health = inspect_zca_auth_health(persisted_auth)
+                listener_st = get_listener_status(normalized_user_id)
+                conflict_type = listener_st.get("conflict_type") or (
+                    "web_slot_conflict"
+                    if expired_event[1] == WEB_SLOT_CONFLICT_MESSAGE
+                    else "logged_out"
+                )
                 payload = {
+                    "user_id": normalized_user_id,
                     "session_id": session.session_id if session else None,
                     "status": "session_expired",
                     "is_logged_in": False,
                     "can_crawl": False,
                     "session_expired": True,
-                    "message": expired_event[1] or "Phiên Zalo đã hết hạn. Vui lòng đăng nhập lại qua extension.",
+                    "conflict_type": conflict_type,
+                    "cookie_expires_at": health.get("cookie_expires_at"),
+                    "cookie_expiring_soon": bool(health.get("cookie_expiring_soon", False)),
+                    "has_proxy": bool(health.get("has_proxy", False)),
+                    "proxy_masked": health.get("proxy_masked"),
+                    "message": expired_event[1] or "Phiên Zalo đã hết hạn. Vui lòng đăng nhập lại bằng mã QR hoặc Extension.",
                 }
                 yield f"event: auth-status\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                logger.info(f"Pushed session_expired to SSE for user={normalized_user_id}")
+                logger.info(
+                    f"Pushed session_expired (conflict_type={conflict_type}) to SSE for user={normalized_user_id}"
+                )
                 continue
 
             # 2. Không có auth_expired → poll status bình thường.
@@ -383,17 +667,34 @@ async def get_status(
     if session.user_id != _normalize_user_id(x_user_id):
         raise HTTPException(status_code=403, detail="Session does not belong to current user")
 
+    normalized_uid = _normalize_user_id(x_user_id)
+    persisted_auth = await load_zca_auth(normalized_uid)
+    health = inspect_zca_auth_health(session.zca_auth or persisted_auth)
+    listener_st = get_listener_status(normalized_uid)
+
     if await ensure_session_zca_auth(session):
         if session.status != "confirmed":
             session.status = "confirmed"
             session.qr_base64 = None
             session.qr_signature = None
             await save_session(session)
-        await _remember_zalo_user(_normalize_user_id(x_user_id), "confirmed", x_zalo_worker_id)
-        return {"user_id": _normalize_user_id(x_user_id), "session_id": session_id, "status": "confirmed"}
+        await _remember_zalo_user(normalized_uid, "confirmed", x_zalo_worker_id)
+        return {
+            "user_id": normalized_uid,
+            "session_id": session_id,
+            "status": "confirmed",
+            "conflict_type": listener_st.get("conflict_type"),
+            **health,
+        }
 
-    await _remember_zalo_user(_normalize_user_id(x_user_id), session.status, x_zalo_worker_id)
-    return {"user_id": _normalize_user_id(x_user_id), "session_id": session_id, "status": session.status}
+    await _remember_zalo_user(normalized_uid, session.status, x_zalo_worker_id)
+    return {
+        "user_id": normalized_uid,
+        "session_id": session_id,
+        "status": session.status,
+        "conflict_type": listener_st.get("conflict_type"),
+        **health,
+    }
 
 
 @router.delete("/session/{session_id}")
@@ -649,12 +950,26 @@ async def import_session_from_extension(
     # gửi lên (đã tự cache ổn định phía extension từ 2026-08-25); nếu không
     # có, tái dùng đúng imei đã lưu từ lần import trước cho account này —
     # CHỈ sinh UUID mới khi account này chưa từng có imei nào được lưu.
+    existing_auth = await load_zca_auth(user_id)
     imei = (body.get("imei") or "").strip()
     if not imei:
-        existing_auth = await load_zca_auth(user_id)
         imei = (existing_auth or {}).get("imei") or ""
     if not imei:
         imei = str(uuid.uuid4())
+
+    # Giữ lại proxy_url đã lưu khi re-import qua extension (hoặc cập nhật nếu body có gửi)
+    resolved_proxy_url: Optional[str] = None
+    if "proxy_url" in body:
+        raw_proxy = body.get("proxy_url")
+        if raw_proxy is not None and str(raw_proxy).strip() != "":
+            try:
+                resolved_proxy_url = validate_proxy_url(str(raw_proxy))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        else:
+            resolved_proxy_url = None
+    else:
+        resolved_proxy_url = str((existing_auth or {}).get("proxy_url") or "").strip() or None
 
     # ── Build a ZCA-compatible auth dict from extension cookies ──────
     # ZCA expects cookies as either array or {cookies: [...]} object.
@@ -668,6 +983,8 @@ async def import_session_from_extension(
         "idMember": id_member,
         "source": "extension",
     }
+    if resolved_proxy_url:
+        auth["proxy_url"] = resolved_proxy_url
 
     # ── Delete any stale sessions and create a fresh confirmed one ───
     profile_lock = await get_profile_lock(user_id)
@@ -706,39 +1023,11 @@ async def import_session_from_extension(
         f"Imported extension session for user={user_id}, "
         f"session={session_id}, cookies={len(parsed_cookies)} keys=[{cookie_keys_str}]"
     )
+    invalidate_zalo_accounts_cache()
     reset_listener_auth_expired(user_id)
 
     # ── Background: start persistent listener FIRST, then sync in background ───
-    async def _background_extension_sync(uid: str, uauth: dict):
-        import time as _time
-        t0 = _time.time()
-        # 1. Khởi động Persistent Listener NGAY để socket online trong 2-3s,
-        # giúp FE polling nhận trạng thái connected=true ngay, không bị treo 60s!
-        try:
-            logger.info(f"Extension import: [1/2] starting persistent listener for user={uid}...")
-            await start_listener(uid, uauth, force_restart=True)
-            logger.info(f"Extension import: [1/2] persistent listener started for {uid} in {_time.time() - t0:.1f}s")
-        except Exception as start_exc:
-            logger.warning(f"Extension import: [1/2] could not start listener for user={uid}: {start_exc}")
-
-        # 2. Đồng bộ nhóm và tin nhắn gần đây (first-time sync) chạy tiếp theo nền
-        t1 = _time.time()
-        try:
-            logger.info(f"Extension import: [2/2] starting first-time sync for user={uid}...")
-            from app.modules.all_platform.zalo.services.zca_api_bridge import first_time_sync
-            result = await first_time_sync(
-                auth=uauth,
-                zalo_account_id=uid,
-                messages_per_chat=50,
-                group_limit=8,
-                include_friends=True,
-            )
-            logger.info(f"Extension import: [2/2] first-time sync done for {uid} in {_time.time() - t1:.1f}s")
-            await _persist_first_time_sync_result(uid, result)
-        except Exception as sync_exc:
-            logger.warning(f"Extension import: [2/2] first-time sync non-fatal error for {uid}: {sync_exc}")
-
-    asyncio.create_task(_background_extension_sync(user_id, auth))
+    asyncio.create_task(_start_listener_and_first_sync(user_id, auth, source_label="Extension import"))
 
     return JSONResponse(
         content={

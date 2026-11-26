@@ -12,12 +12,14 @@ from pydantic import BaseModel, Field
 class ConnectQRRequest(BaseModel):
     label: Optional[str] = Field(default=None, max_length=120)
     account_id: Optional[str] = None
+    proxy_url: Optional[str] = Field(default=None, max_length=512)
 
 
 class ConnectPairingRequest(BaseModel):
     phone_number: str = Field(..., min_length=6, max_length=32)
     label: Optional[str] = Field(default=None, max_length=120)
     account_id: Optional[str] = None
+    proxy_url: Optional[str] = Field(default=None, max_length=512)
 
 
 class UpdateAccountSettingsRequest(BaseModel):
@@ -29,6 +31,7 @@ class UpdateAccountSettingsRequest(BaseModel):
     cloud_waba_id: Optional[str] = Field(default=None, max_length=128)
     cloud_access_token: Optional[str] = None
     cloud_webhook_verify_token: Optional[str] = Field(default=None, max_length=256)
+    proxy_url: Optional[str] = Field(default=None, max_length=512)
 
 
 # ── Conversations ─────────────────────────────────────────────────────────────

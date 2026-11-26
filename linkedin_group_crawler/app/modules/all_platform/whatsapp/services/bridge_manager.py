@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from weakref import WeakKeyDictionary
 
 from loguru import logger
 
@@ -32,7 +33,10 @@ from app.modules.all_platform.whatsapp.config import (
     BACKEND_ROOT,
     get_auth_dir,
     get_bridge_script_path,
+    get_default_proxy_url,
     get_media_dir,
+    normalize_whatsapp_phone,
+    resolve_effective_proxy_url,
     sanitize_account,
     settings,
 )
@@ -191,8 +195,10 @@ class BridgeHandle:
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     qr_event: asyncio.Event = field(default_factory=asyncio.Event)
     pairing_event: asyncio.Event = field(default_factory=asyncio.Event)
+    auth_signal_event: asyncio.Event = field(default_factory=asyncio.Event)
     latest_qr_data_url: Optional[str] = None
     latest_pairing_code: Optional[str] = None
+    last_error: Optional[str] = None
     status: str = "connecting"
     contacts_cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     stopping: bool = False
@@ -200,6 +206,22 @@ class BridgeHandle:
 
 _bridges: Dict[str, BridgeHandle] = {}
 _member_cache: Dict[str, str] = {}
+_account_locks_by_loop: WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, asyncio.Lock]] = WeakKeyDictionary()
+_PROXY_UNSET = object()
+
+
+def _get_account_lock(account_id: str) -> asyncio.Lock:
+    """Return a per-account asyncio.Lock bound cleanly to the current running event loop."""
+    loop = asyncio.get_running_loop()
+    locks = _account_locks_by_loop.get(loop)
+    if locks is None:
+        locks = {}
+        _account_locks_by_loop[loop] = locks
+    lock = locks.get(account_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        locks[account_id] = lock
+    return lock
 
 
 def is_bridge_running(account_id: str) -> bool:
@@ -430,7 +452,9 @@ async def handle_bridge_event(account_id: str, event: Dict[str, Any]) -> None:
         if handle:
             handle.status = "qr_ready"
             handle.latest_qr_data_url = qr_data_url
+            handle.last_error = None
             handle.qr_event.set()
+            handle.auth_signal_event.set()
         updated = await whatsapp_repo.update_account(
             account_id,
             status="qr_ready",
@@ -457,7 +481,9 @@ async def handle_bridge_event(account_id: str, event: Dict[str, Any]) -> None:
         if handle:
             handle.status = "pairing_ready"
             handle.latest_pairing_code = code
+            handle.last_error = None
             handle.pairing_event.set()
+            handle.auth_signal_event.set()
         fields: Dict[str, Any] = {
             "status": "pairing_ready",
             "pairing_code": code,
@@ -489,6 +515,8 @@ async def handle_bridge_event(account_id: str, event: Dict[str, Any]) -> None:
             "close": "disconnected",
             "reconnecting": "reconnecting",
             "logged_out": "logged_out",
+            "qr_expired": "qr_expired",
+            "error": "error",
         }
         mapped_status = status_map.get(raw_status, raw_status or "disconnected")
         if handle:
@@ -508,8 +536,26 @@ async def handle_bridge_event(account_id: str, event: Dict[str, Any]) -> None:
                 fields["phone_number"] = str(me["phone_number"])
             if me.get("display_name"):
                 fields["display_name"] = str(me["display_name"])
+            if handle:
+                handle.last_error = None
+                handle.auth_signal_event.set()
+        elif mapped_status in ("qr_expired", "error", "logged_out"):
+            fields["qr_data_url"] = None
+            fields["pairing_code"] = None
+            err_text = str(event.get("error") or "").strip()
+            if not err_text and mapped_status == "qr_expired":
+                err_text = "Mã QR đã hết hạn — bấm Làm mới QR để tạo mã mới."
+            if err_text:
+                fields["last_error"] = err_text[:500]
+            if handle:
+                handle.last_error = fields.get("last_error")
+                handle.latest_qr_data_url = None
+                handle.latest_pairing_code = None
+                handle.auth_signal_event.set()
         elif event.get("error"):
             fields["last_error"] = str(event["error"])[:500]
+            if handle:
+                handle.last_error = fields["last_error"]
         updated = await whatsapp_repo.update_account(account_id, **fields)
         await message_events.publish_whatsapp_event(
             account_id,
@@ -517,7 +563,7 @@ async def handle_bridge_event(account_id: str, event: Dict[str, Any]) -> None:
             {
                 "status": mapped_status,
                 "me": me or None,
-                "error": event.get("error"),
+                "error": fields.get("last_error") or event.get("error"),
                 "account": sanitize_account(updated),
             },
             id_member=id_member,
@@ -801,9 +847,63 @@ async def _stdout_loop(handle: BridgeHandle) -> None:
             if not fut.done():
                 fut.set_exception(RuntimeError("Tiến trình WhatsApp bridge đã dừng trước khi phản hồi."))
         handle.pending_rpcs.clear()
+
+        if _bridges.get(account_id) is handle:
+            _bridges.pop(account_id, None)
+
         if not handle.stopping:
-            handle.status = "disconnected"
-            logger.warning(f"[WhatsApp {account_id}] Tiến trình Node.js bridge kết thúc (rc={handle.process.returncode})")
+            rc = handle.process.returncode
+            logger.warning(f"[WhatsApp {account_id}] Tiến trình Node.js bridge kết thúc bất ngờ (rc={rc})")
+            already_terminal = handle.status in ("logged_out", "qr_expired", "error")
+            if not already_terminal:
+                exit_status = "error" if rc not in (0, None) else "disconnected"
+                err_msg = handle.last_error or (
+                    f"Tiến trình WhatsApp bridge dừng bất ngờ (mã thoát {rc})."
+                    if exit_status == "error"
+                    else "Tiến trình WhatsApp bridge đã ngắt kết nối."
+                )
+                handle.status = exit_status
+                handle.last_error = err_msg
+                try:
+                    id_member = await _resolve_account_member(account_id)
+                    updated = await whatsapp_repo.update_account(
+                        account_id,
+                        status=exit_status,
+                        qr_data_url=None,
+                        pairing_code=None,
+                        last_error=err_msg[:500],
+                    )
+                    await message_events.publish_whatsapp_event(
+                        account_id,
+                        "account_status",
+                        {
+                            "status": exit_status,
+                            "error": err_msg,
+                            "account": sanitize_account(updated),
+                        },
+                        id_member=id_member,
+                    )
+                except Exception:
+                    logger.exception(f"[WhatsApp {account_id}] Không thể đồng bộ trạng thái thoát bridge lên DB/SSE")
+
+        handle.auth_signal_event.set()
+
+
+def _log_bridge_stderr_line(account_id: str, text: str) -> None:
+    """Route Node bridge stderr lines to appropriate Loguru severity levels."""
+    lower = text.lower()
+    if (
+        "[error]" in lower
+        or '"level":50' in text
+        or '"level":60' in text
+        or "uncaughtexception" in lower
+        or "unhandledrejection" in lower
+    ):
+        logger.error(f"[WhatsApp Bridge {account_id}] {text[:500]}")
+    elif "[warn]" in lower or '"level":40' in text:
+        logger.warning(f"[WhatsApp Bridge {account_id}] {text[:500]}")
+    else:
+        logger.debug(f"[WhatsApp Bridge {account_id}] {text[:500]}")
 
 
 async def _stderr_loop(handle: BridgeHandle) -> None:
@@ -815,7 +915,7 @@ async def _stderr_loop(handle: BridgeHandle) -> None:
                 break
             text = raw_line.decode("utf-8", errors="replace").rstrip()
             if text:
-                logger.debug(f"[WhatsApp Bridge {account_id}] {text[:500]}")
+                _log_bridge_stderr_line(account_id, text)
     except asyncio.CancelledError:
         pass
     except Exception:
@@ -846,61 +946,83 @@ async def start_bridge(
     *,
     id_member: Optional[str] = None,
     pairing_phone: Optional[str] = None,
+    proxy_url: Any = _PROXY_UNSET,
     force_restart: bool = False,
 ) -> BridgeHandle:
     """Spawn (or reuse) the persistent Node.js Baileys bridge process for ``account_id``."""
-    existing = _bridges.get(account_id)
-    if existing and existing.process.returncode is None and not existing.stopping:
-        if not force_restart:
-            return existing
-        await stop_bridge(account_id, logout=False)
+    async with _get_account_lock(account_id):
+        existing = _bridges.get(account_id)
+        if existing and existing.process.returncode is None and not existing.stopping:
+            if not force_restart:
+                return existing
+            await _stop_bridge_unlocked(account_id, logout=False)
 
-    script_path = get_bridge_script_path()
-    if not script_path.is_file():
-        raise RuntimeError(
-            f"Không tìm thấy script WhatsApp bridge tại '{script_path}'. "
-            "Hãy kiểm tra scripts/wa_persistent_bridge.mjs và cài đặt npm."
+        script_path = get_bridge_script_path()
+        if not script_path.is_file():
+            raise RuntimeError(
+                f"Không tìm thấy script WhatsApp bridge tại '{script_path}'. "
+                "Hãy kiểm tra scripts/wa_persistent_bridge.mjs và cài đặt npm."
+            )
+
+        effective_proxy: Optional[str] = None
+        if proxy_url is _PROXY_UNSET:
+            try:
+                acc = await whatsapp_repo.get_account(account_id)
+            except Exception:
+                acc = None
+            effective_proxy = resolve_effective_proxy_url(acc)
+        elif isinstance(proxy_url, str) and proxy_url.strip():
+            effective_proxy = proxy_url.strip()
+        else:
+            effective_proxy = resolve_effective_proxy_url(None)
+
+        auth_dir = str(get_auth_dir(account_id))
+        media_dir = str(get_media_dir(account_id))
+        cmd = [
+            settings.node_binary,
+            str(script_path),
+            "--account-id",
+            str(account_id),
+            "--auth-dir",
+            auth_dir,
+            "--media-dir",
+            media_dir,
+            "--browser-name",
+            settings.browser_name,
+        ]
+        if pairing_phone:
+            digits = normalize_whatsapp_phone(pairing_phone)
+            if digits:
+                cmd.extend(["--pairing-phone", digits])
+
+        env = dict(os.environ)
+        env.setdefault("NODE_ENV", "production")
+        if effective_proxy:
+            env["WA_PROXY_URL"] = effective_proxy
+        else:
+            env.pop("WA_PROXY_URL", None)
+
+        proc = await _spawn_process(cmd, cwd=str(BACKEND_ROOT), env=env)
+
+        if id_member:
+            _member_cache[account_id] = str(id_member)
+
+        handle = BridgeHandle(
+            account_id=account_id,
+            id_member=str(id_member) if id_member else _member_cache.get(account_id),
+            process=proc,
+            auth_dir=auth_dir,
+            media_dir=media_dir,
+            status="connecting",
         )
-
-    auth_dir = str(get_auth_dir(account_id))
-    media_dir = str(get_media_dir(account_id))
-    cmd = [
-        settings.node_binary,
-        str(script_path),
-        "--account-id",
-        str(account_id),
-        "--auth-dir",
-        auth_dir,
-        "--media-dir",
-        media_dir,
-        "--browser-name",
-        settings.browser_name,
-    ]
-    if pairing_phone:
-        digits = "".join(ch for ch in str(pairing_phone) if ch.isdigit())
-        if digits:
-            cmd.extend(["--pairing-phone", digits])
-
-    env = dict(os.environ)
-    env.setdefault("NODE_ENV", "production")
-    proc = await _spawn_process(cmd, cwd=str(BACKEND_ROOT), env=env)
-
-    if id_member:
-        _member_cache[account_id] = str(id_member)
-
-    handle = BridgeHandle(
-        account_id=account_id,
-        id_member=str(id_member) if id_member else _member_cache.get(account_id),
-        process=proc,
-        auth_dir=auth_dir,
-        media_dir=media_dir,
-        status="connecting",
-    )
-    _bridges[account_id] = handle
-    handle.stdout_task = asyncio.create_task(_stdout_loop(handle))
-    handle.stderr_task = asyncio.create_task(_stderr_loop(handle))
-    logger.info(f"[WhatsApp {account_id}] Đã khởi chạy bridge PID={proc.pid}")
-    return handle
+        _bridges[account_id] = handle
+        handle.stdout_task = asyncio.create_task(_stdout_loop(handle))
+        handle.stderr_task = asyncio.create_task(_stderr_loop(handle))
+        logger.info(
+            f"[WhatsApp {account_id}] Đã khởi chạy bridge PID={proc.pid} "
+            f"(proxy={'on' if effective_proxy else 'off'})"
+        )
+        return handle
 
 
 async def send_command(
@@ -946,25 +1068,46 @@ async def wait_for_auth_artifact(
     account_id: str,
     *,
     kind: str = "qr",
-    timeout: float = 2.5,
+    timeout: float = 8.0,
 ) -> Optional[str]:
-    """Wait briefly for initial QR data URL or pairing code so REST response can include it immediately."""
+    """Wait up to ``timeout`` seconds for initial QR/pairing code, waking early on terminal/ready status."""
     handle = _bridges.get(account_id)
     if not handle:
         return None
-    evt = handle.pairing_event if kind == "pairing_code" else handle.qr_event
-    try:
-        await asyncio.wait_for(evt.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
-        return None
-    return handle.latest_pairing_code if kind == "pairing_code" else handle.latest_qr_data_url
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, float(timeout))
+    early_stop_statuses = ("connected", "error", "qr_expired", "logged_out", "disconnected")
+
+    while True:
+        if kind == "pairing_code" and handle.latest_pairing_code:
+            return handle.latest_pairing_code
+        if kind != "pairing_code" and handle.latest_qr_data_url:
+            return handle.latest_qr_data_url
+        if handle.status in early_stop_statuses or handle.process.returncode is not None:
+            return None
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
+        handle.auth_signal_event.clear()
+        # Re-check immediately after clearing to avoid lost-wakeup race
+        if kind == "pairing_code" and handle.latest_pairing_code:
+            return handle.latest_pairing_code
+        if kind != "pairing_code" and handle.latest_qr_data_url:
+            return handle.latest_qr_data_url
+        if handle.status in early_stop_statuses or handle.process.returncode is not None:
+            return None
+        try:
+            await asyncio.wait_for(handle.auth_signal_event.wait(), timeout=remaining)
+        except asyncio.TimeoutError:
+            return None
 
 
-async def stop_bridge(account_id: str, *, logout: bool = False) -> None:
+async def _stop_bridge_unlocked(account_id: str, *, logout: bool = False) -> None:
     handle = _bridges.pop(account_id, None)
     if not handle:
         return
     handle.stopping = True
+    handle.auth_signal_event.set()
     try:
         if handle.process.returncode is None:
             try:
@@ -992,8 +1135,25 @@ async def stop_bridge(account_id: str, *, logout: bool = False) -> None:
         handle.pending_rpcs.clear()
 
 
+async def stop_bridge(account_id: str, *, logout: bool = False) -> None:
+    async with _get_account_lock(account_id):
+        await _stop_bridge_unlocked(account_id, logout=logout)
+
+
+def _has_registered_creds(auth_dir: Path) -> bool:
+    """Return True iff ``auth_dir/creds.json`` exists and has ``registered === true``."""
+    creds_path = auth_dir / "creds.json"
+    if not creds_path.is_file():
+        return False
+    try:
+        data = json.loads(creds_path.read_text(encoding="utf-8"))
+        return isinstance(data, dict) and data.get("registered") is True
+    except Exception:
+        return False
+
+
 async def start_persisted_bridges() -> None:
-    """Auto-resume connected WhatsApp bridges on FastAPI startup (called by ``app/main.py`` lifespan)."""
+    """Auto-resume registered WhatsApp bridges on FastAPI startup (called by ``app/main.py`` lifespan)."""
     if os.getenv("DISABLE_WHATSAPP_BRIDGES", "").strip().lower() in ("1", "true", "yes"):
         logger.warning("DISABLE_WHATSAPP_BRIDGES enabled -> skipping WhatsApp bridge auto-start.")
         return
@@ -1009,11 +1169,18 @@ async def start_persisted_bridges() -> None:
 
     for acc in accounts:
         account_id = acc["id"]
-        auth_dir = Path(acc.get("auth_dir") or get_auth_dir(account_id))
-        if not auth_dir.exists() or not any(auth_dir.iterdir()):
+        auth_dir = get_auth_dir(account_id)
+        if not _has_registered_creds(auth_dir):
+            logger.debug(
+                f"[WhatsApp] Bỏ qua auto-resume cho {account_id} vì chưa có creds.json đã đăng ký (registered=true)."
+            )
             continue
         try:
-            await start_bridge(account_id, id_member=acc.get("id_member"))
+            await start_bridge(
+                account_id,
+                id_member=acc.get("id_member"),
+                proxy_url=resolve_effective_proxy_url(acc),
+            )
             logger.info(f"[WhatsApp] Đã khôi phục bridge cho tài khoản {account_id} ({acc.get('phone_number') or acc.get('label')})")
         except Exception as exc:
             logger.exception(f"[WhatsApp] Không thể khôi phục bridge cho tài khoản {account_id}")
@@ -1024,9 +1191,14 @@ async def start_persisted_bridges() -> None:
 
 
 async def shutdown_all_bridges() -> None:
-    """Gracefully terminate all active WhatsApp bridge subprocesses on FastAPI shutdown."""
-    for account_id in list(_bridges.keys()):
-        try:
-            await stop_bridge(account_id, logout=False)
-        except Exception:
-            logger.exception(f"[WhatsApp] Lỗi khi tắt bridge {account_id}")
+    """Gracefully terminate all active WhatsApp bridge subprocesses in parallel on FastAPI shutdown."""
+    account_ids = list(_bridges.keys())
+    if not account_ids:
+        return
+    results = await asyncio.gather(
+        *(stop_bridge(account_id, logout=False) for account_id in account_ids),
+        return_exceptions=True,
+    )
+    for account_id, res in zip(account_ids, results):
+        if isinstance(res, Exception):
+            logger.error(f"[WhatsApp] Lỗi khi tắt bridge {account_id}: {res}")

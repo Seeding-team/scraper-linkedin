@@ -17,7 +17,12 @@ from app.modules.all_platform.whatsapp import whatsapp_router
 from app.modules.all_platform.whatsapp.config import (
     BACKEND_ROOT,
     decrypt_cloud_token,
+    decrypt_proxy_url,
     encrypt_cloud_token,
+    encrypt_proxy_url,
+    mask_proxy_url,
+    normalize_whatsapp_phone,
+    resolve_effective_proxy_url,
     sanitize_account,
 )
 from app.modules.all_platform.whatsapp.services import (
@@ -916,5 +921,346 @@ def test_group_info_normalization_contact_metadata_reactions_sse_and_call_stub_d
             mock_upsert_msg.assert_not_awaited()
 
     _run(_scenario())
+
+
+# ── 7. P0 + P1 Session, Proxy, Pairing & Lifecycle Hardening Tests ────────────
+
+def test_migration_242_sql_adds_proxy_url_enc_grants_and_reload():
+    sql_path = BACKEND_ROOT / "supabase" / "migrations" / "242_whatsapp_session_proxy.sql"
+    assert sql_path.is_file(), f"Missing migration 242 file: {sql_path}"
+    sql = sql_path.read_text(encoding="utf-8")
+    assert "ALTER TABLE public.whatsapp_accounts" in sql
+    assert "ADD COLUMN IF NOT EXISTS proxy_url_enc TEXT;" in sql
+    assert "GRANT ALL ON TABLE public.whatsapp_accounts" in sql
+    assert "TO postgres, anon, authenticated, service_role;" in sql
+    assert "NOTIFY pgrst, 'reload schema';" in sql
+
+
+def test_proxy_fernet_masking_sanitization_and_default_env(monkeypatch):
+    socks_raw = "socks5://alice:SuperSecret123@1.2.3.4:1080"
+    http_raw = "http://bob:HiddenPass@5.6.7.8:8080"
+
+    enc_socks = encrypt_proxy_url(socks_raw)
+    assert enc_socks != socks_raw
+    assert decrypt_proxy_url(enc_socks) == socks_raw
+
+    assert mask_proxy_url(socks_raw) == "socks5://***@1.2.3.4:1080"
+    assert mask_proxy_url(http_raw) == "http://***@5.6.7.8:8080"
+    assert mask_proxy_url("http://10.0.0.1:3128") == "http://10.0.0.1:3128"
+
+    with pytest.raises(ValueError):
+        encrypt_proxy_url("ftp://1.2.3.4:21")
+    with pytest.raises(ValueError):
+        encrypt_proxy_url("not-a-valid-proxy")
+
+    sanitized = sanitize_account(_sample_account(proxy_url_enc=enc_socks))
+    assert sanitized["has_proxy"] is True
+    assert sanitized["proxy_masked"] == "socks5://***@1.2.3.4:1080"
+    assert "proxy_url_enc" not in sanitized
+    assert "proxy_url" not in sanitized
+    assert "SuperSecret123" not in json.dumps(sanitized)
+
+    sanitized_none = sanitize_account(_sample_account(proxy_url_enc=None))
+    assert sanitized_none["has_proxy"] is False
+    assert sanitized_none["proxy_masked"] is None
+
+    # WHATSAPP_DEFAULT_PROXY_URL used ONLY when account has no proxy_url_enc
+    monkeypatch.setenv("WHATSAPP_DEFAULT_PROXY_URL", http_raw)
+    assert resolve_effective_proxy_url({"proxy_url_enc": enc_socks}) == socks_raw
+    assert resolve_effective_proxy_url({"proxy_url_enc": None}) == http_raw
+    monkeypatch.delenv("WHATSAPP_DEFAULT_PROXY_URL", raising=False)
+    assert resolve_effective_proxy_url({"proxy_url_enc": None}) is None
+
+
+def test_vn_phone_normalization_and_proxy_http_routes():
+    assert normalize_whatsapp_phone("0901234567") == "84901234567"
+    assert normalize_whatsapp_phone("0901 234 567") == "84901234567"
+    assert normalize_whatsapp_phone("+84 901-234-567") == "84901234567"
+    assert normalize_whatsapp_phone("0084901234567") == "84901234567"
+    assert normalize_whatsapp_phone("001 (415) 555-2671") == "14155552671"
+    assert normalize_whatsapp_phone("+1 415 555 2671") == "14155552671"
+
+    app = _build_test_app()
+    client = TestClient(app)
+    existing_enc = encrypt_proxy_url("http://olduser:oldpass@9.9.9.9:8080")
+    acct = _sample_account(status="connected", proxy_url_enc=existing_enc)
+    saved_state: Dict[str, Any] = dict(acct)
+    start_calls: List[Dict[str, Any]] = []
+
+    async def fake_update(aid, **kw):
+        saved_state.update(kw)
+        return dict(saved_state)
+
+    async def fake_start_bridge(aid, **kw):
+        start_calls.append({"aid": aid, **kw})
+        return MagicMock()
+
+    with (
+        patch.object(whatsapp_repo, "get_account", new=AsyncMock(side_effect=lambda aid: dict(saved_state))),
+        patch.object(whatsapp_repo, "update_account", new=AsyncMock(side_effect=fake_update)),
+        patch.object(bridge_manager, "stop_bridge", new=AsyncMock()),
+        patch.object(bridge_manager, "start_bridge", new=AsyncMock(side_effect=fake_start_bridge)),
+        patch.object(bridge_manager, "wait_for_auth_artifact", new=AsyncMock(return_value=None)),
+        patch.object(bridge_manager, "is_bridge_running", return_value=True),
+        patch.object(message_events, "publish_whatsapp_event", new=AsyncMock(return_value=1)),
+    ):
+        # 1) connect-pairing normalizes VN 0901 234 567 -> 84901234567 & sets socks5 proxy
+        res_pair = client.post(
+            "/api/all-platform/whatsapp/auth/connect-pairing",
+            json={
+                "account_id": acct["id"],
+                "phone_number": "0901 234 567",
+                "proxy_url": "socks5://u1:secretP@1.2.3.4:1080",
+            },
+        )
+        assert res_pair.status_code == 200
+        body = res_pair.json()["data"]
+        assert body["phone_number"] == "84901234567"
+        assert body["has_proxy"] is True
+        assert body["proxy_masked"] == "socks5://***@1.2.3.4:1080"
+        assert "secretP" not in res_pair.text
+        assert start_calls[-1]["pairing_phone"] == "84901234567"
+        assert start_calls[-1]["proxy_url"] == "socks5://u1:secretP@1.2.3.4:1080"
+
+        # 2) connect-qr with omitted proxy_url keeps existing proxy
+        res_qr_keep = client.post(
+            "/api/all-platform/whatsapp/auth/connect-qr",
+            json={"account_id": acct["id"]},
+        )
+        assert res_qr_keep.status_code == 200
+        assert res_qr_keep.json()["data"]["has_proxy"] is True
+        assert start_calls[-1]["proxy_url"] == "socks5://u1:secretP@1.2.3.4:1080"
+
+        # 3) connect-qr with empty "" clears proxy
+        res_qr_clear = client.post(
+            "/api/all-platform/whatsapp/auth/connect-qr",
+            json={"account_id": acct["id"], "proxy_url": ""},
+        )
+        assert res_qr_clear.status_code == 200
+        assert res_qr_clear.json()["data"]["has_proxy"] is False
+        assert res_qr_clear.json()["data"]["proxy_masked"] is None
+        assert start_calls[-1]["proxy_url"] is None
+
+        # 4) PATCH settings with new proxy while connected/active restarts bridge with new proxy
+        saved_state["status"] = "connected"
+        prev_starts = len(start_calls)
+        res_patch = client.patch(
+            f"/api/all-platform/whatsapp/accounts/{acct['id']}/settings",
+            json={"proxy_url": "http://newuser:newpass@4.5.6.7:8888"},
+        )
+        assert res_patch.status_code == 200
+        assert res_patch.json()["data"]["has_proxy"] is True
+        assert res_patch.json()["data"]["proxy_masked"] == "http://***@4.5.6.7:8888"
+        assert "newpass" not in res_patch.text
+        assert len(start_calls) == prev_starts + 1
+        assert start_calls[-1]["force_restart"] is True
+        assert start_calls[-1]["proxy_url"] == "http://newuser:newpass@4.5.6.7:8888"
+
+
+def test_qr_expired_early_wakeup_crash_sync_and_stderr_promotion():
+    acct_id = "99999999-1111-1111-1111-111111111111"
+    acct = _sample_account(id=acct_id, status="qr_ready")
+    published: List[tuple[str, str, Dict[str, Any]]] = []
+    db_updates: List[Dict[str, Any]] = []
+
+    async def fake_publish(aid, evt_name, payload, *, id_member=None):
+        published.append((aid, evt_name, payload))
+        return 1
+
+    async def fake_update(aid, **kw):
+        db_updates.append(kw)
+        return {**acct, **kw}
+
+    class FakeProc:
+        def __init__(self, rc=None):
+            self.returncode = rc
+            self.stdout = AsyncMock()
+            self.stdout.readline = AsyncMock(return_value=b"")
+
+    async def _scenario():
+        proc = FakeProc(rc=None)
+        handle = bridge_manager.BridgeHandle(
+            account_id=acct_id,
+            id_member="member-001",
+            process=proc,
+            auth_dir="/tmp/a",
+            media_dir="/tmp/m",
+            status="connecting",
+        )
+        bridge_manager._bridges[acct_id] = handle
+        try:
+            with (
+                patch.object(whatsapp_repo, "get_account", new=AsyncMock(return_value=acct)),
+                patch.object(whatsapp_repo, "update_account", new=AsyncMock(side_effect=fake_update)),
+                patch.object(message_events, "publish_whatsapp_event", new=AsyncMock(side_effect=fake_publish)),
+            ):
+                # Trigger qr_expired shortly after wait_for_auth_artifact(timeout=8.0) starts -> must wake early!
+                async def emit_expired():
+                    await asyncio.sleep(0.05)
+                    await bridge_manager.handle_bridge_event(
+                        acct_id,
+                        {
+                            "event": "connection",
+                            "status": "qr_expired",
+                            "error": "Mã QR đã hết hạn — bấm Làm mới QR để tạo mã mới.",
+                        },
+                    )
+
+                t0 = asyncio.get_running_loop().time()
+                task = asyncio.create_task(emit_expired())
+                res = await bridge_manager.wait_for_auth_artifact(acct_id, kind="qr", timeout=8.0)
+                await task
+                elapsed = asyncio.get_running_loop().time() - t0
+                assert res is None
+                assert elapsed < 1.5, f"wait_for_auth_artifact did not wake early on qr_expired ({elapsed:.2f}s)"
+                assert db_updates[-1]["status"] == "qr_expired"
+                assert db_updates[-1]["qr_data_url"] is None
+                assert any(e == "account_status" and p.get("status") == "qr_expired" for _, e, p in published)
+
+                # Unexpected Node crash in _stdout_loop must sync DB + SSE to error!
+                db_updates.clear()
+                published.clear()
+                crash_proc = FakeProc(rc=1)
+                crash_handle = bridge_manager.BridgeHandle(
+                    account_id=acct_id,
+                    id_member="member-001",
+                    process=crash_proc,
+                    auth_dir="/tmp/a",
+                    media_dir="/tmp/m",
+                    status="connected",
+                )
+                bridge_manager._bridges[acct_id] = crash_handle
+                await bridge_manager._stdout_loop(crash_handle)
+                assert db_updates and db_updates[-1]["status"] == "error"
+                assert any(e == "account_status" and p.get("status") == "error" for _, e, p in published)
+                assert acct_id not in bridge_manager._bridges
+        finally:
+            bridge_manager._bridges.pop(acct_id, None)
+
+        # Stderr level promotion check
+        with (
+            patch.object(bridge_manager.logger, "error") as mock_err,
+            patch.object(bridge_manager.logger, "warning") as mock_warn,
+            patch.object(bridge_manager.logger, "debug") as mock_dbg,
+        ):
+            bridge_manager._log_bridge_stderr_line(acct_id, "[wa-bridge][error] boom 405")
+            bridge_manager._log_bridge_stderr_line(acct_id, "[wa-bridge][warn] slow version fetch")
+            bridge_manager._log_bridge_stderr_line(acct_id, "[wa-bridge][info] connected")
+            mock_err.assert_called_once()
+            mock_warn.assert_called_once()
+            mock_dbg.assert_called_once()
+
+    _run(_scenario())
+
+
+def test_per_account_lock_env_proxy_parallel_shutdown_and_registered_resume(tmp_path: Path):
+    acct_id = "aaaaaaaa-2222-3333-4444-555555555555"
+
+    class FakeProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+            self.returncode = None
+            self.stdin = MagicMock()
+            self.stdin.write = MagicMock()
+            self.stdin.drain = AsyncMock()
+            self.stdout = MagicMock()
+            self.stdout.readline = AsyncMock(return_value=b"")
+            self.stderr = MagicMock()
+            self.stderr.readline = AsyncMock(return_value=b"")
+
+        async def wait(self):
+            self.returncode = 0
+            return 0
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = -9
+
+    async def _scenario():
+        active_spawns = 0
+        max_concurrent_spawns = 0
+        spawn_records: List[Dict[str, Any]] = []
+
+        async def fake_spawn(cmd, *, cwd, env):
+            nonlocal active_spawns, max_concurrent_spawns
+            active_spawns += 1
+            max_concurrent_spawns = max(max_concurrent_spawns, active_spawns)
+            spawn_records.append({"cmd": list(cmd), "env": dict(env)})
+            await asyncio.sleep(0.06)
+            active_spawns -= 1
+            return FakeProc(pid=1000 + len(spawn_records))
+
+        # 1) Concurrent start_bridge for same account_id serializes via per-account lock & passes proxy in env ONLY
+        with (
+            patch.object(bridge_manager, "_spawn_process", side_effect=fake_spawn),
+            patch.object(bridge_manager, "_stdout_loop", new=AsyncMock()),
+            patch.object(bridge_manager, "_stderr_loop", new=AsyncMock()),
+            patch.object(bridge_manager, "get_auth_dir", return_value=tmp_path / "auth1"),
+            patch.object(bridge_manager, "get_media_dir", return_value=tmp_path / "media1"),
+        ):
+            proxy = "socks5://u:p@1.2.3.4:1080"
+            h1, h2 = await asyncio.gather(
+                bridge_manager.start_bridge(acct_id, proxy_url=proxy, force_restart=False),
+                bridge_manager.start_bridge(acct_id, proxy_url=proxy, force_restart=False),
+            )
+            assert max_concurrent_spawns == 1, "Per-account lock must serialize concurrent start_bridge calls"
+            assert h1 is h2, "Second concurrent call with force_restart=False should reuse first handle"
+            assert len(spawn_records) == 1
+            assert spawn_records[0]["env"].get("WA_PROXY_URL") == proxy
+            assert all(proxy not in arg and "u:p" not in arg for arg in spawn_records[0]["cmd"])
+            await bridge_manager.stop_bridge(acct_id, logout=False)
+
+        # 2) Parallel shutdown_all_bridges() runs concurrently via asyncio.gather
+        bridge_manager._bridges.clear()
+        for idx in range(3):
+            aid = f"par-acc-{idx}"
+            bridge_manager._bridges[aid] = bridge_manager.BridgeHandle(
+                account_id=aid, id_member="m1", process=FakeProc(2000 + idx), auth_dir="/tmp", media_dir="/tmp"
+            )
+
+        async def slow_stop(aid, *, logout=False):
+            await asyncio.sleep(0.15)
+            bridge_manager._bridges.pop(aid, None)
+
+        with patch.object(bridge_manager, "stop_bridge", side_effect=slow_stop):
+            t0 = asyncio.get_running_loop().time()
+            await bridge_manager.shutdown_all_bridges()
+            elapsed = asyncio.get_running_loop().time() - t0
+            assert elapsed < 0.35, f"shutdown_all_bridges should run in parallel, took {elapsed:.2f}s"
+
+        # 3) start_persisted_bridges ONLY resumes accounts whose get_auth_dir(id)/creds.json has registered === true
+        auth_root = tmp_path / "persisted_auth"
+        acc_reg = auth_root / "acc-registered"
+        acc_unreg = auth_root / "acc-unregistered"
+        acc_missing = auth_root / "acc-missing"
+        acc_reg.mkdir(parents=True)
+        acc_unreg.mkdir(parents=True)
+        acc_missing.mkdir(parents=True)
+        (acc_reg / "creds.json").write_text(json.dumps({"registered": True, "me": {"id": "8490@s.whatsapp.net"}}), encoding="utf-8")
+        (acc_unreg / "creds.json").write_text(json.dumps({"registered": False, "me": {"id": "8490@s.whatsapp.net"}}), encoding="utf-8")
+
+        resumed_ids: List[str] = []
+
+        async def record_start(aid, **kw):
+            resumed_ids.append(aid)
+            return MagicMock()
+
+        persisted_rows = [
+            {"id": "acc-registered", "id_member": "m1", "status": "connected", "auth_dir": "/stale/ignored/path"},
+            {"id": "acc-unregistered", "id_member": "m1", "status": "connecting", "auth_dir": str(acc_unreg)},
+            {"id": "acc-missing", "id_member": "m1", "status": "connected", "auth_dir": str(acc_missing)},
+        ]
+        with (
+            patch.object(whatsapp_repo, "list_persisted_accounts", new=AsyncMock(return_value=persisted_rows)),
+            patch.object(bridge_manager, "get_auth_dir", side_effect=lambda aid: auth_root / aid),
+            patch.object(bridge_manager, "start_bridge", new=AsyncMock(side_effect=record_start)),
+        ):
+            await bridge_manager.start_persisted_bridges()
+        assert resumed_ids == ["acc-registered"]
+
+    _run(_scenario())
+
 
 

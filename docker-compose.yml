@@ -31,6 +31,7 @@ services:
     image: seeding-app-backend:latest
     container_name: seeding-backend
     restart: unless-stopped
+    stop_grace_period: 25s
     # PID 1 phải reap tiến trình con: LibreOffice (soffice.bin) bị diệt khi timeout sẽ thành zombie nếu uvicorn là PID 1
     init: true
     env_file:

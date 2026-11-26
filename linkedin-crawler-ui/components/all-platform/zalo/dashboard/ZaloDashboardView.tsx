@@ -1,9 +1,7 @@
 "use client";
 
-import { MaterialIcon } from "@/components/ui";
 import type { ZaloCrawlerFlowValue } from "@/hooks/useZaloCrawlerFlow";
 import { useEffect, useState } from "react";
-import Image from "next/image";
 import { ZaloKpiPanel } from "./ZaloKpiPanel";
 import { ZaloAccountAssignmentsPanel } from "./ZaloAccountAssignmentsPanel";
 import { ZaloAddAccountModal } from "./ZaloAddAccountModal";
@@ -15,6 +13,48 @@ import { allPlatformUsersService } from "@/services/all-platform.service";
 interface ZaloDashboardViewProps {
   flow: ZaloCrawlerFlowValue;
   onEnterChat: (accountId: string) => void;
+  onConnectAccount?: (accountId: string) => void;
+}
+
+type ZaloDashboardAccount = ZaloCrawlerFlowValue["accounts"][number] & {
+  owner_name?: string | null;
+  id_member?: string | null;
+  sim_location?: string | null;
+  assigned_domains?: unknown[];
+  assigned_groups?: unknown[];
+  cookie_expiring_soon?: boolean;
+  cookie_expires_at?: string | null;
+  conflict_type?: string | null;
+  web_slot_conflict?: boolean;
+  has_proxy?: boolean;
+  proxy_masked?: string | null;
+  listener?: ZaloCrawlerFlowValue["accounts"][number]["listener"] & {
+    cookie_expiring_soon?: boolean;
+    cookie_expires_at?: string | null;
+    conflict_type?: string | null;
+    web_slot_conflict?: boolean;
+    has_proxy?: boolean;
+    proxy_masked?: string | null;
+  };
+};
+
+function getAccountHealthSignals(account: ZaloDashboardAccount) {
+  const cookieExpiringSoon = Boolean(
+    account.cookie_expiring_soon || account.listener?.cookie_expiring_soon,
+  );
+  const cookieExpiresAt =
+    account.cookie_expires_at || account.listener?.cookie_expires_at || null;
+  const lastErr = account.listener?.last_error || "";
+  const webSlotConflict = Boolean(
+    account.web_slot_conflict ||
+      account.conflict_type === "web_slot_conflict" ||
+      account.listener?.web_slot_conflict ||
+      account.listener?.conflict_type === "web_slot_conflict" ||
+      /web_slot_conflict|DuplicateConnection|Overlimit|cmd=3000|3003|chat\.zalo\.me/i.test(
+        lastErr,
+      ),
+  );
+  return { cookieExpiringSoon, cookieExpiresAt, webSlotConflict };
 }
 
 function shortId(value: string, head = 10, tail = 6) {
@@ -23,8 +63,10 @@ function shortId(value: string, head = 10, tail = 6) {
 }
 
 function accountStatus(account: ZaloCrawlerFlowValue["accounts"][number]) {
+  const health = getAccountHealthSignals(account as ZaloDashboardAccount);
   if (account.listener?.auth_expired) return { text: "Hết hạn — đăng nhập lại", tone: "error" as const };
   if (account.listener?.connected) return { text: "Online", tone: "success" as const };
+  if (health.webSlotConflict) return { text: "Trùng phiên Web", tone: "warning" as const };
   if (account.listener?.running) return { text: "Đang chạy", tone: "warning" as const };
   if (account.has_auth) return { text: "Đã kết nối", tone: "success" as const };
   return { text: "Chưa kết nối", tone: "muted" as const };
@@ -42,7 +84,11 @@ function StatusDot({ tone }: { tone: "success" | "warning" | "muted" | "error" }
   return <span className={`inline-block h-2.5 w-2.5 rounded-full border border-white ${className}`} />;
 }
 
-export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps) {
+export function ZaloDashboardView({
+  flow,
+  onEnterChat,
+  onConnectAccount,
+}: ZaloDashboardViewProps) {
   const { user } = useAppAuth();
   const isAdmin = user?.role === "admin";
   const [showAddAccountModal, setShowAddAccountModal] = useState(false);
@@ -65,12 +111,20 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
   useEffect(() => {
     allPlatformUsersService
       .getAllProfiles()
-      .then((res: any) => {
+      .then((res) => {
         if (res.success && Array.isArray(res.data)) {
           const map: Record<string, string> = {};
-          res.data.forEach((u: any) => {
-            const uid = u.id || u.user_id;
-            const uname = u.name || u.full_name || u.email;
+          res.data.forEach((u) => {
+            const rawUser = u as unknown as Record<string, unknown>;
+            const uid =
+              (typeof rawUser.id === "string" && rawUser.id) ||
+              (typeof rawUser.user_id === "string" && rawUser.user_id) ||
+              "";
+            const uname =
+              (typeof rawUser.name === "string" && rawUser.name) ||
+              (typeof rawUser.full_name === "string" && rawUser.full_name) ||
+              (typeof rawUser.email === "string" && rawUser.email) ||
+              "";
             if (uid && uname) {
               map[uid] = uname;
             }
@@ -81,9 +135,9 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
       .catch(() => {});
   }, []);
 
-  const getAssignedName = (account: any) => {
-    const rawName = account.owner_name;
-    const memberId = account.id_member || account.owner_id;
+  const getAssignedName = (account: ZaloDashboardAccount) => {
+    const rawName = account.owner_name || undefined;
+    const memberId = account.id_member || account.owner_id || undefined;
     const isUuid = (val?: string) =>
       Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val));
 
@@ -126,7 +180,7 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
     const phoneMatch = a.phone?.toLowerCase().includes(q);
     const labelMatch = a.label?.toLowerCase().includes(q);
     const idMatch = a.account_id.toLowerCase().includes(q);
-    const ownerMatch = (a as any).owner_name?.toLowerCase().includes(q);
+    const ownerMatch = (a as ZaloDashboardAccount).owner_name?.toLowerCase().includes(q);
     return phoneMatch || labelMatch || idMatch || ownerMatch;
   });
 
@@ -194,7 +248,7 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
               </div>
             </div>
             <a
-              href="/api-facebook-get-extension.zip"
+              href="/extension-login-zalo.zip"
               download
               className="inline-flex items-center gap-1.5 h-8.5 px-3.5 rounded-lg bg-primary hover:bg-red-700 text-white text-[12px] font-bold transition shadow-sm shadow-red-500/20 shrink-0"
             >
@@ -339,9 +393,12 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                 </tr>
               </thead>
               <tbody className="divide-y divide-outline-variant/60">
-                {filteredAccounts.map((account, idx) => {
+                {filteredAccounts.map((rawAccount, idx) => {
+                  const account = rawAccount as ZaloDashboardAccount;
                   const status = accountStatus(account);
-                  const simLoc = (account as any).sim_location;
+                  const health = getAccountHealthSignals(account);
+                  const needsInitialConnect = !account.has_auth && !account.listener?.auth_expired;
+                  const simLoc = account.sim_location;
                   const simLocLabel =
                     simLoc === "office"
                       ? "SIM Văn phòng"
@@ -349,8 +406,18 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                         ? "SIM Vị trí khác"
                         : "SIM Máy nhân sự";
 
-                  const domainCount = ((account as any).assigned_domains || []).length;
-                  const groupCount = ((account as any).assigned_groups || []).length;
+                  const domainCount = (account.assigned_domains || []).length;
+                  const groupCount = (account.assigned_groups || []).length;
+                  const triggerConnect = () => {
+                    if (onConnectAccount) {
+                      onConnectAccount(account.account_id);
+                      return;
+                    }
+                    if (account.account_id !== flow.userId) {
+                      flow.switchAccount(account.account_id);
+                    }
+                    void flow.restartSession();
+                  };
 
                   return (
                     <tr
@@ -440,30 +507,52 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
 
                       {/* Trạng thái kết nối */}
                       <td className="px-3.5 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${
-                            status.tone === "success"
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : status.tone === "error"
-                                ? "bg-red-50 text-red-700 border-red-200"
-                                : status.tone === "warning"
-                                  ? "bg-amber-50 text-amber-700 border-amber-200"
-                                  : "bg-surface-container-low text-on-surface-variant border-outline-variant"
-                          }`}
-                        >
+                        <div className="flex flex-col items-start gap-1">
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${
+                            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10.5px] font-bold border ${
                               status.tone === "success"
-                                ? "bg-emerald-500 animate-pulse"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                 : status.tone === "error"
-                                  ? "bg-red-500"
+                                  ? "bg-red-50 text-red-700 border-red-200"
                                   : status.tone === "warning"
-                                    ? "bg-amber-500 animate-pulse"
-                                    : "bg-slate-400"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                    : "bg-surface-container-low text-on-surface-variant border-outline-variant"
                             }`}
-                          />
-                          <span>{status.text}</span>
-                        </span>
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${
+                                status.tone === "success"
+                                  ? "bg-emerald-500 animate-pulse"
+                                  : status.tone === "error"
+                                    ? "bg-red-500"
+                                    : status.tone === "warning"
+                                      ? "bg-amber-500 animate-pulse"
+                                      : "bg-slate-400"
+                              }`}
+                            />
+                            <span>{status.text}</span>
+                          </span>
+                          {health.cookieExpiringSoon && (
+                            <span
+                              title={
+                                health.cookieExpiresAt
+                                  ? `Cookie sắp hết hạn lúc ${health.cookieExpiresAt} — hãy quét QR lại để làm mới`
+                                  : "Cookie sắp hết hạn (<24h) — hãy quét QR lại để làm mới"
+                              }
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-300"
+                            >
+                              <span>⚠️ Cookie sắp hết hạn (&lt;24h)</span>
+                            </span>
+                          )}
+                          {health.webSlotConflict && (
+                            <span
+                              title="Phát hiện mở song song chat.zalo.me ở trình duyệt — hãy ĐÓNG tab chat.zalo.me (không bấm Đăng xuất) rồi bấm Kết nối lại"
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 text-orange-800 border border-orange-300"
+                            >
+                              <span>⚠️ Xung đột 1 phiên Web — đóng tab chat.zalo.me</span>
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Thao tác (Actions) */}
@@ -472,17 +561,22 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                           {account.listener?.auth_expired ? (
                             <button
                               type="button"
-                              onClick={() => {
-                                if (account.account_id !== flow.userId) {
-                                  flow.switchAccount(account.account_id);
-                                }
-                                void flow.restartSession();
-                              }}
-                              className="h-7 px-2 bg-primary text-white text-[11px] font-bold rounded-lg hover:bg-red-700 transition inline-flex items-center gap-1 animate-pulse shadow-xs cursor-pointer"
-                              title="Đăng nhập lại qua Extension"
+                              onClick={triggerConnect}
+                              className="h-7 px-2.5 bg-primary text-white text-[11px] font-bold rounded-lg hover:bg-red-700 transition inline-flex items-center gap-1 animate-pulse shadow-xs cursor-pointer"
+                              title="Phiên đã hết hạn — bấm để đăng nhập lại qua Mã QR hoặc Extension"
                             >
                               <span className="material-symbols-outlined text-[13px]">login</span>
                               <span>Login lại</span>
+                            </button>
+                          ) : needsInitialConnect ? (
+                            <button
+                              type="button"
+                              onClick={triggerConnect}
+                              className="h-7 px-2.5 bg-[#0068ff] hover:bg-[#0052cc] text-white text-[11px] font-bold rounded-lg transition inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                              title="Chưa kết nối — bấm để quét mã QR trực tiếp hoặc dùng Extension"
+                            >
+                              <span className="material-symbols-outlined text-[13px]">qr_code_2</span>
+                              <span>Kết nối ngay</span>
                             </button>
                           ) : (
                             <button
@@ -554,8 +648,21 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
       {/* GRID VIEW (DẠNG LƯỚI THẺ - TÙY CHỌN) */}
       {viewMode === "grid" && filteredAccounts.length > 0 && (
         <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filteredAccounts.map((account) => {
+          {filteredAccounts.map((rawAccount) => {
+            const account = rawAccount as ZaloDashboardAccount;
             const status = accountStatus(account);
+            const health = getAccountHealthSignals(account);
+            const needsInitialConnect = !account.has_auth && !account.listener?.auth_expired;
+            const triggerConnect = () => {
+              if (onConnectAccount) {
+                onConnectAccount(account.account_id);
+                return;
+              }
+              if (account.account_id !== flow.userId) {
+                flow.switchAccount(account.account_id);
+              }
+              void flow.restartSession();
+            };
             return (
               <div
                 key={account.account_id}
@@ -651,7 +758,7 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                     </div>
 
                     {/* Status badge */}
-                    <div className="mt-1">
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
                       <span
                         className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
                           status.tone === "success"
@@ -676,6 +783,26 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                         />
                         <span>{status.text}</span>
                       </span>
+                      {health.cookieExpiringSoon && (
+                        <span
+                          title={
+                            health.cookieExpiresAt
+                              ? `Cookie sắp hết hạn lúc ${health.cookieExpiresAt}`
+                              : "Cookie sắp hết hạn (<24h)"
+                          }
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-amber-50 text-amber-800 border border-amber-300"
+                        >
+                          ⚠️ Sắp hết hạn
+                        </span>
+                      )}
+                      {health.webSlotConflict && (
+                        <span
+                          title="Đang mở song song chat.zalo.me — hãy ĐÓNG tab (không Đăng xuất) rồi Kết nối lại"
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-orange-50 text-orange-800 border border-orange-300"
+                        >
+                          ⚠️ Trùng phiên Web
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -704,17 +831,32 @@ export function ZaloDashboardView({ flow, onEnterChat }: ZaloDashboardViewProps)
                     <>
                       <button
                         type="button"
-                        onClick={() => {
-                          if (account.account_id !== flow.userId) {
-                            flow.switchAccount(account.account_id);
-                          }
-                          void flow.restartSession();
-                        }}
+                        onClick={triggerConnect}
                         className="flex-1 h-8 bg-primary text-white flex items-center justify-center gap-1 rounded-lg text-xs font-bold transition-all hover:bg-red-700 hover:shadow-sm shadow-red-500/20 active:scale-95 animate-pulse cursor-pointer"
-                        title="Phiên đã hết hạn — bấm để đăng nhập lại qua Extension"
+                        title="Phiên đã hết hạn — bấm để đăng nhập lại qua Mã QR hoặc Extension"
                       >
                         <span className="material-symbols-outlined text-[14px]">login</span>
                         <span>Đăng nhập lại</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingAccount(account)}
+                        className="h-8 w-8 bg-surface-container-low text-on-surface hover:text-primary flex items-center justify-center rounded-lg border border-outline-variant transition cursor-pointer"
+                        title="Chỉnh sửa tài khoản"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">edit</span>
+                      </button>
+                    </>
+                  ) : needsInitialConnect ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={triggerConnect}
+                        className="flex-1 h-8 bg-[#0068ff] text-white flex items-center justify-center gap-1 rounded-lg text-xs font-bold transition-all hover:bg-[#0052cc] hover:shadow-sm active:scale-95 cursor-pointer"
+                        title="Chưa kết nối — bấm để quét mã QR trực tiếp hoặc dùng Extension"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">qr_code_2</span>
+                        <span>Kết nối ngay</span>
                       </button>
                       <button
                         type="button"

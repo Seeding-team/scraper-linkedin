@@ -78,6 +78,26 @@ import {
   WhatsAppAvatar,
 } from "./whatsapp-ui";
 
+function resolveWhatsAppStatusMeta(status?: string | null) {
+  if (status === "qr_expired") {
+    return {
+      label: "Mã QR hết hạn",
+      dotClass: "bg-amber-500",
+      badgeClass: "bg-amber-50 text-amber-700 border-amber-200",
+      isConnected: false,
+    };
+  }
+  if (status === "reconnecting") {
+    return {
+      label: "Đang kết nối lại...",
+      dotClass: "bg-sky-500 animate-pulse",
+      badgeClass: "bg-sky-50 text-sky-700 border-sky-200",
+      isConnected: false,
+    };
+  }
+  return getAccountStatusMeta(status);
+}
+
 function normalizeSseMessage(raw: WhatsAppSseMessagePayload): WhatsAppMessage | null {
   const candidate = (raw.message ?? raw) as Partial<WhatsAppMessage>;
   if (!candidate || !candidate.message_id || !candidate.chat_jid) return null;
@@ -435,6 +455,9 @@ export function WhatsAppAccountsPageContent() {
                 data.pairing_code !== undefined ? data.pairing_code : merged.pairing_code,
               phone_number: data.phone_number ?? merged.phone_number,
               display_name: data.display_name ?? merged.display_name,
+              has_proxy: data.has_proxy !== undefined ? data.has_proxy : merged.has_proxy,
+              proxy_masked:
+                data.proxy_masked !== undefined ? data.proxy_masked : merged.proxy_masked,
               last_error: data.last_error !== undefined ? data.last_error : merged.last_error,
             };
           });
@@ -738,13 +761,25 @@ export function WhatsAppAccountsPageContent() {
 
   const handleReconnectAccount = async () => {
     if (!activeAccount) return;
-    if (activeAccount.status === "logged_out" || activeAccount.status === "qr_ready") {
-      setModalState({ open: true, tab: "qr", account: activeAccount });
+    if (
+      activeAccount.status === "logged_out" ||
+      activeAccount.status === "qr_ready" ||
+      activeAccount.status === "qr_expired" ||
+      activeAccount.status === "pairing_ready" ||
+      activeAccount.status === "error" ||
+      activeAccount.status === "disconnected"
+    ) {
+      setModalState({
+        open: true,
+        tab: activeAccount.status === "pairing_ready" ? "pairing" : "qr",
+        account: activeAccount,
+      });
       return;
     }
     const res = await whatsappService.reconnectAccount(activeAccount.id);
     if (!res.success) {
-      toast.error(res.message || "Kết nối lại thất bại.");
+      toast.error(res.message || "Kết nối lại thất bại — mở hộp thoại để thử lại hoặc cấu hình Proxy.");
+      setModalState({ open: true, tab: "qr", account: activeAccount });
       return;
     }
     toast.success("Đang kết nối lại tài khoản WhatsApp...");
@@ -1256,7 +1291,7 @@ export function WhatsAppAccountsPageContent() {
             <div className="flex items-center gap-1.5 min-w-0">
               {accounts.map((acc) => {
                 const active = acc.id === activeAccountId;
-                const st = getAccountStatusMeta(acc.status);
+                const st = resolveWhatsAppStatusMeta(acc.status);
                 return (
                   <button
                     key={acc.id}
@@ -1276,6 +1311,14 @@ export function WhatsAppAccountsPageContent() {
                         {acc.phone_number ? formatPhoneDisplay(acc.phone_number) : st.label}
                       </div>
                     </div>
+                    {acc.has_proxy && (
+                      <span
+                        title={acc.proxy_masked || "Đang dùng Proxy riêng"}
+                        className="rounded bg-emerald-100 px-1 py-0.5 text-[9px] font-bold text-emerald-800"
+                      >
+                        Proxy
+                      </span>
+                    )}
                     {acc.cloud_calling_enabled && (
                       <span
                         title="Đã bật Meta Cloud Calling WebRTC"
@@ -1432,11 +1475,12 @@ export function WhatsAppAccountsPageContent() {
                   <span
                     className={cn(
                       "h-2 w-2 shrink-0 rounded-full",
-                      getAccountStatusMeta(activeAccount.status).dotClass,
+                      resolveWhatsAppStatusMeta(activeAccount.status).dotClass,
                     )}
                   />
                   <span className="truncate font-medium">
-                    Trạng thái phiên: <strong>{getAccountStatusMeta(activeAccount.status).label}</strong>
+                    Trạng thái phiên:{" "}
+                    <strong>{resolveWhatsAppStatusMeta(activeAccount.status).label}</strong>
                     {activeAccount.last_error ? ` — ${activeAccount.last_error}` : ""}
                   </span>
                 </div>

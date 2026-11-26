@@ -46,6 +46,7 @@ async def create_account(
     phone_number: Optional[str] = None,
     auth_dir: Optional[str] = None,
     status: str = "pending",
+    proxy_url_enc: Optional[str] = None,
 ) -> Dict[str, Any]:
     sb: Client = get_supabase_client()
     row: Dict[str, Any] = {
@@ -56,6 +57,8 @@ async def create_account(
         "auth_dir": auth_dir,
         "status": status,
     }
+    if proxy_url_enc is not None:
+        row["proxy_url_enc"] = proxy_url_enc
     res = await _run(lambda: sb.table("whatsapp_accounts").insert(row).execute())
     return res.data[0]
 

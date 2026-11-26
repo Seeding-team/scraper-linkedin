@@ -1,8 +1,10 @@
 export type WhatsAppAccountStatus =
   | "pending"
   | "qr_ready"
+  | "qr_expired"
   | "pairing_ready"
   | "connecting"
+  | "reconnecting"
   | "connected"
   | "disconnected"
   | "logged_out"
@@ -24,6 +26,8 @@ export interface WhatsAppAccount {
   qr_data_url?: string | null;
   pairing_code?: string | null;
   auth_dir?: string | null;
+  has_proxy?: boolean;
+  proxy_masked?: string | null;
   cloud_calling_enabled?: boolean;
   cloud_phone_number_id?: string | null;
   cloud_waba_id?: string | null;
@@ -47,6 +51,8 @@ export interface WhatsAppAccountStatusResult {
   pairing_code?: string | null;
   phone_number?: string | null;
   display_name?: string | null;
+  has_proxy?: boolean;
+  proxy_masked?: string | null;
   last_error?: string | null;
   bridge_running?: boolean;
   bridge_connected?: boolean;
@@ -54,6 +60,8 @@ export interface WhatsAppAccountStatusResult {
 
 export interface WhatsAppSettingsPatch {
   label?: string | null;
+  /** Pass "" to clear saved proxy; omit (undefined) to preserve existing proxy. */
+  proxy_url?: string | null;
   auto_reject_calls?: boolean;
   auto_reject_message?: string | null;
   cloud_calling_enabled?: boolean;
@@ -337,6 +345,8 @@ export interface WhatsAppSseAccountStatusPayload {
   pairing_code?: string | null;
   phone_number?: string | null;
   display_name?: string | null;
+  has_proxy?: boolean;
+  proxy_masked?: string | null;
   last_error?: string | null;
   account?: WhatsAppAccount | null;
 }

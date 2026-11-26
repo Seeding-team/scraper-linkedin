@@ -26,6 +26,7 @@ async def connect_qr(
         user,
         label=payload.label,
         account_id=payload.account_id,
+        proxy_url=payload.proxy_url,
     )
     return BaseResponse(success=True, data=data)
 
@@ -40,5 +41,6 @@ async def connect_pairing(
         phone_number=payload.phone_number,
         label=payload.label,
         account_id=payload.account_id,
+        proxy_url=payload.proxy_url,
     )
     return BaseResponse(success=True, data=data)

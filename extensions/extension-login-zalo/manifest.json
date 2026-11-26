@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Seeding Zalo Connector",
-  "version": "3.0.0",
-  "description": "Đăng nhập Zalo cho app Seeding (seeding.markeeai.com) — lấy cookie Zalo Web + đồng bộ tin nhắn. Tên/version đổi khác hẳn extension của các app khác (vd Markee Zalo Personal Connector) để không bị nhầm lẫn khi cài song song.",
+  "version": "3.1.0",
+  "description": "Đăng nhập Zalo cho app Seeding (seeding.markeeai.com / dev.seeding.markeeai.com) — lấy cookie Zalo Web + tự đóng tab sau khi đồng bộ để tránh xung đột phiên.",
   "permissions": [
     "activeTab",
     "cookies",
@@ -20,7 +20,8 @@
     "https://127.0.0.1/*",
     "https://auto-fb.zenithglobal.dev/*",
     "https://seeding.zenithglobal.dev/*",
-    "https://seeding.markeeai.com/*"
+    "https://seeding.markeeai.com/*",
+    "https://dev.seeding.markeeai.com/*"
   ],
   "background": {
     "service_worker": "background.js",
@@ -35,7 +36,8 @@
         "https://127.0.0.1/*",
         "https://auto-fb.zenithglobal.dev/*",
         "https://seeding.zenithglobal.dev/*",
-        "https://seeding.markeeai.com/*"
+        "https://seeding.markeeai.com/*",
+        "https://dev.seeding.markeeai.com/*"
       ],
       "js": [
         "page-bridge.js"

@@ -1397,11 +1397,19 @@ async function login(auth) {
   if (!cookie || !auth.imei || !auth.userAgent) {
     throw new Error("Missing ZCA auth fields: cookies, imei, userAgent");
   }
-  const zalo = new Zalo({
+  const zaloOptions = {
     selfListen: true,
     checkUpdate: false,
     logging: false,
-  });
+  };
+  const proxyUrl = String(process.env.ZALO_PROXY_URL || "").trim();
+  if (proxyUrl) {
+    const { createZcaClientOptions } = require("./zca_qr_login");
+    const proxyClientOpts = createZcaClientOptions(auth.userAgent, proxyUrl);
+    if (proxyClientOpts.agent) zaloOptions.agent = proxyClientOpts.agent;
+    if (proxyClientOpts.polyfill) zaloOptions.polyfill = proxyClientOpts.polyfill;
+  }
+  const zalo = new Zalo(zaloOptions);
   return await zalo.login({
     cookie,
     imei: auth.imei,

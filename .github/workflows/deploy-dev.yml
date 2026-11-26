@@ -104,10 +104,10 @@ jobs:
           echo "===== Applying migration 222 to Dev DB (10.30.195.32) ====="
           docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/222_kpi_call_replacement.sql || true"
 
-      - name: Ap dung migration database 223..241 (Zalo Inbox KPI + Public Rotating Proxy + Continuous 4G + Threads + Instagram/LinkedIn No-Acc + Facebook EAA Pool + WhatsApp Chat & Call)
+      - name: Ap dung migration database 223..242 (Zalo Inbox KPI + Public Rotating Proxy + Continuous 4G + Threads + Instagram/LinkedIn No-Acc + Facebook EAA Pool + WhatsApp Chat/Call/Proxy)
         run: |
-          echo "===== Applying migrations 223..241 to Dev DB (10.30.195.32) ====="
-          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/223_zalo_inbox_kpi.sql -f /repo/linkedin_group_crawler/supabase/migrations/224_post_call_results_stats_index.sql -f /repo/linkedin_group_crawler/supabase/migrations/225_public_4g_crawler.sql -f /repo/linkedin_group_crawler/supabase/migrations/226_public_rotating_proxies.sql -f /repo/linkedin_group_crawler/supabase/migrations/227_public_crawl_post_audit.sql -f /repo/linkedin_group_crawler/supabase/migrations/228_continuous_4g_loop.sql -f /repo/linkedin_group_crawler/supabase/migrations/229_threads_no_acc_alternating_4g.sql -f /repo/linkedin_group_crawler/supabase/migrations/230_fb_messenger_bridge.sql -f /repo/linkedin_group_crawler/supabase/migrations/231_fb_messenger_relax_daily_limit.sql -f /repo/linkedin_group_crawler/supabase/migrations/240_unified_crawler_instagram_linkedin_eaa.sql -f /repo/linkedin_group_crawler/supabase/migrations/241_whatsapp_chat_crm.sql || true"
+          echo "===== Applying migrations 223..242 to Dev DB (10.30.195.32) ====="
+          docker run --rm -v "$PWD:/repo" postgres:alpine sh -c "psql 'postgresql://postgres.seeding-dev-test:NVaI8iX0cUvhQQ4dXnZ72B4WogfIokmvd6TpUHn80tM@10.30.195.32:5462/postgres' -f /repo/linkedin_group_crawler/supabase/migrations/223_zalo_inbox_kpi.sql -f /repo/linkedin_group_crawler/supabase/migrations/224_post_call_results_stats_index.sql -f /repo/linkedin_group_crawler/supabase/migrations/225_public_4g_crawler.sql -f /repo/linkedin_group_crawler/supabase/migrations/226_public_rotating_proxies.sql -f /repo/linkedin_group_crawler/supabase/migrations/227_public_crawl_post_audit.sql -f /repo/linkedin_group_crawler/supabase/migrations/228_continuous_4g_loop.sql -f /repo/linkedin_group_crawler/supabase/migrations/229_threads_no_acc_alternating_4g.sql -f /repo/linkedin_group_crawler/supabase/migrations/230_fb_messenger_bridge.sql -f /repo/linkedin_group_crawler/supabase/migrations/231_fb_messenger_relax_daily_limit.sql -f /repo/linkedin_group_crawler/supabase/migrations/240_unified_crawler_instagram_linkedin_eaa.sql -f /repo/linkedin_group_crawler/supabase/migrations/241_whatsapp_chat_crm.sql -f /repo/linkedin_group_crawler/supabase/migrations/242_whatsapp_session_proxy.sql || true"
 
       - name: Cap nhat bien moi truong host DEV sang DB moi
         run: |
@@ -123,6 +123,7 @@ jobs:
         run: |
           echo "===== Deploying dev.seeding.markeeai.com stack ====="
           docker volume create scraper-linkedin_backend-storage 2>/dev/null || true
+          docker volume create scraper-linkedin_backend-dev-whatsapp 2>/dev/null || true
           docker volume create scraper-linkedin_backend-dev-artifacts 2>/dev/null || true
           docker compose -f docker-compose.dev.yml up -d --no-deps --force-recreate frontend-dev backend-dev
           echo "Checking container status:"

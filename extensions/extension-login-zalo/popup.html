@@ -30,6 +30,16 @@
         font-size: 13px;
         line-height: 1.45;
       }
+      .notice {
+        margin: 0 0 12px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+        font-size: 12px;
+        line-height: 1.45;
+      }
       button {
         width: 100%;
         border: 0;
@@ -45,7 +55,10 @@
   <body>
     <span class="badge">SEEDING</span>
     <h1>Seeding Zalo Connector</h1>
-    <p>Dùng riêng cho app Seeding (seeding.markeeai.com). Giữ đăng nhập Zalo Web, sau đó vào trang "Tài khoản Zalo" trên Seeding để nhập cookie hoặc đồng bộ tin nhắn.</p>
+    <p>Dùng riêng cho app Seeding (seeding.markeeai.com / dev.seeding.markeeai.com). Vào trang "Tài khoản Zalo" trên Seeding để kết nối 1-chạm hoặc đồng bộ tin nhắn.</p>
+    <div class="notice">
+      <strong>Lưu ý giữ phiên:</strong> Tab chat.zalo.me sẽ tự đóng sau khi đồng bộ — TUYỆT ĐỐI KHÔNG bấm Đăng xuất để giữ phiên sống 24/7.
+    </div>
     <button id="open-zalo">Mở Zalo Web</button>
     <script src="popup.js"></script>
   </body>

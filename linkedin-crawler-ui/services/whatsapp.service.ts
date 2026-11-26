@@ -99,7 +99,11 @@ export const whatsappService = {
     return { success: true, message: res.message, data: extractArray<WhatsAppAccount>(res.data, "accounts") };
   },
 
-  connectQr: (payload?: { label?: string; account_id?: string }): Promise<ApiResponse<WhatsAppAccountStatusResult>> =>
+  connectQr: (payload?: {
+    label?: string;
+    account_id?: string;
+    proxy_url?: string | null;
+  }): Promise<ApiResponse<WhatsAppAccountStatusResult>> =>
     requestJson(`${BASE}/auth/connect-qr`, {
       method: "POST",
       body: JSON.stringify(payload ?? {}),
@@ -109,6 +113,7 @@ export const whatsappService = {
     phone_number: string;
     label?: string;
     account_id?: string;
+    proxy_url?: string | null;
   }): Promise<ApiResponse<WhatsAppAccountStatusResult>> =>
     requestJson(`${BASE}/auth/connect-pairing`, {
       method: "POST",

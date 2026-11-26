@@ -22,15 +22,19 @@ import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Boom } from "@hapi/boom";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import pino from "pino";
 import QRCode from "qrcode";
+import { SocksProxyAgent } from "socks-proxy-agent";
+import { ProxyAgent as UndiciProxyAgent } from "undici";
 import makeWASocket, {
   Browsers,
+  BufferJSON,
   DEFAULT_CONNECTION_CONFIG,
   DisconnectReason,
   downloadMediaMessage,
   extractMessageContent,
-  fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
   getContentType,
   isJidBroadcast,
   isJidGroup,
@@ -39,6 +43,7 @@ import makeWASocket, {
   isPnUser,
   jidDecode,
   jidNormalizedUser,
+  makeCacheableSignalKeyStore,
   normalizeMessageContent,
   proto,
   toNumber,
@@ -121,6 +126,19 @@ const CONTACTS_SYNC_CHUNK_SIZE = 80;
 const MAX_MESSAGE_CACHE = 1200;
 const MAX_LID_CACHE = 20000;
 
+export const BUNDLED_WA_VERSION = [2, 3000, 1043857760];
+const WA_VERSION_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const WA_VERSION_FETCH_TIMEOUT_MS = 4000;
+export const MAX_UNSCANNED_AUTH_CYCLES = 2;
+export const VALID_PROXY_PROTOCOLS = new Set([
+  "http:",
+  "https:",
+  "socks4:",
+  "socks4a:",
+  "socks5:",
+  "socks5h:",
+]);
+
 const CALL_STUB_TYPES = new Set([40, 41, 45, 46, 169, 170]);
 const REVOKE_STUB_TYPES = new Set([1, 132]);
 
@@ -186,6 +204,336 @@ export function parseCliArgs(argv) {
 export function cleanPhoneDigits(input) {
   if (!input) return "";
   return String(input).replace(/\D/g, "");
+}
+
+export function normalizePairingPhone(input) {
+  let digits = cleanPhoneDigits(input);
+  if (!digits) return "";
+  if (digits.startsWith("00")) {
+    digits = digits.slice(2);
+  } else if (digits.startsWith("0") && digits.length >= 8) {
+    digits = `84${digits.slice(1)}`;
+  }
+  return digits;
+}
+
+export function maskProxyUrl(rawProxyUrl) {
+  const trimmed = String(rawProxyUrl || "").trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(trimmed);
+    const scheme = parsed.protocol.replace(/:$/, "").toLowerCase();
+    const host = parsed.hostname;
+    if (!scheme || !host) return null;
+    const hostPart = host.includes(":") ? `[${host}]` : host;
+    const portPart = parsed.port ? `:${parsed.port}` : "";
+    const hasAuth = Boolean(parsed.username || parsed.password);
+    return hasAuth
+      ? `${scheme}://***@${hostPart}${portPart}`
+      : `${scheme}://${hostPart}${portPart}`;
+  } catch {
+    return null;
+  }
+}
+
+export function buildProxyTransports(rawProxyUrl) {
+  const trimmed = String(rawProxyUrl || "").trim();
+  if (!trimmed) {
+    return {
+      enabled: false,
+      protocol: null,
+      maskedUrl: null,
+      agent: undefined,
+      fetchAgent: undefined,
+      dispatcher: undefined,
+    };
+  }
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (err) {
+    throw new Error(`Invalid WA_PROXY_URL syntax: ${err?.message || String(err)}`);
+  }
+  const protocol = parsed.protocol.toLowerCase();
+  if (!VALID_PROXY_PROTOCOLS.has(protocol) || !parsed.hostname) {
+    throw new Error(
+      `Unsupported WA_PROXY_URL protocol '${protocol}' (allowed: http, https, socks4, socks5, socks5h)`
+    );
+  }
+  const maskedUrl = maskProxyUrl(trimmed);
+  if (protocol.startsWith("socks")) {
+    const agent = new SocksProxyAgent(trimmed);
+    return {
+      enabled: true,
+      protocol,
+      maskedUrl,
+      agent,
+      fetchAgent: agent,
+      dispatcher: undefined,
+    };
+  }
+  const agent = new HttpsProxyAgent(trimmed);
+  const dispatcher = new UndiciProxyAgent(trimmed);
+  return {
+    enabled: true,
+    protocol,
+    maskedUrl,
+    agent,
+    fetchAgent: agent,
+    dispatcher,
+  };
+}
+
+export async function writeJsonAtomic(filePath, data) {
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const serialized = JSON.stringify(data, BufferJSON.replacer);
+  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 8)}.tmp`;
+  try {
+    await fs.promises.writeFile(tmpPath, serialized, { encoding: "utf8", mode: 0o600 });
+    let renamed = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        await fs.promises.rename(tmpPath, filePath);
+        renamed = true;
+        break;
+      } catch (err) {
+        if ((err?.code === "EPERM" || err?.code === "EBUSY") && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 30 * (attempt + 1)));
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (!renamed) {
+      throw new Error(`Failed to atomically rename ${tmpPath} -> ${filePath}`);
+    }
+  } catch (err) {
+    try {
+      await fs.promises.unlink(tmpPath);
+    } catch {
+      // ignore temp cleanup failure
+    }
+    throw err;
+  }
+}
+
+export function cleanDirtyUnregisteredAuthDir(authDir) {
+  if (!authDir || !fs.existsSync(authDir)) return false;
+  const credsPath = path.join(authDir, "creds.json");
+  if (!fs.existsSync(credsPath)) return false;
+  let parsed = null;
+  try {
+    const raw = fs.readFileSync(credsPath, "utf8");
+    parsed = JSON.parse(raw, BufferJSON.reviver);
+  } catch {
+    // Truncated or corrupted creds.json -> wipe auth files preserving .bridge.lock
+    parsed = { registered: false, me: { id: "corrupted" } };
+  }
+  if (parsed && !parsed.registered && parsed.me) {
+    const entries = fs.readdirSync(authDir);
+    for (const name of entries) {
+      if (name === ".bridge.lock") continue;
+      try {
+        fs.rmSync(path.join(authDir, name), { recursive: true, force: true });
+      } catch {
+        // ignore individual removal failure
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+export function isPidAlive(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return false;
+  if (n === process.pid) return true;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    if (err?.code === "EPERM") return true;
+    return false;
+  }
+}
+
+export function acquireBridgeLock(authDir, accountId) {
+  fs.mkdirSync(authDir, { recursive: true });
+  const lockPath = path.join(authDir, ".bridge.lock");
+  const payload = JSON.stringify({
+    pid: process.pid,
+    account_id: String(accountId || ""),
+    acquired_at: nowIso(),
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fs.writeFileSync(lockPath, payload, { flag: "wx", encoding: "utf8" });
+      return lockPath;
+    } catch (err) {
+      if (err?.code !== "EEXIST") throw err;
+      let existing = null;
+      try {
+        existing = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+      } catch {
+        existing = null;
+      }
+      const holderPid = Number(existing?.pid);
+      if (holderPid === process.pid) {
+        return lockPath;
+      }
+      if (holderPid && isPidAlive(holderPid)) {
+        throw new Error(
+          `Phiên WhatsApp bridge khác (PID ${holderPid}) đang chạy trên cùng thư mục auth '${authDir}'. ` +
+            "Đã chặn khởi chạy trùng lặp để tránh xung đột 440 (connectionReplaced)."
+        );
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch {
+        // ignore race unlink
+      }
+    }
+  }
+  throw new Error(`Không thể tạo lockfile '${lockPath}' sau khi dọn lock cũ.`);
+}
+
+export function releaseBridgeLock(lockPath) {
+  if (!lockPath || !fs.existsSync(lockPath)) return;
+  try {
+    const existing = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    if (existing?.pid && Number(existing.pid) !== process.pid) {
+      return;
+    }
+  } catch {
+    // unreadable lockfile; ignore
+  }
+  try {
+    fs.unlinkSync(lockPath);
+  } catch {
+    // ignore unlink failure
+  }
+}
+
+export function classifyDisconnectDecision({
+  statusCode = null,
+  errMessage = "",
+  isRegistered = false,
+  isShuttingDown = false,
+  pairSuccessReceived = false,
+  authArtifactEmitted = false,
+  unscannedAuthCycles = 0,
+  maxUnscannedCycles = MAX_UNSCANNED_AUTH_CYCLES,
+} = {}) {
+  const code = statusCode !== null && statusCode !== undefined ? Number(statusCode) : null;
+
+  if (code === DisconnectReason.loggedOut || code === 401) {
+    return {
+      status: "logged_out",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: 0,
+      error: "Phiên WhatsApp đã bị đăng xuất khỏi thiết bị chính (401). Vui lòng quét QR hoặc ghép nối lại.",
+    };
+  }
+  if (code === DisconnectReason.forbidden || code === 403) {
+    return {
+      status: "error",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: unscannedAuthCycles,
+      error:
+        "WhatsApp từ chối kết nối (403 — IP VPS có thể bị chặn). Vui lòng cấu hình Sticky Proxy riêng (HTTP/SOCKS5) rồi thử lại.",
+    };
+  }
+  if (code === 405) {
+    return {
+      status: "error",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: unscannedAuthCycles,
+      error:
+        "Máy chủ WhatsApp từ chối bắt tay kết nối (405 — IP VPS hoặc phiên bản bị hạn chế). Vui lòng cấu hình Sticky Proxy riêng (HTTP/SOCKS5) rồi thử lại.",
+    };
+  }
+  if (code === DisconnectReason.multideviceMismatch || code === 411) {
+    return {
+      status: "error",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: unscannedAuthCycles,
+      error:
+        "Tài khoản chưa tương thích chế độ đa thiết bị (411). Vui lòng cập nhật WhatsApp trên điện thoại rồi thử lại.",
+    };
+  }
+  if (code === DisconnectReason.connectionReplaced || code === 440) {
+    return {
+      status: "error",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: unscannedAuthCycles,
+      error:
+        "Kết nối bị thay thế bởi phiên khác cùng thiết bị (440). Vui lòng kiểm tra tiến trình trùng lặp rồi bấm Kết nối lại.",
+    };
+  }
+
+  if (isShuttingDown) {
+    return {
+      status: "close",
+      willReconnect: false,
+      isRestartRequired: false,
+      nextUnscannedCycles: unscannedAuthCycles,
+      error: errMessage || "Bridge shutting down",
+    };
+  }
+
+  const isRestartRequired = code === DisconnectReason.restartRequired || code === 515;
+  if (isRestartRequired) {
+    return {
+      status: "reconnecting",
+      willReconnect: true,
+      isRestartRequired: true,
+      nextUnscannedCycles: 0,
+      error: null,
+    };
+  }
+
+  const isUnregisteredAuthClose =
+    !isRegistered &&
+    !pairSuccessReceived &&
+    (code === DisconnectReason.timedOut ||
+      code === 408 ||
+      authArtifactEmitted ||
+      /qr refs attempts ended/i.test(String(errMessage || "")));
+
+  if (isUnregisteredAuthClose) {
+    const nextCycles = unscannedAuthCycles + 1;
+    if (nextCycles >= maxUnscannedCycles) {
+      return {
+        status: "qr_expired",
+        willReconnect: false,
+        isRestartRequired: false,
+        nextUnscannedCycles: nextCycles,
+        error: "Mã QR đã hết hạn — bấm Làm mới QR để tạo mã mới.",
+      };
+    }
+    return {
+      status: "reconnecting",
+      willReconnect: true,
+      isRestartRequired: false,
+      nextUnscannedCycles: nextCycles,
+      error: errMessage || "Đang làm mới phiên QR...",
+    };
+  }
+
+  return {
+    status: "reconnecting",
+    willReconnect: true,
+    isRestartRequired: false,
+    nextUnscannedCycles: unscannedAuthCycles,
+    error: errMessage || (code ? `Disconnect code ${code}` : "Connection closed"),
+  };
 }
 
 export function extractPhoneFromJid(jid) {
@@ -807,15 +1155,32 @@ function createBridgeRuntime(cliArgs) {
   );
 
   const startedAtMs = Date.now();
+  const rawProxyUrl = (process.env.WA_PROXY_URL || "").trim();
+  const proxyTransports = buildProxyTransports(rawProxyUrl);
+  if (proxyTransports.enabled) {
+    logStderr(
+      "info",
+      `Proxy transport enabled (${proxyTransports.protocol}) via ${proxyTransports.maskedUrl}`
+    );
+  }
+
   let sock = null;
   let authState = null;
   let saveCredsFn = null;
+  let lastSaveCredsPromise = Promise.resolve();
+  let lockPath = null;
+  let cachedWaVersion = null;
+  let cachedWaVersionAtMs = 0;
   let connectionStatus = cliArgs.dryRun ? "dry_run" : "connecting";
   let meInfo = null;
   let lastQr = null;
   let lastQrDataUrl = null;
   let lastPairingCode = null;
+  let pairingMode = Boolean(cliArgs.pairingPhone);
   let pairingRequestedForSocket = false;
+  let authArtifactEmittedForSocket = false;
+  let pairSuccessReceived = false;
+  let unscannedAuthCycles = 0;
   let reconnectAttempts = 0;
   let reconnectTimer = null;
   let pairingTimer = null;
@@ -1084,10 +1449,13 @@ function createBridgeRuntime(cliArgs) {
         return;
       }
 
+      const downloadOpts = proxyTransports.dispatcher
+        ? { options: { dispatcher: proxyTransports.dispatcher } }
+        : {};
       const buffer = await downloadMediaMessage(
         msg,
         "buffer",
-        {},
+        downloadOpts,
         {
           logger,
           reuploadRequest: sock.updateMediaMessage,
@@ -1200,34 +1568,79 @@ function createBridgeRuntime(cliArgs) {
   // -------------------------------------------------------------------------
   // 4. Socket Lifecycle & Reconnection State Machine
   // -------------------------------------------------------------------------
-  async function resolveBaileysVersion() {
+  async function resolveWaWebVersion() {
+    const now = Date.now();
+    if (cachedWaVersion && now - cachedWaVersionAtMs < WA_VERSION_CACHE_TTL_MS) {
+      return cachedWaVersion;
+    }
     try {
-      const res = await fetchLatestBaileysVersion();
+      const fetchOpts = { signal: AbortSignal.timeout(WA_VERSION_FETCH_TIMEOUT_MS) };
+      if (proxyTransports.dispatcher) {
+        fetchOpts.dispatcher = proxyTransports.dispatcher;
+      }
+      const res = await fetchLatestWaWebVersion(fetchOpts);
       if (Array.isArray(res?.version) && res.version.length === 3 && !res.error) {
+        cachedWaVersion = res.version;
+        cachedWaVersionAtMs = now;
         return res.version;
       }
-      logStderr("warn", "fetchLatestBaileysVersion returned error/empty, using fallback", res?.error);
+      logStderr(
+        "warn",
+        "fetchLatestWaWebVersion returned error/empty, using bundled fallback",
+        res?.error
+      );
     } catch (err) {
-      logStderr("warn", "fetchLatestBaileysVersion failed (offline?), using fallback", err?.message || String(err));
+      logStderr(
+        "warn",
+        "fetchLatestWaWebVersion failed/timed out, using bundled fallback",
+        err?.message || String(err)
+      );
     }
-    return DEFAULT_CONNECTION_CONFIG.version;
+    return BUNDLED_WA_VERSION;
   }
 
   function resolveBrowserTuple() {
-    // Pairing code servers strictly validate standard OS/browser display formats.
-    if (cliArgs.pairingPhone) {
-      return Browsers.ubuntu("Chrome");
-    }
-    if (cliArgs.browserName && cliArgs.browserName.trim()) {
-      return [cliArgs.browserName.trim(), "Chrome", "22.04.4"];
-    }
+    // Pairing code & Multi-Device servers strictly validate standard OS/browser display tuples.
     return Browsers.ubuntu("Chrome");
   }
 
+  function enqueueAtomicSaveCreds(authDir, credsObj) {
+    const credsPath = path.join(authDir, "creds.json");
+    const next = lastSaveCredsPromise
+      .catch(() => {})
+      .then(() => writeJsonAtomic(credsPath, credsObj));
+    lastSaveCredsPromise = next;
+    return next;
+  }
+
+  async function waitForOpenSocket(targetSock, timeoutMs = 10000) {
+    if (!targetSock) {
+      throw new Error("WhatsApp socket is not initialized yet");
+    }
+    if (targetSock.ws?.isOpen) {
+      return;
+    }
+    if (typeof targetSock.waitForSocketOpen !== "function") {
+      throw new Error("WhatsApp WebSocket is not open yet");
+    }
+    await Promise.race([
+      targetSock.waitForSocketOpen(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Quá thời gian chờ mở WebSocket WhatsApp.")), timeoutMs);
+      }),
+    ]);
+    if (!targetSock.ws?.isOpen) {
+      throw new Error("WhatsApp WebSocket closed before pairing code could be requested");
+    }
+  }
+
   async function triggerPairingCodeInternal(phoneInput) {
-    const digits = cleanPhoneDigits(phoneInput);
+    pairingMode = true;
+    const digits = normalizePairingPhone(phoneInput);
     if (digits.length < 7 || digits.length > 15) {
-      throw new Error("Invalid phone_number: provide E.164 digits only (7-15 digits, e.g. 84901234567)");
+      throw new Error(
+        "Số điện thoại không hợp lệ — nhập số VN (09xxxxxxxx) hoặc E.164 (84901234567)."
+      );
     }
     if (!sock) {
       throw new Error("WhatsApp socket is not initialized yet");
@@ -1235,6 +1648,8 @@ function createBridgeRuntime(cliArgs) {
     if (authState?.creds?.registered) {
       throw new Error("Account is already registered/authenticated; logout first to re-pair");
     }
+    await waitForOpenSocket(sock, 10000);
+    authArtifactEmittedForSocket = true;
     const rawCode = await sock.requestPairingCode(digits);
     const formatted = formatPairingCode(rawCode);
     lastPairingCode = rawCode;
@@ -1278,32 +1693,38 @@ function createBridgeRuntime(cliArgs) {
       pairingTimer = null;
     }
     if (sock) {
+      const prevSock = sock;
+      sock = null;
       try {
-        sock.ev.removeAllListeners("connection.update");
-        sock.ev.removeAllListeners("creds.update");
-        sock.ev.removeAllListeners("messaging-history.set");
-        sock.ev.removeAllListeners("chats.upsert");
-        sock.ev.removeAllListeners("chats.update");
-        sock.ev.removeAllListeners("contacts.upsert");
-        sock.ev.removeAllListeners("contacts.update");
-        sock.ev.removeAllListeners("lid-mapping.update");
-        sock.ev.removeAllListeners("messages.upsert");
-        sock.ev.removeAllListeners("messages.update");
-        sock.ev.removeAllListeners("messages.delete");
-        sock.ev.removeAllListeners("messages.reaction");
-        sock.ev.removeAllListeners("presence.update");
-        sock.ev.removeAllListeners("groups.upsert");
-        sock.ev.removeAllListeners("groups.update");
-        sock.ev.removeAllListeners("call");
+        prevSock.ev.removeAllListeners("connection.update");
+        prevSock.ev.removeAllListeners("creds.update");
+        prevSock.ev.removeAllListeners("messaging-history.set");
+        prevSock.ev.removeAllListeners("chats.upsert");
+        prevSock.ev.removeAllListeners("chats.update");
+        prevSock.ev.removeAllListeners("contacts.upsert");
+        prevSock.ev.removeAllListeners("contacts.update");
+        prevSock.ev.removeAllListeners("lid-mapping.update");
+        prevSock.ev.removeAllListeners("messages.upsert");
+        prevSock.ev.removeAllListeners("messages.update");
+        prevSock.ev.removeAllListeners("messages.delete");
+        prevSock.ev.removeAllListeners("messages.reaction");
+        prevSock.ev.removeAllListeners("presence.update");
+        prevSock.ev.removeAllListeners("groups.upsert");
+        prevSock.ev.removeAllListeners("groups.update");
+        prevSock.ev.removeAllListeners("call");
       } catch {
         // ignore listener cleanup errors
       }
       try {
-        sock.ws?.close();
+        prevSock.end(undefined);
+      } catch {
+        // ignore socket end errors
+      }
+      try {
+        prevSock.ws?.close();
       } catch {
         // ignore ws close errors
       }
-      sock = null;
     }
   }
 
@@ -1312,17 +1733,32 @@ function createBridgeRuntime(cliArgs) {
     activeGeneration += 1;
     const gen = activeGeneration;
     pairingRequestedForSocket = false;
+    authArtifactEmittedForSocket = false;
+    pairSuccessReceived = false;
 
     await cleanupPreviousSocket();
 
     fs.mkdirSync(cliArgs.authDir, { recursive: true });
     fs.mkdirSync(cliArgs.mediaDir, { recursive: true });
 
-    const { state, saveCreds } = await useMultiFileAuthState(cliArgs.authDir);
-    authState = state;
-    saveCredsFn = saveCreds;
+    // Prevent poisoned reconnect loop when an aborted pairing attempt wrote creds.me while registered=false
+    if (cleanDirtyUnregisteredAuthDir(cliArgs.authDir)) {
+      logStderr(
+        "warn",
+        `Wiped dirty unregistered creds.me in ${cliArgs.authDir} before rebuilding auth state`
+      );
+    }
 
-    const version = await resolveBaileysVersion();
+    const { state } = await useMultiFileAuthState(cliArgs.authDir);
+    if (!state.creds.registered && state.creds.me) {
+      logStderr("warn", "Detected in-memory dirty unregistered creds.me; resetting auth directory");
+      cleanDirtyUnregisteredAuthDir(cliArgs.authDir);
+    }
+    const saveCredsAtomic = () => enqueueAtomicSaveCreds(cliArgs.authDir, state.creds);
+    authState = state;
+    saveCredsFn = saveCredsAtomic;
+
+    const version = await resolveWaWebVersion();
     const browser = resolveBrowserTuple();
 
     connectionStatus = "connecting";
@@ -1335,11 +1771,15 @@ function createBridgeRuntime(cliArgs) {
       ts: nowIso(),
     });
 
-    const newSock = makeWASocket({
+    const socketConfig = {
       version,
-      auth: state,
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, logger),
+      },
       logger,
       browser,
+      countryCode: "VN",
       syncFullHistory: false,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
@@ -1347,56 +1787,145 @@ function createBridgeRuntime(cliArgs) {
         const cached = lookupCachedMessage(key);
         return cached?.message || undefined;
       },
-    });
+    };
+    if (proxyTransports.agent) {
+      socketConfig.agent = proxyTransports.agent;
+      socketConfig.fetchAgent = proxyTransports.fetchAgent;
+    }
+    if (proxyTransports.dispatcher) {
+      socketConfig.options = { dispatcher: proxyTransports.dispatcher };
+    }
+
+    const newSock = makeWASocket(socketConfig);
     sock = newSock;
 
-    // 4.1 Persist credentials safely
+    // 4.1 Persist credentials atomically & track promise for 515 restart flush
     newSock.ev.on("creds.update", async () => {
       if (gen !== activeGeneration) return;
       try {
-        await saveCreds();
+        await saveCredsAtomic();
       } catch (err) {
-        logStderr("error", "saveCreds failed", err?.message || String(err));
+        logStderr("error", "Atomic saveCreds failed", err?.message || String(err));
       }
     });
+
+    // Surface server-side pairing IQ rejections (e.g. 429 rate-overlimit) cleanly
+    try {
+      newSock.ws?.on("CB:iq,type:error", (node) => {
+        if (gen !== activeGeneration || state.creds.registered || !pairingRequestedForSocket) {
+          return;
+        }
+        const children = Array.isArray(node?.content) ? node.content : [];
+        const errChild = children.find((c) => c?.tag === "error");
+        const errCode = Number(errChild?.attrs?.code || 0);
+        const errText = errChild?.attrs?.text || "";
+        if (errCode === 429) {
+          const msg =
+            "WhatsApp tạm giới hạn gửi mã ghép nối (429). Vui lòng đợi 1-2 phút hoặc chuyển sang quét QR / gắn Proxy riêng.";
+          logStderr("error", "Pairing IQ rejected with 429", { errCode, errText });
+          emitStdout({
+            event: "connection",
+            account_id: cliArgs.accountId,
+            status: "error",
+            me: null,
+            status_code: 429,
+            error: msg,
+            will_reconnect: false,
+            ts: nowIso(),
+          });
+        } else if (errCode >= 400) {
+          logStderr("warn", "Pairing IQ error from WhatsApp", { errCode, errText });
+        }
+      });
+    } catch {
+      // ignore if ws wrapper does not support custom CB listener
+    }
+
+    // Non-blind WS-open readiness fallback for --pairing-phone if WA server skips initial qr frame
+    if (pairingMode && cliArgs.pairingPhone && !state.creds.registered) {
+      void (async () => {
+        try {
+          await waitForOpenSocket(newSock, 15000);
+          await new Promise((resolve) => {
+            pairingTimer = setTimeout(resolve, 2500);
+          });
+          pairingTimer = null;
+          if (gen !== activeGeneration || isShuttingDown || sock !== newSock) return;
+          if (!state.creds.registered && !pairingRequestedForSocket && newSock.ws?.isOpen) {
+            pairingRequestedForSocket = true;
+            try {
+              await triggerPairingCodeInternal(cliArgs.pairingPhone);
+            } catch (err) {
+              logStderr("error", "WS-open fallback requestPairingCode failed", err?.message || String(err));
+              connectionStatus = "error";
+              emitStdout({
+                event: "connection",
+                account_id: cliArgs.accountId,
+                status: "error",
+                me: null,
+                error: `Không thể tạo mã ghép nối 8 ký tự: ${err?.message || String(err)}`,
+                will_reconnect: false,
+                ts: nowIso(),
+              });
+            }
+          }
+        } catch (err) {
+          if (gen !== activeGeneration || isShuttingDown) return;
+          logStderr("warn", "Pairing WS readiness waiter exited early", err?.message || String(err));
+        }
+      })();
+    }
 
     // 4.2 Connection lifecycle + QR + Phone Pairing Code
     newSock.ev.on("connection.update", async (update) => {
       if (gen !== activeGeneration) return;
-      const { connection, lastDisconnect, qr } = update;
+      const { connection, lastDisconnect, qr, isNewLogin } = update;
+
+      if (isNewLogin) {
+        pairSuccessReceived = true;
+      }
 
       if (qr) {
-        lastQr = qr;
-        try {
-          lastQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, width: 320 });
-        } catch (err) {
-          logStderr("warn", "QRCode.toDataURL failed", err?.message || String(err));
-          lastQrDataUrl = null;
-        }
-        emitStdout({
-          event: "qr",
-          account_id: cliArgs.accountId,
-          qr,
-          qr_data_url: lastQrDataUrl,
-          ts: nowIso(),
-        });
-
-        // Auto-request pairing code if --pairing-phone was passed and not yet registered
-        if (cliArgs.pairingPhone && !state.creds.registered && !pairingRequestedForSocket) {
-          pairingRequestedForSocket = true;
-          try {
-            await triggerPairingCodeInternal(cliArgs.pairingPhone);
-          } catch (err) {
-            logStderr("error", "Auto requestPairingCode failed", err?.message || String(err));
-            emitStdout({
-              event: "connection",
-              account_id: cliArgs.accountId,
-              status: "connecting",
-              me: null,
-              error: `pairing_code_failed: ${err?.message || String(err)}`,
-              ts: nowIso(),
-            });
+        authArtifactEmittedForSocket = true;
+        if (pairingMode && !state.creds.registered) {
+          // Suppress QR emission in pairing mode; first QR confirms WS + Noise handshake are ready!
+          if (cliArgs.pairingPhone && !pairingRequestedForSocket && newSock.ws?.isOpen) {
+            if (pairingTimer) {
+              clearTimeout(pairingTimer);
+              pairingTimer = null;
+            }
+            pairingRequestedForSocket = true;
+            try {
+              await triggerPairingCodeInternal(cliArgs.pairingPhone);
+            } catch (err) {
+              logStderr("error", "Auto requestPairingCode failed", err?.message || String(err));
+              connectionStatus = "error";
+              emitStdout({
+                event: "connection",
+                account_id: cliArgs.accountId,
+                status: "error",
+                me: null,
+                error: `Không thể tạo mã ghép nối 8 ký tự: ${err?.message || String(err)}`,
+                will_reconnect: false,
+                ts: nowIso(),
+              });
+            }
           }
+        } else {
+          lastQr = qr;
+          try {
+            lastQrDataUrl = await QRCode.toDataURL(qr, { margin: 2, width: 320 });
+          } catch (err) {
+            logStderr("warn", "QRCode.toDataURL failed", err?.message || String(err));
+            lastQrDataUrl = null;
+          }
+          emitStdout({
+            event: "qr",
+            account_id: cliArgs.accountId,
+            qr,
+            qr_data_url: lastQrDataUrl,
+            ts: nowIso(),
+          });
         }
       }
 
@@ -1409,28 +1938,14 @@ function createBridgeRuntime(cliArgs) {
           me: extractMeInfo(),
           ts: nowIso(),
         });
-
-        // Fallback trigger for --pairing-phone if WA server doesn't emit a QR first
-        if (cliArgs.pairingPhone && !state.creds.registered && !pairingRequestedForSocket && !pairingTimer) {
-          pairingTimer = setTimeout(async () => {
-            pairingTimer = null;
-            if (gen !== activeGeneration || isShuttingDown) return;
-            if (!state.creds.registered && !pairingRequestedForSocket && sock === newSock) {
-              pairingRequestedForSocket = true;
-              try {
-                await triggerPairingCodeInternal(cliArgs.pairingPhone);
-              } catch (err) {
-                logStderr("warn", "Delayed requestPairingCode failed", err?.message || String(err));
-              }
-            }
-          }, 2500);
-        }
       } else if (connection === "open") {
         if (pairingTimer) {
           clearTimeout(pairingTimer);
           pairingTimer = null;
         }
         reconnectAttempts = 0;
+        unscannedAuthCycles = 0;
+        pairSuccessReceived = false;
         lastQr = null;
         lastQrDataUrl = null;
         lastPairingCode = null;
@@ -1458,66 +1973,72 @@ function createBridgeRuntime(cliArgs) {
           errObj?.output?.statusCode ??
           errObj?.statusCode ??
           null;
-        const errMessage = errObj?.message || (statusCode ? `Disconnect code ${statusCode}` : "Connection closed");
+        const errMessage =
+          errObj?.message || (statusCode ? `Disconnect code ${statusCode}` : "Connection closed");
 
-        const isLoggedOut = statusCode === DisconnectReason.loggedOut || statusCode === 401;
-        const isReplaced = statusCode === DisconnectReason.connectionReplaced || statusCode === 440;
-        const isRestartRequired = statusCode === DisconnectReason.restartRequired || statusCode === 515;
+        const decision = classifyDisconnectDecision({
+          statusCode,
+          errMessage,
+          isRegistered: Boolean(state.creds.registered),
+          isShuttingDown,
+          pairSuccessReceived,
+          authArtifactEmitted: authArtifactEmittedForSocket,
+          unscannedAuthCycles,
+          maxUnscannedCycles: MAX_UNSCANNED_AUTH_CYCLES,
+        });
 
-        if (isLoggedOut) {
-          connectionStatus = "logged_out";
-          meInfo = null;
+        unscannedAuthCycles = decision.nextUnscannedCycles;
+        connectionStatus = decision.status;
+
+        if (!decision.willReconnect) {
+          lastQr = null;
+          lastQrDataUrl = null;
+          lastPairingCode = null;
+          if (decision.status === "logged_out" || decision.status === "qr_expired") {
+            meInfo = null;
+          }
+          logStderr(
+            decision.status === "error" ? "error" : "warn",
+            `Stopping bridge reconnect (${decision.status}, code=${statusCode}): ${decision.error}`
+          );
           emitStdout({
             event: "connection",
             account_id: cliArgs.accountId,
-            status: "logged_out",
-            me: null,
+            status: decision.status,
+            me: decision.status === "logged_out" || decision.status === "qr_expired" ? null : extractMeInfo(),
             status_code: statusCode,
-            error: errMessage,
+            error: decision.error,
             will_reconnect: false,
             ts: nowIso(),
           });
           return;
         }
 
-        if (isReplaced) {
-          connectionStatus = "close";
-          emitStdout({
-            event: "connection",
-            account_id: cliArgs.accountId,
-            status: "close",
-            me: extractMeInfo(),
-            status_code: statusCode,
-            error: "Connection replaced by another session",
-            will_reconnect: false,
-            ts: nowIso(),
-          });
-          return;
-        }
-
-        const willReconnect = !isShuttingDown;
-        connectionStatus = "close";
         emitStdout({
           event: "connection",
           account_id: cliArgs.accountId,
-          status: "close",
+          status: decision.status,
           me: extractMeInfo(),
           status_code: statusCode,
-          error: errMessage,
-          will_reconnect: willReconnect,
+          error: decision.error,
+          will_reconnect: true,
           ts: nowIso(),
         });
 
-        if (willReconnect) {
-          if (isRestartRequired) {
-            reconnectAttempts = 0;
-            scheduleReconnect(250);
-          } else {
-            const baseDelay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
-            const jitter = Math.floor(Math.random() * 500);
-            reconnectAttempts += 1;
-            scheduleReconnect(baseDelay + jitter);
+        if (decision.isRestartRequired) {
+          // Ensure creds.json is atomically flushed to disk before reconnecting on 515!
+          try {
+            await lastSaveCredsPromise;
+          } catch (saveErr) {
+            logStderr("warn", "Failed awaiting lastSaveCredsPromise before 515 reconnect", saveErr?.message || String(saveErr));
           }
+          reconnectAttempts = 0;
+          scheduleReconnect(250);
+        } else {
+          const baseDelay = Math.min(30000, 1000 * Math.pow(2, reconnectAttempts));
+          const jitter = Math.floor(Math.random() * 500);
+          reconnectAttempts += 1;
+          scheduleReconnect(baseDelay + jitter);
         }
       }
     });
@@ -1971,6 +2492,9 @@ function createBridgeRuntime(cliArgs) {
           has_qr: Boolean(lastQr),
           qr_data_url: lastQrDataUrl,
           pairing_code: lastPairingCode,
+          has_proxy: proxyTransports.enabled,
+          proxy_masked: proxyTransports.maskedUrl,
+          unscanned_auth_cycles: unscannedAuthCycles,
           reconnect_attempts: reconnectAttempts,
           cached_chats: chatCache.size,
           cached_contacts: contactCache.size,
@@ -2349,6 +2873,18 @@ function createBridgeRuntime(cliArgs) {
           }
         }
         await cleanupPreviousSocket();
+        try {
+          await lastSaveCredsPromise;
+        } catch {
+          // ignore pending save errors during logout
+        }
+        releaseBridgeLock(lockPath);
+        lockPath = null;
+        try {
+          await proxyTransports.dispatcher?.close?.();
+        } catch {
+          // ignore dispatcher close failure
+        }
         if (payload.clear_auth !== false && fs.existsSync(cliArgs.authDir)) {
           try {
             fs.rmSync(cliArgs.authDir, { recursive: true, force: true });
@@ -2376,6 +2912,18 @@ function createBridgeRuntime(cliArgs) {
           reconnectTimer = null;
         }
         await cleanupPreviousSocket();
+        try {
+          await lastSaveCredsPromise;
+        } catch {
+          // ignore save errors during shutdown
+        }
+        try {
+          await proxyTransports.dispatcher?.close?.();
+        } catch {
+          // ignore dispatcher close failure
+        }
+        releaseBridgeLock(lockPath);
+        lockPath = null;
         return { shutting_down: true };
       }
 
@@ -2434,6 +2982,18 @@ function createBridgeRuntime(cliArgs) {
         isShuttingDown = true;
         if (reconnectTimer) clearTimeout(reconnectTimer);
         await cleanupPreviousSocket();
+        try {
+          await lastSaveCredsPromise;
+        } catch {
+          // ignore
+        }
+        try {
+          await proxyTransports.dispatcher?.close?.();
+        } catch {
+          // ignore
+        }
+        releaseBridgeLock(lockPath);
+        lockPath = null;
         setImmediate(() => process.exit(0));
       }
     });
@@ -2443,8 +3003,13 @@ function createBridgeRuntime(cliArgs) {
     process.stdout.on("error", (err) => {
       if (err?.code === "EPIPE") {
         isShuttingDown = true;
+        releaseBridgeLock(lockPath);
         process.exit(0);
       }
+    });
+
+    process.on("exit", () => {
+      releaseBridgeLock(lockPath);
     });
 
     const onSignal = async (sig) => {
@@ -2452,6 +3017,18 @@ function createBridgeRuntime(cliArgs) {
       isShuttingDown = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       await cleanupPreviousSocket();
+      try {
+        await lastSaveCredsPromise;
+      } catch {
+        // ignore
+      }
+      try {
+        await proxyTransports.dispatcher?.close?.();
+      } catch {
+        // ignore
+      }
+      releaseBridgeLock(lockPath);
+      lockPath = null;
       process.exit(0);
     };
     process.on("SIGINT", () => void onSignal("SIGINT"));
@@ -2470,22 +3047,29 @@ function createBridgeRuntime(cliArgs) {
         event: "ready",
         account_id: cliArgs.accountId,
         dry_run: true,
+        has_proxy: proxyTransports.enabled,
+        proxy_masked: proxyTransports.maskedUrl,
         baileys_exports_ok:
           typeof makeWASocket === "function" &&
           typeof useMultiFileAuthState === "function" &&
+          typeof makeCacheableSignalKeyStore === "function" &&
           typeof downloadMediaMessage === "function" &&
-          typeof fetchLatestBaileysVersion === "function" &&
+          typeof fetchLatestWaWebVersion === "function" &&
           typeof DisconnectReason === "object",
-        default_version: DEFAULT_CONNECTION_CONFIG.version,
+        default_version: BUNDLED_WA_VERSION,
         ts: nowIso(),
       });
       return;
     }
 
+    lockPath = acquireBridgeLock(cliArgs.authDir, cliArgs.accountId);
+
     emitStdout({
       event: "ready",
       account_id: cliArgs.accountId,
       dry_run: false,
+      has_proxy: proxyTransports.enabled,
+      proxy_masked: proxyTransports.maskedUrl,
       ts: nowIso(),
     });
     await startSocket();
@@ -2506,18 +3090,22 @@ const isMainModule =
 if (isMainModule) {
   installStdoutGuard();
   const cliArgs = parseCliArgs(process.argv.slice(2));
-  const runtime = createBridgeRuntime(cliArgs);
-  runtime.start().catch((err) => {
-    logStderr("error", "Fatal bridge startup error", err?.stack || String(err));
-    emitStdout({
-      event: "connection",
-      account_id: cliArgs.accountId,
-      status: "close",
-      me: null,
-      error: err?.message || String(err),
-      will_reconnect: false,
-      ts: nowIso(),
+  Promise.resolve()
+    .then(() => {
+      const runtime = createBridgeRuntime(cliArgs);
+      return runtime.start();
+    })
+    .catch((err) => {
+      logStderr("error", "Fatal bridge startup error", err?.stack || String(err));
+      emitStdout({
+        event: "connection",
+        account_id: cliArgs.accountId,
+        status: "error",
+        me: null,
+        error: err?.message || String(err),
+        will_reconnect: false,
+        ts: nowIso(),
+      });
+      process.exit(1);
     });
-    process.exit(1);
-  });
 }
