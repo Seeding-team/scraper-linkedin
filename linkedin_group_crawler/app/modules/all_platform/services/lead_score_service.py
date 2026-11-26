@@ -189,6 +189,8 @@ def _table_to_platform(table: str) -> str:
         return "linkedin"
     if table == "threads_posts":
         return "threads"
+    if table == "instagram_posts":
+        return "instagram"
     return "facebook"
 
 

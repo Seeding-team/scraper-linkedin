@@ -557,9 +557,9 @@ def _attach_auto_seeding_comments(sb, posts: list[dict], platform: str = "facebo
         _get_logger().debug(f"[ZALO-KPI] enrich_posts_with_zalo_kpi skipped: {kpi_exc}")
 
 
-# Nền tảng không có "group" — bài tìm theo từ khoá qua "Markee Seeding Extension":
-# Threads (lệnh MK_TH_CRAWL_*) và YouTube (lệnh MK_YT_CRAWL_*, kèm link dán tay).
-KEYWORD_POST_TABLES = ("threads_posts", "youtube_posts")
+# Nền tảng không có "group" — bài tìm theo từ khoá / profile công khai:
+# Threads, YouTube và Instagram No-Acc.
+KEYWORD_POST_TABLES = ("threads_posts", "youtube_posts", "instagram_posts")
 # Bảng phân quyền theo cột id_member (người bấm cào), khác linkedin_posts (theo group).
 MEMBER_SCOPED_TABLES = ("facebook_posts", *KEYWORD_POST_TABLES)
 _TABLE_PLATFORM = {
@@ -567,6 +567,7 @@ _TABLE_PLATFORM = {
     "linkedin_posts": "linkedin",
     "threads_posts": "threads",
     "youtube_posts": "youtube",
+    "instagram_posts": "instagram",
 }
 _PLATFORM_TABLE = {v: k for k, v in _TABLE_PLATFORM.items()}
 
@@ -756,6 +757,11 @@ def _fetch_keyword_posts(
             p["group_name"] = p.get("author_name") or p.get("channel_handle") or "Kênh YouTube"
             p["author"] = p.get("author_name") or p.get("channel_handle") or ""
             p["search_keyword"] = p.get("keyword") or ""
+        elif table == "instagram_posts":
+            username = p.get("author_username") or ""
+            p["group_name"] = f"IG @{username}" if username else (f"Instagram: {p.get('keyword')}" if p.get("keyword") else "Instagram")
+            p["search_keyword"] = p.get("keyword") or ""
+            p["author"] = p.get("author_name") or username
         else:
             username = p.get("author_username") or ""
             # PostCard hiển thị group_name ở đầu thẻ — với Threads dùng @tác giả, kèm từ

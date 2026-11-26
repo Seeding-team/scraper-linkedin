@@ -6,13 +6,17 @@ import { CrawlScheduleHistoryPanel } from "@/components/all-platform/crawl-sched
 import { CrawlQueueMonitor } from "@/components/all-platform/crawl-queue-monitor";
 import { Public4GCrawlerPanel } from "@/components/all-platform/components/public-crawler/Public4GCrawlerPanel";
 import { Public4GCrawledPostsPanel } from "@/components/all-platform/components/public-crawler/Public4GCrawledPostsPanel";
+import { MultiPlatformAndEaaPanel } from "@/components/all-platform/components/public-crawler/MultiPlatformAndEaaPanel";
 import { cn } from "@/lib/utils";
 
-type TabKey = "public-4g" | "crawled-posts" | "history" | "queue";
+type TabKey = "public-4g" | "multi-platform-eaa" | "crawled-posts" | "history" | "queue";
 
 function parseTabParam(raw: string | null): TabKey {
   if (raw === "crawled-posts" || raw === "posts") {
     return "crawled-posts";
+  }
+  if (raw === "multi-platform-eaa" || raw === "eaa" || raw === "instagram" || raw === "linkedin") {
+    return "multi-platform-eaa";
   }
   if (raw === "history" || raw === "queue" || raw === "public-4g") {
     return raw;
@@ -51,6 +55,19 @@ function LichCaoHangDoiInner() {
           >
             <span className="material-symbols-outlined text-[16px]">public</span>
             Cào Public 4G (Không Acc)
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedTab("multi-platform-eaa")}
+            className={cn(
+              "px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5",
+              activeTab === "multi-platform-eaa"
+                ? "bg-white text-indigo-700 shadow-xs"
+                : "text-gray-500 hover:text-gray-900"
+            )}
+          >
+            <span className="material-symbols-outlined text-[16px]">vpn_key</span>
+            Đa nền tảng (IG · LI) &amp; EAA Token
           </button>
           <button
             type="button"
@@ -98,6 +115,8 @@ function LichCaoHangDoiInner() {
       <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-xs">
         {activeTab === "public-4g" ? (
           <Public4GCrawlerPanel />
+        ) : activeTab === "multi-platform-eaa" ? (
+          <MultiPlatformAndEaaPanel />
         ) : activeTab === "crawled-posts" ? (
           <Public4GCrawledPostsPanel />
         ) : activeTab === "history" ? (

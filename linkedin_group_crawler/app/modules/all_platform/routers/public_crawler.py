@@ -25,7 +25,7 @@ class RunPublicCrawlBody(BaseModel):
     keywords: Optional[List[str]] = None
     only_due: bool = False
     limit_groups: Optional[int] = Field(None, ge=1, le=50)
-    platform: Literal["auto", "facebook", "threads"] = "auto"
+    platform: Literal["auto", "facebook", "threads", "instagram", "linkedin_no_acc"] = "auto"
 
 
 class ConfigUpdateBody(BaseModel):
@@ -74,6 +74,21 @@ class ConfigUpdateBody(BaseModel):
         ge=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_age_days"][0],
         le=PUBLIC_CRAWL_CONFIG_BOUNDS["threads_max_age_days"][1],
     )
+    use_curl_cffi: Optional[bool] = None
+    alternating_instagram_enabled: Optional[bool] = None
+    instagram_max_posts_per_target: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["instagram_max_posts_per_target"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["instagram_max_posts_per_target"][1],
+    )
+    alternating_linkedin_no_acc_enabled: Optional[bool] = None
+    linkedin_no_acc_location: Optional[str] = None
+    linkedin_no_acc_max_jobs_per_keyword: Optional[int] = Field(
+        None,
+        ge=PUBLIC_CRAWL_CONFIG_BOUNDS["linkedin_no_acc_max_jobs_per_keyword"][0],
+        le=PUBLIC_CRAWL_CONFIG_BOUNDS["linkedin_no_acc_max_jobs_per_keyword"][1],
+    )
+    use_eaa_for_private_groups: Optional[bool] = None
 
 
 class GroupPublicSettingsBody(BaseModel):
@@ -338,3 +353,271 @@ async def purge_foreign_language_threads(
     from app.modules.all_platform.services.threads_language_service import purge_foreign_threads_posts
     result = await asyncio.to_thread(purge_foreign_threads_posts, batch_size=limit)
     return {"success": True, "data": result}
+
+
+# ── Phase 2: Instagram No-Acc Targets CRUD ────────────────────────────────────
+
+class AddInstagramTargetsBody(BaseModel):
+    target_type: Literal["keyword", "profile"] = "keyword"
+    values: List[str]
+    topic: str = "Chung"
+
+
+class ToggleTargetBody(BaseModel):
+    is_active: Optional[bool] = None
+
+
+@router.get("/instagram-targets")
+async def get_instagram_targets(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+        list_instagram_targets,
+    )
+
+    items = await asyncio.to_thread(list_instagram_targets)
+    return {"success": True, "items": items}
+
+
+@router.post("/instagram-targets")
+async def create_instagram_targets(
+    body: AddInstagramTargetsBody,
+    user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+        add_instagram_targets,
+    )
+
+    creator = user.get("name") or user.get("email") or "Admin"
+    return await asyncio.to_thread(
+        add_instagram_targets,
+        target_type=body.target_type,
+        values=body.values,
+        topic=body.topic,
+        created_by=creator,
+    )
+
+
+@router.delete("/instagram-targets/{target_id}")
+async def remove_instagram_target(
+    target_id: str,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+        delete_instagram_target,
+    )
+
+    ok = await asyncio.to_thread(delete_instagram_target, target_id)
+    return {"success": ok}
+
+
+@router.post("/instagram-targets/{target_id}/toggle")
+async def toggle_instagram_target_route(
+    target_id: str,
+    body: Optional[ToggleTargetBody] = None,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+        toggle_instagram_target,
+    )
+
+    ok = await asyncio.to_thread(toggle_instagram_target, target_id, body.is_active if body else None)
+    return {"success": ok}
+
+
+# ── Phase 3: LinkedIn No-Acc Targets CRUD ─────────────────────────────────────
+
+class AddLinkedInNoAccTargetsBody(BaseModel):
+    keywords: List[str]
+    location: str = "Vietnam"
+    channel: Literal["jobs_guest", "search_index", "both"] = "both"
+
+
+@router.get("/linkedin-no-acc-targets")
+async def get_linkedin_no_acc_targets(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+        list_linkedin_no_acc_targets,
+    )
+
+    items = await asyncio.to_thread(list_linkedin_no_acc_targets)
+    return {"success": True, "items": items}
+
+
+@router.post("/linkedin-no-acc-targets")
+async def create_linkedin_no_acc_targets(
+    body: AddLinkedInNoAccTargetsBody,
+    user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+        add_linkedin_no_acc_targets,
+    )
+
+    creator = user.get("name") or user.get("email") or "Admin"
+    return await asyncio.to_thread(
+        add_linkedin_no_acc_targets,
+        keywords=body.keywords,
+        location=body.location,
+        channel=body.channel,
+        created_by=creator,
+    )
+
+
+@router.delete("/linkedin-no-acc-targets/{target_id}")
+async def remove_linkedin_no_acc_target(
+    target_id: str,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+        delete_linkedin_no_acc_target,
+    )
+
+    ok = await asyncio.to_thread(delete_linkedin_no_acc_target, target_id)
+    return {"success": ok}
+
+
+@router.post("/linkedin-no-acc-targets/{target_id}/toggle")
+async def toggle_linkedin_no_acc_target_route(
+    target_id: str,
+    body: Optional[ToggleTargetBody] = None,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+        toggle_linkedin_no_acc_target,
+    )
+
+    ok = await asyncio.to_thread(toggle_linkedin_no_acc_target, target_id, body.is_active if body else None)
+    return {"success": ok}
+
+
+# ── Phase 4: Facebook EAA Token Fast-Lane Pool CRUD & 1-Click Test ────────────
+
+class CreateEaaTokenBody(BaseModel):
+    label: str = Field(..., min_length=1, max_length=120)
+    access_token: str = Field(..., min_length=30)
+    sticky_proxy_url: Optional[str] = None
+    hourly_quota: int = Field(80, ge=5, le=150)
+
+
+class UpdateEaaTokenBody(BaseModel):
+    label: Optional[str] = Field(None, min_length=1, max_length=120)
+    sticky_proxy_url: Optional[str] = None
+    hourly_quota: Optional[int] = Field(None, ge=5, le=150)
+    status: Optional[Literal["active", "disabled", "cooldown", "quarantined"]] = None
+
+
+class TestEaaTokenBody(BaseModel):
+    test_group_id_or_url: Optional[str] = None
+
+
+class TestRawEaaTokenBody(BaseModel):
+    access_token: str = Field(..., min_length=30)
+    sticky_proxy_url: Optional[str] = None
+    test_group_id_or_url: Optional[str] = None
+
+
+@router.get("/eaa-tokens")
+async def list_fb_eaa_tokens(
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        list_eaa_tokens_sync,
+    )
+
+    items = await asyncio.to_thread(list_eaa_tokens_sync)
+    return {"success": True, "items": items}
+
+
+@router.post("/eaa-tokens")
+async def add_fb_eaa_token(
+    body: CreateEaaTokenBody,
+    user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        create_eaa_token_sync,
+    )
+
+    creator = user.get("name") or user.get("email") or "Admin"
+    try:
+        item = await asyncio.to_thread(
+            create_eaa_token_sync,
+            label=body.label,
+            access_token=body.access_token,
+            sticky_proxy_url=body.sticky_proxy_url,
+            hourly_quota=body.hourly_quota,
+            created_by=creator,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"success": True, "item": item}
+
+
+@router.patch("/eaa-tokens/{token_id}")
+async def patch_fb_eaa_token(
+    token_id: str,
+    body: UpdateEaaTokenBody,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        update_eaa_token_sync,
+    )
+
+    try:
+        updated = await asyncio.to_thread(
+            update_eaa_token_sync,
+            token_id,
+            body.model_dump(exclude_unset=True),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Không tìm thấy EAA token")
+    return {"success": True, "item": updated}
+
+
+@router.delete("/eaa-tokens/{token_id}")
+async def delete_fb_eaa_token(
+    token_id: str,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        delete_eaa_token_sync,
+    )
+
+    ok = await asyncio.to_thread(delete_eaa_token_sync, token_id)
+    return {"success": ok}
+
+
+@router.post("/eaa-tokens/{token_id}/test")
+async def test_saved_fb_eaa_token(
+    token_id: str,
+    body: Optional[TestEaaTokenBody] = None,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        test_eaa_token_one_click,
+    )
+
+    res = await test_eaa_token_one_click(
+        token_id=token_id,
+        test_group_id_or_url=body.test_group_id_or_url if body else None,
+    )
+    return {"success": bool(res.get("ok")), **res}
+
+
+@router.post("/eaa-tokens/test-raw")
+async def test_raw_fb_eaa_token(
+    body: TestRawEaaTokenBody,
+    _user: dict[str, Any] = Depends(require_admin_or_leader),
+) -> dict[str, Any]:
+    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+        test_eaa_token_one_click,
+    )
+
+    res = await test_eaa_token_one_click(
+        raw_token=body.access_token,
+        sticky_proxy_url=body.sticky_proxy_url,
+        test_group_id_or_url=body.test_group_id_or_url,
+    )
+    return {"success": bool(res.get("ok")), **res}

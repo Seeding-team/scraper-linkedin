@@ -19,7 +19,87 @@ export interface PublicCrawlConfig {
   threads_keyword_target?: number;
   threads_max_posts_per_keyword?: number;
   threads_max_age_days?: number;
-  last_completed_platform?: "facebook" | "threads" | null;
+  last_completed_platform?: "facebook" | "threads" | "instagram" | "linkedin_no_acc" | null;
+  use_curl_cffi?: boolean;
+  gql_pagination_doc_id?: string | null;
+  alternating_instagram_enabled?: boolean;
+  instagram_max_posts_per_target?: number;
+  alternating_linkedin_no_acc_enabled?: boolean;
+  linkedin_no_acc_location?: string;
+  linkedin_no_acc_max_jobs_per_keyword?: number;
+  use_eaa_for_private_groups?: boolean;
+}
+
+export interface InstagramTargetItem {
+  id: string;
+  target_type: "keyword" | "profile";
+  target_value: string;
+  topic: string;
+  is_active: boolean;
+  times_used: number;
+  total_posts_found: number;
+  high_score_posts: number;
+  last_crawled_at?: string | null;
+  last_error?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface LinkedInNoAccTargetItem {
+  id: string;
+  keyword: string;
+  location: string;
+  channel: "jobs_guest" | "search_index" | "both";
+  is_active: boolean;
+  times_used: number;
+  total_posts_found: number;
+  high_score_posts: number;
+  last_crawled_at?: string | null;
+  last_error?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface FbEaaTokenItem {
+  id: string;
+  label: string;
+  token_masked: string;
+  token_type: string;
+  fb_user_id?: string | null;
+  fb_user_name?: string | null;
+  has_sticky_proxy: boolean;
+  sticky_proxy_masked?: string | null;
+  proxy_warning: boolean;
+  hourly_quota: number;
+  requests_this_hour: number;
+  total_requests: number;
+  total_posts_saved: number;
+  status: "active" | "cooldown" | "quarantined" | "expired" | "disabled" | string;
+  cooldown_until?: string | null;
+  last_app_usage_pct: number;
+  last_error_code?: number | null;
+  last_error_message?: string | null;
+  last_used_at?: string | null;
+  last_tested_at?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+}
+
+export interface FbEaaTokenTestResponse {
+  success: boolean;
+  ok: boolean;
+  token_type?: string;
+  token_masked?: string;
+  fb_user_id?: string | null;
+  fb_user_name?: string | null;
+  status?: string;
+  app_usage_pct?: number;
+  proxy_warning?: boolean;
+  sample_posts_count?: number | null;
+  group_error?: string | null;
+  error_code?: number | null;
+  error?: string | null;
+  latency_ms?: number;
 }
 
 export interface ThreadsKeywordStatItem {
@@ -56,9 +136,12 @@ export interface PublicCrawlRuntime {
   auto_pause_reason?: string | null;
   proxy_expired_error?: string | null;
   continuous_waiting?: boolean;
-  current_platform?: "facebook" | "threads" | "both";
-  next_platform?: "facebook" | "threads";
-  last_completed_platform?: "facebook" | "threads" | null;
+  current_platform?: "facebook" | "threads" | "instagram" | "linkedin_no_acc" | "both";
+  next_platform?: "facebook" | "threads" | "instagram" | "linkedin_no_acc";
+  last_completed_platform?: "facebook" | "threads" | "instagram" | "linkedin_no_acc" | null;
+  tls_engine?: "curl_cffi_chrome131" | "httpx" | string;
+  curl_cffi_available?: boolean;
+  active_gql_doc_id?: string;
   parallel_mode?: boolean;
   facebook?: {
     is_running: boolean;

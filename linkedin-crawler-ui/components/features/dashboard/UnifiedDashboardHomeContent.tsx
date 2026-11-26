@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { FiExternalLink } from "react-icons/fi";
 import { FaFacebook, FaLinkedin } from "react-icons/fa";
-import { FaThreads, FaYoutube } from "react-icons/fa6";
+import { FaInstagram, FaThreads, FaYoutube } from "react-icons/fa6";
 // SeedingExtensionPanel deprecated - now using Public 4G No-Acc crawler
 import { useYouTubeCommentResults } from "@/components/all-platform/components/seeding-extension/use-youtube-seeding";
 import { YouTubeCommentModal } from "@/components/all-platform/components/youtube-comment-modal";
@@ -1128,6 +1128,7 @@ export function UnifiedDashboardHomeContent({
         { key: "facebook", label: "Facebook", icon: <FaFacebook className="text-blue-600" /> },
         { key: "linkedin", label: "LinkedIn", icon: <FaLinkedin className="text-blue-700" /> },
         { key: "threads", label: "Threads", icon: <FaThreads /> },
+        { key: "instagram", label: "Instagram", icon: <FaInstagram className="text-pink-600" /> },
         { key: "youtube", label: "YouTube", icon: <FaYoutube className="text-[#ff0000]" /> },
       ] as const).map((t) => (
         <button

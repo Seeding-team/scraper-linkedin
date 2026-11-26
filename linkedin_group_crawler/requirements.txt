@@ -41,4 +41,6 @@ pywebpush
 telethon
 # Zalo Web VoIP Realtime Opus Audio (prebuilt wheel tich hop san libopus/libswresample)
 av>=14.0.0
+# TLS JA3/JA4 Chrome 131 Impersonation cho Public 4G Crawler (tu dong fallback httpx neu thieu)
+curl_cffi>=0.7.0
 

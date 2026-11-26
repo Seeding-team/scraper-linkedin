@@ -1,6 +1,10 @@
 import type {
   ThreadsKeywordLibraryItem,
   CrawledPostsOverviewResponse,
+  FbEaaTokenItem,
+  FbEaaTokenTestResponse,
+  InstagramTargetItem,
+  LinkedInNoAccTargetItem,
   ProxyTestResponse,
   PublicCrawlActionResponse,
   PublicCrawlConfig,
@@ -40,7 +44,7 @@ export const publicCrawlerService = {
     keywords?: string[];
     only_due?: boolean;
     limit_groups?: number;
-    platform?: "auto" | "facebook" | "threads";
+    platform?: "auto" | "facebook" | "threads" | "instagram" | "linkedin_no_acc";
   }) =>
     request<PublicCrawlActionResponse>("/run", {
       method: "POST",
@@ -133,5 +137,101 @@ export const publicCrawlerService = {
     request<{ success: boolean }>(`/threads-keywords/${encodeURIComponent(id)}/toggle`, {
       method: "POST",
       body: JSON.stringify({ is_active }),
+    }),
+
+  // ── Phase 2: Instagram No-Acc Targets ────────────────────────────────────
+  getInstagramTargets: () =>
+    request<{ success: boolean; items: InstagramTargetItem[] }>("/instagram-targets"),
+
+  addInstagramTargets: (body: { target_type: "keyword" | "profile"; values: string[]; topic?: string }) =>
+    request<{ success: boolean; added_count: number; items: InstagramTargetItem[]; message: string }>(
+      "/instagram-targets",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  deleteInstagramTarget: (id: string) =>
+    request<{ success: boolean }>(`/instagram-targets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  toggleInstagramTarget: (id: string, is_active?: boolean) =>
+    request<{ success: boolean }>(`/instagram-targets/${encodeURIComponent(id)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ is_active }),
+    }),
+
+  // ── Phase 3: LinkedIn No-Acc Targets ─────────────────────────────────────
+  getLinkedInNoAccTargets: () =>
+    request<{ success: boolean; items: LinkedInNoAccTargetItem[] }>("/linkedin-no-acc-targets"),
+
+  addLinkedInNoAccTargets: (body: {
+    keywords: string[];
+    location?: string;
+    channel?: "jobs_guest" | "search_index" | "both";
+  }) =>
+    request<{ success: boolean; added_count: number; items: LinkedInNoAccTargetItem[]; message: string }>(
+      "/linkedin-no-acc-targets",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  deleteLinkedInNoAccTarget: (id: string) =>
+    request<{ success: boolean }>(`/linkedin-no-acc-targets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  toggleLinkedInNoAccTarget: (id: string, is_active?: boolean) =>
+    request<{ success: boolean }>(`/linkedin-no-acc-targets/${encodeURIComponent(id)}/toggle`, {
+      method: "POST",
+      body: JSON.stringify({ is_active }),
+    }),
+
+  // ── Phase 4: Facebook EAA Token Fast-Lane Pool ───────────────────────────
+  getEaaTokens: () =>
+    request<{ success: boolean; items: FbEaaTokenItem[] }>("/eaa-tokens"),
+
+  createEaaToken: (body: {
+    label: string;
+    access_token: string;
+    sticky_proxy_url?: string;
+    hourly_quota?: number;
+  }) =>
+    request<{ success: boolean; item: FbEaaTokenItem }>("/eaa-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateEaaToken: (
+    id: string,
+    patch: {
+      label?: string;
+      sticky_proxy_url?: string;
+      hourly_quota?: number;
+      status?: "active" | "disabled" | "cooldown" | "quarantined";
+    },
+  ) =>
+    request<{ success: boolean; item: FbEaaTokenItem }>(`/eaa-tokens/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
+  deleteEaaToken: (id: string) =>
+    request<{ success: boolean }>(`/eaa-tokens/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  testEaaToken: (id: string, testGroupIdOrUrl?: string) =>
+    request<FbEaaTokenTestResponse>(`/eaa-tokens/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+      body: JSON.stringify({ test_group_id_or_url: testGroupIdOrUrl || null }),
+    }),
+
+  testRawEaaToken: (body: {
+    access_token: string;
+    sticky_proxy_url?: string;
+    test_group_id_or_url?: string;
+  }) =>
+    request<FbEaaTokenTestResponse>("/eaa-tokens/test-raw", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 };

@@ -11,9 +11,11 @@ proactively (every K groups) and reactively (on HTTP 429 / checkpoint / login wa
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import logging
 import os
+import random
 import re
 import time
 import uuid
@@ -77,6 +79,212 @@ _ACTIVE_GQL_PAGINATION_DOC_ID: str = os.getenv(
     "FB_GQL_GROUP_FEED_DOC_ID",
     "28899178166419503",
 ).strip() or "28899178166419503"
+_GQL_DOC_ID_REGEXES: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r'"GroupsCometFeedRegularStoriesPaginationQuery"[^\{\}]{0,220}?"(?:id|doc_id|queryID)"\s*:\s*"(\d{12,24})"',
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r'"(?:id|doc_id|queryID)"\s*:\s*"(\d{12,24})"[^\{\}]{0,220}?"GroupsCometFeedRegularStoriesPaginationQuery"',
+        re.IGNORECASE,
+    ),
+)
+
+
+def is_curl_cffi_available() -> bool:
+    """Return True when `curl_cffi` is installed and not disabled via env."""
+    if os.getenv("PUBLIC_CRAWL_DISABLE_CURL_CFFI", "").strip().lower() in {"1", "true", "yes"}:
+        return False
+    return importlib.util.find_spec("curl_cffi") is not None
+
+
+def get_active_gql_doc_id() -> str:
+    return _ACTIVE_GQL_PAGINATION_DOC_ID
+
+
+def extract_gql_doc_id_from_html(html_text: str) -> str | None:
+    """Attempt to auto-discover `GroupsCometFeedRegularStoriesPaginationQuery` doc_id from SSR HTML."""
+    if not html_text or "GroupsCometFeedRegularStoriesPaginationQuery" not in html_text:
+        return None
+    for pat in _GQL_DOC_ID_REGEXES:
+        m = pat.search(html_text)
+        if m and m.group(1).isdigit():
+            return m.group(1)
+    return None
+
+
+def update_active_gql_doc_id(new_doc_id: str, *, persist: bool = True) -> bool:
+    """Update active Facebook GraphQL pagination doc_id in-memory and optionally persist to DB."""
+    global _ACTIVE_GQL_PAGINATION_DOC_ID
+    clean = str(new_doc_id or "").strip()
+    if not clean or not clean.isdigit() or len(clean) < 12 or clean == _ACTIVE_GQL_PAGINATION_DOC_ID:
+        return False
+    _ACTIVE_GQL_PAGINATION_DOC_ID = clean
+    logger.info("[PUBLIC-4G] Auto-discovered & activated new FB GQL doc_id=%s", clean)
+    if persist:
+        try:
+            sb = get_supabase_client()
+            sb.table("public_crawl_config").upsert(
+                {
+                    "id": "default",
+                    "gql_pagination_doc_id": clean,
+                    "gql_doc_id_updated_at": _utc_now_iso(),
+                    "updated_at": _utc_now_iso(),
+                },
+                on_conflict="id",
+            ).execute()
+        except Exception as exc:
+            logger.debug("[PUBLIC-4G] Persist gql_pagination_doc_id skipped (%s)", exc)
+    return True
+
+
+class _CurlCffiAsyncClientAdapter:
+    """Drop-in async client wrapping `curl_cffi.requests.AsyncSession(impersonate='chrome131')`."""
+
+    def __init__(
+        self,
+        *,
+        proxy: str | None = None,
+        timeout: float = 20.0,
+        headers: dict[str, str] | None = None,
+        impersonate: str = "chrome131",
+    ) -> None:
+        from curl_cffi.requests import AsyncSession
+
+        self._session = AsyncSession(
+            impersonate=impersonate,
+            proxies={"http": proxy, "https": proxy} if proxy else None,
+            timeout=timeout,
+            allow_redirects=False,
+            headers=headers or CHROME_DOC_HEADERS,
+        )
+        self.cookies = self._session.cookies
+
+    async def __aenter__(self) -> "_CurlCffiAsyncClientAdapter":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        await self.aclose()
+
+    async def get(self, url: str, **kwargs: Any) -> Any:
+        return await self._session.get(url, allow_redirects=False, **kwargs)
+
+    async def post(self, url: str, **kwargs: Any) -> Any:
+        return await self._session.post(url, allow_redirects=False, **kwargs)
+
+    async def aclose(self) -> None:
+        try:
+            await self._session.close()
+        except Exception:
+            pass
+
+
+def create_tls_http_client(
+    proxy_http: str | None = None,
+    *,
+    use_curl_cffi: bool = True,
+    timeout: float = 20.0,
+    headers: dict[str, str] | None = None,
+) -> tuple[Any, str]:
+    """Build Chrome 131 TLS impersonation client when available, seamlessly falling back to httpx."""
+    if use_curl_cffi and is_curl_cffi_available():
+        try:
+            return (
+                _CurlCffiAsyncClientAdapter(
+                    proxy=proxy_http,
+                    timeout=timeout,
+                    headers=headers or CHROME_DOC_HEADERS,
+                ),
+                "curl_cffi_chrome131",
+            )
+        except Exception as exc:
+            logger.debug("[PUBLIC-4G] curl_cffi init failed, falling back to httpx (%s)", exc)
+    return (
+        httpx.AsyncClient(
+            proxy=proxy_http,
+            timeout=timeout,
+            follow_redirects=False,
+            headers=headers or CHROME_DOC_HEADERS,
+        ),
+        "httpx",
+    )
+
+
+class AdaptiveRateLimiter:
+    """Adaptive per-node rate limiter + circuit breaker reacting to 429/soft-block ratios."""
+
+    def __init__(
+        self,
+        *,
+        window_size: int = 20,
+        base_delay_sec: float = 0.0,
+        max_delay_sec: float = 20.0,
+        breaker_threshold: int = 4,
+        breaker_cooldown_sec: float = 25.0,
+    ) -> None:
+        self.window_size = max(5, int(window_size))
+        self.base_delay_sec = max(0.0, float(base_delay_sec))
+        self.max_delay_sec = max(1.0, float(max_delay_sec))
+        self.breaker_threshold = max(2, int(breaker_threshold))
+        self.breaker_cooldown_sec = max(1.0, float(breaker_cooldown_sec))
+        self._outcomes: dict[str, deque[int]] = {}
+        self._consecutive_blocks: dict[str, int] = {}
+        self._breaker_until: dict[str, float] = {}
+
+    def record_success(self, node_id: str) -> None:
+        q = self._outcomes.setdefault(node_id, deque(maxlen=self.window_size))
+        q.append(0)
+        self._consecutive_blocks[node_id] = 0
+        self._breaker_until.pop(node_id, None)
+
+    def record_rate_limit(self, node_id: str) -> float:
+        q = self._outcomes.setdefault(node_id, deque(maxlen=self.window_size))
+        q.append(1)
+        streak = self._consecutive_blocks.get(node_id, 0) + 1
+        self._consecutive_blocks[node_id] = streak
+        if streak >= self.breaker_threshold:
+            self._breaker_until[node_id] = time.monotonic() + self.breaker_cooldown_sec
+        return self.recommended_delay(node_id)
+
+    def block_ratio(self, node_id: str) -> float:
+        q = self._outcomes.get(node_id)
+        if not q:
+            return 0.0
+        return sum(q) / len(q)
+
+    def is_circuit_open(self, node_id: str) -> bool:
+        until = self._breaker_until.get(node_id)
+        if until is None:
+            return False
+        if time.monotonic() >= until:
+            self._breaker_until.pop(node_id, None)
+            self._consecutive_blocks[node_id] = max(0, self.breaker_threshold - 1)
+            return False
+        return True
+
+    def recommended_delay(self, node_id: str) -> float:
+        if self.is_circuit_open(node_id):
+            return max(0.0, self._breaker_until[node_id] - time.monotonic())
+        ratio = self.block_ratio(node_id)
+        streak = self._consecutive_blocks.get(node_id, 0)
+        if streak <= 0 and ratio < 0.15:
+            return self.base_delay_sec
+        backoff = min(self.max_delay_sec, (1.5 ** min(streak, 6)) * (1.0 + ratio * 2.0))
+        return round(backoff * random.uniform(0.85, 1.15), 2)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            nid: {
+                "block_ratio": round(self.block_ratio(nid), 3),
+                "consecutive_blocks": self._consecutive_blocks.get(nid, 0),
+                "circuit_open": self.is_circuit_open(nid),
+                "recommended_delay_sec": self.recommended_delay(nid),
+            }
+            for nid in sorted(set(self._outcomes.keys()) | set(self._consecutive_blocks.keys()))
+        }
+
+
+adaptive_rate_limiter = AdaptiveRateLimiter()
 
 _GQL_RELAY_INTERNAL_DEFAULTS: dict[str, Any] = {
     "__relay_internal__pv__GHLShouldChangeAdIdFieldNamerelayprovider": False,
@@ -118,6 +326,8 @@ PUBLIC_CRAWL_CONFIG_BOUNDS: dict[str, tuple[int, int]] = {
     "threads_keyword_target": (5, 50),
     "threads_max_posts_per_keyword": (5, 30),
     "threads_max_age_days": (1, 30),
+    "instagram_max_posts_per_target": (3, 30),
+    "linkedin_no_acc_max_jobs_per_keyword": (3, 30),
 }
 
 _SCROLL_DEPTH_GQL_BUDGET: dict[int, int] = {
@@ -145,6 +355,14 @@ DEFAULT_PUBLIC_CRAWL_CONFIG: dict[str, Any] = {
     "threads_max_posts_per_keyword": 20,
     "threads_max_age_days": 7,
     "last_completed_platform": None,
+    "use_curl_cffi": True,
+    "gql_pagination_doc_id": None,
+    "alternating_instagram_enabled": False,
+    "instagram_max_posts_per_target": 12,
+    "alternating_linkedin_no_acc_enabled": False,
+    "linkedin_no_acc_location": "Vietnam",
+    "linkedin_no_acc_max_jobs_per_keyword": 15,
+    "use_eaa_for_private_groups": False,
 }
 
 MAX_CONSECUTIVE_PROXY_FAILURES = 3
@@ -1051,13 +1269,16 @@ class GuestPublicGroupWorker:
             return self.sim.socks_url
         return None
 
-    def _build_http_client(self, proxy_http: str | None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            proxy=proxy_http,
+    def _build_http_client(self, proxy_http: str | None) -> Any:
+        use_tls = bool(self.config.get("use_curl_cffi", True))
+        client, engine = create_tls_http_client(
+            proxy_http,
+            use_curl_cffi=use_tls,
             timeout=20.0,
-            follow_redirects=False,
             headers=CHROME_DOC_HEADERS,
         )
+        self._tls_engine = engine
+        return client
 
     async def _resilient_http_request(
         self,
@@ -1192,6 +1413,11 @@ class GuestPublicGroupWorker:
                 }
 
             if final_status == 200 and html_text:
+                # Phase 1: Opportunistically auto-discover newest GraphQL doc_id from SSR HTML
+                ssr_doc_id = extract_gql_doc_id_from_html(html_text)
+                if ssr_doc_id:
+                    update_active_gql_doc_id(ssr_doc_id, persist=True)
+
                 ssr_posts = parse_fb_html_embedded_stories(
                     html_text,
                     group_url=raw_url,
@@ -1497,8 +1723,7 @@ class GuestPublicGroupWorker:
                         qs = parse_qs(post_data)
                         new_doc_id = (qs.get("doc_id") or [""])[0].strip()
                         if new_doc_id and new_doc_id.isdigit() and new_doc_id != _ACTIVE_GQL_PAGINATION_DOC_ID:
-                            _ACTIVE_GQL_PAGINATION_DOC_ID = new_doc_id
-                            logger.info("[PUBLIC-PROXY] Auto-updated GQL Pagination doc_id=%s", new_doc_id)
+                            update_active_gql_doc_id(new_doc_id, persist=True)
                 except Exception:
                     pass
                 raw_text = await resp.text()
@@ -1713,6 +1938,89 @@ class GuestPublicGroupWorker:
             self.sim.consecutive_proxy_failures = 0
             if self.sim.status in {"expired", "error"}:
                 self.sim.status = "idle"
+
+            # Phase 4 Smart Router: Route Private Group to Facebook EAA Token Fast-Lane Pool when enabled
+            if bool(self.config.get("use_eaa_for_private_groups", False)) and self._attempt_fetcher is None:
+                try:
+                    from app.modules.all_platform.services.fb_eaa_token_crawler_service import (
+                        crawl_private_group_via_eaa_pool,
+                    )
+
+                    eaa_res = await crawl_private_group_via_eaa_pool(
+                        group_url=group_url,
+                        group_name=group_name,
+                        limit=int(self.config.get("max_posts_per_group") or 25),
+                        apply_jitter=False,
+                    )
+                    if eaa_res.get("ok") and eaa_res.get("posts"):
+                        eaa_posts = eaa_res["posts"]
+                        ext_posts_eaa = [
+                            ExtensionPost(
+                                post_url=p.get("post_url"),
+                                url=p.get("post_url"),
+                                author_name=p.get("author_name") or "",
+                                author_url=p.get("author_url") or "",
+                                timestamp_raw=p.get("timestamp_raw"),
+                                date=p.get("timestamp_raw"),
+                                timestamp_class="iso",
+                                content=p.get("content") or "",
+                                reactions=int(p.get("reactions") or 0),
+                                comments=int(p.get("comments") or 0),
+                                shares=int(p.get("shares") or 0),
+                                images=p.get("images") or [],
+                                video_url=p.get("video_url"),
+                                media_url=p.get("video_url"),
+                                group_url=group_url,
+                                crawled_at=p.get("crawled_at"),
+                            )
+                            for p in eaa_posts
+                            if p.get("post_url")
+                        ]
+                        saved_eaa = 0
+                        if ext_posts_eaa:
+                            ingest_res = await ingest_facebook_posts(
+                                ExtensionCrawlRequest(
+                                    posts=ext_posts_eaa,
+                                    group_name=group_name,
+                                    group_url=group_url,
+                                    group_id=group_id or None,
+                                    keywords=self.keywords,
+                                    post_limit=int(self.config.get("max_posts_per_group") or 25),
+                                    worker_id=f"fb-eaa:{eaa_res.get('token_label') or 'pool'}",
+                                ),
+                                event_name="public_4g_crawl_saved",
+                                extra_broadcast_fields={
+                                    "source": "fb_eaa_token",
+                                    "token_label": eaa_res.get("token_label"),
+                                    "run_id": self.run_id,
+                                },
+                            )
+                            saved_eaa = int(ingest_res.get("count") or 0)
+                        await asyncio.to_thread(
+                            _update_group_crawl_meta_sync,
+                            group_id=group_id,
+                            status="ok",
+                            error=None,
+                            posts_count=saved_eaa,
+                            mark_private=True,
+                        )
+                        self.log_cb(
+                            "success",
+                            self.sim.id,
+                            f"[{group_name}] Smart Router -> EAA Pool ({eaa_res.get('token_label')}) lấy {len(eaa_posts)} bài, lưu mới {saved_eaa} bài (AppUsage={eaa_res.get('app_usage_pct', 0)}%)",
+                        )
+                        self.sim.total_groups += 1
+                        return {
+                            "group_id": group_id,
+                            "status": "ok",
+                            "source": "fb_eaa_token",
+                            "posts_saved": saved_eaa,
+                            "extracted": len(eaa_posts),
+                            "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+                        }
+                except Exception as eaa_exc:
+                    self.log_cb("warn", self.sim.id, f"[{group_name}] Smart Router EAA fallback bỏ qua: {eaa_exc}")
+
             await asyncio.to_thread(
                 _update_group_crawl_meta_sync,
                 group_id=group_id,
@@ -1735,6 +2043,7 @@ class GuestPublicGroupWorker:
             err_text = error_msg or f"Guest blocked ({final_state})"
 
             if final_state in {"rate_limit", "login_wall"}:
+                adaptive_rate_limiter.record_rate_limit(self.sim.id)
                 # Temporary FB block means proxy itself is still alive -> never trip 24/24 proxy expiry
                 self.sim.consecutive_proxy_failures = 0
                 if self.sim.status in {"expired", "error"}:
@@ -1793,6 +2102,7 @@ class GuestPublicGroupWorker:
                 "error": err_text,
             }
 
+        adaptive_rate_limiter.record_success(self.sim.id)
         self.sim.consecutive_proxy_failures = 0
         self.sim.last_error = None
         if self.sim.status in {"expired", "error"}:
@@ -2020,6 +2330,10 @@ class GuestPublicGroupWorker:
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
         if result.status in {"login_wall", "rate_limited", "empty", "empty_or_throttled", "ok"} and not proxy_expired_detected:
+            if result.status in {"login_wall", "rate_limited"}:
+                adaptive_rate_limiter.record_rate_limit(self.sim.id)
+            else:
+                adaptive_rate_limiter.record_success(self.sim.id)
             self.sim.consecutive_proxy_failures = 0
             if self.sim.status in {"expired", "error"}:
                 self.sim.status = "idle"
@@ -2139,6 +2453,207 @@ class GuestPublicGroupWorker:
             "posts_saved": result.saved_count,
             "high_score_count": result.high_score_count,
             "extracted": result.raw_extracted,
+            "elapsed_ms": elapsed_ms,
+            "error": result.error,
+        }
+
+    async def process_instagram_target(self, target: dict[str, Any]) -> dict[str, Any]:
+        """Crawl one Instagram public keyword or profile without any account over rotating 4G."""
+        from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+            InstagramTargetCrawlResult,
+            crawl_instagram_target_guest,
+            get_known_instagram_shortcodes,
+            ingest_instagram_4g_batch,
+        )
+
+        t0 = time.perf_counter()
+        t_type = str(target.get("target_type") or "keyword").strip().lower()
+        t_val = str(target.get("target_value") or target.get("keyword") or "").strip()
+        self.sim.status = "crawling"
+
+        p_lo, p_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["instagram_max_posts_per_target"]
+        raw_lim = self.config.get("instagram_max_posts_per_target")
+        max_posts = 12 if raw_lim is None else max(p_lo, min(p_hi, int(raw_lim)))
+        known_codes = await asyncio.to_thread(get_known_instagram_shortcodes, 200)
+
+        result = InstagramTargetCrawlResult(
+            target_type=t_type,
+            target_value=t_val,
+            discovery_url="",
+            status="transport_error",
+        )
+        rotated_on_retry = False
+
+        for attempt in range(2):
+            if self.stop_check():
+                break
+            await self._ensure_playwright_browser()
+            if self._context is None:
+                await self.reset_guest_context()
+            if self._context is None:
+                break
+            page = await self._context.new_page()
+            try:
+                result = await crawl_instagram_target_guest(
+                    page,
+                    t_type,
+                    t_val,
+                    max_posts=max_posts,
+                    known_shortcodes=known_codes,
+                    is_proxy_expired_fn=is_proxy_expired_error,
+                )
+            finally:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+
+            if result.status == "proxy_expired":
+                self.sim.status = "expired"
+                self.sim.last_error = result.error
+                break
+            fallback_proxies = self.config.get("proxy_urls") or ([self.sim.socks_url] if self.sim.socks_url else None)
+            if result.should_rotate and attempt == 0 and fallback_proxies:
+                adaptive_rate_limiter.record_rate_limit(self.sim.id)
+                rot = await self.rotator.wait_for_ip_rotation(
+                    self.sim.id,
+                    reason=f"instagram_{result.status}",
+                    proxy_urls=fallback_proxies,
+                    stop_check=self.stop_check,
+                    log_cb=self.log_cb,
+                )
+                if rot.get("ok"):
+                    rotated_on_retry = True
+                    if rot.get("ip_changed"):
+                        self.progress_cb({"ip_rotations": 1})
+                    await self.reset_guest_context()
+                    continue
+            break
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        if result.posts:
+            adaptive_rate_limiter.record_success(self.sim.id)
+            result = await ingest_instagram_4g_batch(
+                result,
+                post_limit=max_posts,
+                proxy_node=self.sim.id,
+                run_id=self.run_id,
+            )
+            status_out = "rotated_retry" if rotated_on_retry else "ok"
+            self.log_cb(
+                "success",
+                self.sim.id,
+                f"[Instagram {t_type}:{t_val}] Đọc {result.raw_extracted} bài -> lưu mới {result.saved_count} bài ({elapsed_ms}ms)",
+            )
+        elif result.status == "empty":
+            status_out = "ok"
+            self.log_cb("info", self.sim.id, f"[Instagram {t_type}:{t_val}] 0 bài mới ({elapsed_ms}ms)")
+        else:
+            status_out = "proxy_expired" if result.status == "proxy_expired" else "blocked"
+            self.log_cb(
+                "warn",
+                self.sim.id,
+                f"[Instagram {t_type}:{t_val}] Tạm dừng/lỗi ({result.error or result.status}) ({elapsed_ms}ms)",
+            )
+
+        self.sim.total_groups += 1
+        self.sim.status = "idle" if self.sim.status != "expired" else "expired"
+        return {
+            "target": t_val,
+            "status": status_out,
+            "proxy_expired": status_out == "proxy_expired",
+            "posts_saved": result.saved_count,
+            "extracted": result.raw_extracted,
+            "elapsed_ms": elapsed_ms,
+            "error": result.error,
+        }
+
+    async def process_linkedin_no_acc_target(self, target: dict[str, Any]) -> dict[str, Any]:
+        """Crawl one LinkedIn No-Acc B2B keyword (Jobs Guest API + Search Index) over pure HTTP."""
+        from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+            LinkedInNoAccCrawlResult,
+            crawl_linkedin_no_acc_keyword,
+            ingest_linkedin_no_acc_batch,
+        )
+
+        t0 = time.perf_counter()
+        kw = str(target.get("keyword") or "").strip()
+        loc = str(target.get("location") or self.config.get("linkedin_no_acc_location") or "Vietnam").strip()
+        channel = str(target.get("channel") or "both").strip()
+        self.sim.status = "crawling"
+
+        j_lo, j_hi = PUBLIC_CRAWL_CONFIG_BOUNDS["linkedin_no_acc_max_jobs_per_keyword"]
+        raw_lim = self.config.get("linkedin_no_acc_max_jobs_per_keyword")
+        max_jobs = 15 if raw_lim is None else max(j_lo, min(j_hi, int(raw_lim)))
+
+        result = LinkedInNoAccCrawlResult(keyword=kw, location=loc, channel=channel, status="transport_error")
+        rotated_on_retry = False
+
+        for attempt in range(2):
+            if self.stop_check():
+                break
+            result = await crawl_linkedin_no_acc_keyword(
+                kw,
+                location=loc,
+                channel=channel,
+                max_jobs=max_jobs,
+                proxy_http=self._httpx_proxy_url(),
+                is_proxy_expired_fn=is_proxy_expired_error,
+            )
+            if result.status == "proxy_expired":
+                self.sim.status = "expired"
+                self.sim.last_error = result.error
+                break
+            fallback_proxies = self.config.get("proxy_urls") or ([self.sim.socks_url] if self.sim.socks_url else None)
+            if result.should_rotate and attempt == 0 and fallback_proxies:
+                adaptive_rate_limiter.record_rate_limit(self.sim.id)
+                rot = await self.rotator.wait_for_ip_rotation(
+                    self.sim.id,
+                    reason=f"linkedin_{result.status}",
+                    proxy_urls=fallback_proxies,
+                    stop_check=self.stop_check,
+                    log_cb=self.log_cb,
+                )
+                if rot.get("ok"):
+                    rotated_on_retry = True
+                    if rot.get("ip_changed"):
+                        self.progress_cb({"ip_rotations": 1})
+                    continue
+            break
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        if result.posts:
+            adaptive_rate_limiter.record_success(self.sim.id)
+            result = await ingest_linkedin_no_acc_batch(
+                result,
+                proxy_node=self.sim.id,
+                run_id=self.run_id,
+            )
+            status_out = "rotated_retry" if rotated_on_retry else "ok"
+            self.log_cb(
+                "success",
+                self.sim.id,
+                f"[LinkedIn No-Acc: {kw} ({loc})] {result.jobs_extracted} Jobs + {result.public_posts_extracted} Public -> lưu mới {result.saved_count} bài ({elapsed_ms}ms)",
+            )
+        elif result.status == "empty":
+            status_out = "ok"
+            self.log_cb("info", self.sim.id, f"[LinkedIn No-Acc: {kw}] 0 tín hiệu mới ({elapsed_ms}ms)")
+        else:
+            status_out = "proxy_expired" if result.status == "proxy_expired" else "blocked"
+            self.log_cb(
+                "warn",
+                self.sim.id,
+                f"[LinkedIn No-Acc: {kw}] Tạm dừng/lỗi ({result.error or result.status}) ({elapsed_ms}ms)",
+            )
+
+        self.sim.total_groups += 1
+        self.sim.status = "idle" if self.sim.status != "expired" else "expired"
+        return {
+            "keyword": kw,
+            "status": status_out,
+            "proxy_expired": status_out == "proxy_expired",
+            "posts_saved": result.saved_count,
+            "extracted": len(result.posts),
             "elapsed_ms": elapsed_ms,
             "error": result.error,
         }
@@ -2274,8 +2789,11 @@ class PublicCrawlOrchestrator:
                 if "proxy_expired_error" in row:
                     self.proxy_expired_error = row.get("proxy_expired_error")
                     cfg["proxy_expired_error"] = self.proxy_expired_error
-                if row.get("last_completed_platform") in {"facebook", "threads"} and self.last_completed_platform is None:
+                if row.get("last_completed_platform") in {"facebook", "threads", "instagram", "linkedin_no_acc"} and self.last_completed_platform is None:
                     self.last_completed_platform = row.get("last_completed_platform")
+                persisted_doc_id = str(row.get("gql_pagination_doc_id") or "").strip()
+                if persisted_doc_id.isdigit() and len(persisted_doc_id) >= 12:
+                    update_active_gql_doc_id(persisted_doc_id, persist=False)
         except Exception as exc:
             logger.debug("[PUBLIC-4G] get_config fallback defaults (%s)", exc)
         return clamp_public_crawl_config(cfg)
@@ -2368,6 +2886,13 @@ class PublicCrawlOrchestrator:
             "threads_keyword_target",
             "threads_max_posts_per_keyword",
             "threads_max_age_days",
+            "use_curl_cffi",
+            "alternating_instagram_enabled",
+            "instagram_max_posts_per_target",
+            "alternating_linkedin_no_acc_enabled",
+            "linkedin_no_acc_location",
+            "linkedin_no_acc_max_jobs_per_keyword",
+            "use_eaa_for_private_groups",
         }
         clean_patch: dict[str, Any] = {}
         for k, v in patch.items():
@@ -2714,6 +3239,10 @@ class PublicCrawlOrchestrator:
                 },
                 "active_threads_keywords": self.active_threads_keywords[:50],
                 "threads_keyword_meta": self.threads_keyword_meta,
+                "tls_engine": "curl_cffi_chrome131" if (cfg.get("use_curl_cffi", True) and is_curl_cffi_available()) else "httpx",
+                "curl_cffi_available": is_curl_cffi_available(),
+                "active_gql_doc_id": get_active_gql_doc_id(),
+                "rate_limiter": adaptive_rate_limiter.snapshot(),
                 **merged_stats,
             },
             "sims": sims,
@@ -2934,17 +3463,27 @@ class PublicCrawlOrchestrator:
         alternating_enabled = bool(cfg.get("alternating_threads_enabled", True))
         if group_ids:
             target_platform = "facebook"
-        elif platform in {"facebook", "threads"}:
+        elif platform in {"facebook", "threads", "instagram", "linkedin_no_acc"}:
             target_platform = platform
         else:
             prev_completed = self.last_completed_platform or cfg.get("last_completed_platform")
-            if alternating_enabled and prev_completed == "facebook":
-                target_platform = "threads"
+            cycle_order: list[str] = ["facebook"]
+            if alternating_enabled:
+                cycle_order.append("threads")
+            if bool(cfg.get("alternating_instagram_enabled", False)):
+                cycle_order.append("instagram")
+            if bool(cfg.get("alternating_linkedin_no_acc_enabled", False)):
+                cycle_order.append("linkedin_no_acc")
+            if prev_completed in cycle_order and len(cycle_order) > 1:
+                next_idx = (cycle_order.index(prev_completed) + 1) % len(cycle_order)
+                target_platform = cycle_order[next_idx]
             else:
-                target_platform = "facebook"
+                target_platform = cycle_order[0]
 
         groups: list[dict[str, Any]] = []
         threads_keywords: list[str] = []
+        instagram_targets: list[dict[str, Any]] = []
+        linkedin_no_acc_targets: list[dict[str, Any]] = []
         new_groups_count = 0
 
         if target_platform == "facebook":
@@ -3009,11 +3548,62 @@ class PublicCrawlOrchestrator:
                     "message": "Không có từ khóa Threads nào để chạy.",
                 }
 
-        work_items: list[dict[str, Any]] = (
-            [{"kind": "threads", "keyword": kw} for kw in threads_keywords]
-            if target_platform == "threads"
-            else [{"kind": "facebook", "group": g} for g in groups]
-        )
+        if target_platform == "instagram":
+            explicit_kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+            if explicit_kws:
+                instagram_targets = [
+                    {
+                        "target_type": "profile" if kw.startswith("@") else "keyword",
+                        "target_value": kw.lstrip("@"),
+                    }
+                    for kw in explicit_kws
+                ]
+            else:
+                from app.modules.all_platform.services.instagram_no_acc_crawler_service import (
+                    list_instagram_targets,
+                )
+
+                instagram_targets = await asyncio.to_thread(list_instagram_targets, True)
+            if limit_groups is not None and limit_groups > 0:
+                instagram_targets = instagram_targets[:limit_groups]
+            if not instagram_targets:
+                return {
+                    "started": False,
+                    "reason": "no_instagram_targets",
+                    "message": "Chưa có từ khóa hoặc Profile công khai Instagram nào đang bật.",
+                }
+
+        if target_platform == "linkedin_no_acc":
+            explicit_kws = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+            default_loc = str(cfg.get("linkedin_no_acc_location") or "Vietnam")
+            if explicit_kws:
+                linkedin_no_acc_targets = [
+                    {"keyword": kw, "location": default_loc, "channel": "both"}
+                    for kw in explicit_kws
+                ]
+            else:
+                from app.modules.all_platform.services.linkedin_no_acc_crawler_service import (
+                    list_linkedin_no_acc_targets,
+                )
+
+                linkedin_no_acc_targets = await asyncio.to_thread(list_linkedin_no_acc_targets, True)
+            if limit_groups is not None and limit_groups > 0:
+                linkedin_no_acc_targets = linkedin_no_acc_targets[:limit_groups]
+            if not linkedin_no_acc_targets:
+                return {
+                    "started": False,
+                    "reason": "no_linkedin_no_acc_targets",
+                    "message": "Chưa có từ khóa LinkedIn No-Acc nào đang bật.",
+                }
+
+        if target_platform == "threads":
+            work_items = [{"kind": "threads", "keyword": kw} for kw in threads_keywords]
+        elif target_platform == "instagram":
+            work_items = [{"kind": "instagram", "target": t} for t in instagram_targets]
+        elif target_platform == "linkedin_no_acc":
+            work_items = [{"kind": "linkedin_no_acc", "target": t} for t in linkedin_no_acc_targets]
+        else:
+            work_items = [{"kind": "facebook", "group": g} for g in groups]
 
         if continuous is None:
             is_continuous = bool(not group_ids and cfg.get("enabled") and cfg_interval == 0)
@@ -3369,8 +3959,13 @@ class PublicCrawlOrchestrator:
                         except asyncio.QueueEmpty:
                             break
                         try:
-                            if work_item.get("kind") == "threads":
+                            item_kind = work_item.get("kind")
+                            if item_kind == "threads":
                                 res = await worker.process_threads_keyword(str(work_item.get("keyword") or ""))
+                            elif item_kind == "instagram":
+                                res = await worker.process_instagram_target(work_item.get("target") or {})
+                            elif item_kind == "linkedin_no_acc":
+                                res = await worker.process_linkedin_no_acc_target(work_item.get("target") or {})
                             else:
                                 res = await worker.process_group(work_item["group"])
                             elapsed_samples.append(int(res.get("elapsed_ms") or 0))
