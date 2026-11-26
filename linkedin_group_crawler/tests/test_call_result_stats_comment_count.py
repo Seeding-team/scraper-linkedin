@@ -233,6 +233,32 @@ def test_comment_distinct_post_count_scoped_by_member_id(patched):
     assert data["comment_distinct_post_count"] == 1
 
 
+def test_comment_distinct_post_count_excludes_null_id_member_rows_when_unscoped(patched):
+    """Đồng bộ 2026-11-25 với get_who_did_what/get_day_breakdown (post_contact_activity_service.py,
+    "if not mid: continue"): dòng seeding_content_kpi có id_member = NULL (dữ liệu cũ) phải bị
+    loại trừ khỏi X kể cả khi xem "Tất cả thành viên" (allowed_member_ids = None) — trước đây
+    nhánh này KHÔNG lọc id_member chút nào nên 1 bài chỉ có đúng dòng NULL vẫn bị tính vào X, dù
+    bảng "Lượt bình luận" luôn bỏ qua dòng đó (X có thể > Tổng "Lượt bình luận"). Giờ phải nhất
+    quán: không tính."""
+    fake_db = patched
+    cur_start, _ = _vn_week_range_to_utc("2026-11-10", "2026-11-10")
+
+    fake_db.store.setdefault("facebook_posts", []).extend([
+        {"id": "fb-1", "crawl_date": _inside(cur_start, 1)},
+        {"id": "fb-2", "crawl_date": _inside(cur_start, 2)},
+    ])
+    fake_db.store.setdefault("seeding_content_kpi", []).extend([
+        # fb-1: dòng seeding DUY NHẤT có id_member = NULL -> không được tính vào X.
+        {"id_member": None, "id_post": "fb-1", "created_at": _inside(cur_start, 1)},
+        # fb-2: có dòng id_member hợp lệ -> vẫn được tính bình thường.
+        {"id_member": "mem-a", "id_post": "fb-2", "created_at": _inside(cur_start, 2)},
+    ])
+
+    data = svc.get_call_result_stats(ADMIN_USER, date_from="2026-11-10", date_to="2026-11-10")
+
+    assert data["comment_distinct_post_count"] == 1  # chỉ fb-2, fb-1 bị loại vì toàn dòng NULL
+
+
 def test_comment_distinct_post_count_resilient_when_table_missing():
     raising_db = _RaisingSupabase()
     with mock.patch.object(svc, "get_supabase_client", return_value=raising_db), \
