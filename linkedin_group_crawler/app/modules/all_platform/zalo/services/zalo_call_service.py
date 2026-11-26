@@ -319,8 +319,9 @@ def parse_zrtc_packet(packet: bytes) -> Optional[Dict[str, Any]]:
             "token": 0,
             "rtp_payload": packet[1:],
         }
-    if msg_type in (3, 5, 13, 15) and len(packet) >= 17:
+    if (msg_type in (3, 5, 13) and len(packet) >= 17) or (msg_type == 15 and len(packet) >= 13):
         # Client -> Relay Audio RTP (3), Audio RTCP (5), Video RTP (13), Video RTCP (15): 5-byte header.
+        # Video RTCP (15) cho phép >= 13 byte (5B header + 8B RR/PLI tối thiểu).
         _, token = struct.unpack("<BI", packet[:5])
         return {
             "msg_type": msg_type,
@@ -540,8 +541,24 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
                     )
             return
 
-        # msgType=5/15 là RTCP, msgType=13/14 là Video RTP -> bỏ qua không giải mã Opus
-        if zrtc is not None and zrtc.get("msg_type") in (5, 13, 14, 15):
+        # msgType=5 là Audio RTCP -> bỏ qua không giải mã Opus
+        if zrtc is not None and zrtc.get("msg_type") == 5:
+            return
+
+        # msgType=13/14 là Video RTP, msgType=15 là Video RTCP:
+        # - Với Audio Call (call_type == 1): bỏ qua 100% như cũ (KHÔNG đụng packets_received hay luồng thoại).
+        # - Với Video Call (call_type in (2, 3)): định tuyến sang Video Engine độc lập (zalo_video_codec.py).
+        if zrtc is not None and zrtc.get("msg_type") in (13, 14, 15):
+            if self.session.is_video_call and zrtc.get("rtp_payload"):
+                mt_vid = zrtc["msg_type"]
+                if mt_vid == 15:
+                    self.session.handle_incoming_video_rtcp(zrtc["rtp_payload"])
+                else:
+                    parsed_vid = parse_rtp_packet(zrtc["rtp_payload"])
+                    if parsed_vid and parsed_vid["payload"]:
+                        if self.session.status == "ringing" and parsed_vid["ssrc"] != self.session.ssrc:
+                            asyncio.create_task(_promote_connected_from_media(self.session))
+                        self.session.handle_incoming_video_rtp(parsed_vid)
             return
 
         # Relay -> Client Audio RTP mang msgType=4 (1-byte header); Client/Loopback có thể mang msgType=3 (5-byte header)
@@ -553,6 +570,9 @@ class _ZaloRtpDatagramProtocol(asyncio.DatagramProtocol):
 
         # Transport/STUN/RTCP replies are not evidence that the callee answered.
         parsed = parse_rtp_packet(rtp_bytes)
+        if parsed and self.session.is_video_call and parsed["payload_type"] in (97, 98, 100) and parsed["payload"]:
+            self.session.handle_incoming_video_rtp(parsed)
+            return
         if not parsed or parsed["payload_type"] not in (111, 112, 113) or not parsed["payload"]:
             if self.session.status == "connected" and self._logged_unknown_rx_count < 3:
                 self._logged_unknown_rx_count += 1
@@ -641,6 +661,97 @@ class ZaloCallSession:
     _init_zrtp_event: Optional[asyncio.Event] = field(default=None, repr=False, compare=False)
     _pcm_tx_buffer: bytearray = field(default_factory=bytearray, repr=False, compare=False)
     _opus_codec: _ZaloOpusCodec = field(default_factory=_ZaloOpusCodec, repr=False, compare=False)
+    _video_bridge: Optional[Any] = field(default=None, repr=False, compare=False)
+
+    @property
+    def is_video_call(self) -> bool:
+        return int(self.call_type or 1) in (2, 3)
+
+    def _get_or_create_video_bridge(self) -> Optional[Any]:
+        """Khởi tạo lười Video Engine (chỉ chạy cho call_type in (2, 3); Audio Call luôn trả None)."""
+        if not self.is_video_call:
+            return None
+        if self._video_bridge is None:
+            from app.modules.all_platform.zalo.services.zalo_video_codec import ZaloVideoSessionBridge
+
+            def _send_video_udp(zrtc_pkt: bytes, raw_pkt: bytes) -> None:
+                if not self.udp_transport:
+                    return
+                if self.remote_rtp_addr:
+                    try:
+                        self.udp_transport.sendto(zrtc_pkt, self.remote_rtp_addr)
+                    except Exception:
+                        pass
+                if self.p2p_target and self.p2p_target != self.remote_rtp_addr:
+                    try:
+                        self.udp_transport.sendto(raw_pkt, self.p2p_target)
+                    except Exception:
+                        pass
+
+            self._video_bridge = ZaloVideoSessionBridge(
+                session_id=self.session_id,
+                send_udp_cb=_send_video_udp,
+                broadcast_browser_cb=self.broadcast_audio_to_browsers,
+                get_ssrc_cb=lambda: self.ssrc,
+                get_token_cb=lambda: self.zrtc_token or self.zalo_from_id,
+                packet_mode=2,
+            )
+        return self._video_bridge
+
+    def send_video_from_browser(self, jpeg_bytes: bytes) -> None:
+        if self.status != "connected" or not self.is_video_call or not jpeg_bytes:
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is not None:
+            bridge.enqueue_browser_jpeg(jpeg_bytes)
+
+    def set_video_camera_muted(self, muted: bool) -> None:
+        if not self.is_video_call:
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is not None:
+            bridge.set_camera_muted(muted)
+
+    def request_remote_video_keyframe(self) -> None:
+        if not self.is_video_call:
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is not None:
+            bridge.send_pli_if_needed(force=True)
+
+    def handle_incoming_video_rtp(self, parsed_rtp: Dict[str, Any]) -> None:
+        if not self.is_video_call or self.status not in ("dialing", "ringing", "connected"):
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is not None:
+            bridge.handle_incoming_video_rtp(
+                payload_type=int(parsed_rtp.get("payload_type") or 0),
+                seq=int(parsed_rtp.get("seq") or 0),
+                timestamp=int(parsed_rtp.get("timestamp") or 0),
+                ssrc=int(parsed_rtp.get("ssrc") or 0),
+                marker=bool(parsed_rtp.get("marker")),
+                payload=parsed_rtp.get("payload") or b"",
+            )
+
+    def handle_incoming_video_rtcp(self, rtcp_bytes: bytes) -> None:
+        if not self.is_video_call or self.status not in ("dialing", "ringing", "connected"):
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is not None:
+            bridge.handle_incoming_video_rtcp(rtcp_bytes)
+
+    def tick_video_keepalive(self, tick_idx: int) -> None:
+        """Nhịp Video RTCP SR+RR mỗi 1.0s (5 tick) + PLI xin IDR + khung giữ nhịp khi tắt/thiếu webcam."""
+        if not self.is_video_call or self.status != "connected":
+            return
+        bridge = self._get_or_create_video_bridge()
+        if bridge is None:
+            return
+        if bridge.video_rtcp_sent == 0 or tick_idx % 5 == 0:
+            bridge.send_video_rtcp_sr_rr()
+            bridge.send_pli_if_needed(force=False)
+        if bridge.video_frames_sent == 0 or tick_idx % 3 == 0:
+            bridge.send_placeholder_if_idle()
 
     def notify_init_zrtp(self) -> None:
         if self._init_zrtp_event is not None and not self._init_zrtp_event.is_set():
@@ -672,6 +783,7 @@ class ZaloCallSession:
         parsed_local = _parse_host_port(self.local_rtp_address)
         public_ip = parsed_local[0] if parsed_local else None
         rtp_port = parsed_local[1] if parsed_local else 0
+        vstats = self._video_bridge.stats_dict() if self._video_bridge is not None else {}
         return {
             "session_id": self.session_id,
             "account_id": self.account_id,
@@ -682,7 +794,7 @@ class ZaloCallSession:
             "phone_number": self.phone_number,
             "call_type": self.call_type,
             "status": self.status,
-            "codec": "Opus/PCM16",
+            "codec": "Opus/H264" if self.is_video_call else "Opus/PCM16",
             "rtp_port": rtp_port,
             "public_ip": public_ip,
             "public_port": rtp_port or None,
@@ -708,6 +820,11 @@ class ZaloCallSession:
             ),
             "packets_sent": self.packets_sent,
             "packets_received": self.packets_received,
+            "video_packets_sent": int(vstats.get("video_packets_sent") or 0),
+            "video_packets_received": int(vstats.get("video_packets_received") or 0),
+            "video_frames_sent": int(vstats.get("video_frames_sent") or 0),
+            "video_frames_received": int(vstats.get("video_frames_received") or 0),
+            "camera_muted": bool(vstats.get("camera_muted", False)),
             "zrtc_worker_id": self.zrtc_worker_id,
             "zrtc_worker_connected": bool(self.zrtc_worker_id and self.zrtc_worker_id in _ZRTC_WORKERS) or is_zrtc_worker_connected(),
             "kpi_recorded": self.kpi_recorded,
@@ -789,6 +906,12 @@ class ZaloCallSession:
         self._send_encoded_rtp_frame(audio_frame, payload_type=payload_type)
 
     def close_media(self, *, send_zrtc_end: bool = True) -> None:
+        if self._video_bridge is not None:
+            try:
+                self._video_bridge.close()
+            except Exception:
+                pass
+            self._video_bridge = None
         if self.udp_transport is not None:
             if send_zrtc_end and self.remote_rtp_addr and self.zalo_from_id and self.zrtc_token:
                 try:
@@ -1369,6 +1492,12 @@ def _send_udp_keepalive_tick(
                 session.udp_transport.sendto(rtcp_pkt, addr)
         except Exception:
             pass
+
+    if session.status == "connected" and session.is_video_call and session.zalo_from_id:
+        try:
+            session.tick_video_keepalive(tick_idx)
+        except Exception as vid_exc:
+            logger.debug(f"[VOIP-VIDEO] keepalive tick error session={session.session_id}: {vid_exc}")
 
     if not send_rtp:
         return

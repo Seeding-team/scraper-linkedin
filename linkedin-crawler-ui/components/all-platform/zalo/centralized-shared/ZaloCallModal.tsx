@@ -7,6 +7,7 @@ import {
   PhoneCall,
   PhoneOff,
   Video,
+  VideoOff,
   Mic,
   MicOff,
   Volume2,
@@ -125,6 +126,10 @@ export function ZaloCallModal({
   const [startingDirectCall, setStartingDirectCall] = useState(false);
   const [endingDirectCall, setEndingDirectCall] = useState(false);
   const [isCallMuted, setIsCallMuted] = useState(false);
+  const [isCamMuted, setIsCamMuted] = useState(false);
+  const [hasLocalVideo, setHasLocalVideo] = useState(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
   const [sendingFriendReq, setSendingFriendReq] = useState(false);
   const [friendReqSent, setFriendReqSent] = useState(false);
 
@@ -154,6 +159,14 @@ export function ZaloCallModal({
   const callStatusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const callProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const isCallMutedRef = useRef<boolean>(false);
+  const isCamMutedRef = useRef<boolean>(false);
+  const localVideoStreamRef = useRef<MediaStream | null>(null);
+  const localVideoElRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoCaptureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoCaptureTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const encodingLocalFrameRef = useRef<boolean>(false);
+  const renderingRemoteFrameRef = useRef<boolean>(false);
   const activeCallSessionRef = useRef<ZaloDirectCallSession | null>(null);
   const accountIdRef = useRef<string>(accountId);
   const isOpenRef = useRef<boolean>(open);
@@ -184,7 +197,190 @@ export function ZaloCallModal({
     isCallMutedRef.current = isCallMuted;
   }, [isCallMuted]);
 
+  useEffect(() => {
+    isCamMutedRef.current = isCamMuted;
+  }, [isCamMuted]);
+
+  // Đồng bộ srcObject vào thẻ <video> PiP ngay khi element mount
+  useEffect(() => {
+    const el = localVideoElRef.current;
+    const stream = localVideoStreamRef.current;
+    if (el && stream && el.srcObject !== stream) {
+      el.srcObject = stream;
+      void el.play().catch(() => {});
+    }
+  }, [hasLocalVideo, activeCallSession?.call_type, activeCallSession?.status]);
+
+  const stopLocalVideoCapture = useCallback(() => {
+    if (videoCaptureTimerRef.current) {
+      clearInterval(videoCaptureTimerRef.current);
+      videoCaptureTimerRef.current = null;
+    }
+    encodingLocalFrameRef.current = false;
+    renderingRemoteFrameRef.current = false;
+    if (localVideoStreamRef.current) {
+      for (const track of localVideoStreamRef.current.getTracks()) {
+        try {
+          track.stop();
+        } catch {
+          /* ignore */
+        }
+      }
+      localVideoStreamRef.current = null;
+    }
+    if (localVideoElRef.current) {
+      try {
+        localVideoElRef.current.srcObject = null;
+      } catch {
+        /* ignore */
+      }
+    }
+    setHasLocalVideo(false);
+    setHasRemoteVideo(false);
+    setCameraError(null);
+  }, []);
+
+  const startLocalVideoCapture = useCallback(async () => {
+    stopLocalVideoCapture();
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Trình duyệt không hỗ trợ Camera — vẫn tự động phát khung hình giữ kết nối ổn định.");
+      return;
+    }
+    try {
+      const vStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 480 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 12, max: 15 },
+          facingMode: "user",
+        },
+        audio: false,
+      });
+      if (!isOpenRef.current) {
+        vStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      localVideoStreamRef.current = vStream;
+      vStream.getVideoTracks().forEach((t) => {
+        t.enabled = !isCamMutedRef.current;
+      });
+      if (localVideoElRef.current) {
+        localVideoElRef.current.srcObject = vStream;
+        void localVideoElRef.current.play().catch(() => {});
+      }
+      setHasLocalVideo(true);
+      setCameraError(null);
+
+      // Thu khung hình webcam ~10fps -> JPEG quality 0.62 -> b"VJPG" + bytes gửi qua /call-ws
+      // CHỐT CHẶN: chỉ phát khi connected, không mute cam, và WebSocket không nghẽn (<120KB) để 0% ảnh hưởng Audio!
+      videoCaptureTimerRef.current = setInterval(() => {
+        const videoEl = localVideoElRef.current;
+        const ws = callWsRef.current;
+        const sess = activeCallSessionRef.current;
+        if (
+          !videoEl ||
+          videoEl.readyState < 2 ||
+          videoEl.videoWidth <= 0 ||
+          videoEl.videoHeight <= 0 ||
+          !ws ||
+          ws.readyState !== WebSocket.OPEN ||
+          ws.bufferedAmount > 120_000 ||
+          !sess ||
+          sess.status !== "connected" ||
+          (sess.call_type !== 2 && sess.call_type !== 3) ||
+          isCamMutedRef.current ||
+          encodingLocalFrameRef.current
+        ) {
+          return;
+        }
+        const maxDim = 480;
+        const scale = Math.min(1, maxDim / Math.max(videoEl.videoWidth, videoEl.videoHeight));
+        const w = Math.max(160, Math.floor((videoEl.videoWidth * scale) / 16) * 16);
+        const h = Math.max(120, Math.floor((videoEl.videoHeight * scale) / 16) * 16);
+        let canvas = videoCaptureCanvasRef.current;
+        if (!canvas) {
+          canvas = document.createElement("canvas");
+          videoCaptureCanvasRef.current = canvas;
+        }
+        if (canvas.width !== w || canvas.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+        const ctx2d = canvas.getContext("2d");
+        if (!ctx2d) return;
+        ctx2d.drawImage(videoEl, 0, 0, w, h);
+        encodingLocalFrameRef.current = true;
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              encodingLocalFrameRef.current = false;
+              return;
+            }
+            void blob
+              .arrayBuffer()
+              .then((buf) => {
+                const liveWs = callWsRef.current;
+                if (
+                  liveWs &&
+                  liveWs.readyState === WebSocket.OPEN &&
+                  liveWs.bufferedAmount <= 120_000 &&
+                  activeCallSessionRef.current?.status === "connected" &&
+                  !isCamMutedRef.current
+                ) {
+                  const jpegBytes = new Uint8Array(buf);
+                  const packet = new Uint8Array(4 + jpegBytes.length);
+                  // Magic prefix "VJPG" (0x56 0x4A 0x50 0x47)
+                  packet[0] = 0x56;
+                  packet[1] = 0x4a;
+                  packet[2] = 0x50;
+                  packet[3] = 0x47;
+                  packet.set(jpegBytes, 4);
+                  liveWs.send(packet.buffer);
+                }
+              })
+              .catch(() => {})
+              .finally(() => {
+                encodingLocalFrameRef.current = false;
+              });
+          },
+          "image/jpeg",
+          0.62,
+        );
+      }, 100);
+    } catch (camErr) {
+      setHasLocalVideo(false);
+      setCameraError(
+        camErr instanceof Error
+          ? `Không mở được Webcam (${camErr.message}) — vẫn duy trì luồng Video giữ kết nối ổn định & Audio 2 chiều.`
+          : "Không tìm thấy Webcam — vẫn duy trì luồng Video giữ kết nối ổn định & Audio 2 chiều.",
+      );
+    }
+  }, [stopLocalVideoCapture]);
+
+  const handleToggleCamera = useCallback(() => {
+    setIsCamMuted((prev) => {
+      const next = !prev;
+      isCamMutedRef.current = next;
+      if (localVideoStreamRef.current) {
+        localVideoStreamRef.current.getVideoTracks().forEach((t) => {
+          t.enabled = !next;
+        });
+      } else if (!next && activeCallSessionRef.current && (activeCallSessionRef.current.call_type === 2 || activeCallSessionRef.current.call_type === 3)) {
+        void startLocalVideoCapture();
+      }
+      if (callWsRef.current && callWsRef.current.readyState === WebSocket.OPEN) {
+        try {
+          callWsRef.current.send(JSON.stringify({ type: "video_mute", muted: next }));
+        } catch {
+          /* ignore */
+        }
+      }
+      return next;
+    });
+  }, [startLocalVideoCapture]);
+
   const stopCallWsAndPolling = useCallback(() => {
+    stopLocalVideoCapture();
     nextPlayTimeRef.current = 0;
     if (callStatusPollRef.current) {
       clearInterval(callStatusPollRef.current);
@@ -206,13 +402,14 @@ export function ZaloCallModal({
       }
       callWsRef.current = null;
     }
-  }, []);
+  }, [stopLocalVideoCapture]);
 
   /**
    * Giải phóng đồng bộ (0ms) các MediaStreamTrack trước khi mở liên kết ngoài `zalo://`
    * để KHÔNG làm mất Transient User Activation của Chrome và nhả ngay khóa WASAPI.
    */
   const releaseMicTracksSync = useCallback(() => {
+    stopLocalVideoCapture();
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -229,7 +426,7 @@ export function ZaloCallModal({
     }
     setTestingMic(false);
     setMicLevel(0);
-  }, []);
+  }, [stopLocalVideoCapture]);
 
   const releaseBrowserAudioHardware = useCallback(async () => {
     stopCallWsAndPolling();
@@ -645,6 +842,40 @@ export function ZaloCallModal({
             return;
           }
 
+          // Phân tách khung Video "VFRM" (0x56 0x46 0x52 0x4D + JPEG) từ Backend H.264 decoder
+          // — hoàn toàn KHÔNG đi qua AudioContext để âm thanh Audio Call/Video Call giữ nguyên 100%!
+          if (ev.data instanceof ArrayBuffer && ev.data.byteLength > 4) {
+            const head = new Uint8Array(ev.data, 0, 4);
+            if (head[0] === 0x56 && head[1] === 0x46 && head[2] === 0x52 && head[3] === 0x4d) {
+              if (!renderingRemoteFrameRef.current && remoteVideoCanvasRef.current) {
+                renderingRemoteFrameRef.current = true;
+                const jpegSlice = new Uint8Array(ev.data, 4);
+                const blob = new Blob([jpegSlice], { type: "image/jpeg" });
+                void createImageBitmap(blob)
+                  .then((bmp) => {
+                    const canvas = remoteVideoCanvasRef.current;
+                    if (canvas) {
+                      if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+                        canvas.width = bmp.width;
+                        canvas.height = bmp.height;
+                      }
+                      const ctx2d = canvas.getContext("2d");
+                      if (ctx2d) {
+                        ctx2d.drawImage(bmp, 0, 0);
+                      }
+                    }
+                    bmp.close();
+                    setHasRemoteVideo(true);
+                  })
+                  .catch(() => {})
+                  .finally(() => {
+                    renderingRemoteFrameRef.current = false;
+                  });
+              }
+              return;
+            }
+          }
+
           // Binary PCM16 16kHz mono từ Backend PyAV Opus decoder đẩy về trình duyệt -> xếp lịch phát nối tiếp tránh rè/chồng tiếng
           if (ev.data instanceof ArrayBuffer && audioCtxRef.current && ev.data.byteLength >= 4) {
             try {
@@ -793,11 +1024,15 @@ export function ZaloCallModal({
             );
           }
         }
+        // Nếu là cuộc gọi Video (call_type === 2 | 3), khởi chạy luồng Webcam hoàn toàn độc lập với Audio Mic
+        if (session.call_type === 2 || session.call_type === 3) {
+          void startLocalVideoCapture();
+        }
       } catch {
         /* ignore audio gateway setup error */
       }
     },
-    [accountId, selectedMicId, stopCallWsAndPolling],
+    [accountId, selectedMicId, startLocalVideoCapture, stopCallWsAndPolling],
   );
 
   // ── Kích hoạt Gọi Trực Tiếp Trên Web CRM Qua Zalo VoIP Engine (Hướng 3) ────
@@ -809,6 +1044,8 @@ export function ZaloCallModal({
     setCallMode(mode);
     setStartingDirectCall(true);
     setIsCallMuted(false);
+    setIsCamMuted(false);
+    setCameraError(null);
 
     try {
       await releaseBrowserAudioHardware();
@@ -1181,7 +1418,14 @@ export function ZaloCallModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="relative w-full max-w-[560px] max-h-[92vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl text-slate-900 animate-in zoom-in-95 duration-150">
+      <div
+        className={cn(
+          "relative w-full max-h-[92vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl text-slate-900 animate-in zoom-in-95 duration-150",
+          activeCallSession && (activeCallSession.call_type === 2 || activeCallSession.call_type === 3)
+            ? "max-w-[620px]"
+            : "max-w-[560px]",
+        )}
+      >
         {/* ── Header ──────────────────────────────────────────────────────── */}
         <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-100 bg-gradient-to-r from-[#0068FF] to-[#0052CC] px-5 py-4 text-white rounded-t-2xl">
           <div className="flex items-center gap-3 min-w-0">
@@ -1483,6 +1727,27 @@ export function ZaloCallModal({
                         </button>
                       )}
 
+                      {(activeCallSession.call_type === 2 || activeCallSession.call_type === 3) && (
+                        <button
+                          type="button"
+                          onClick={handleToggleCamera}
+                          className={cn(
+                            "inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold transition cursor-pointer",
+                            isCamMuted
+                              ? "border-amber-300 bg-amber-100 text-amber-800"
+                              : "border-emerald-200 bg-white text-slate-700 hover:bg-emerald-50",
+                          )}
+                          title={isCamMuted ? "Bật lại Camera" : "Tắt Camera (vẫn duy trì luồng Video ổn định)"}
+                        >
+                          {isCamMuted ? (
+                            <VideoOff className="h-3.5 w-3.5 text-amber-700" />
+                          ) : (
+                            <Video className="h-3.5 w-3.5 text-emerald-600" />
+                          )}
+                          <span>{isCamMuted ? "Cam đã tắt" : "Cam đang bật"}</span>
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => setIsCallMuted((m) => !m)}
@@ -1510,6 +1775,104 @@ export function ZaloCallModal({
                   )}
                 </div>
 
+                {/* ── Khung Video Call 2 Chiều (CHỈ hiển thị khi call_type === 2 | 3) ── */}
+                {(activeCallSession.call_type === 2 || activeCallSession.call_type === 3) &&
+                  ["initializing", "dialing", "ringing", "connected"].includes(activeCallSession.status) && (
+                    <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner">
+                      <canvas
+                        ref={remoteVideoCanvasRef}
+                        className={cn(
+                          "w-full h-full object-contain transition-opacity duration-200",
+                          hasRemoteVideo ? "opacity-100" : "opacity-0",
+                        )}
+                      />
+
+                      {!hasRemoteVideo && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-4 bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-950/90">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/15 border border-emerald-400/30 text-emerald-300">
+                            <Video className="h-6 w-6 animate-pulse" />
+                          </div>
+                          <p className="text-xs font-bold text-white">
+                            {activeCallSession.status === "connected"
+                              ? "Đang đồng bộ hình ảnh H.264 từ khách hàng..."
+                              : "Đang chờ khách hàng nhấc máy Video Call..."}
+                          </p>
+                          <p className="text-[11px] text-slate-400 max-w-xs">
+                            Kênh H.264 & Video RTCP đang tự động đồng bộ keyframe để giữ kết nối ổn định 2 chiều.
+                          </p>
+                          {activeCallSession.status === "connected" && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (callWsRef.current?.readyState === WebSocket.OPEN) {
+                                  callWsRef.current.send(JSON.stringify({ type: "request_keyframe" }));
+                                  toast.info("Đã gửi yêu cầu làm mới khung hình (RTCP PLI) tới khách hàng.");
+                                }
+                              }}
+                              className="mt-1 inline-flex items-center gap-1 rounded-lg border border-white/15 bg-white/10 hover:bg-white/20 px-2.5 py-1 text-[11px] font-semibold text-white transition cursor-pointer"
+                            >
+                              <RefreshCw className="h-3 w-3" />
+                              <span>Làm mới hình ảnh</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Nhãn trạng thái Live góc trên trái */}
+                      <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 rounded-full bg-slate-950/75 border border-white/15 backdrop-blur-xs px-2.5 py-1 text-[10.5px] font-bold text-white">
+                        <span
+                          className={cn(
+                            "h-2 w-2 rounded-full",
+                            hasRemoteVideo
+                              ? "bg-emerald-400 animate-pulse"
+                              : activeCallSession.status === "connected"
+                                ? "bg-sky-400 animate-pulse"
+                                : "bg-amber-400",
+                          )}
+                        />
+                        <span>
+                          {hasRemoteVideo
+                            ? "VIDEO 2 CHIỀU • H.264"
+                            : activeCallSession.status === "connected"
+                              ? "ĐÃ KẾT NỐI VIDEO"
+                              : "ĐANG GỌI VIDEO"}
+                        </span>
+                      </div>
+
+                      {/* Picture-in-Picture (PiP) Webcam cục bộ của Sale góc dưới phải */}
+                      <div className="absolute bottom-2.5 right-2.5 w-28 sm:w-36 aspect-[4/3] rounded-lg overflow-hidden border-2 border-white/25 bg-slate-900 shadow-lg">
+                        <video
+                          ref={localVideoElRef}
+                          autoPlay
+                          muted
+                          playsInline
+                          className={cn(
+                            "w-full h-full object-cover -scale-x-100",
+                            hasLocalVideo && !isCamMuted ? "opacity-100" : "opacity-0",
+                          )}
+                        />
+                        {(!hasLocalVideo || isCamMuted) && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-slate-900/95 text-slate-300 px-1 text-center">
+                            <VideoOff className="h-4 w-4 text-slate-400" />
+                            <span className="text-[10px] font-semibold">
+                              {isCamMuted ? "Camera đang tắt" : "Không có Webcam"}
+                            </span>
+                          </div>
+                        )}
+                        <div className="absolute bottom-1 left-1.5 rounded bg-slate-950/70 px-1.5 py-0.5 text-[9px] font-bold text-white/90">
+                          Bạn
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                {cameraError &&
+                  (activeCallSession.call_type === 2 || activeCallSession.call_type === 3) && (
+                    <div className="rounded-lg border border-sky-200 bg-sky-50/90 px-2.5 py-1.5 text-[11px] font-medium text-sky-800">
+                      ℹ️ {cameraError}
+                    </div>
+                  )}
+
                 <div className="flex items-center justify-between text-[10.5px] font-mono text-slate-500 flex-wrap gap-2">
                   <span>
                     UDP RTP Port: <strong>{activeCallSession.rtp_port || "auto"}</strong>
@@ -1518,8 +1881,15 @@ export function ZaloCallModal({
                       : ""}
                   </span>
                   <span>
-                    RTP Tx: <strong>{activeCallSession.packets_sent}</strong> • Rx:{" "}
+                    Audio Tx: <strong>{activeCallSession.packets_sent}</strong> • Rx:{" "}
                     <strong>{activeCallSession.packets_received}</strong>
+                    {(activeCallSession.call_type === 2 || activeCallSession.call_type === 3) && (
+                      <>
+                        {" "}
+                        • Video Tx: <strong>{activeCallSession.video_packets_sent ?? 0}</strong> • Rx:{" "}
+                        <strong>{activeCallSession.video_packets_received ?? 0}</strong>
+                      </>
+                    )}
                     {activeCallSession.zrtc_worker_connected ? " • ZRTC Worker: ON" : ""}
                     {activeCallSession.kpi_recorded ? " • Đã +1 KPI CALL" : ""}
                   </span>

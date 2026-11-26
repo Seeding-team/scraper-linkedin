@@ -525,8 +525,12 @@ async def zalo_direct_call_audio_websocket(websocket: WebSocket, session_id: str
             if msg.get("type") == "websocket.disconnect":
                 break
             if "bytes" in msg and msg["bytes"]:
+                raw_bytes = msg["bytes"]
                 if session.status == "connected":
-                    session.send_audio_from_browser(msg["bytes"])
+                    if session.is_video_call and len(raw_bytes) > 4 and raw_bytes[:4] == b"VJPG":
+                        session.send_video_from_browser(raw_bytes[4:])
+                    else:
+                        session.send_audio_from_browser(raw_bytes)
             elif "text" in msg and msg["text"]:
                 try:
                     data = json.loads(msg["text"])
@@ -537,6 +541,13 @@ async def zalo_direct_call_audio_websocket(websocket: WebSocket, session_id: str
                     await websocket.send_text(
                         json.dumps({"type": "pong", "ts": int(time.time() * 1000)})
                     )
+                elif cmd == "video_mute" and session.is_video_call:
+                    session.set_video_camera_muted(bool(data.get("muted")))
+                    await session.broadcast_json(
+                        {"type": "call_state", "session": session.to_dict(), **session.to_dict()}
+                    )
+                elif cmd == "request_keyframe" and session.is_video_call:
+                    session.request_remote_video_keyframe()
                 elif cmd in ("cancel", "end", "hangup", "mark_connected"):
                     await perform_call_action(
                         session_id,
