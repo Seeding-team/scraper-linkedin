@@ -50,9 +50,17 @@ RUN pip install --upgrade pip \
     && pip install -r requirements.txt \
     && pip install "setuptools<70"
 
+# Cài riêng Node.js dependencies cho WhatsApp Bridge (@whiskeysockets/baileys, qrcode, pino, @hapi/boom)
+# vào /app/scripts/node_modules — tách biệt 100% khỏi /app/node_modules (zca-js của Zalo).
+COPY scripts/package.json scripts/package-lock.json* /tmp/wa_bridge_pkg/
+RUN cd /tmp/wa_bridge_pkg && npm install --omit=dev
+
 COPY . .
 
-RUN mkdir -p /app/storage/session /app/storage/runtime /app/data/raw /app/data/output \
+RUN rm -rf /app/scripts/node_modules \
+    && mv /tmp/wa_bridge_pkg/node_modules /app/scripts/node_modules \
+    && rm -rf /tmp/wa_bridge_pkg \
+    && mkdir -p /app/storage/session /app/storage/runtime /app/storage/whatsapp_auth /app/storage/whatsapp_media /app/data/raw /app/data/output \
     && chown -R pwuser:pwuser /app
 
 USER pwuser

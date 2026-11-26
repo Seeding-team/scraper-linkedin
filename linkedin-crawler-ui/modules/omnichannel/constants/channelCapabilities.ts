@@ -59,11 +59,11 @@ export const CHANNEL_CAPABILITIES: Record<ChannelType, ChannelCapabilityConfig> 
   whatsapp: {
     id: "whatsapp",
     name: "WhatsApp",
-    categoryName: "WhatsApp Business",
-    description: "Tính năng đang phát triển",
-    isAvailable: false,
-    badgeText: "Đang phát triển",
-    connectActionLabel: "Đang phát triển",
+    categoryName: "WhatsApp Personal / Business",
+    description: "Kết nối tài khoản WhatsApp (QR / Mã ghép nối) & Gọi thoại WebRTC",
+    isAvailable: true,
+    connectRoute: "/all-platform/whatsapp-chat",
+    connectActionLabel: "Kết nối →",
   },
   viber: {
     id: "viber",

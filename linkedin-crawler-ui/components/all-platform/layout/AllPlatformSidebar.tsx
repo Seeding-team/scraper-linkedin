@@ -450,6 +450,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
       label: "Tài khoản Telegram",
       matchStartsWith: ["/all-platform/telegram-chat"],
     },
+    {
+      type: "item",
+      id: "whatsapp-chat",
+      href: "/all-platform/whatsapp-chat",
+      icon: "call",
+      label: "WhatsApp Chat & Call",
+      matchStartsWith: ["/all-platform/whatsapp-chat"],
+    },
   ];
 
   // Space "QUAN LY CRM":

@@ -561,6 +561,15 @@ all_platform_router.include_router(telegram_conversations_router, prefix="/teleg
 all_platform_router.include_router(telegram_messages_router, prefix="/telegram", tags=["Telegram Messages"])
 all_platform_router.include_router(telegram_events_router, prefix="/telegram", tags=["Telegram Events"])
 
+# ── WhatsApp Chat & Call (Baileys Multi-Device + Meta Cloud Calling WebRTC) ────
+from app.modules.all_platform.whatsapp import whatsapp_router
+
+all_platform_router.include_router(
+    whatsapp_router,
+    prefix="/whatsapp",
+    tags=["WhatsApp Chat & Call"],
+)
+
 # ── Scheduled Comments ─────────────────────────────────────────────────────────
 all_platform_router.include_router(
     scheduled_comments_router,
