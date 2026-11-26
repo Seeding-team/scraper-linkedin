@@ -559,17 +559,85 @@ def format_sidebar_last_message_preview(
     return None
 
 
+def build_zalo_sticker_cdn_url(sticker_id: Any, size: int = 130) -> Optional[str]:
+    """Dựng URL ảnh nhãn dán Zalo công khai (`/sticker/webpc?eid=<id>&size=130`)."""
+    try:
+        sid = int(sticker_id)
+    except (TypeError, ValueError):
+        return None
+    if sid <= 0:
+        return None
+    safe_size = int(size) if isinstance(size, int) and size > 0 else 130
+    return f"https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid={sid}&size={safe_size}"
+
+
+def extract_sticker_id_from_raw(raw_content: Any) -> Optional[int]:
+    """Trích xuất sticker ID dương từ raw_content (kể cả envelope `data.content` hoặc JSON string)."""
+    norm = _normalize_raw_content(raw_content)
+    if not isinstance(norm, dict):
+        return None
+    candidates: List[Dict[str, Any]] = [norm]
+    data_obj = norm.get("data")
+    if isinstance(data_obj, dict):
+        candidates.append(data_obj)
+        inner = data_obj.get("content")
+        if isinstance(inner, str) and inner.strip().startswith("{"):
+            try:
+                inner = json.loads(inner)
+            except Exception:
+                inner = None
+        if isinstance(inner, dict):
+            candidates.append(inner)
+            params = inner.get("params")
+            if isinstance(params, str) and params.strip().startswith("{"):
+                try:
+                    params = json.loads(params)
+                except Exception:
+                    params = None
+            if isinstance(params, dict):
+                candidates.append(params)
+    top_content = norm.get("content")
+    if isinstance(top_content, str) and top_content.strip().startswith("{"):
+        try:
+            top_content = json.loads(top_content)
+        except Exception:
+            top_content = None
+    if isinstance(top_content, dict):
+        candidates.append(top_content)
+
+    for obj in candidates:
+        for key in ("id", "stickerId", "sticker_id"):
+            val = obj.get(key)
+            if val is None or val == "" or isinstance(val, bool):
+                continue
+            try:
+                sid = int(val)
+            except (TypeError, ValueError):
+                continue
+            if sid > 0:
+                return sid
+    return None
+
+
 def _normalize_message_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure every message row dict returned to API consumers has dict raw_content and canonical msg_kind."""
     out = dict(row)
     norm_raw = _normalize_raw_content(out.get("raw_content"))
     out["raw_content"] = norm_raw
-    out["msg_kind"] = classify_message_kind(
+    resolved_kind = classify_message_kind(
         out.get("type"),
         out.get("content"),
         norm_raw,
         existing_kind=out.get("msg_kind"),
     )
+    out["msg_kind"] = resolved_kind
+    if resolved_kind == "sticker":
+        existing_urls = out.get("image_urls")
+        if not existing_urls:
+            sid = extract_sticker_id_from_raw(norm_raw)
+            cdn_url = build_zalo_sticker_cdn_url(sid)
+            if cdn_url:
+                out["image_urls"] = [cdn_url]
     return out
 
 
@@ -1131,6 +1199,11 @@ def _message_from_row(row: Dict[str, Any]) -> Message:
         norm_raw,
         existing_kind=row.get("msg_kind"),
     )
+    if resolved_kind == "sticker" and not image_urls:
+        sid = extract_sticker_id_from_raw(norm_raw)
+        cdn_url = build_zalo_sticker_cdn_url(sid)
+        if cdn_url:
+            image_urls.append(cdn_url)
     return Message(
         message_id=str(row.get("source_message_id") or row.get("id") or ""),
         sender_id=row.get("sender_id") or None,

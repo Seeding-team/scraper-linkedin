@@ -518,6 +518,9 @@ function resolveMessageType(msgType, imageUrlsCount, msgKind = null) {
   if (msgKind === "call" || mt === "chat.recommended") {
     return mt === "chat.recommended" ? "chat.recommended" : mt;
   }
+  if (msgKind === "sticker") {
+    return mt === "chat.recommended" ? "chat.recommended" : "chat.sticker";
+  }
   if (msgKind === "bankcard" || msgKind === "contact" || msgKind === "link" || msgKind === "location" || msgKind === "system_notice" || msgKind === "undo") {
     return mt;
   }
@@ -669,6 +672,30 @@ function firstTimestampMs(...values) {
   return 0;
 }
 
+function extractStickerId(contentObj, paramsObj, rawContent) {
+  const candidates = [
+    contentObj && contentObj.id,
+    contentObj && contentObj.stickerId,
+    contentObj && contentObj.sticker_id,
+    paramsObj && paramsObj.id,
+    paramsObj && paramsObj.stickerId,
+    paramsObj && paramsObj.sticker_id,
+    rawContent && typeof rawContent === "object" ? rawContent.id : null,
+    rawContent && typeof rawContent === "object" ? rawContent.stickerId : null,
+  ];
+  for (const val of candidates) {
+    if (val === null || val === undefined || val === "") continue;
+    const n = Number(val);
+    if (Number.isFinite(n) && n > 0) return Math.trunc(n);
+  }
+  return null;
+}
+
+function buildZaloStickerCdnUrl(stickerId, size = 130) {
+  if (!Number.isFinite(stickerId) || stickerId <= 0) return null;
+  return `https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=${Math.trunc(stickerId)}&size=${size}`;
+}
+
 function normalizeMessage(raw, index, ownId = null) {
   const data = raw && raw.data ? raw.data : raw || {};
   const rawContent = data.content ?? data.message ?? data.msg ?? raw.content ?? raw.message;
@@ -711,6 +738,14 @@ function normalizeMessage(raw, index, ownId = null) {
   const imageUrls = isMediaKind ? collectUrls(mediaSource) : [];
   // media_urls (rộng hơn imageUrls) — chỉ thu thập cho các tin media/file thực sự để không gom avatar/thumb ecard vào assets.
   const mediaUrls = isMediaKind ? Array.from(new Set(collectMediaUrls(mediaSource))) : [];
+  if (msgKind === "sticker" && imageUrls.length === 0 && mediaUrls.length === 0) {
+    const stickerId = extractStickerId(contentObj, paramsObj, rawContent);
+    const stickerCdnUrl = buildZaloStickerCdnUrl(stickerId, 130);
+    if (stickerCdnUrl) {
+      imageUrls.push(stickerCdnUrl);
+      mediaUrls.push(stickerCdnUrl);
+    }
+  }
   const fileNameHint = collectFileName(mediaSource);
 
   const senderId = String(data.uidFrom || raw.uidFrom || raw.senderId || raw.sender_id || "");

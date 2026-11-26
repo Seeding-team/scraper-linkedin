@@ -61,6 +61,7 @@ import { cn } from "@/lib/utils";
 import { API_BASE_URL, API_KEY } from "@/lib/env";
 import { isSendBubblePlaceholder, type ZaloCallMessageInfo } from "@/lib/zaloCallMessage";
 import {
+  buildZaloStickerCdnUrl,
   extractFreeTextBankAccounts,
   extractVietnamesePhones,
   formatBytes,
@@ -263,6 +264,8 @@ function SafeMediaImage({
       src={src}
       alt={alt}
       loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
       onError={() => setFailedSrc(src)}
       onLoad={onLoad}
       className={className}
@@ -1976,30 +1979,169 @@ export function ZaloVoiceCard({
   );
 }
 
+// Module-level cache & in-flight dedup cho fallback API `/stickers?ids=...` (chỉ gọi nếu ảnh CDN chính lỗi)
+const STICKER_DETAIL_CACHE = new Map<number, string | null>();
+const STICKER_DETAIL_INFLIGHT = new Map<number, Promise<string | null>>();
+
+async function resolveZaloStickerDetailFallback(stickerId: number): Promise<string | null> {
+  if (!Number.isFinite(stickerId) || stickerId <= 0) return null;
+  const sid = Math.trunc(stickerId);
+  if (STICKER_DETAIL_CACHE.has(sid)) {
+    return STICKER_DETAIL_CACHE.get(sid) ?? null;
+  }
+  const inflight = STICKER_DETAIL_INFLIGHT.get(sid);
+  if (inflight) return inflight;
+
+  const task = (async (): Promise<string | null> => {
+    try {
+      const headers: Record<string, string> = {};
+      if (API_KEY) headers["X-API-Key"] = API_KEY;
+      const res = await fetch(
+        `${API_BASE_URL}/api/all-platform/zalo/conversations/stickers?ids=${encodeURIComponent(String(sid))}`,
+        { headers, credentials: "include" },
+      );
+      if (!res.ok) {
+        STICKER_DETAIL_CACHE.set(sid, null);
+        return null;
+      }
+      const data = (await res.json()) as {
+        stickers?: Array<{ stickerWebpUrl?: string | null; stickerUrl?: string | null }>;
+      };
+      const first = Array.isArray(data?.stickers) ? data.stickers[0] : null;
+      const candidate =
+        (isSafeHttpUrl(first?.stickerWebpUrl) ? first.stickerWebpUrl : null) ||
+        (isSafeHttpUrl(first?.stickerUrl) ? first.stickerUrl : null) ||
+        null;
+      STICKER_DETAIL_CACHE.set(sid, candidate);
+      return candidate;
+    } catch {
+      return null;
+    } finally {
+      STICKER_DETAIL_INFLIGHT.delete(sid);
+    }
+  })();
+
+  STICKER_DETAIL_INFLIGHT.set(sid, task);
+  return task;
+}
+
 export function ZaloStickerCard({
   attachment,
   compact = false,
+  onLoad,
   className,
 }: {
   attachment: ZaloAttachment;
   compact?: boolean;
+  onLoad?: () => void;
   className?: string;
 }) {
-  if (isSafeHttpUrl(attachment.url)) {
+  const stickerId =
+    typeof attachment.sticker_id === "number" &&
+    Number.isFinite(attachment.sticker_id) &&
+    attachment.sticker_id > 0
+      ? Math.trunc(attachment.sticker_id)
+      : undefined;
+
+  const initialCandidates = useMemo(() => {
+    const list: string[] = [];
+    if (isSafeHttpUrl(attachment.url)) {
+      list.push(attachment.url);
+    }
+    const cdnUrl = buildZaloStickerCdnUrl(stickerId, 130);
+    if (cdnUrl && !list.includes(cdnUrl)) {
+      list.push(cdnUrl);
+    }
+    return list;
+  }, [attachment.url, stickerId]);
+
+  const identityKey = `${attachment.url ?? ""}|${stickerId ?? ""}`;
+  const [fallbackState, setFallbackState] = useState<{
+    key: string;
+    candidateIdx: number;
+    apiFallbackUrl: string | null;
+    apiTried: boolean;
+    allFailed: boolean;
+  }>({
+    key: identityKey,
+    candidateIdx: 0,
+    apiFallbackUrl: null,
+    apiTried: false,
+    allFailed: false,
+  });
+
+  const isCurrentKey = fallbackState.key === identityKey;
+  const candidateIdx = isCurrentKey ? fallbackState.candidateIdx : 0;
+  const apiFallbackUrl = isCurrentKey ? fallbackState.apiFallbackUrl : null;
+  const apiTried = isCurrentKey ? fallbackState.apiTried : false;
+  const allFailed = isCurrentKey ? fallbackState.allFailed : false;
+
+  const activeSrc =
+    candidateIdx < initialCandidates.length
+      ? initialCandidates[candidateIdx]
+      : apiFallbackUrl;
+
+  const handleImageError = useCallback(() => {
+    const nextIdx = candidateIdx + 1;
+    if (nextIdx < initialCandidates.length) {
+      setFallbackState({
+        key: identityKey,
+        candidateIdx: nextIdx,
+        apiFallbackUrl: null,
+        apiTried,
+        allFailed: false,
+      });
+      return;
+    }
+    if (!apiTried && stickerId) {
+      setFallbackState({
+        key: identityKey,
+        candidateIdx: initialCandidates.length,
+        apiFallbackUrl: null,
+        apiTried: true,
+        allFailed: false,
+      });
+      void resolveZaloStickerDetailFallback(stickerId).then((resolved) => {
+        setFallbackState((prev) => {
+          if (prev.key !== identityKey) return prev;
+          if (resolved && !initialCandidates.includes(resolved)) {
+            return { ...prev, apiFallbackUrl: resolved, allFailed: false };
+          }
+          return { ...prev, allFailed: true };
+        });
+      });
+      return;
+    }
+    setFallbackState({
+      key: identityKey,
+      candidateIdx: initialCandidates.length,
+      apiFallbackUrl,
+      apiTried: true,
+      allFailed: true,
+    });
+  }, [identityKey, candidateIdx, initialCandidates, apiTried, apiFallbackUrl, stickerId]);
+
+  if (activeSrc && !allFailed) {
     return (
-      <SafeMediaImage
-        src={attachment.url}
-        alt="Nhãn dán Zalo"
-        className={cn("object-contain select-none", compact ? "h-24 w-24" : "h-28 w-28", className)}
-        fallback={
-          <div className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-[12px] text-slate-600 shadow-2xs">
-            <Smile className="h-4 w-4 text-amber-500" />
-            <span>Nhãn dán{attachment.sticker_id ? ` #${attachment.sticker_id}` : ""}</span>
-          </div>
-        }
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={activeSrc}
+        alt={stickerId ? `Nhãn dán Zalo #${stickerId}` : "Nhãn dán Zalo"}
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        draggable={false}
+        onLoad={onLoad}
+        onError={handleImageError}
+        className={cn(
+          "object-contain select-none transition-transform duration-150 hover:scale-105",
+          compact ? "h-24 w-24" : "h-28 w-28",
+          className,
+        )}
       />
     );
   }
+
   return (
     <div
       className={cn(
@@ -2008,7 +2150,7 @@ export function ZaloStickerCard({
       )}
     >
       <Smile className="h-4 w-4 text-amber-500" />
-      <span>Nhãn dán{attachment.sticker_id ? ` #${attachment.sticker_id}` : ""}</span>
+      <span>Nhãn dán{stickerId ? ` #${stickerId}` : ""}</span>
     </div>
   );
 }
@@ -2366,6 +2508,7 @@ export function ZaloRichMessageContent({
     msg.attachments.length > 0 &&
     Boolean(cleanText) &&
     ((msg.kind === "bankcard" && /^\[?(thẻ ngân hàng|tài khoản ngân hàng|bank account)\]?$/i.test(cleanText.trim())) ||
+      (msg.kind === "sticker" && /^\[?(sticker|nhãn dán|bộ sticker)(\s*#\d+)?\]?$/i.test(cleanText.trim())) ||
       (msg.kind === "link" && otherItems.some((a) => a.url && a.url.trim() === cleanText.trim())) ||
       ((msg.kind === "file" || msg.kind === "folder") &&
         otherItems.some((a) => a.name && a.name.trim() === cleanText.trim())));
@@ -2452,7 +2595,7 @@ export function ZaloRichMessageContent({
           case "voice":
             return <ZaloVoiceCard key={key} attachment={a} compact={compact} />;
           case "sticker":
-            return <ZaloStickerCard key={key} attachment={a} compact={compact} />;
+            return <ZaloStickerCard key={key} attachment={a} compact={compact} onLoad={onMediaLoad} />;
           case "call":
             return (
               <ZaloCallMessageCard
