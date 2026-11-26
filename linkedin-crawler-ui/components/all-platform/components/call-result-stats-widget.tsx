@@ -648,40 +648,52 @@ export function CallResultStatsWidget({
 
       {/* 4 thẻ số liệu, thứ tự Comment → Zalo → Cuộc gọi → Tổng bài (2026-11-25) — icon vuông
           màu + "X / Y" + badge % (Cuộc gọi/Zalo/Tổng bài) hoặc "+N/-N" (Comment) + progress bar
-          mỏng (Cuộc gọi/Zalo). Cột Zalo hiển thị "đã trả lời / đã gửi" (zaloStats.replied/sent).
-          Viền trên + nền icon + icon + thanh tiến trình mỗi card dùng 1 màu chủ đề riêng (viền
-          trên gắn bằng inline style để luôn hiện ở mọi breakpoint, không phụ thuộc border-t/
-          border-b vốn chỉ là divider lưới xám giữa các ô — giữ nguyên, không đổi). Badge % và
-          chip Thành công/Thất bại KHÔNG đổi (vẫn xanh/đỏ/xám theo tỷ lệ, độc lập màu chủ đề). */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 border-t border-border">
-        <div className="p-4 border-b lg:border-b-0 border-border" style={{ borderTop: "3px solid #993556" }}>
-          <StatCardHeader
-            icon="chat_bubble"
-            iconBgClass="bg-[#FBEAF0]"
-            iconTextClass="text-[#993556]"
-            title="Comment"
-            tooltip="Số bài đã có seeding/bình luận trên tổng số bài phù hợp trong kỳ đang chọn (mẫu số thu hẹp theo đúng thành viên nếu đang lọc 1 người), so với cùng độ dài kỳ liền trước."
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">
-              {commentDistinctPostCount} / {commentPostPoolCount}
-            </span>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-bold",
-                commentPostPctChange > 0
-                  ? "bg-emerald-50 text-emerald-700"
-                  : commentPostPctChange < 0
-                    ? "bg-rose-50 text-rose-600"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {commentPostPctChange > 0 ? "+" : ""}
-              {commentPostPctChange}%
-            </span>
+          mỏng (mọi card, Việc 8). Cột Zalo hiển thị "đã trả lời / đã gửi" (zaloStats.replied/sent).
+          Việc 7 (2026-11-26): 4 card tách rời (rounded-2xl + bg-card + shadow-sm + gap-3, không
+          còn border-b/border-l chia vách lưới) — viền trên 3px + nền icon + icon + progress bar
+          mỗi card vẫn dùng 1 màu chủ đề riêng (viền trên gắn bằng inline style). Việc 9: mỗi card
+          flex flex-col justify-between h-full để 4 thanh tiến trình canh ngang hàng nhau. Badge %
+          và chip Thành công/Thất bại KHÔNG đổi (vẫn xanh/đỏ/xám theo tỷ lệ, độc lập màu chủ đề). */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4 bg-muted/20 border-t border-border">
+        <div
+          className="flex flex-col justify-between h-full p-4 rounded-2xl bg-card shadow-sm"
+          style={{ borderTop: "3px solid #993556" }}
+        >
+          <div>
+            <StatCardHeader
+              icon="mode_comment"
+              iconBgClass="bg-[#FBEAF0]"
+              iconTextClass="text-[#993556]"
+              title="Comment"
+              tooltip="Số bài đã có seeding/bình luận trên tổng số bài phù hợp trong kỳ đang chọn (mẫu số thu hẹp theo đúng thành viên nếu đang lọc 1 người), so với cùng độ dài kỳ liền trước."
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-[26px] font-extrabold leading-tight">
+                {commentDistinctPostCount} / {commentPostPoolCount}
+              </span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                  commentPostPctChange > 0
+                    ? "bg-emerald-50 text-emerald-700"
+                    : commentPostPctChange < 0
+                      ? "bg-rose-50 text-rose-600"
+                      : "bg-muted text-muted-foreground"
+                )}
+              >
+                {commentPostPctChange > 0 ? "+" : ""}
+                {commentPostPctChange}%
+              </span>
+            </div>
+            <div className="text-[12px] text-muted-foreground mt-0.5">
+              {commentDistinctPostCount} bài đã comment / {commentPostPoolCount} bài phù hợp trong kỳ
+            </div>
           </div>
-          <div className="text-[12px] text-muted-foreground mt-0.5">
-            {commentDistinctPostCount} bài đã comment / {commentPostPoolCount} bài phù hợp trong kỳ
+          <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+            <span
+              className="block h-full"
+              style={{ width: `${pct(commentDistinctPostCount, totalPostsSuitableCount)}%`, backgroundColor: "#993556" }}
+            />
           </div>
         </div>
 
@@ -690,24 +702,29 @@ export function CallResultStatsWidget({
           const zaloReplied = zaloStats?.replied ?? 0;
           const zaloPctVal = pct(zaloReplied, zaloSent);
           return (
-            <div className="p-4 border-b lg:border-b-0 border-l border-border" style={{ borderTop: "3px solid #0F6E56" }}>
-              <StatCardHeader
-                icon="chat"
-                iconBgClass="bg-[#E1F5EE]"
-                iconTextClass="text-[#0F6E56]"
-                title="Zalo"
-                tooltip="Số cuộc trò chuyện Zalo khách đã trả lời / tổng số tin nhắn Zalo đã gửi từ bài seeding / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
-              />
-              <div className="flex items-center gap-2">
-                <span className="text-[26px] font-extrabold leading-tight">
-                  {zaloReplied} / {zaloSent} / {totalUniquePhonesCount}
-                </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
-                  {zaloPctVal}%
-                </span>
-              </div>
-              <div className="text-[12px] text-muted-foreground mt-0.5">
-                {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi / {totalUniquePhonesCount} số điện thoại
+            <div
+              className="flex flex-col justify-between h-full p-4 rounded-2xl bg-card shadow-sm"
+              style={{ borderTop: "3px solid #0F6E56" }}
+            >
+              <div>
+                <StatCardHeader
+                  icon="chat"
+                  iconBgClass="bg-[#E1F5EE]"
+                  iconTextClass="text-[#0F6E56]"
+                  title="Zalo"
+                  tooltip="Số cuộc trò chuyện Zalo khách đã trả lời / tổng số tin nhắn Zalo đã gửi từ bài seeding / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
+                />
+                <div className="flex items-center gap-2">
+                  <span className="text-[26px] font-extrabold leading-tight">
+                    {zaloReplied} / {zaloSent} / {totalUniquePhonesCount}
+                  </span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(zaloPctVal, zaloSent > 0))}>
+                    {zaloPctVal}%
+                  </span>
+                </div>
+                <div className="text-[12px] text-muted-foreground mt-0.5">
+                  {zaloReplied} khách đã phản hồi / {zaloSent} tin đã gửi / {totalUniquePhonesCount} số điện thoại
+                </div>
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className="block h-full" style={{ width: `${zaloPctVal}%`, backgroundColor: "#0F6E56" }} />
@@ -719,24 +736,29 @@ export function CallResultStatsWidget({
         {(() => {
           const callPctVal = pct(callOk, callTotal);
           return (
-            <div className="p-4 border-t lg:border-t-0 lg:border-l border-border" style={{ borderTop: "3px solid #D85A30" }}>
-              <StatCardHeader
-                icon="call"
-                iconBgClass="bg-[#FAECE7]"
-                iconTextClass="text-[#D85A30]"
-                title="Cuộc gọi"
-                tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) / tổng số cuộc gọi đã ghi nhận / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
-              />
-              <div className="flex items-center gap-2">
-                <span className="text-[26px] font-extrabold leading-tight">
-                  {callOk} / {callTotal} / {totalUniquePhonesCount}
-                </span>
-                <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
-                  {callPctVal}%
-                </span>
-              </div>
-              <div className="text-[12px] text-muted-foreground mt-0.5">
-                {callOk} cuộc gọi thành công / {callTotal} đã thực hiện / {totalUniquePhonesCount} số điện thoại
+            <div
+              className="flex flex-col justify-between h-full p-4 rounded-2xl bg-card shadow-sm"
+              style={{ borderTop: "3px solid #D85A30" }}
+            >
+              <div>
+                <StatCardHeader
+                  icon="call"
+                  iconBgClass="bg-[#FAECE7]"
+                  iconTextClass="text-[#D85A30]"
+                  title="Cuộc gọi"
+                  tooltip="Số cuộc gọi có kết quả thành công (Có nhu cầu/Hẹn gọi lại/Đang tư vấn/Chờ phản hồi) / tổng số cuộc gọi đã ghi nhận / tổng số điện thoại khác nhau trích được từ bài phù hợp trong kỳ đang chọn."
+                />
+                <div className="flex items-center gap-2">
+                  <span className="text-[26px] font-extrabold leading-tight">
+                    {callOk} / {callTotal} / {totalUniquePhonesCount}
+                  </span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", ratioBadgeClass(callPctVal, callTotal > 0))}>
+                    {callPctVal}%
+                  </span>
+                </div>
+                <div className="text-[12px] text-muted-foreground mt-0.5">
+                  {callOk} cuộc gọi thành công / {callTotal} đã thực hiện / {totalUniquePhonesCount} số điện thoại
+                </div>
               </div>
               <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
                 <span className="block h-full" style={{ width: `${callPctVal}%`, backgroundColor: "#D85A30" }} />
@@ -745,34 +767,45 @@ export function CallResultStatsWidget({
           );
         })()}
 
-        <div className="p-4 border-t lg:border-t-0 border-l border-border" style={{ borderTop: "3px solid #534AB7" }}>
-          <StatCardHeader
-            icon="feed"
-            iconBgClass="bg-[#EEEDFE]"
-            iconTextClass="text-[#534AB7]"
-            title="Tổng bài"
-            tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
-          />
-          <div className="flex items-center gap-2">
-            <span className="text-[26px] font-extrabold leading-tight">
-              {totalPostsSuitableCount} / {totalPostsCount}
-            </span>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px] font-bold",
-                totalPostsPctChange > 0
-                  ? "bg-emerald-50 text-emerald-700"
-                  : totalPostsPctChange < 0
-                    ? "bg-rose-50 text-rose-600"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {totalPostsPctChange > 0 ? "+" : ""}
-              {totalPostsPctChange}%
-            </span>
+        <div
+          className="flex flex-col justify-between h-full p-4 rounded-2xl bg-card shadow-sm"
+          style={{ borderTop: "3px solid #534AB7" }}
+        >
+          <div>
+            <StatCardHeader
+              icon="description"
+              iconBgClass="bg-[#EEEDFE]"
+              iconTextClass="text-[#534AB7]"
+              title="Tổng bài"
+              tooltip="Số bài viết đã crawl về hệ thống trong kỳ đang chọn (mọi nền tảng, không lọc theo thành viên), so với cùng độ dài kỳ liền trước. Tử số là số bài chưa bị đánh giá 'Không phù hợp'."
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-[26px] font-extrabold leading-tight">
+                {totalPostsSuitableCount} / {totalPostsCount}
+              </span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[11px] font-bold",
+                  totalPostsPctChange > 0
+                    ? "bg-emerald-50 text-emerald-700"
+                    : totalPostsPctChange < 0
+                      ? "bg-rose-50 text-rose-600"
+                      : "bg-muted text-muted-foreground"
+                )}
+              >
+                {totalPostsPctChange > 0 ? "+" : ""}
+                {totalPostsPctChange}%
+              </span>
+            </div>
+            <div className="text-[12px] text-muted-foreground mt-0.5">
+              {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
+            </div>
           </div>
-          <div className="text-[12px] text-muted-foreground mt-0.5">
-            {totalPostsSuitableCount} bài phù hợp / {totalPostsCount} bài crawl trong kỳ, kỳ trước {totalPostsCountPrev} bài
+          <div className="h-1 rounded-full overflow-hidden bg-muted mt-2.5">
+            <span
+              className="block h-full"
+              style={{ width: `${pct(totalPostsSuitableCount, totalPostsCount)}%`, backgroundColor: "#534AB7" }}
+            />
           </div>
         </div>
       </div>
@@ -951,7 +984,7 @@ export function CallResultStatsWidget({
                       <th className="py-1.5">Thành viên</th>
                       <th className="py-1.5 text-right">Thành công</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Bình luận</th>
+                      <th className="py-1.5 text-right">Lượt bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1005,7 +1038,7 @@ export function CallResultStatsWidget({
                       <th className="py-1.5">Ngày</th>
                       <th className="py-1.5 text-right">Thành công</th>
                       <th className="py-1.5 text-right">Zalo trả lời</th>
-                      <th className="py-1.5 text-right">Bình luận</th>
+                      <th className="py-1.5 text-right">Lượt bình luận</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1068,7 +1101,7 @@ export function CallResultStatsWidget({
                                       <thead>
                                         <tr className="text-[10.5px] text-muted-foreground font-bold text-left">
                                           <th className="py-1">Thành viên</th>
-                                          <th className="py-1 text-right">Bình luận</th>
+                                          <th className="py-1 text-right">Lượt bình luận</th>
                                           <th className="py-1 text-right">Tổng</th>
                                         </tr>
                                       </thead>
