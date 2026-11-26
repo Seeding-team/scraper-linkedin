@@ -30,6 +30,7 @@ class _FakeQuery:
         self.single = False
         self.op: tuple[str, Any] | None = None
         self.on_conflict: str | None = None
+        self.ignore_duplicates: bool = False
 
     def select(self, *_args, **_kwargs):
         return self
@@ -61,9 +62,10 @@ class _FakeQuery:
         self.op = ("insert", data)
         return self
 
-    def upsert(self, data, on_conflict: str | None = None):
+    def upsert(self, data, on_conflict: str | None = None, ignore_duplicates: bool = False):
         self.op = ("upsert", data)
         self.on_conflict = on_conflict
+        self.ignore_duplicates = ignore_duplicates
         return self
 
     def _matches(self, row: dict) -> bool:
@@ -100,6 +102,11 @@ class _FakeQuery:
                                 existing = row
                                 break
                     if existing is not None:
+                        if self.ignore_duplicates:
+                            # ON CONFLICT DO NOTHING (giống Supabase/PostgREST thật): giữ
+                            # nguyên row cũ 100%, KHÔNG update cột nào, và không có trong
+                            # RETURNING -> không append vào saved.
+                            continue
                         existing.update(item)
                         saved.append(dict(existing))
                     else:

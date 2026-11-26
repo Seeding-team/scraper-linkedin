@@ -19,6 +19,7 @@ from app.modules.all_platform.schemas.crawl_keywords import (
 )
 from app.modules.all_platform.services.crawl_exclude_service import (
     approve_proposal,
+    auto_reject_legacy_low_lead_score_posts,
     bulk_approve_proposals,
     create_exclude_keyword,
     create_proposal,
@@ -135,6 +136,26 @@ def crawl_keywords_approve_proposal(
     try:
         data = approve_proposal(id, user)
         return BaseResponse(success=True, message="Đã duyệt đề xuất từ khóa", data=data)
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/auto-reject-legacy-low-score")
+def crawl_keywords_auto_reject_legacy_low_score(
+    user: dict[str, Any] = Depends(require_admin),
+) -> BaseResponse:
+    """Việc C (2026-11-26, báo cáo điều tra feed ẩn bài do lead_score): quét 1 lần, idempotent,
+    các bài CŨ đã có sẵn lead_score xác định 1-39 (không phải NULL — xem Việc B) còn sót lại
+    từ cửa sổ lịch sử 2026-10-02 -> 2026-11-04, tự động gắn 'Không phù hợp'. Chỉ Admin được
+    chạy (có thể gọi lại nhiều lần an toàn, không tạo thêm history thừa cho bài đã xử lý)."""
+    del user
+    try:
+        data = auto_reject_legacy_low_lead_score_posts()
+        return BaseResponse(
+            success=True,
+            message=f"Đã quét {data.get('scanned', 0)} bài, gắn 'Không phù hợp' cho {data.get('marked', 0)} bài",
+            data=data,
+        )
     except Exception as exc:
         return _error(exc)
 
