@@ -617,15 +617,70 @@ function buildLink(c: RawRecord): ZaloAttachment | null {
   });
 }
 
+/**
+ * Dựng URL ảnh nhãn dán Zalo công khai (PNG/WebP 1 khung rõ nét, không cần cookie).
+ * Lưu ý: endpoint Zalo dùng `/sticker/webpc?eid=...` (chữ `c`), còn `/sticker/webp` trả 404.
+ */
+export function buildZaloStickerCdnUrl(
+  stickerId?: number | null,
+  size = 130,
+): string | undefined {
+  if (typeof stickerId !== "number" || !Number.isFinite(stickerId) || stickerId <= 0) {
+    return undefined;
+  }
+  const safeSize = Number.isFinite(size) && size > 0 ? Math.trunc(size) : 130;
+  return `https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=${Math.trunc(stickerId)}&size=${safeSize}`;
+}
+
+const STICKER_PLACEHOLDER_RE = /^\[?(?:sticker|nhãn dán|bộ sticker)(?:\s*#(\d+))?\]?$/i;
+
+function isStickerPlaceholderText(text?: string | null): boolean {
+  if (!text) return false;
+  return STICKER_PLACEHOLDER_RE.test(text.trim());
+}
+
+function extractStickerIdFromPlaceholder(text?: string | null): number | undefined {
+  if (!text) return undefined;
+  const match = text.trim().match(STICKER_PLACEHOLDER_RE);
+  if (!match?.[1]) return undefined;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;
+}
+
 function buildSticker(c: RawRecord): ZaloAttachment | null {
-  const stickerId = firstPositiveNumber(c.id, c.stickerId, c.sticker_id);
-  const url = firstUsableUrl(c.stickerWebpUrl, c.stickerUrl, c.staticUrl, c.animationUrl, c.url, c.href);
+  const p = parseParams(c.params);
+  const stickerId = firstPositiveNumber(
+    c.id,
+    c.stickerId,
+    c.sticker_id,
+    p.id,
+    p.stickerId,
+    p.sticker_id,
+  );
+  const explicitUrl = firstUsableUrl(
+    c.stickerWebpUrl,
+    c.stickerUrl,
+    p.webpUrl,
+    p.stickerWebpUrl,
+    p.stickerUrl,
+    c.staticUrl,
+    c.animationUrl,
+    c.thumb,
+    c.normalUrl,
+    c.hdUrl,
+    c.url,
+    c.href,
+  );
+  const url = explicitUrl || buildZaloStickerCdnUrl(stickerId);
   if (stickerId === undefined && !url) return null;
+  const rawType = c.type ?? p.type;
   return compact({
     kind: "sticker",
     sticker_id: stickerId,
-    cate_id: firstPositiveNumber(c.catId, c.cateId, c.cate_id),
-    sticker_type: Number.isFinite(Number(c.type)) ? Number(c.type) : undefined,
+    cate_id: firstPositiveNumber(c.catId, c.cateId, c.cate_id, p.catId, p.cateId, p.cate_id),
+    sticker_type: rawType !== undefined && rawType !== "" && Number.isFinite(Number(rawType))
+      ? Number(rawType)
+      : undefined,
     url,
   });
 }
@@ -1336,13 +1391,31 @@ export function normalizeStoredMessage(row: StoredMessageRow): NormalizedZaloMes
     });
   }
 
-  // 5. Cột `attachments` đã chuẩn hóa sẵn bởi Bridge (bổ sung SĐT/BIN nếu thiếu)
+  // 5. Cột `attachments` đã chuẩn hóa sẵn bởi Bridge (bổ sung SĐT/BIN/URL sticker nếu thiếu)
   const stored = attachmentsFromStoredColumn(row.attachments);
   if (stored.length > 0) {
     const mappedKind = (MSG_TYPE_KIND[rawKindLower] as ZaloMessageKind | undefined) || stored[0].kind;
-    if (inner) {
-      const p = parseParams(inner.params);
-      for (const a of stored) {
+    const rowImageFallback = Array.isArray(row.image_urls) ? row.image_urls.find(isUsableUrl) : undefined;
+    const p = inner ? parseParams(inner.params) : {};
+    for (const a of stored) {
+      if (a.kind === "sticker") {
+        if (!a.sticker_id && inner) {
+          const sid = firstPositiveNumber(
+            inner.id,
+            inner.stickerId,
+            inner.sticker_id,
+            p.id,
+            p.stickerId,
+            p.sticker_id,
+          );
+          if (sid) a.sticker_id = sid;
+        }
+        if (!isUsableUrl(a.url)) {
+          const resolvedUrl = buildZaloStickerCdnUrl(a.sticker_id) || rowImageFallback;
+          if (resolvedUrl) a.url = resolvedUrl;
+        }
+      }
+      if (inner) {
         if (a.kind === "contact") {
           if (!a.phone) {
             const ph = extractContactPhone(inner, p);
@@ -1361,9 +1434,10 @@ export function normalizeStoredMessage(row: StoredMessageRow): NormalizedZaloMes
         }
       }
     }
+    const cleanStoredText = sanitizeDisplayText(rowContentText);
     return finalizeResult(row, {
       kind: mappedKind,
-      text: sanitizeDisplayText(rowContentText),
+      text: mappedKind === "sticker" && isStickerPlaceholderText(cleanStoredText) ? "" : cleanStoredText,
       attachments: stored,
     });
   }
@@ -1503,9 +1577,25 @@ export function normalizeStoredMessage(row: StoredMessageRow): NormalizedZaloMes
     }
   }
 
-  // 7. Tin cũ chỉ còn `image_urls`
+  // 7. Tin cũ chỉ còn `image_urls` hoặc tin sticker legacy thiếu `raw_content`
+  const isStickerHint =
+    rawKindLower === "sticker" ||
+    rawKindLower === "chat.sticker" ||
+    wireMsgType === "chat.sticker";
   const urls = Array.isArray(row.image_urls) ? row.image_urls.filter(isUsableUrl) : [];
   if (urls.length > 0) {
+    if (isStickerHint) {
+      const sidFromText = extractStickerIdFromPlaceholder(rowContentText);
+      const attachments = urls.map<ZaloAttachment>((url) =>
+        compact({ kind: "sticker", sticker_id: sidFromText, url }),
+      );
+      const cleanTxt = sanitizeDisplayText(rowContentText);
+      return finalizeResult(row, {
+        kind: "sticker",
+        text: isStickerPlaceholderText(cleanTxt) ? "" : cleanTxt,
+        attachments,
+      });
+    }
     const attachments = urls.map<ZaloAttachment>((url) =>
       VIDEO_EXT_RE.test(url) || HLS_EXT_RE.test(url)
         ? { kind: "video", url }
@@ -1518,6 +1608,18 @@ export function normalizeStoredMessage(row: StoredMessageRow): NormalizedZaloMes
       text: sanitizeDisplayText(rowContentText),
       attachments,
     });
+  }
+
+  if (isStickerHint) {
+    const sidFromText = extractStickerIdFromPlaceholder(rowContentText);
+    const cdnUrl = buildZaloStickerCdnUrl(sidFromText);
+    if (sidFromText && cdnUrl) {
+      return finalizeResult(row, {
+        kind: "sticker",
+        text: "",
+        attachments: [{ kind: "sticker", sticker_id: sidFromText, url: cdnUrl }],
+      });
+    }
   }
 
   // 8. Tin văn bản thuần (bao gồm `webchat` có `data.content` là chuỗi)

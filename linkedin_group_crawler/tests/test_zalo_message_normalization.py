@@ -851,3 +851,62 @@ def test_g7_mark_zalo_message_recalled_matches_source_or_cli_msg_id():
         assert calls[1]["json"]["msg_kind"] == "undo"
 
     asyncio.run(_run())
+
+
+def test_sticker_cdn_url_synthesis_across_js_python_and_api():
+    expected_url = "https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=23037&size=130"
+
+    # 1. JS listener normalizes incoming chat.sticker without stickerUrl into canonical CDN image_urls while preserving type='chat.sticker'
+    raw_sticker = {
+        "threadId": "9001",
+        "isSelf": False,
+        "data": {
+            "msgId": "88001",
+            "cliMsgId": "99001",
+            "uidFrom": "5001",
+            "idTo": "9001",
+            "dName": "Cao Thị Thu",
+            "ts": "1764129360000",
+            "msgType": "chat.sticker",
+            "content": {"id": 23037, "catId": 10398, "type": 7},
+        },
+    }
+    js_res = _run_node_helper("normalizeMessage", [raw_sticker, 0, "9999"])
+    assert js_res["type"] == "chat.sticker"
+    assert js_res["msg_kind"] == "sticker"
+    assert js_res["image_urls"] == [expected_url]
+
+    # 2. Python _message_from_row & _normalize_message_row synthesize public CDN URL for historical sticker rows without assets
+    db_row = {
+        "id": "uuid-sticker-1",
+        "source_message_id": "88001",
+        "type": "chat.sticker",
+        "msg_kind": "sticker",
+        "content": "",
+        "raw_content": raw_sticker,
+        "assets": [],
+        "is_sent": False,
+    }
+    msg = _message_from_row(db_row)
+    assert msg.msg_kind == "sticker"
+    assert msg.image_urls == [expected_url]
+
+    norm_row = _normalize_message_row(db_row)
+    assert norm_row["msg_kind"] == "sticker"
+    assert norm_row["image_urls"] == [expected_url]
+
+    # 3. GET /conversations/stickers?ids=23037 gracefully returns CDN fallback even when ZCA auth session is missing
+    app = FastAPI()
+    app.include_router(zalo_conversations_router, prefix="/api/all-platform/zalo")
+    client = TestClient(app)
+    with patch(
+        "app.modules.all_platform.zalo.api.routes.conversations.load_zca_auth",
+        new=AsyncMock(return_value=None),
+    ):
+        resp = client.get("/api/all-platform/zalo/conversations/stickers?ids=23037")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["stickers"]) == 1
+    assert body["stickers"][0]["id"] == 23037
+    assert body["stickers"][0]["stickerUrl"] == expected_url
+    assert body["stickers"][0]["fallback"] is True

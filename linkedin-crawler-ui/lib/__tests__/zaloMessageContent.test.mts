@@ -55,6 +55,7 @@ const {
 
 const {
   MSG_TYPE_KIND,
+  buildZaloStickerCdnUrl,
   extractContactPhone,
   formatBytes,
   formatDuration,
@@ -282,7 +283,7 @@ test("Prod shape 6: legacy type='group' with JSON-string raw_content contact sha
   assert.equal(res.previewText, "[Danh thiếp] Tdhgiang");
 });
 
-test("Prod shape 7: chat.sticker (catId field) & staff stickerUrl object", () => {
+test("Prod shape 7: chat.sticker (catId field, incoming #23037 CDN synthesis, photo-sticker, stored column & staff stickerUrl)", () => {
   const s1 = normalizeStoredMessage({
     type: "chat.sticker",
     msg_kind: "chat.sticker",
@@ -295,10 +296,38 @@ test("Prod shape 7: chat.sticker (catId field) & staff stickerUrl object", () =>
     },
   });
   assert.equal(s1.kind, "sticker");
+  assert.equal(s1.text, "");
   assert.equal(s1.attachments[0].sticker_id, 101213);
   assert.equal(s1.attachments[0].cate_id, 12832);
+  assert.equal(
+    s1.attachments[0].url,
+    "https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=101213&size=130",
+  );
   assert.equal(s1.previewText, "[Sticker]");
 
+  // Real production incoming sticker #23037 (Cao Thị Thu) with NO stickerUrl in wire payload
+  const s23037 = normalizeStoredMessage({
+    type: "chat.sticker",
+    msg_kind: "sticker",
+    content: "[Sticker]",
+    raw_content: {
+      data: {
+        msgType: "chat.sticker",
+        content: { id: 23037, type: 7, catId: 10398 },
+      },
+      isSelf: false,
+    },
+  });
+  assert.equal(s23037.kind, "sticker");
+  assert.equal(s23037.text, "");
+  assert.equal(s23037.attachments[0].sticker_id, 23037);
+  assert.equal(s23037.attachments[0].cate_id, 10398);
+  assert.equal(
+    s23037.attachments[0].url,
+    buildZaloStickerCdnUrl(23037),
+  );
+
+  // Staff outbound sticker preserves explicit stickerWebpUrl
   const s2 = normalizeStoredMessage({
     type: "image",
     msg_kind: "image",
@@ -311,6 +340,56 @@ test("Prod shape 7: chat.sticker (catId field) & staff stickerUrl object", () =>
   });
   assert.equal(s2.kind, "sticker");
   assert.equal(s2.attachments[0].url, "https://zalo-api.zadn.vn/sticker.webp");
+
+  // Photo-sticker (`chat.photo` with `params.webpUrl` + `subType: 1`) preserves params.webpUrl
+  const sPhoto = normalizeStoredMessage({
+    type: "chat.photo",
+    msg_kind: "image",
+    content: "",
+    raw_content: {
+      data: {
+        msgType: "chat.photo",
+        content: {
+          href: "https://photo-stal-10.zdn.vn/gr/abc/sticker.png",
+          params: JSON.stringify({
+            subType: 1,
+            msgBubbleLayoutType: 3,
+            webpUrl: "https://photo-stal-10.zdn.vn/gr/abc/sticker.webp",
+          }),
+        },
+      },
+    },
+  });
+  assert.equal(sPhoto.kind, "sticker");
+  assert.equal(sPhoto.attachments[0].url, "https://photo-stal-10.zdn.vn/gr/abc/sticker.webp");
+
+  // Stored `attachments` column without `url` is auto-enriched with public Zalo CDN URL & strips placeholder text
+  const sStored = normalizeStoredMessage({
+    type: "chat.sticker",
+    msg_kind: "sticker",
+    content: "Nhãn dán #23037",
+    attachments: [{ kind: "sticker", sticker_id: 23037, cate_id: 10398 }],
+  });
+  assert.equal(sStored.kind, "sticker");
+  assert.equal(sStored.text, "");
+  assert.equal(
+    sStored.attachments[0].url,
+    "https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=23037&size=130",
+  );
+
+  // Legacy row missing raw_content & attachments but carrying sticker placeholder ID
+  const sLegacy = normalizeStoredMessage({
+    type: "sticker",
+    msg_kind: "sticker",
+    content: "Nhãn dán #23037",
+  });
+  assert.equal(sLegacy.kind, "sticker");
+  assert.equal(sLegacy.text, "");
+  assert.equal(sLegacy.attachments[0].sticker_id, 23037);
+  assert.equal(
+    sLegacy.attachments[0].url,
+    "https://zalo-api.zadn.vn/api/emoticon/sticker/webpc?eid=23037&size=130",
+  );
 });
 
 test("Prod shape 8: chat.gif with double-m action='recommend.gif'", () => {

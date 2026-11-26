@@ -168,7 +168,7 @@ export function MessageAttachments({
           case "link":
             return <ZaloLinkCard key={key} attachment={a} isOwn={mine} compact={compact} />;
           case "sticker":
-            return <ZaloStickerCard key={key} attachment={a} compact={compact} />;
+            return <ZaloStickerCard key={key} attachment={a} compact={compact} onLoad={onMediaLoad} />;
           case "location":
             return <ZaloLocationCard key={key} attachment={a} isOwn={mine} compact={compact} />;
           case "contact":

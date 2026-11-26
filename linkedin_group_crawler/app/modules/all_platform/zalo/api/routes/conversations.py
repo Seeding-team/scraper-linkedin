@@ -27,6 +27,7 @@ from app.modules.all_platform.zalo.services.supabase_service import (
     SupabaseNotConfigured,
     _normalize_raw_content,
     _rest,
+    build_zalo_sticker_cdn_url,
     classify_message_kind,
     fetch_bankcard_preview,
     format_sidebar_last_message_preview,
@@ -2967,6 +2968,8 @@ async def send_sticker_to_conversation(
         sticker_url = detail.get("stickerWebpUrl") or detail.get("stickerUrl") or None
     except Exception as exc:
         logger.info(f"Could not resolve sticker detail for id={body.id}: {exc}")
+    if not sticker_url:
+        sticker_url = build_zalo_sticker_cdn_url(body.id)
 
     api_payload = result.get("response") or result.get("result") if isinstance(result, dict) else None
     staff_name = getattr(body, "staff_name", None)
@@ -2990,19 +2993,21 @@ async def send_sticker_to_conversation(
             "email": resolved_staff_email,
             "avatar": resolved_staff_avatar,
         },
+        "id": body.id,
+        "cateId": body.cate_id,
+        "type": body.type,
     }
     await _persist_outgoing_message(
         user_id,
         conversation_id.strip(),
         api_payload,
         content="",
-        message_type="image" if sticker_url else "sticker",
+        message_type="chat.sticker",
         image_urls=[sticker_url] if sticker_url else None,
-        raw_content_override=dict(raw_staff_override, **({"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else {})),
-        # clean
-        # old_override=(
-            # {"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else None
-        #
+        raw_content_override=dict(
+            raw_staff_override,
+            **({"stickerUrl": sticker_url, "stickerWebpUrl": sticker_url} if sticker_url else {}),
+        ),
     )
     _schedule_post_send_side_effects(user_id, conversation_id.strip(), x_caller_email)
     return {"ok": True, "result": result}
@@ -3014,21 +3019,44 @@ async def get_stickers_detail(
     account_id: Optional[str] = Query(None),
     x_user_id: str = Header("default", alias="X-User-ID"),
 ):
-    user_id = _normalize_user_id(account_id or x_user_id)
-    auth = await load_zca_auth(user_id)
-    if not auth:
-        raise HTTPException(status_code=401, detail="Chưa có phiên ZCA hợp lệ. Hãy đăng nhập lại qua extension.")
     try:
         sticker_ids = [int(s.strip()) for s in ids.split(",") if s.strip()]
     except ValueError:
         raise HTTPException(status_code=400, detail="ids phải là danh sách số nguyên, phân tách bằng dấu phẩy")
+
+    fallback_stickers = [
+        {
+            "id": sid,
+            "stickerUrl": build_zalo_sticker_cdn_url(sid),
+            "stickerWebpUrl": None,
+            "fallback": True,
+        }
+        for sid in sticker_ids
+        if sid > 0
+    ]
+
+    user_id = _normalize_user_id(account_id or x_user_id)
+    auth = await load_zca_auth(user_id)
+    if not auth:
+        return {"stickers": fallback_stickers}
+
     try:
         stickers = await get_zca_stickers_detail(auth, sticker_ids)
-    except ZcaAuthExpiredError:
-        raise HTTPException(status_code=401, detail=ZCA_SESSION_EXPIRED_DETAIL)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Không thể tra sticker: {exc}")
-    return {"stickers": stickers}
+        logger.warning(f"ZCA getStickersDetail failed for ids={sticker_ids}, using public CDN fallback: {exc}")
+        return {"stickers": fallback_stickers}
+
+    enriched: List[Dict[str, Any]] = []
+    for item in stickers or []:
+        if not isinstance(item, dict):
+            continue
+        copy_item = dict(item)
+        if not copy_item.get("stickerWebpUrl") and not copy_item.get("stickerUrl"):
+            cdn_url = build_zalo_sticker_cdn_url(copy_item.get("id"))
+            if cdn_url:
+                copy_item["stickerUrl"] = cdn_url
+        enriched.append(copy_item)
+    return {"stickers": enriched or fallback_stickers}
 
 
 @router.get("/{conversation_id}/phone")
