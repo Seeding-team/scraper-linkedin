@@ -447,3 +447,74 @@ def auto_reject_legacy_low_lead_score_posts(
 
     return summary
 
+
+# ── Dọn tồn đọng (2026-11-26): đẩy TOÀN BỘ bài lead_score IS NULL vào "Không phù hợp" ──
+# Quyết định kinh doanh đã xác nhận: đánh đổi chấp nhận mất 1 số lead tốt thật trong đống
+# tồn đọng (chỉ vì CHƯA TỪNG được AI chấm điểm, không đồng nghĩa điểm thấp — khác bản chất
+# với auto_reject_legacy_low_lead_score_posts() ở trên) để dọn nhanh/rẻ hơn chấm điểm hồi
+# tố (tốn chi phí API). CHỈ áp dụng bài đang 'chua-danh-gia' — không ghi đè đánh giá thủ
+# công đã có (tái dùng đúng guard của _apply_auto_not_suitable).
+#
+# LƯU Ý QUAN TRỌNG: KHÔNG gồm youtube_posts — bảng này CHƯA TỪNG có cột `lead_score`
+# (migration 159_post_lead_score.sql chỉ thêm cho facebook_posts/linkedin_posts/
+# threads_posts). Query theo "lead_score IS NULL" trên youtube_posts sẽ lỗi "column does
+# not exist", và về bản chất sẽ khớp 100% video (vì cột không tồn tại) — hoàn toàn khác ý
+# nghĩa "tồn đọng" của 3 bảng kia. Nếu cần xử lý YouTube thì đây là quyết định RIÊNG, lớn
+# hơn nhiều (đánh dấu toàn bộ video), cần xác nhận lại rõ ràng trước khi làm.
+_NULL_LEAD_SCORE_BACKLOG_TABLES = ("facebook_posts", "linkedin_posts", "threads_posts")
+
+
+def auto_reject_null_lead_score_backlog() -> dict[str, Any]:
+    """Quét 1 lần (idempotent) toàn bộ bài `lead_score IS NULL` (chưa từng được AI chấm
+    điểm) trong facebook_posts/linkedin_posts/threads_posts, tự động gắn 'khong-phu-hop'
+    CHỈ cho bài đang 'chua-danh-gia' — giữ nguyên bài đã có đánh giá thủ công từ trước.
+    """
+    from app.modules.all_platform.services.post_evaluation_service import get_review
+
+    supabase = get_supabase_client()
+    summary: dict[str, Any] = {"scanned": 0, "marked": 0, "skipped_already_reviewed": 0, "errors": []}
+
+    for table in _NULL_LEAD_SCORE_BACKLOG_TABLES:
+        platform = "threads" if table == "threads_posts" else ("linkedin" if table == "linkedin_posts" else "facebook")
+        try:
+            res = execute_supabase_query(
+                lambda t=table: supabase.table(t).select("id").is_("lead_score", "null").execute()
+            )
+        except Exception as exc:
+            summary["errors"].append(f"{table}: {exc}")
+            continue
+
+        rows = res.data or []
+        summary["scanned"] += len(rows)
+
+        for row in rows:
+            post_id = row.get("id")
+            if not post_id:
+                continue
+            try:
+                review = get_review(post_id, platform)
+                result = _apply_auto_not_suitable(
+                    post_id,
+                    platform,
+                    review,
+                    reason="Tự động loại trừ do chưa từng được AI chấm điểm (dọn tồn đọng, quyết định kinh doanh 2026-11-26)",
+                    action_type="auto_exclude_null_score_backlog",
+                    log_extra={"lead_score": None},
+                )
+                current_code = review.get("evaluation_code") if review else None
+                if current_code not in (None, "chua-danh-gia"):
+                    summary["skipped_already_reviewed"] += 1
+                elif result:
+                    summary["marked"] += 1
+            except Exception as exc:
+                summary["errors"].append(f"{table}#{post_id}: {exc}")
+
+    logger.info(
+        "[NULL-LEAD-SCORE-BACKLOG] scanned=%s marked=%s skipped_already_reviewed=%s errors=%s",
+        summary["scanned"],
+        summary["marked"],
+        summary["skipped_already_reviewed"],
+        len(summary["errors"]),
+    )
+    return summary
+

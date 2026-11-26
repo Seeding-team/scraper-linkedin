@@ -20,6 +20,7 @@ from app.modules.all_platform.schemas.crawl_keywords import (
 from app.modules.all_platform.services.crawl_exclude_service import (
     approve_proposal,
     auto_reject_legacy_low_lead_score_posts,
+    auto_reject_null_lead_score_backlog,
     bulk_approve_proposals,
     create_exclude_keyword,
     create_proposal,
@@ -151,6 +152,28 @@ def crawl_keywords_auto_reject_legacy_low_score(
     del user
     try:
         data = auto_reject_legacy_low_lead_score_posts()
+        return BaseResponse(
+            success=True,
+            message=f"Đã quét {data.get('scanned', 0)} bài, gắn 'Không phù hợp' cho {data.get('marked', 0)} bài",
+            data=data,
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@router.post("/auto-reject-null-lead-score-backlog")
+def crawl_keywords_auto_reject_null_lead_score_backlog(
+    user: dict[str, Any] = Depends(require_admin),
+) -> BaseResponse:
+    """Dọn tồn đọng (2026-11-26, quyết định kinh doanh đã xác nhận): quét 1 lần, idempotent,
+    TOÀN BỘ bài lead_score IS NULL (chưa từng được AI chấm điểm) trong facebook_posts/
+    linkedin_posts/threads_posts, tự động gắn 'Không phù hợp' — CHỈ cho bài đang
+    'chua-danh-gia', không ghi đè đánh giá thủ công đã có. Đánh đổi đã xác nhận: có thể mất
+    1 số lead tốt thật trong đống tồn đọng, đổi lấy dọn nhanh/rẻ hơn chấm điểm hồi tố. Chỉ
+    Admin được chạy (idempotent — gọi lại nhiều lần an toàn)."""
+    del user
+    try:
+        data = auto_reject_null_lead_score_backlog()
         return BaseResponse(
             success=True,
             message=f"Đã quét {data.get('scanned', 0)} bài, gắn 'Không phù hợp' cho {data.get('marked', 0)} bài",

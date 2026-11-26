@@ -1,3 +1,13 @@
+/** Phương án dự phòng (2026-11-26, Việc 1) auto-fill URL nhóm Facebook khi Extension
+ * timeout/lỗi — xem `fetch_public_group_info()` trong `public_4g_crawler_service.py`. */
+export interface GroupInfoFallbackResponse {
+  success: boolean;
+  group_name?: string | null;
+  member_count?: number | null;
+  error?: string;
+  error_code?: "busy" | "blocked" | "login_required" | "not_found" | "no_proxy" | "exception";
+}
+
 export interface PublicCrawlConfig {
   id: string;
   enabled: boolean;

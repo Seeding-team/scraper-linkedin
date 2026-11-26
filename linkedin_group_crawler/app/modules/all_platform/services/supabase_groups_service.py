@@ -92,6 +92,27 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
     # group dù post_quick_review đọc thành công -> số đếm ra 0 cho tất cả, phải coi là lỗi.
     can_lien_he_error = can_lien_he_error or stats_error
 
+    # Đếm "Tổng lượt bình luận" theo nhóm (2026-11-26, cột mới "Quản lý nhóm"): seeding_content_kpi
+    # không lưu platform/group trực tiếp (chỉ có id_post) - tái dùng ĐÚNG post_group_map đã dựng
+    # sẵn ở trên (không quét lại posts_table), KHÔNG tái dùng get_seeding_group_coverage() vì hàm
+    # đó nhóm theo group_name (text, có thể trùng giữa 2 nhóm khác group_id) chứ không phải
+    # group_id thật. Đếm TOÀN BỘ lịch sử (không lọc created_at) - nhất quán với "Cần liên hệ".
+    total_comment_counts: dict[str, int] = {}
+    total_comment_error = False
+    try:
+        kpi_res = supabase.table("seeding_content_kpi").select("id_post").execute()
+        for r in kpi_res.data or []:
+            gid = post_group_map.get(r.get("id_post"))
+            if gid:
+                total_comment_counts[gid] = total_comment_counts.get(gid, 0) + 1
+    except Exception as e:
+        logger.warning(
+            f"[GROUP-TOTAL-COMMENT-STATS] Lỗi đếm 'Tổng lượt bình luận' cho nhóm ({posts_table}), "
+            f"bỏ qua thống kê, KHÔNG xoá/ẩn nhóm nào: {e}"
+        )
+        total_comment_error = True
+    total_comment_error = total_comment_error or stats_error
+
     for r in rows:
         s = stats.get(r.get("id"), {"count": 0, "high_count": 0, "sum": 0})
         r["high_lead_post_count"] = int(s["high_count"])
@@ -105,6 +126,9 @@ def _attach_group_lead_stats(supabase: Client, rows: list[dict], posts_table: st
         r["can_lien_he_post_count"] = int(can_lien_he_counts.get(r.get("id"), 0))
         if can_lien_he_error:
             r["can_lien_he_stats_error"] = True
+        r["total_comment_count"] = int(total_comment_counts.get(r.get("id"), 0))
+        if total_comment_error:
+            r["total_comment_stats_error"] = True
 
     if not stats_error:
         rows.sort(key=lambda r: (r.get("high_lead_post_count") or 0, r.get("avg_lead_score") or 0), reverse=True)

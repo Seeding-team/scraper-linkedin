@@ -15,6 +15,7 @@ import {
 } from "@/services/all-platform.service";
 import type { FacebookGroup, LinkedInGroup, FeedPlatform, Category, GroupPricingTier } from "@/types/unified.types";
 import { fetchFacebookGroupInfo } from "@/lib/fb-ext-bridge";
+import { publicCrawlerService } from "@/services/public-crawler.service";
 
 import { SiThreads } from "react-icons/si";
 import { ThreadsKeywordsTab } from "./threads-keywords-tab";
@@ -780,9 +781,11 @@ function FacebookGroupForm({
   // Việc còn dở (2026-11-22): tự động lấy Tên nhóm + Số thành viên từ URL qua Extension
   // (lib/fb-ext-bridge.ts). apiFilledFields đánh dấu field nào đang hiện badge "✓ API" —
   // mất ngay khi người dùng tự gõ lại field đó (set()/onChange riêng bên dưới sẽ xoá dấu).
-  const [groupInfoFetch, setGroupInfoFetch] = useState<{ status: "idle" | "loading" | "error"; error?: string }>({
-    status: "idle",
-  });
+  const [groupInfoFetch, setGroupInfoFetch] = useState<{
+    status: "idle" | "loading" | "error";
+    error?: string;
+    stage?: "extension" | "server";
+  }>({ status: "idle" });
   const [apiFilledFields, setApiFilledFields] = useState<Set<"group_name" | "members">>(new Set());
   const lastFetchedUrlRef = useRef<string>("");
 
@@ -793,13 +796,37 @@ function FacebookGroupForm({
     const url = form.group_url.trim();
     if (!url || !/facebook\.com\/groups\//i.test(url) || url === lastFetchedUrlRef.current) return;
     lastFetchedUrlRef.current = url;
-    setGroupInfoFetch({ status: "loading" });
-    const res = await fetchFacebookGroupInfo(url);
+    setGroupInfoFetch({ status: "loading", stage: "extension" });
+    let res = await fetchFacebookGroupInfo(url);
     if (!res.success) {
-      // Không bao giờ chặn người dùng — vẫn gõ tay bình thường, chỉ báo lỗi để biết vì sao
-      // không tự điền được (xem BƯỚC 1: graceful fallback).
-      setGroupInfoFetch({ status: "error", error: res.error || "Không lấy được thông tin nhóm." });
-      return;
+      // Phương án dự phòng (2026-11-26, Việc 1): Extension timeout/lỗi -> tự động thử lại
+      // qua server (proxy SIM 4G của Public Crawler) TRƯỚC KHI fallback về nhập tay —
+      // không thay thế Extension (vẫn thử Extension trước vì nhanh hơn khi có sẵn).
+      setGroupInfoFetch({ status: "loading", stage: "server" });
+      try {
+        const fallback = await publicCrawlerService.fetchGroupInfoFallback(url);
+        if (fallback.success) {
+          res = {
+            success: true,
+            group_name: fallback.group_name ?? null,
+            member_count: fallback.member_count ?? null,
+          };
+        } else {
+          setGroupInfoFetch({
+            status: "error",
+            error: fallback.error || res.error || "Không lấy được thông tin nhóm.",
+          });
+          return;
+        }
+      } catch (fallbackErr) {
+        // Không bao giờ chặn người dùng — vẫn gõ tay bình thường, chỉ báo lỗi để biết vì sao
+        // không tự điền được (xem BƯỚC 1: graceful fallback).
+        setGroupInfoFetch({
+          status: "error",
+          error: res.error || (fallbackErr instanceof Error ? fallbackErr.message : "Không lấy được thông tin nhóm."),
+        });
+        return;
+      }
     }
     setGroupInfoFetch({ status: "idle" });
     const filled = new Set<"group_name" | "members">();
@@ -923,7 +950,9 @@ function FacebookGroupForm({
             {groupInfoFetch.status === "loading" && (
               <p className="text-[11px] text-on-surface-variant mt-1 flex items-center gap-1">
                 <span className="material-symbols-outlined text-[13px] animate-spin">progress_activity</span>
-                Đang thử tự động lấy tên nhóm/số thành viên qua Extension...
+                {groupInfoFetch.stage === "server"
+                  ? "Extension không khả dụng, đang thử qua server..."
+                  : "Đang thử tự động lấy tên nhóm/số thành viên qua Extension..."}
               </p>
             )}
             {groupInfoFetch.status === "error" && (
@@ -2076,13 +2105,22 @@ export function GroupManagementContent() {
   // dữ liệu đã load hết 1 lần (không phân trang ở server), giữ nguyên thứ tự mặc định
   // (nhóm điểm AI cao lên đầu) khi chưa bấm sort.
   const [canLienHeSortDir, setCanLienHeSortDir] = useState<"asc" | "desc" | null>(null);
+  // Cùng pattern sort client-side với "Cần liên hệ" — chỉ 1 cột được sort tại 1 thời điểm
+  // (bấm cột này sẽ reset cột kia về null, tránh 2 sort key xung đột khó hiểu cho người dùng).
+  const [totalCommentSortDir, setTotalCommentSortDir] = useState<"asc" | "desc" | null>(null);
   const sortedGroups = useMemo(() => {
+    if (totalCommentSortDir) {
+      const dir = totalCommentSortDir === "asc" ? 1 : -1;
+      return [...currentGroups].sort(
+        (a, b) => dir * ((Number((a as any).total_comment_count) || 0) - (Number((b as any).total_comment_count) || 0)),
+      );
+    }
     if (!canLienHeSortDir) return currentGroups;
     const dir = canLienHeSortDir === "asc" ? 1 : -1;
     return [...currentGroups].sort(
       (a, b) => dir * ((Number((a as any).can_lien_he_post_count) || 0) - (Number((b as any).can_lien_he_post_count) || 0)),
     );
-  }, [currentGroups, canLienHeSortDir]);
+  }, [currentGroups, canLienHeSortDir, totalCommentSortDir]);
 
   const totalItems = sortedGroups.length;
   const totalPages = Math.ceil(totalItems / pageSize);
@@ -2577,13 +2615,31 @@ export function GroupManagementContent() {
                 )}
                 <th
                   className="text-center px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[110px] cursor-pointer select-none hover:text-primary transition-all duration-150 ease-out"
-                  onClick={() => setCanLienHeSortDir((d) => (d === "desc" ? "asc" : d === "asc" ? null : "desc"))}
+                  onClick={() => {
+                    setTotalCommentSortDir(null);
+                    setCanLienHeSortDir((d) => (d === "desc" ? "asc" : d === "asc" ? null : "desc"));
+                  }}
                   title="Bấm để sắp xếp theo số bài Cần liên hệ"
                 >
                   <span className="inline-flex items-center gap-1">
                     Cần liên hệ
                     <span className="material-symbols-outlined text-[12px]">
                       {canLienHeSortDir === "asc" ? "arrow_upward" : canLienHeSortDir === "desc" ? "arrow_downward" : "unfold_more"}
+                    </span>
+                  </span>
+                </th>
+                <th
+                  className="text-center px-4 py-3.5 font-bold text-on-surface-variant text-[10px] uppercase tracking-wider w-[130px] cursor-pointer select-none hover:text-primary transition-all duration-150 ease-out"
+                  onClick={() => {
+                    setCanLienHeSortDir(null);
+                    setTotalCommentSortDir((d) => (d === "desc" ? "asc" : d === "asc" ? null : "desc"));
+                  }}
+                  title="Bấm để sắp xếp theo Tổng lượt bình luận"
+                >
+                  <span className="inline-flex items-center gap-1">
+                    Tổng lượt bình luận
+                    <span className="material-symbols-outlined text-[12px]">
+                      {totalCommentSortDir === "asc" ? "arrow_upward" : totalCommentSortDir === "desc" ? "arrow_downward" : "unfold_more"}
                     </span>
                   </span>
                 </th>
@@ -2745,6 +2801,27 @@ export function GroupManagementContent() {
                           title="Số bài trong nhóm đã đánh giá 'Cần liên hệ'"
                         >
                           {Number((g as any).can_lien_he_post_count) || 0}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {(g as any).total_comment_stats_error ? (
+                        <span
+                          title="Không tính được Tổng lượt bình luận lúc này — danh sách nhóm vẫn đầy đủ, không phải thật sự 0 lượt"
+                          className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-50 text-amber-600 border border-amber-200"
+                        >
+                          <span className="material-symbols-outlined text-[14px]">warning</span>
+                        </span>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center justify-center min-w-[28px] px-2 py-0.5 rounded-full text-[11px] font-bold ${
+                            Number((g as any).total_comment_count) > 0
+                              ? "bg-primary/10 text-primary border border-primary/20"
+                              : "bg-surface-container-highest text-on-surface-variant"
+                          }`}
+                          title="Tổng số lượt seeding/bình luận của nhóm (toàn bộ lịch sử)"
+                        >
+                          {Number((g as any).total_comment_count) || 0}
                         </span>
                       )}
                     </td>

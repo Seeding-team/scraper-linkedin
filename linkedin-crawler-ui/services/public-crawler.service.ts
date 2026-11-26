@@ -1,6 +1,7 @@
 import type {
   ThreadsKeywordLibraryItem,
   CrawledPostsOverviewResponse,
+  GroupInfoFallbackResponse,
   ProxyTestResponse,
   PublicCrawlActionResponse,
   PublicCrawlConfig,
@@ -34,6 +35,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const publicCrawlerService = {
   getStatus: () => request<PublicCrawlStatusResponse>("/status"),
+
+  // Phương án dự phòng (2026-11-26, Việc 1): gọi SAU KHI Extension (lib/fb-ext-bridge.ts)
+  // timeout/lỗi, trước khi fallback cuối cùng về nhập tay — xem group-management.tsx.
+  fetchGroupInfoFallback: (url: string) =>
+    request<GroupInfoFallbackResponse>("/group-info", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
 
   runNow: (body?: {
     group_ids?: string[];
