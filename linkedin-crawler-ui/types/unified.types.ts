@@ -538,6 +538,11 @@ export interface FacebookGroup {
   /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
    * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
   can_lien_he_stats_error?: boolean;
+  /** Tổng số lượt seeding/bình luận (bảng seeding_content_kpi) của nhóm, toàn bộ lịch sử —
+   * tính on-the-fly cùng post_group_map với can_lien_he_post_count. */
+  total_comment_count?: number;
+  /** true nếu backend không tính được "Tổng lượt bình luận" cho nhóm (lỗi tạm thời). */
+  total_comment_stats_error?: boolean;
   /** Cờ Public 4G Zero-Account Crawler (migration 224) */
   visibility?: "public" | "private";
   public_crawl_enabled?: boolean;
@@ -619,6 +624,11 @@ export interface LinkedInGroup {
   /** true nếu backend không tính được số bài "Cần liên hệ" cho nhóm (lỗi tạm thời) — hiển thị
    * cảnh báo thay vì số 0 để không gây hiểu nhầm là thật sự không có bài nào. */
   can_lien_he_stats_error?: boolean;
+  /** Tổng số lượt seeding/bình luận (bảng seeding_content_kpi) của nhóm, toàn bộ lịch sử —
+   * tính on-the-fly cùng post_group_map với can_lien_he_post_count. */
+  total_comment_count?: number;
+  /** true nếu backend không tính được "Tổng lượt bình luận" cho nhóm (lỗi tạm thời). */
+  total_comment_stats_error?: boolean;
   /** Việc 1 (2026-11-22): nhiều lĩnh vực/group — xem chú thích tương ứng ở FacebookGroup. */
   intent_ids?: string[];
   intent_names?: string[];

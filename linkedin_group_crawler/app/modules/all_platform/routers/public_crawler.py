@@ -14,6 +14,7 @@ from app.modules.all_platform.services.crawled_post_audit_service import (
 )
 from app.modules.all_platform.services.public_4g_crawler_service import (
     PUBLIC_CRAWL_CONFIG_BOUNDS,
+    fetch_public_group_info,
     public_crawl_orchestrator,
 )
 
@@ -203,6 +204,25 @@ async def bulk_toggle_public_groups(
         visibility=body.visibility,
     )
     return {"success": True, "updated_count": count}
+
+
+class GroupInfoFallbackBody(BaseModel):
+    url: str
+
+
+@router.post("/group-info")
+async def fetch_group_info_fallback(
+    body: GroupInfoFallbackBody,
+    _user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Phương án dự phòng (2026-11-26, Việc 1): lấy {name, member_count} của 1 nhóm
+    Facebook công khai qua proxy SIM 4G của Public Crawler — modal "Thêm nhóm"
+    (group-management.tsx) gọi endpoint này SAU KHI Extension timeout/lỗi, trước khi
+    fallback cuối cùng về nhập tay."""
+    url = (body.url or "").strip()
+    if not url:
+        return {"success": False, "error": "Thiếu URL nhóm.", "error_code": "not_found"}
+    return await fetch_public_group_info(url)
 
 
 @router.post("/proxy/test")

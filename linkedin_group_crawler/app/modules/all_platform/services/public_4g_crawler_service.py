@@ -11,6 +11,7 @@ proactively (every K groups) and reactively (on HTTP 429 / checkpoint / login wa
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -72,6 +73,19 @@ CHROME_DOC_HEADERS: dict[str, str] = {
     "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
 }
+
+
+def _build_guest_http_client(proxy_http: str | None) -> httpx.AsyncClient:
+    """HTTPX client dùng chung cho mọi tác vụ "Guest" (không cookie) qua proxy SIM 4G —
+    tái dùng bởi `GuestPublicGroupWorker._build_http_client()` (luồng cào chính) VÀ
+    `fetch_public_group_info()` (phương án dự phòng auto-fill URL nhóm, 2026-11-26)."""
+    return httpx.AsyncClient(
+        proxy=proxy_http,
+        timeout=20.0,
+        follow_redirects=False,
+        headers=CHROME_DOC_HEADERS,
+    )
+
 
 _ACTIVE_GQL_PAGINATION_DOC_ID: str = os.getenv(
     "FB_GQL_GROUP_FEED_DOC_ID",
@@ -1052,12 +1066,7 @@ class GuestPublicGroupWorker:
         return None
 
     def _build_http_client(self, proxy_http: str | None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            proxy=proxy_http,
-            timeout=20.0,
-            follow_redirects=False,
-            headers=CHROME_DOC_HEADERS,
-        )
+        return _build_guest_http_client(proxy_http)
 
     async def _resilient_http_request(
         self,
@@ -3607,3 +3616,204 @@ class PublicCrawlOrchestrator:
 
 
 public_crawl_orchestrator = PublicCrawlOrchestrator()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phương án dự phòng (2026-11-26, Việc 1): lấy Tên nhóm + Số thành viên từ URL nhóm
+# Facebook công khai qua proxy SIM 4G của Public Crawler, dùng khi Extension
+# (lib/fb-ext-bridge.ts) timeout/lỗi. Ràng buộc đã xác nhận ở Bước 0:
+#   - HTTPX client RIÊNG, ngắn hạn cho đúng 1 request — KHÔNG tái dùng
+#     GuestPublicGroupWorker._http_client/_bridge, KHÔNG gọi bất kỳ method nào làm thay
+#     đổi trạng thái của MobileProxyRotator đang chạy job chính (chỉ ĐỌC qua
+#     rotator.sync_nodes(), đúng cơ chế read-only mà get_status() cho admin đã dùng).
+#   - concurrency = 1 (asyncio.Lock module-level).
+#   - Không chạy khi sim.status == "rotating" (đang giữa 1 lượt xoay IP) — trả lỗi
+#     "busy" ngay, không chờ, không chen ngang.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_group_info_fetch_lock = asyncio.Lock()
+
+_GROUP_INFO_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_GROUP_INFO_MEMBER_PATTERNS = (
+    re.compile(r"([\d.,]+)\s*(?:thành viên|members?)\b", re.IGNORECASE),
+    re.compile(r"(?:thành viên|members?)\s*[:：]?\s*([\d.,]+)", re.IGNORECASE),
+)
+
+
+def _pick_facebook_guest_sim() -> Any:
+    """Đọc (KHÔNG mutate) danh sách SIM proxy hiện có của Public Crawler, chọn 1 node
+    gán cho Facebook (hoặc dùng chung cả 2 nền tảng) — dùng đúng `rotator.sync_nodes()`
+    mà `get_status()` (endpoint trạng thái admin) đã dùng, không gọi bất kỳ method nào
+    làm đổi status/rotation của job chính."""
+    try:
+        cfg = public_crawl_orchestrator.get_config_sync()
+    except Exception:
+        cfg = {}
+    try:
+        nodes = public_crawl_orchestrator.rotator.sync_nodes(cfg.get("proxy_urls"))
+    except Exception:
+        return None
+    for n in nodes:
+        if n.socks_url and n.platform in (None, "facebook"):
+            return n
+    return None
+
+
+def _parse_group_name_and_member_count(html_text: str) -> tuple[str | None, int | None]:
+    """Tách Tên nhóm + Số thành viên từ HTML thô — viết lại tương đương (không gọi lại
+    code JS) logic của `platforms/facebook/crawl.js::doFetchGroupInfo()` bên Extension:
+    đọc `<title>` (bỏ hậu tố " | Facebook"), quét text thân trang bằng cùng 2 pattern
+    "X thành viên"/"X members"."""
+    group_name: str | None = None
+    m = _GROUP_INFO_TITLE_RE.search(html_text or "")
+    if m:
+        raw_title = html.unescape(m.group(1) or "").strip()
+        raw_title = re.sub(r"\s*\|\s*Facebook\s*$", "", raw_title, flags=re.IGNORECASE).strip()
+        group_name = raw_title or None
+
+    member_count: int | None = None
+    body_text = html.unescape(re.sub(r"<[^>]+>", " ", html_text or ""))
+    for pat in _GROUP_INFO_MEMBER_PATTERNS:
+        mm = pat.search(body_text)
+        if not mm:
+            continue
+        try:
+            n = int(re.sub(r"[.,]", "", mm.group(1)))
+        except ValueError:
+            continue
+        if n > 0:
+            member_count = n
+            break
+
+    return group_name, member_count
+
+
+async def fetch_public_group_info(url: str) -> dict[str, Any]:
+    """Phương án dự phòng: lấy {name, member_count} từ 1 URL nhóm Facebook công khai
+    qua proxy SIM 4G của Public Crawler — gọi SAU khi Extension timeout/lỗi (xem
+    `lib/fb-ext-bridge.ts` + `components/all-platform/group-management.tsx`).
+
+    Trả về:
+        {"success": True, "group_name": str|None, "member_count": int|None}
+        {"success": False, "error": str, "error_code": "busy"|"blocked"|"login_required"
+            |"not_found"|"no_proxy"|"exception"}
+    """
+    if _group_info_fetch_lock.locked():
+        return {
+            "success": False,
+            "error": "Đang có 1 yêu cầu lấy thông tin nhóm khác qua server — vui lòng thử lại sau vài giây.",
+            "error_code": "busy",
+        }
+
+    async with _group_info_fetch_lock:
+        sim = await asyncio.to_thread(_pick_facebook_guest_sim)
+        if sim is None:
+            return {
+                "success": False,
+                "error": "Chưa cấu hình proxy SIM 4G cho Facebook — không thể dùng phương án dự phòng này.",
+                "error_code": "no_proxy",
+            }
+        if sim.status == "rotating":
+            return {
+                "success": False,
+                "error": "Proxy SIM 4G đang xoay IP cho job cào chính — vui lòng thử lại sau vài giây.",
+                "error_code": "busy",
+            }
+
+        target_url = normalize_group_crawl_url(url.strip())
+        bridge: Socks5HttpBridge | None = None
+        client: httpx.AsyncClient | None = None
+        try:
+            proxy_http = sim.socks_url
+            if proxy_http and not proxy_http.lower().startswith("http"):
+                bridge = Socks5HttpBridge(proxy_http)
+                proxy_http = await bridge.start()
+
+            client = _build_guest_http_client(proxy_http)
+            if hasattr(client, "cookies"):
+                client.cookies.clear()
+
+            cur_url = target_url
+            html_text = ""
+            final_status: int | None = None
+            for _hop in range(3):
+                resp = await client.get(cur_url)
+                final_status = resp.status_code
+                if final_status in (301, 302, 303, 307, 308):
+                    loc = (resp.headers.get("location") or "").strip()
+                    loc_lower = loc.lower()
+                    if "/login" in loc_lower or "/checkpoint" in loc_lower:
+                        return {
+                            "success": False,
+                            "error": "Phiên Guest bị chuyển về trang đăng nhập/checkpoint.",
+                            "error_code": "login_required",
+                        }
+                    if loc.startswith("http"):
+                        cur_url = normalize_group_crawl_url(loc) if "/groups/" in loc_lower else loc
+                        continue
+                html_text = resp.text or ""
+                break
+
+            if final_status == 429:
+                return {
+                    "success": False,
+                    "error": "Proxy SIM 4G đang bị Facebook giới hạn tốc độ (rate limit) — vui lòng thử lại sau.",
+                    "error_code": "blocked",
+                }
+
+            if not html_text:
+                return {
+                    "success": False,
+                    "error": "Không tải được nội dung trang nhóm qua proxy.",
+                    "error_code": "exception",
+                }
+
+            body_hint = re.sub(r"<[^>]+>", " ", html_text[:80000])
+            state = classify_guest_page_state(
+                current_url=cur_url,
+                body_text=body_hint,
+                extracted_posts_count=0,
+                http_status=final_status,
+            )
+            if state == "rate_limit":
+                return {
+                    "success": False,
+                    "error": "Proxy SIM 4G đang bị Facebook giới hạn tốc độ (rate limit) — vui lòng thử lại sau.",
+                    "error_code": "blocked",
+                }
+            if state == "login_wall":
+                return {
+                    "success": False,
+                    "error": "Phiên Guest bị chặn, yêu cầu đăng nhập — nhóm có thể cần tài khoản để xem.",
+                    "error_code": "login_required",
+                }
+            if state == "private_group":
+                return {
+                    "success": False,
+                    "error": "Nhóm riêng tư (Private) — không thể lấy thông tin ở chế độ Guest, vui lòng nhập tay.",
+                    "error_code": "not_found",
+                }
+
+            group_name, member_count = _parse_group_name_and_member_count(html_text)
+            if not group_name and member_count is None:
+                return {
+                    "success": False,
+                    "error": "Không đọc được tên nhóm/số thành viên từ trang (nhóm riêng tư, không tồn tại, hoặc Facebook đã đổi giao diện).",
+                    "error_code": "not_found",
+                }
+
+            return {"success": True, "group_name": group_name, "member_count": member_count}
+        except Exception as exc:
+            logger.warning("[GROUP-INFO-FALLBACK] Lỗi fetch_public_group_info(%s): %s", url, exc)
+            return {"success": False, "error": str(exc), "error_code": "exception"}
+        finally:
+            if client is not None:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
+            if bridge is not None:
+                try:
+                    await bridge.stop()
+                except Exception:
+                    pass
