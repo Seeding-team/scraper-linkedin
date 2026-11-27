@@ -347,3 +347,30 @@ def test_fetch_keyword_posts_threads_applies_evaluation_code_and_service_area_fi
     assert [p["id"] for p in posts] == ["th-1"]
     assert total == 1
     _assert_no_id_list_filter(calls)
+
+
+# ── Sort theo THỜI GIAN ĐĂNG BÀI THẬT (post_time/posted_at), không phải crawl_date ──────
+
+
+def test_fetch_posts_default_sort_orders_by_post_time_not_crawl_date_facebook(monkeypatch):
+    """2026-11-27: badge giờ trên post-card.tsx hiển thị `post.post_time || post.posted_at`
+    (lúc bài THẬT SỰ được đăng), nhưng sort mặc định trước đó lại ORDER BY `crawl_date` (lúc
+    HỆ THỐNG cào được) — 2 mốc thời gian có thể lệch nhau, khiến danh sách trông như "sắp xếp
+    sai" dù query đã ORDER BY đúng cột nó dùng. Đổi sang sort theo `post_time` (facebook)."""
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls, []))
+
+    svc._fetch_posts(table="facebook_posts", email="", sort="latest", page=1, page_size=50)
+
+    order_calls = [args for name, args, _kw in calls if name == "order"]
+    assert ("post_time",) in order_calls or any(a and a[0] == "post_time" for a in order_calls)
+
+
+def test_fetch_posts_default_sort_orders_by_posted_at_linkedin(monkeypatch):
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls, []))
+
+    svc._fetch_posts(table="linkedin_posts", email="", sort="latest", page=1, page_size=50)
+
+    order_calls = [args for name, args, _kw in calls if name == "order"]
+    assert any(a and a[0] == "posted_at" for a in order_calls)
