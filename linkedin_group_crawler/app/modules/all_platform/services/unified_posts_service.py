@@ -340,6 +340,14 @@ def _fetch_posts(
         matched_ids = _resolve_post_ids_by_contact_member(sb, table, contact_member_id)
         id_predicates.append(("in", set(matched_ids)))
 
+    # Cot thoi gian ĐĂNG bai that su (khop dung badge gio hien tren the bai o post-card.tsx:
+    # `post.post_time || post.posted_at`) - khac "crawl_date" (luc HE THONG cao duoc bai, co
+    # the lech thu tu so voi luc bai thuc su duoc dang, gay cam giac "sap xep sai" du query
+    # da ORDER BY dung cot crawl_date). 2026-11-27: doi sort mac dinh sang cot nay de danh
+    # sach hien dung thu tu nhu badge gio dang hien thi - threads_posts/youtube_posts o
+    # _fetch_keyword_posts() da lam dung cach nay tu truoc (sort theo post_time).
+    post_time_col = "post_time" if table == "facebook_posts" else "posted_at"
+
     # Sort
     if sort == "lead_score_high":
         # Mac dinh khi vao trang (yeu cau 2026-10-02): CHI hien bai diem cao (>=40) -
@@ -352,7 +360,7 @@ def _fetch_posts(
         # 2026-11-26: NULL >= 40 = NULL/false trong Postgres -> .gte() don thuan an ca NULL).
         query = query.or_(
             f"lead_score.gte.{_DEFAULT_MIN_LEAD_SCORE},lead_score.is.null"
-        ).order("crawl_date", desc=True, nullsfirst=False)
+        ).order(post_time_col, desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
     elif sort == "score_high":
         query = query.order("score", desc=True, nullsfirst=False)
     elif sort == "score_low":
@@ -365,7 +373,7 @@ def _fetch_posts(
         else:
             query = query.order("crawl_date", desc=True, nullsfirst=False)
     else:  # latest
-        query = query.order("crawl_date", desc=True, nullsfirst=False)
+        query = query.order(post_time_col, desc=True, nullsfirst=False).order("crawl_date", desc=True, nullsfirst=False)
 
     posts, total = _execute_with_id_predicates(query, id_predicates, page=page, page_size=page_size)
 
