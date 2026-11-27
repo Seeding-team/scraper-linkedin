@@ -72,21 +72,21 @@ def fake_db():
     return _FakeSupabase()
 
 
-def test_resolve_by_evaluation_status_pending_defaults_for_posts_without_review(fake_db):
-    fake_db.store["facebook_posts"] = [
-        {"id": "fb-1"},
-        {"id": "fb-2"},
-        {"id": "fb-3"},
-    ]
+def test_resolve_by_evaluation_status_pending_returns_not_in_small_reviewed_set(fake_db):
+    """2026-11-27 hotfix: 'chua-danh-gia' la bucket MAC DINH (da gay 414 Request-URI Too
+    Large tren production khi tra ve ~700 id de nhoi vao `.in_("id", ...)`), nen gio tra ve
+    mode "not_in" tren tap NHO "da danh gia" (bo het full-table-scan `all_ids` cu)."""
     fake_db.store["post_quick_review"] = [
         {"post_id": "fb-1", "platform": "facebook", "evaluation_code": "can-lien-he"},
         # fb-2: khong co dong nao -> mac dinh chua-danh-gia
         {"post_id": "fb-3", "platform": "facebook", "evaluation_code": "chua-danh-gia"},
     ]
 
-    pending_ids = svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "chua-danh-gia")
+    mode, ids = svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "chua-danh-gia")
 
-    assert sorted(pending_ids) == ["fb-2", "fb-3"]
+    assert mode == "not_in"
+    assert sorted(ids) == ["fb-1"]
+    assert "facebook_posts" not in fake_db.store  # khong con full-table-scan
 
 
 def test_resolve_by_evaluation_status_explicit_codes(fake_db):
@@ -96,8 +96,8 @@ def test_resolve_by_evaluation_status_explicit_codes(fake_db):
         {"post_id": "li-1", "platform": "linkedin", "evaluation_code": "can-lien-he"},  # khac platform
     ]
 
-    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "can-lien-he") == ["fb-1"]
-    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "khong-phu-hop") == ["fb-2"]
+    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "can-lien-he") == ("in", ["fb-1"])
+    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "khong-phu-hop") == ("in", ["fb-2"])
 
 
 def test_resolve_by_service_area_facebook_via_group_id_team(fake_db):
@@ -155,6 +155,13 @@ class _RecordingQuery:
         return _Result([], 0)
 
     def __getattr__(self, name: str):
+        if name == "not_":
+            # supabase-py: `.not_` la PROPERTY (khong goi ()), tra ve chinh builder de
+            # method filter KE TIEP (vd `.in_(...)`) bi phu dinh - khac moi method khac
+            # o day deu la function call ghi lai args.
+            self._calls.append(("not_", (), {}))
+            return self
+
         def _method(*args, **kwargs):
             self._calls.append((name, args, kwargs))
             return self
@@ -172,7 +179,7 @@ class _RecordingSupabase:
 def test_fetch_posts_facebook_applies_evaluation_code_and_service_area_filters(monkeypatch):
     calls: list[tuple[str, tuple, dict]] = []
     monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls))
-    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ["fb-1", "fb-2"])
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ("in", ["fb-1", "fb-2"]))
     monkeypatch.setattr(svc, "_resolve_post_ids_by_service_area", lambda sb, t, area: ["fb-1"])
 
     svc._fetch_posts(
@@ -190,10 +197,34 @@ def test_fetch_posts_facebook_applies_evaluation_code_and_service_area_filters(m
     assert {"fb-1"} in [set(v) for v in in_id_calls]
 
 
+def test_fetch_posts_facebook_applies_not_in_for_pending_evaluation_code(monkeypatch):
+    """Hotfix 2026-11-27: mode="not_in" (bucket 'chua-danh-gia' mac dinh) phai goi
+    `.not_.in_("id", ...)`, KHONG goi `.in_("id", ...)` — tranh nhoi danh sach lon (production
+    gap ~700 id) vao query string PostgREST gay 414 Request-URI Too Large."""
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls))
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ("not_in", ["fb-9"]))
+
+    svc._fetch_posts(
+        table="facebook_posts",
+        email="",
+        sort="latest",
+        page=1,
+        page_size=50,
+        evaluation_code="chua-danh-gia",
+    )
+
+    # `.not_` la property access (khong mang id), `.in_("id", ids)` ngay sau do moi la call
+    # mang id — can xac nhan CA HAI: co 1 lan access "not_", va call "in_" dung mang ["fb-9"].
+    assert any(name == "not_" for name, _args, _kw in calls)
+    in_id_calls = [args[1] for name, args, _kw in calls if name == "in_" and args and args[0] == "id"]
+    assert ["fb-9"] in in_id_calls
+
+
 def test_fetch_keyword_posts_threads_applies_evaluation_code_and_service_area_filters(monkeypatch):
     calls: list[tuple[str, tuple, dict]] = []
     monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls))
-    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ["th-1"])
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ("in", ["th-1"]))
     monkeypatch.setattr(svc, "_resolve_post_ids_by_service_area", lambda sb, t, area: ["th-1"])
 
     svc._fetch_keyword_posts(

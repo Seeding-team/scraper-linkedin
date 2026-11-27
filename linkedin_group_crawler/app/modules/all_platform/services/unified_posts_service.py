@@ -271,8 +271,12 @@ def _fetch_posts(
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if evaluation_code:
-        matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        eval_mode, matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
+        if eval_mode == "not_in":
+            if matched_ids:
+                query = query.not_.in_("id", matched_ids)
+        else:
+            query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if service_area and service_area.lower() != "all":
         matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
@@ -665,18 +669,29 @@ def _resolve_post_ids_by_contact_member(sb: Client, table: str, member_id: str) 
     return list(post_ids)
 
 
-def _resolve_post_ids_by_evaluation_status(sb: Client, table: str, evaluation_code: str) -> list[str]:
+def _resolve_post_ids_by_evaluation_status(
+    sb: Client, table: str, evaluation_code: str
+) -> tuple[str, list[str]]:
     """post_id khớp đúng `evaluation_code` ('chua-danh-gia'/'can-lien-he'/'khong-phu-hop') —
     2026-11-27, dùng để server-paginate đúng theo dropdown "Trạng thái liên hệ" (trước đây
     FE tự lọc tay trên 1 batch nhỏ đã tải, xem get_evaluation_status_counts()).
 
+    Trả về `(mode, ids)` — caller áp `.in_("id", ids)` nếu mode="in", hoặc
+    `.not_.in_("id", ids)` nếu mode="not_in".
+
     'chua-danh-gia' là TRẠNG THÁI MẶC ĐỊNH (bài KHÔNG có dòng post_quick_review nào, hoặc có
-    dòng với evaluation_code='chua-danh-gia') — phải quét toàn bộ id trong bảng rồi loại trừ,
-    khác hẳn 2 trạng thái kia (truy vấn thẳng post_quick_review là đủ).
+    dòng với evaluation_code='chua-danh-gia') — tức là PHẦN LỚN bài (vd thực tế production
+    2026-11-27: 685/712 bài facebook). Trả thẳng danh sách ~700 id để `.in_("id", ...)` nhồi
+    vào query string PostgREST làm URL vượt giới hạn, openresty trả 414 "Request-URI Too
+    Large" (sập toàn bộ Post Feed ở view mặc định "Chưa đánh giá"/status=pending — lỗi thật
+    gặp trên production ngay sau khi tính năng này merge). Fix: đảo chiều thành NOT IN trên
+    tập "đã đánh giá" (can-lien-he + khong-phu-hop) — tập này nhỏ hơn hẳn vì cần hành động
+    thủ công, không còn quét toàn bộ bảng (bỏ luôn full-table-scan `all_ids` cũ) lẫn không
+    còn nhồi danh sách lớn vào URL cho đúng trường hợp hay gặp nhất.
     """
     platform = _TABLE_PLATFORM.get(table)
     if not platform:
-        return []
+        return "in", []
 
     if evaluation_code != "chua-danh-gia":
         res = (
@@ -686,9 +701,8 @@ def _resolve_post_ids_by_evaluation_status(sb: Client, table: str, evaluation_co
             .eq("evaluation_code", evaluation_code)
             .execute()
         )
-        return [str(r["post_id"]) for r in (res.data or []) if r.get("post_id")]
+        return "in", [str(r["post_id"]) for r in (res.data or []) if r.get("post_id")]
 
-    all_ids = {str(r["id"]) for r in (sb.table(table).select("id").execute().data or []) if r.get("id")}
     reviewed = (
         sb.table("post_quick_review")
         .select("post_id, evaluation_code")
@@ -700,7 +714,7 @@ def _resolve_post_ids_by_evaluation_status(sb: Client, table: str, evaluation_co
         for r in (reviewed.data or [])
         if r.get("post_id") and r.get("evaluation_code") not in (None, "chua-danh-gia")
     }
-    return list(all_ids - non_pending_ids)
+    return "not_in", list(non_pending_ids)
 
 
 def _resolve_post_ids_by_service_area(sb: Client, table: str, service_area: str) -> list[str]:
@@ -798,8 +812,12 @@ def _fetch_keyword_posts(
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if evaluation_code:
-        matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        eval_mode, matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
+        if eval_mode == "not_in":
+            if matched_ids:
+                query = query.not_.in_("id", matched_ids)
+        else:
+            query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if service_area and service_area.lower() != "all":
         matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
