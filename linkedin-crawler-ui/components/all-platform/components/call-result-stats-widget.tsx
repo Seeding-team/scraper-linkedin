@@ -26,6 +26,10 @@ interface CallResultStatsWidgetProps {
   platform?: string;
   userRole?: string;
   className?: string;
+  /** 2026-11-27: báo lên cha mỗi khi khoảng ngày ĐÃ COMMIT (không phải draft đang gõ dở) đổi —
+   * để trang Post Feed đồng bộ "kỳ" cho badge đếm + danh sách bài bên dưới theo đúng kỳ của
+   * widget này (trước đây 2 bên lệch kỳ, xem báo cáo điều tra "Tổng bài 169 vs Chưa đánh giá 37"). */
+  onDateRangeChange?: (dateFrom: string, dateTo: string) => void;
 }
 
 type Tab = "member" | "day" | "log";
@@ -245,6 +249,7 @@ export function CallResultStatsWidget({
   onSelectContactMember,
   platform,
   className,
+  onDateRangeChange,
 }: CallResultStatsWidgetProps) {
   // Bộ lọc thời gian "pinned + overflow": preset chỉ set giá trị khởi tạo, sau đó date_from/date_to
   // committed (dùng để fetch) và draft (gắn trực tiếp vào 2 input ngày) tách riêng — xem applyPreset/
@@ -287,6 +292,11 @@ export function CallResultStatsWidget({
   const date_from = dateFrom;
   const date_to = dateTo;
   const resolvedPlatform = platform && platform !== "all" ? platform : undefined;
+
+  useEffect(() => {
+    onDateRangeChange?.(dateFrom, dateTo);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateFrom, dateTo]);
 
   const applyPreset = useCallback((preset: PresetKey) => {
     const range = presetRange(preset);

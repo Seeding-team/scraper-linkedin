@@ -149,6 +149,18 @@ export function UnifiedDashboardHomeContent({
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  // Kỳ (ngày) đang chọn ở CallResultStatsWidget (2026-11-27) — widget tự báo lên qua
+  // onDateRangeChange mỗi khi khoảng ngày ĐÃ COMMIT đổi (đổi preset hoặc gõ tay xong). Đồng bộ
+  // "Tổng bài" + badge "Trạng thái liên hệ" + chính danh sách bài bên dưới về CÙNG 1 kỳ — trước
+  // đó lệch kỳ (xem báo cáo điều tra "Tổng bài 169 vs Chưa đánh giá 37").
+  const [statsPeriodFrom, setStatsPeriodFrom] = useState<string>("");
+  const [statsPeriodTo, setStatsPeriodTo] = useState<string>("");
+  const handleStatsPeriodChange = useCallback((from: string, to: string) => {
+    setStatsPeriodFrom((prev) => (prev === from ? prev : from));
+    setStatsPeriodTo((prev) => (prev === to ? prev : to));
+    setPage(1);
+  }, []);
+
   // Status filter: 'all' | 'todo' | 'doing' | 'done' | 'skip'
   const [seedingStatusFilter, setSeedingStatusFilter] = useState<string>(() => {
     return searchParams?.get("status") || "pending";
@@ -161,7 +173,6 @@ export function UnifiedDashboardHomeContent({
       setSeedingStatusFilter(s);
       setCallFilter("all");
       setPage(1);
-      setClientPage(1);
     } else {
       // Khi khong co status query param (Hoat dong seeding mac dinh):
       // mac dinh vao submenu "Chua danh gia" (pending)
@@ -170,7 +181,6 @@ export function UnifiedDashboardHomeContent({
       setServiceArea("all");
       setFilters(INITIAL_FILTERS);
       setPage(1);
-      setClientPage(1);
     }
   }, [searchParams]);
 
@@ -182,7 +192,6 @@ export function UnifiedDashboardHomeContent({
       setSeedingStatusFilter("all");
       setCallFilter("all");
       setPage(1);
-      setClientPage(1);
       setIsReviewMode(false);
       setReviewedPostIds(new Set());
       if (typeof window !== "undefined") {
@@ -490,7 +499,6 @@ export function UnifiedDashboardHomeContent({
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const [postsError, setPostsError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const [clientPage, setClientPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
@@ -552,6 +560,27 @@ export function UnifiedDashboardHomeContent({
       const requestPage = page;
       const requestPageSize = 50;
 
+      // Dropdown "Trạng thái liên hệ" (seedingStatusFilter: all/pending/todo/skip) ->
+      // evaluation_code thật ở backend (2026-11-27) — lọc + phân trang 50 bài/trang hẳn ở
+      // server, thay cho cách cũ lọc tay trên đúng 1 batch 50 bài đã tải (xem báo cáo điều
+      // tra "Tổng bài 169 vs Chưa đánh giá 37").
+      const evaluationCodeFilter =
+        seedingStatusFilter === "pending"
+          ? "chua-danh-gia"
+          : seedingStatusFilter === "todo"
+            ? "can-lien-he"
+            : seedingStatusFilter === "skip"
+              ? "khong-phu-hop"
+              : undefined;
+
+      // callFilter (sub-filter "Kết quả liên hệ" chỉ trong nhánh "todo") dùng chung tham số
+      // call_result_code với pill selectedCallResultCode của CallResultStatsWidget — ưu tiên
+      // pill nếu cả 2 cùng có giá trị. "none" (chưa liên hệ lần nào) không map được sang 1
+      // result_code cụ thể ở backend nên bỏ qua ở đây, vẫn lọc tiếp 1 lớp nhẹ ở client như cũ.
+      const effectiveCallResultCode =
+        selectedCallResultCode ||
+        (seedingStatusFilter === "todo" && callFilter !== "all" && callFilter !== "none" ? callFilter : undefined);
+
       const res = await fetchWithRetry(() =>
         allPlatformPostsService.filter({
           email: CURRENT_USER_EMAIL,
@@ -563,8 +592,12 @@ export function UnifiedDashboardHomeContent({
           content_type: filters.content_type || undefined,
           product_seeding: filters.product_seeding || undefined,
           search: filters.search || undefined,
-          call_result_code: selectedCallResultCode || undefined,
+          call_result_code: effectiveCallResultCode || undefined,
           contact_member_id: contactMemberId || undefined,
+          evaluation_code: evaluationCodeFilter,
+          service_area: serviceArea !== "all" ? serviceArea : undefined,
+          date_from: statsPeriodFrom || undefined,
+          date_to: statsPeriodTo || undefined,
           sort: filters.sort,
           page: requestPage,
           page_size: requestPageSize,
@@ -628,7 +661,19 @@ export function UnifiedDashboardHomeContent({
     } finally {
       setIsLoadingPosts(false);
     }
-  }, [CURRENT_USER_EMAIL, feedPlatform, filters, page, selectedCallResultCode, contactMemberId]);
+  }, [
+    CURRENT_USER_EMAIL,
+    feedPlatform,
+    filters,
+    page,
+    selectedCallResultCode,
+    contactMemberId,
+    seedingStatusFilter,
+    serviceArea,
+    callFilter,
+    statsPeriodFrom,
+    statsPeriodTo,
+  ]);
 
   // Việc 1 (2026-11-21): chuyển xuống dưới `fetchPosts` (vốn ở ngay trên) + bọc useCallback —
   // trước đây là hàm thường (tạo mới mỗi lần render), không vấn đề gì vì JSX gọi nó chỉ render
@@ -683,7 +728,6 @@ export function UnifiedDashboardHomeContent({
     filterDebounceRef.current = setTimeout(() => {
       setFilters(f);
       setPage(1);
-      setClientPage(1);
       // Phase 6: persist filter state in URL (refresh won't lose filters)
       if (typeof window !== "undefined") {
         const params = new URLSearchParams();
@@ -893,44 +937,46 @@ export function UnifiedDashboardHomeContent({
     [posts, serviceArea]
   );
 
-  // 4 metric summary counts
-  const seedingMetrics = useMemo(() => {
-    let todo = 0;
-    let doing = 0;
-    let done = 0;
-    let skip = 0;
-    let pending = 0;
+  // Badge số lượng cho dropdown "Trạng thái liên hệ" (2026-11-27) — COUNT THẬT từ DB qua
+  // allPlatformPostsService.getEvaluationStatusCounts(), KHÔNG còn đếm tay trên mảng `posts`
+  // đã tải (cách cũ `seedingMetrics` bị giới hạn cứng page_size=50 nên luôn ra số thấp hơn
+  // thực tế — xem báo cáo điều tra "Tổng bài 169 vs Chưa đánh giá 37"). Theo ĐÚNG kỳ đang chọn
+  // ở CallResultStatsWidget (statsPeriodFrom/To, đổi theo yêu cầu 2026-11-27 — trước đó cố ý
+  // KHÔNG theo kỳ) + platform + serviceArea (khu vực) — KHÔNG lọc theo seedingStatusFilter/
+  // callFilter (đây là bộ đếm CHO các lựa chọn đó, không phải theo chúng).
+  const [evaluationStatusCounts, setEvaluationStatusCounts] = useState({
+    all: 0,
+    "chua-danh-gia": 0,
+    "can-lien-he": 0,
+    "khong-phu-hop": 0,
+  });
 
-    areaPosts.forEach((p) => {
-      const { rating, call } = getPostRatingAndCall(p);
-      const isSkip = rating === "khong_phu_hop" || call === "invalid";
-      const isDoing = call === "consulting" || call === "waiting";
-      const isDone = call === "interested" || call === "refused" || call === "nointerest";
-      const isTodo = (rating === "can_lien_he" || call === "noanswer" || call === "callback") && !isSkip;
-      const isPending = (rating === "chua_danh_gia" || !rating) && !isSkip && !isTodo && !isDoing && !isDone;
-
-      if (isSkip) {
-        skip++;
-      } else if (isDoing) {
-        doing++;
-      } else if (isDone) {
-        done++;
-      } else if (isTodo) {
-        todo++;
-      } else if (isPending) {
-        pending++;
-      }
-    });
-
-    return {
-      all: areaPosts.length,
-      pending,
-      todo,
-      doing,
-      done,
-      skip,
+  useEffect(() => {
+    let cancelled = false;
+    allPlatformPostsService
+      .getEvaluationStatusCounts({
+        platform: feedPlatform,
+        service_area: serviceArea !== "all" ? serviceArea : undefined,
+        date_from: statsPeriodFrom || undefined,
+        date_to: statsPeriodTo || undefined,
+      })
+      .then((res) => {
+        if (!cancelled && res.success && res.data) {
+          setEvaluationStatusCounts({
+            all: res.data.all ?? 0,
+            "chua-danh-gia": res.data["chua-danh-gia"] ?? 0,
+            "can-lien-he": res.data["can-lien-he"] ?? 0,
+            "khong-phu-hop": res.data["khong-phu-hop"] ?? 0,
+          });
+        }
+      })
+      .catch(() => {
+        // Giữ số cũ, không chặn trang nếu lỗi tạm thời
+      });
+    return () => {
+      cancelled = true;
     };
-  }, [areaPosts, getPostRatingAndCall]);
+  }, [feedPlatform, serviceArea, statsPeriodFrom, statsPeriodTo]);
 
   const callResultOptions: [string, string][] = [
     ["all", "Tất cả"],
@@ -1007,26 +1053,19 @@ export function UnifiedDashboardHomeContent({
     });
   }, [areaPosts, seedingStatusFilter, callFilter, getPostRatingAndCall]);
 
-  const isClientFiltered = Boolean(
-    (seedingStatusFilter && seedingStatusFilter !== "all") ||
-    (callFilter && callFilter !== "all") ||
-    (filters.seeding_status && filters.seeding_status !== "all") ||
-    (serviceArea && serviceArea !== "all")
-  );
-
-  const CLIENT_PAGE_SIZE = 15;
-  const effectiveTotalCount = isClientFiltered ? visiblePosts.length : totalCount;
-  const effectiveTotalPages = isClientFiltered
-    ? Math.max(1, Math.ceil(visiblePosts.length / CLIENT_PAGE_SIZE))
-    : totalPages;
-  const currentPage = isClientFiltered ? clientPage : page;
+  // Phân trang (2026-11-27): seedingStatusFilter/serviceArea/callFilter (trừ "none") giờ đã
+  // lọc + phân trang THẬT ở backend (evaluation_code/service_area/call_result_code — xem
+  // fetchPosts() phía trên), nên không còn cần đường phân trang client riêng (CLIENT_PAGE_SIZE
+  // cũ chỉ cắt lát trên ĐÚNG 1 batch 50 bài đã tải, không phải tổng số thật — đúng lỗi "Tổng
+  // bài 169 vs Chưa đánh giá 37" đã điều tra). `visiblePosts` vẫn giữ nguyên (áp lại các điều
+  // kiện tương tự lên trang đã tải — vô hại, chỉ thật sự còn ý nghĩa cho callFilter==="none"
+  // không map được sang call_result_code ở backend).
+  const effectiveTotalCount = totalCount;
+  const effectiveTotalPages = totalPages;
+  const currentPage = page;
 
   const displayPosts = useMemo(() => {
-    const list = !isClientFiltered
-      ? visiblePosts
-      : visiblePosts.slice((clientPage - 1) * CLIENT_PAGE_SIZE, clientPage * CLIENT_PAGE_SIZE);
-
-    return list.map((p) => {
+    return visiblePosts.map((p) => {
       const pid = String(p.id || p.post_url || "");
       const idKey = p.id ? String(p.id) : "";
       const urlKey = p.post_url ? String(p.post_url) : "";
@@ -1049,21 +1088,14 @@ export function UnifiedDashboardHomeContent({
         lastCall: lastCall || p.last_call_at || "",
       };
     });
-  }, [visiblePosts, isClientFiltered, clientPage, getPostRatingAndCall, callsMap]);
+  }, [visiblePosts, getPostRatingAndCall, callsMap]);
 
   const handlePageChange = useCallback((newPage: number) => {
-    if (isClientFiltered) {
-      setClientPage(Math.max(1, Math.min(effectiveTotalPages, newPage)));
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    } else {
-      setPage(Math.max(1, Math.min(totalPages, newPage)));
-      if (typeof window !== "undefined") {
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
+    setPage(Math.max(1, Math.min(totalPages, newPage)));
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
     }
-  }, [isClientFiltered, effectiveTotalPages, totalPages]);
+  }, [totalPages]);
 
   // Tab theo team: "Tất cả" + từng team thật đang có trong hệ thống (list `teams`
   // đã fetch sẵn ở trên cho FilterBar) — tự động có tab mới khi admin tạo thêm team.
@@ -1099,12 +1131,12 @@ export function UnifiedDashboardHomeContent({
   // này qua mọi đường trên UI (dropdown/sidebar/widget's chip).
   const leadStatusDropdownOptions = useMemo(
     () => [
-      { value: "all", label: "Tất cả bài viết", count: seedingMetrics.all },
-      { value: "pending", label: postEvaluationLabels["chua-danh-gia"] || "Chưa đánh giá", count: seedingMetrics.pending },
-      { value: "todo", label: postEvaluationLabels["can-lien-he"] || "Cần liên hệ", count: seedingMetrics.todo },
-      { value: "skip", label: postEvaluationLabels["khong-phu-hop"] || "Chưa phù hợp (Bỏ qua)", count: seedingMetrics.skip },
+      { value: "all", label: "Tất cả bài viết", count: evaluationStatusCounts.all },
+      { value: "pending", label: postEvaluationLabels["chua-danh-gia"] || "Chưa đánh giá", count: evaluationStatusCounts["chua-danh-gia"] },
+      { value: "todo", label: postEvaluationLabels["can-lien-he"] || "Cần liên hệ", count: evaluationStatusCounts["can-lien-he"] },
+      { value: "skip", label: postEvaluationLabels["khong-phu-hop"] || "Chưa phù hợp (Bỏ qua)", count: evaluationStatusCounts["khong-phu-hop"] },
     ],
-    [seedingMetrics, postEvaluationLabels],
+    [evaluationStatusCounts, postEvaluationLabels],
   );
 
   // Việc 2 (gộp hàng tab team thật vào dropdown FilterBar) — cùng state/logic lọc cũ
@@ -1135,7 +1167,7 @@ export function UnifiedDashboardHomeContent({
           type="button"
           role="tab"
           aria-selected={feedPlatform === t.key}
-          onClick={() => { setFeedPlatform(t.key); setPage(1); setClientPage(1); }}
+          onClick={() => { setFeedPlatform(t.key); setPage(1); }}
           className={cn(
             "flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all cursor-pointer",
             feedPlatform === t.key
@@ -1315,7 +1347,7 @@ export function UnifiedDashboardHomeContent({
                   <button
                     key={key}
                     type="button"
-                    onClick={() => { setCallFilter(key); setPage(1); setClientPage(1); }}
+                    onClick={() => { setCallFilter(key); setPage(1); }}
                     className={cn(
                       "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer",
                       isSelected
@@ -1371,14 +1403,12 @@ export function UnifiedDashboardHomeContent({
                 setSeedingStatusFilter(value);
                 setCallFilter("all");
                 setPage(1);
-                setClientPage(1);
               }}
               teamTabOptions={teamTabDropdownOptions}
               teamTabValue={serviceArea}
               onTeamTabChange={(value) => {
                 setServiceArea(value);
                 setPage(1);
-                setClientPage(1);
               }}
             />
           </div>
@@ -1390,6 +1420,7 @@ export function UnifiedDashboardHomeContent({
             onSelectContactMember={setContactMemberId}
             platform={feedPlatform}
             userRole={user?.role}
+            onDateRangeChange={handleStatsPeriodChange}
           />
 
           {isLoadingPosts ? (
