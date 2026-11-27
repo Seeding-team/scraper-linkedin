@@ -3138,6 +3138,9 @@ export const postCallResultService = {
     member_id?: string;
     result_code?: string;
     team_id?: string;
+    /** True: bỏ giới hạn theo role (member/leader) — chỉ widget "Kết quả liên hệ" trên
+     * Dashboard chính dùng (2026-11-27), ai cũng thấy bản dữ liệu chung. */
+    ignore_role_scope?: boolean;
   }): Promise<ApiResponse<CallResultStats>> => {
     const searchParams = new URLSearchParams();
     if (params?.date_from) searchParams.set("date_from", params.date_from);
@@ -3146,6 +3149,7 @@ export const postCallResultService = {
     if (params?.platform) searchParams.set("platform", params.platform);
     if (params?.member_id) searchParams.set("member_id", params.member_id);
     if (params?.team_id) searchParams.set("team_id", params.team_id);
+    if (params?.ignore_role_scope) searchParams.set("ignore_role_scope", "true");
     const qs = searchParams.toString();
     return requestJson(`${BASE}/posts/call-results/stats${qs ? `?${qs}` : ""}`);
   },
@@ -3260,6 +3264,9 @@ interface ContactActivityQueryParams {
   date_to?: string;
   member_id?: string;
   team_id?: string;
+  /** True: bỏ giới hạn theo role (member/leader) — chỉ widget "Kết quả liên hệ" trên Dashboard
+   * chính dùng (2026-11-27), ai cũng thấy bản dữ liệu chung. */
+  ignore_role_scope?: boolean;
 }
 
 function buildContactActivityQuery(params?: ContactActivityQueryParams): URLSearchParams {
@@ -3269,6 +3276,7 @@ function buildContactActivityQuery(params?: ContactActivityQueryParams): URLSear
   if (params?.date_to) searchParams.set("date_to", params.date_to);
   if (params?.member_id) searchParams.set("member_id", params.member_id);
   if (params?.team_id) searchParams.set("team_id", params.team_id);
+  if (params?.ignore_role_scope) searchParams.set("ignore_role_scope", "true");
   return searchParams;
 }
 

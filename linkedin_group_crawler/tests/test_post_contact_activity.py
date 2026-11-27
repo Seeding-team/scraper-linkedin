@@ -863,3 +863,86 @@ def test_day_breakdown_by_member_falls_back_to_email_then_id(patched_clients):
     by_id = {m["member_id"]: m["member_name"] for m in days[0]["by_member"]}
     assert by_id["mem-c"] == "c@x.com"
     assert by_id["mem-d"] == "mem-d"
+
+
+# ---- ignore_role_scope (2026-11-27): widget "Kết quả liên hệ" trên Dashboard chính cho MỌI
+# role thấy bản dữ liệu chung, không bị ép về đúng mình (member) hay đúng team (leader) nữa. ----
+
+MEMBER_USER: dict[str, Any] = {"id": "mem-a", "role": "member"}
+
+
+def test_who_did_what_member_sees_only_self_by_default(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "created_at": ts_in, "member": MEMBER_A},
+        {"id_member": "mem-b", "created_at": ts_in, "member": MEMBER_B},
+    ]
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+
+    result = svc.get_who_did_what(MEMBER_USER, date_from="2026-11-10", date_to="2026-11-10")
+    assert {r["member_id"] for r in result} == {"mem-a"}
+
+
+def test_who_did_what_ignore_role_scope_lets_member_see_everyone(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "created_at": ts_in, "member": MEMBER_A},
+        {"id_member": "mem-b", "created_at": ts_in, "member": MEMBER_B},
+    ]
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+
+    result = svc.get_who_did_what(
+        MEMBER_USER, date_from="2026-11-10", date_to="2026-11-10", ignore_role_scope=True
+    )
+    assert {r["member_id"] for r in result} == {"mem-a", "mem-b"}
+
+
+def test_who_did_what_ignore_role_scope_lets_leader_see_outside_own_team(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+    fake_db.store["teams"] = [{"id": "team-1", "id_leader": "leader-1"}]
+    fake_db.store["member_of_teams"] = [{"id_member": "mem-a", "id_teams": "team-1"}]
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "created_at": ts_in, "member": MEMBER_A},
+        {"id_member": "mem-b", "created_at": ts_in, "member": MEMBER_B},  # khong thuoc team-1
+    ]
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+
+    scoped = svc.get_who_did_what(LEADER_USER, date_from="2026-11-10", date_to="2026-11-10")
+    assert {r["member_id"] for r in scoped} == {"mem-a"}
+
+    unscoped = svc.get_who_did_what(
+        LEADER_USER, date_from="2026-11-10", date_to="2026-11-10", ignore_role_scope=True
+    )
+    assert {r["member_id"] for r in unscoped} == {"mem-a", "mem-b"}
+
+
+def test_day_breakdown_and_activity_log_accept_ignore_role_scope(patched_clients):
+    fake_db = patched_clients
+    start_utc, _ = _bounds()
+    ts_in = _inside(start_utc)
+    fake_db.store["seeding_content_kpi"] = [
+        {"id_member": "mem-a", "id_post": "s1", "created_at": ts_in, "verify": False, "member": MEMBER_A},
+        {"id_member": "mem-b", "id_post": "s2", "created_at": ts_in, "verify": False, "member": MEMBER_B},
+    ]
+    fake_db.store["post_call_results"] = []
+    fake_db.store["zalo_inbox_kpi"] = []
+
+    days = svc.get_day_breakdown(
+        MEMBER_USER, date_from="2026-11-10", date_to="2026-11-10", ignore_role_scope=True
+    )
+    assert days[0]["seed"] == 2  # ca mem-a lan mem-b, khong chi mem-a
+
+    log = svc.get_activity_log(
+        MEMBER_USER, date_from="2026-11-10", date_to="2026-11-10", page=1, page_size=10,
+        ignore_role_scope=True,
+    )
+    assert log["total"] == 2
