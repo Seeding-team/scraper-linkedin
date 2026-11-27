@@ -1243,6 +1243,11 @@ export const allPlatformPostsService = {
     id_member?: string;
     call_result_code?: string;
     contact_member_id?: string;
+    // 2026-11-27: server-paginate đúng dropdown "Trạng thái liên hệ" (evaluation_code) +
+    // "Khu vực" (service_area, tên hiển thị team — KHÁC `team` ở trên là id_team) — thay cho
+    // cách lọc tay ở client vốn bị giới hạn cứng trong 1 batch page_size=50 đã tải.
+    evaluation_code?: string;
+    service_area?: string;
     search?: string;
     sort?: string;
     page?: number;
@@ -1273,6 +1278,25 @@ export const allPlatformPostsService = {
     }>
   > => {
     return requestJson(`${BASE}/unified/posts/filter`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** COUNT thật từ DB cho dropdown "Trạng thái liên hệ" — không giới hạn page_size=50 như
+   * cách đếm tay cũ ở client. `service_area`: tên hiển thị team (khớp matchesServiceArea ở
+   * FE) — KHÁC `team` (id_team) dùng ở getAll/filter phía trên. `date_from`/`date_to`
+   * (2026-11-27): đồng bộ đúng kỳ đang chọn ở CallResultStatsWidget — bỏ trống = toàn bộ
+   * lịch sử. */
+  getEvaluationStatusCounts: (payload: {
+    platform: string;
+    service_area?: string;
+    date_from?: string;
+    date_to?: string;
+  }): Promise<
+    ApiResponse<{ all: number; "chua-danh-gia": number; "can-lien-he": number; "khong-phu-hop": number }>
+  > => {
+    return requestJson(`${BASE}/unified/posts/evaluation-counts`, {
       method: "POST",
       body: JSON.stringify(payload),
     });

@@ -128,6 +128,8 @@ def _fetch_posts(
     page_size: int = 20,
     call_result_code: Optional[str] = None,
     contact_member_id: Optional[str] = None,
+    evaluation_code: Optional[str] = None,
+    service_area: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Fetch posts from a single table with full filter + sort + pagination.
 
@@ -153,6 +155,8 @@ def _fetch_posts(
             page_size=page_size,
             call_result_code=call_result_code,
             contact_member_id=contact_member_id,
+            evaluation_code=evaluation_code,
+            service_area=service_area,
         )
 
     sb = _supabase()
@@ -264,6 +268,14 @@ def _fetch_posts(
 
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if evaluation_code:
+        matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if service_area and service_area.lower() != "all":
+        matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if contact_member_id:
@@ -653,6 +665,83 @@ def _resolve_post_ids_by_contact_member(sb: Client, table: str, member_id: str) 
     return list(post_ids)
 
 
+def _resolve_post_ids_by_evaluation_status(sb: Client, table: str, evaluation_code: str) -> list[str]:
+    """post_id khớp đúng `evaluation_code` ('chua-danh-gia'/'can-lien-he'/'khong-phu-hop') —
+    2026-11-27, dùng để server-paginate đúng theo dropdown "Trạng thái liên hệ" (trước đây
+    FE tự lọc tay trên 1 batch nhỏ đã tải, xem get_evaluation_status_counts()).
+
+    'chua-danh-gia' là TRẠNG THÁI MẶC ĐỊNH (bài KHÔNG có dòng post_quick_review nào, hoặc có
+    dòng với evaluation_code='chua-danh-gia') — phải quét toàn bộ id trong bảng rồi loại trừ,
+    khác hẳn 2 trạng thái kia (truy vấn thẳng post_quick_review là đủ).
+    """
+    platform = _TABLE_PLATFORM.get(table)
+    if not platform:
+        return []
+
+    if evaluation_code != "chua-danh-gia":
+        res = (
+            sb.table("post_quick_review")
+            .select("post_id")
+            .eq("platform", platform)
+            .eq("evaluation_code", evaluation_code)
+            .execute()
+        )
+        return [str(r["post_id"]) for r in (res.data or []) if r.get("post_id")]
+
+    all_ids = {str(r["id"]) for r in (sb.table(table).select("id").execute().data or []) if r.get("id")}
+    reviewed = (
+        sb.table("post_quick_review")
+        .select("post_id, evaluation_code")
+        .eq("platform", platform)
+        .execute()
+    )
+    non_pending_ids = {
+        str(r["post_id"])
+        for r in (reviewed.data or [])
+        if r.get("post_id") and r.get("evaluation_code") not in (None, "chua-danh-gia")
+    }
+    return list(all_ids - non_pending_ids)
+
+
+def _resolve_post_ids_by_service_area(sb: Client, table: str, service_area: str) -> list[str]:
+    """post_id thuộc đúng khu vực/team hiển thị `service_area` (khớp `post.team`/
+    `matchesServiceArea` ở FE — KHÁC `team`/`id_team` dùng cho bộ lọc "Lĩnh vực" riêng) —
+    2026-11-27. facebook/linkedin qua group.id_team; threads/youtube qua member_of_teams
+    (giống hệt cách get_evaluation_status_counts() đã resolve, viết riêng ở đây để không rủi
+    ro sửa lại hàm đó đã có test)."""
+    team_rows = sb.table("teams").select("id, name_team").execute().data or []
+    team_id_by_name = {t["name_team"]: t["id"] for t in team_rows if t.get("name_team")}
+    allowed_team_id = team_id_by_name.get(service_area)
+    if allowed_team_id is None:
+        return []
+
+    group_fk = _POST_GROUP_FK.get(table)
+    if group_fk:
+        g_table = _GROUP_TABLE_FOR_POST_TABLE[table]
+        rows = sb.table(table).select(f"id, {group_fk}").execute().data or []
+        group_ids = {r[group_fk] for r in rows if r.get(group_fk)}
+        allowed_group_ids: set[str] = set()
+        if group_ids:
+            g_rows = sb.table(g_table).select("id, id_team").in_("id", list(group_ids)).execute().data or []
+            allowed_group_ids = {g["id"] for g in g_rows if g.get("id_team") == allowed_team_id}
+        return [r["id"] for r in rows if r.get(group_fk) in allowed_group_ids]
+
+    rows = sb.table(table).select("id, id_member").execute().data or []
+    member_ids = {r["id_member"] for r in rows if r.get("id_member")}
+    allowed_member_ids: set[str] = set()
+    if member_ids:
+        mot_rows = (
+            sb.table("member_of_teams")
+            .select("id_member, id_teams")
+            .in_("id_member", list(member_ids))
+            .execute()
+            .data
+            or []
+        )
+        allowed_member_ids = {m["id_member"] for m in mot_rows if m.get("id_teams") == allowed_team_id}
+    return [r["id"] for r in rows if r.get("id_member") in allowed_member_ids]
+
+
 def _fetch_keyword_posts(
     *,
     table: str,
@@ -667,6 +756,8 @@ def _fetch_keyword_posts(
     page_size: int,
     call_result_code: Optional[str] = None,
     contact_member_id: Optional[str] = None,
+    evaluation_code: Optional[str] = None,
+    service_area: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Bài Threads/YouTube (bảng threads_posts/youtube_posts, cào qua "Markee Seeding Extension").
 
@@ -704,6 +795,14 @@ def _fetch_keyword_posts(
 
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if evaluation_code:
+        matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
+        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+
+    if service_area and service_area.lower() != "all":
+        matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
         query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
 
     if contact_member_id:
@@ -1099,6 +1198,8 @@ def get_unified_posts(
     page_size: int = 20,
     call_result_code: Optional[str] = None,
     contact_member_id: Optional[str] = None,
+    evaluation_code: Optional[str] = None,
+    service_area: Optional[str] = None,
 ) -> dict[str, Any]:
     """Fetch posts from one or all platforms, fully filtered server-side."""
     platforms_to_fetch = _tables_for_platform(platform)
@@ -1137,6 +1238,8 @@ def get_unified_posts(
                 page_size=combined_limit,
                 call_result_code=call_result_code,
                 contact_member_id=contact_member_id,
+                evaluation_code=evaluation_code,
+                service_area=service_area,
             )
             # Add platform tag
             platform_name = table.replace("_posts", "")
@@ -1195,6 +1298,8 @@ def get_unified_posts(
             page_size=page_size,
             call_result_code=call_result_code,
             contact_member_id=contact_member_id,
+            evaluation_code=evaluation_code,
+            service_area=service_area,
         )
         platform_name = table.replace("_posts", "")
         for p in posts:
@@ -1385,6 +1490,123 @@ def _tables_for_platform(platform: str) -> list[str]:
     return [table] if table else ["facebook_posts", "linkedin_posts"]
 
 
+_EVALUATION_COUNT_BUCKETS = ("chua-danh-gia", "can-lien-he", "khong-phu-hop")
+_POST_GROUP_FK = {"facebook_posts": "group_id", "linkedin_posts": "id_group"}
+_GROUP_TABLE_FOR_POST_TABLE = {"facebook_posts": "facebook_groups", "linkedin_posts": "linkedin_groups"}
+
+
+def get_evaluation_status_counts(
+    *,
+    platform: str = "all",
+    service_area: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+) -> dict[str, int]:
+    """COUNT THẬT từ DB cho dropdown "Trạng thái liên hệ" (Post Feed, UnifiedDashboardHomeContent)
+    — thay cho cách đếm tay cũ ở client (`seedingMetrics`, useMemo trên mảng `posts` đã tải, bị
+    giới hạn cứng page_size=50 nên luôn ra số THẤP HƠN thực tế khi tổng số bài > 50).
+
+    `date_from`/`date_to` (2026-11-27): lọc theo ĐÚNG kỳ đang chọn ở CallResultStatsWidget —
+    trước đó cố tình KHÔNG lọc theo kỳ (toàn bộ lịch sử), nay đổi theo yêu cầu để badge + danh
+    sách bài bên dưới luôn cùng 1 phạm vi ngày với "Tổng bài" (xem báo cáo điều tra "Tổng bài
+    169 vs Chưa đánh giá 37" — gốc của tính năng này). None = không lọc (toàn bộ lịch sử).
+
+    `service_area`: tên hiển thị team gắn với bài (khớp đúng `post.team`/`matchesServiceArea` ở
+    FE — field `team` trong `UnifiedPostsRequest` là `id_team` dùng cho bộ lọc "Lĩnh vực" khác,
+    KHÔNG liên quan). None/"all" = không lọc khu vực.
+
+    Chỉ đếm 3 nhóm chính (chua-danh-gia/can-lien-he/khong-phu-hop) — khớp đúng 3 badge hiện có
+    trên dropdown; bài có evaluation_code khác (vd 'can-xem-xet', 'phu-hop') không rơi vào bucket
+    nào trong 3 cái này, giống hệt hành vi cũ ở client (cũng không match isPending/isTodo/isSkip).
+    Lưu ý: cách đếm cũ ở client CÒN gộp thêm `post_call_results.result_code` vào "Cần liên hệ"/
+    "Bỏ qua" (vd call=noanswer/callback cũng tính là "todo") — hàm này CHỈ dựa theo
+    evaluation_code thuần, đơn giản hoá có chủ đích theo đúng yêu cầu 2026-11-26.
+    """
+    sb = _supabase()
+    tables = _tables_for_platform(platform)
+    area = (service_area or "").strip()
+    filter_by_area = bool(area) and area.lower() != "all"
+    norm_from, norm_to = _normalize_vn_date_bounds(date_from, date_to)
+
+    counts: dict[str, int] = {"all": 0, **{b: 0 for b in _EVALUATION_COUNT_BUCKETS}}
+
+    team_id_by_name: dict[str, str] = {}
+    if filter_by_area:
+        team_rows = sb.table("teams").select("id, name_team").execute().data or []
+        team_id_by_name = {t["name_team"]: t["id"] for t in team_rows if t.get("name_team")}
+        allowed_team_id = team_id_by_name.get(area)
+        if allowed_team_id is None:
+            # Khu vực không khớp team nào đang có -> chắc chắn 0 bài, không cần quét bảng post.
+            return counts
+
+    for table in tables:
+        platform_name = _TABLE_PLATFORM.get(table, "facebook")
+        group_fk = _POST_GROUP_FK.get(table)
+        time_col = "post_time" if table == "threads_posts" else "crawl_date"
+
+        select_cols = f"id, {group_fk}" if group_fk else "id, id_member"
+
+        def _run_rows_query(t=table, s=select_cols, tc=time_col):
+            q = sb.table(t).select(s)
+            if norm_from:
+                q = q.gte(tc, norm_from)
+            if norm_to:
+                q = q.lte(tc, norm_to)
+            return q.execute()
+
+        rows = execute_supabase_query(_run_rows_query).data or []
+
+        post_ids: list[str]
+        if not filter_by_area:
+            post_ids = [r["id"] for r in rows if r.get("id")]
+        elif group_fk:
+            group_ids = {r[group_fk] for r in rows if r.get(group_fk)}
+            allowed_group_ids: set[str] = set()
+            if group_ids:
+                g_table = _GROUP_TABLE_FOR_POST_TABLE[table]
+                g_rows = execute_supabase_query(
+                    lambda gt=g_table, gids=list(group_ids): sb.table(gt)
+                    .select("id, id_team")
+                    .in_("id", gids)
+                    .execute()
+                ).data or []
+                allowed_group_ids = {g["id"] for g in g_rows if g.get("id_team") == allowed_team_id}
+            post_ids = [r["id"] for r in rows if r.get(group_fk) in allowed_group_ids]
+        else:
+            # threads_posts/youtube_posts: khu vực gắn theo NGƯỜI CÀO (id_member), giống cách
+            # _fetch_keyword_posts() resolve team_name cho mỗi bài.
+            member_ids = {r["id_member"] for r in rows if r.get("id_member")}
+            allowed_member_ids: set[str] = set()
+            if member_ids:
+                mot_rows = execute_supabase_query(
+                    lambda mids=list(member_ids): sb.table("member_of_teams")
+                    .select("id_member, id_teams")
+                    .in_("id_member", mids)
+                    .execute()
+                ).data or []
+                allowed_member_ids = {m["id_member"] for m in mot_rows if m.get("id_teams") == allowed_team_id}
+            post_ids = [r["id"] for r in rows if r.get("id_member") in allowed_member_ids]
+
+        if not post_ids:
+            continue
+
+        review_rows = execute_supabase_query(
+            lambda p=platform_name: sb.table("post_quick_review")
+            .select("post_id, evaluation_code")
+            .eq("platform", p)
+            .execute()
+        ).data or []
+        eval_by_post_id = {str(r["post_id"]): r.get("evaluation_code") for r in review_rows if r.get("post_id")}
+
+        for pid in post_ids:
+            code = eval_by_post_id.get(str(pid)) or "chua-danh-gia"
+            counts["all"] += 1
+            if code in counts:
+                counts[code] += 1
+
+    return counts
+
+
 def filter_unified_posts(
     *,
     email: str,
@@ -1406,6 +1628,8 @@ def filter_unified_posts(
     page_size: int = 20,
     call_result_code: Optional[str] = None,
     contact_member_id: Optional[str] = None,
+    evaluation_code: Optional[str] = None,
+    service_area: Optional[str] = None,
 ) -> dict[str, Any]:
     """Filter posts with ALL criteria applied server-side in Supabase."""
     date_from = date_from or date
@@ -1428,6 +1652,8 @@ def filter_unified_posts(
         page_size=page_size,
         call_result_code=call_result_code,
         contact_member_id=contact_member_id,
+        evaluation_code=evaluation_code,
+        service_area=service_area,
     )
 
 

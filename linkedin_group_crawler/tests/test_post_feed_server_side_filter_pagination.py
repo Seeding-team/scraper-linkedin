@@ -1,0 +1,215 @@
+"""Test cho server-side filter theo evaluation_code/service_area (2026-11-27) — thay thế
+cách phân trang CLIENT-SIDE cũ của trang Post Feed (dropdown "Trạng thái liên hệ" +
+"Khu vực"): trước đây khi lọc, FE tự lọc tay trên ĐÚNG 1 batch 50 bài đã tải (page_size=50
+cố định, không cộng dồn), nên danh sách hiển thị không bao giờ vượt quá 50 dù tổng số bài
+khớp bộ lọc lớn hơn nhiều. Giờ lọc + phân trang 50 bài/trang hoàn toàn ở backend.
+
+2 nhóm test:
+- Unit test cho 2 hàm resolver mới (`_resolve_post_ids_by_evaluation_status`,
+  `_resolve_post_ids_by_service_area`) với fake DB có dữ liệu thật.
+- Wiring test (spy query) xác nhận `_fetch_posts()`/`_fetch_keyword_posts()` có gọi đúng
+  `.in_("id", ...)` khi truyền `evaluation_code`/`service_area`.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from app.modules.all_platform.services import unified_posts_service as svc
+
+
+class _Result:
+    def __init__(self, data=None, count=0):
+        self.data = data or []
+        self.count = count
+
+
+# ── Fake DB co du lieu that, dung cho test resolver truc tiep ───────────────────────────
+
+
+class _FakeQuery:
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+        self.filters: list[tuple[str, Any, str]] = []
+
+    def select(self, *_a, **_kw):
+        return self
+
+    def eq(self, key, value):
+        self.filters.append((key, value, "eq"))
+        return self
+
+    def in_(self, key, values):
+        self.filters.append((key, set(values), "in_"))
+        return self
+
+    def _matches(self, row: dict) -> bool:
+        for key, value, kind in self.filters:
+            cur = row.get(key)
+            if kind == "eq" and cur != value:
+                return False
+            if kind == "in_" and cur not in value:
+                return False
+        return True
+
+    def execute(self):
+        matched = [r for r in self.rows if self._matches(r)]
+        return _Result([dict(r) for r in matched])
+
+
+class _FakeSupabase:
+    def __init__(self):
+        self.store: dict[str, list[dict]] = {}
+
+    def table(self, name: str) -> _FakeQuery:
+        return _FakeQuery(self.store.setdefault(name, []))
+
+
+@pytest.fixture
+def fake_db():
+    return _FakeSupabase()
+
+
+def test_resolve_by_evaluation_status_pending_defaults_for_posts_without_review(fake_db):
+    fake_db.store["facebook_posts"] = [
+        {"id": "fb-1"},
+        {"id": "fb-2"},
+        {"id": "fb-3"},
+    ]
+    fake_db.store["post_quick_review"] = [
+        {"post_id": "fb-1", "platform": "facebook", "evaluation_code": "can-lien-he"},
+        # fb-2: khong co dong nao -> mac dinh chua-danh-gia
+        {"post_id": "fb-3", "platform": "facebook", "evaluation_code": "chua-danh-gia"},
+    ]
+
+    pending_ids = svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "chua-danh-gia")
+
+    assert sorted(pending_ids) == ["fb-2", "fb-3"]
+
+
+def test_resolve_by_evaluation_status_explicit_codes(fake_db):
+    fake_db.store["post_quick_review"] = [
+        {"post_id": "fb-1", "platform": "facebook", "evaluation_code": "can-lien-he"},
+        {"post_id": "fb-2", "platform": "facebook", "evaluation_code": "khong-phu-hop"},
+        {"post_id": "li-1", "platform": "linkedin", "evaluation_code": "can-lien-he"},  # khac platform
+    ]
+
+    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "can-lien-he") == ["fb-1"]
+    assert svc._resolve_post_ids_by_evaluation_status(fake_db, "facebook_posts", "khong-phu-hop") == ["fb-2"]
+
+
+def test_resolve_by_service_area_facebook_via_group_id_team(fake_db):
+    fake_db.store["teams"] = [
+        {"id": "team-a", "name_team": "Team Dev"},
+        {"id": "team-b", "name_team": "Team Sale"},
+    ]
+    fake_db.store["facebook_groups"] = [
+        {"id": "grp-dev", "id_team": "team-a"},
+        {"id": "grp-sale", "id_team": "team-b"},
+    ]
+    fake_db.store["facebook_posts"] = [
+        {"id": "fb-dev-1", "group_id": "grp-dev"},
+        {"id": "fb-sale-1", "group_id": "grp-sale"},
+    ]
+
+    ids = svc._resolve_post_ids_by_service_area(fake_db, "facebook_posts", "Team Dev")
+
+    assert ids == ["fb-dev-1"]
+
+
+def test_resolve_by_service_area_threads_via_member_of_teams(fake_db):
+    fake_db.store["teams"] = [{"id": "team-a", "name_team": "Team Dev"}]
+    fake_db.store["member_of_teams"] = [
+        {"id_member": "mem-1", "id_teams": "team-a"},
+        {"id_member": "mem-2", "id_teams": "team-b"},
+    ]
+    fake_db.store["threads_posts"] = [
+        {"id": "th-1", "id_member": "mem-1"},
+        {"id": "th-2", "id_member": "mem-2"},
+    ]
+
+    ids = svc._resolve_post_ids_by_service_area(fake_db, "threads_posts", "Team Dev")
+
+    assert ids == ["th-1"]
+
+
+def test_resolve_by_service_area_unknown_team_returns_empty(fake_db):
+    fake_db.store["teams"] = [{"id": "team-a", "name_team": "Team Dev"}]
+
+    assert svc._resolve_post_ids_by_service_area(fake_db, "facebook_posts", "Khong Ton Tai") == []
+
+
+# ── Wiring test: _fetch_posts()/_fetch_keyword_posts() phai goi .in_("id", ...) dung luc ──
+
+
+class _RecordingQuery:
+    """Tra ve chinh no cho moi method chain, ghi lai (ten method, args, kwargs)."""
+
+    def __init__(self, calls: list[tuple[str, tuple, dict]]):
+        self._calls = calls
+
+    def execute(self):
+        self._calls.append(("execute", (), {}))
+        return _Result([], 0)
+
+    def __getattr__(self, name: str):
+        def _method(*args, **kwargs):
+            self._calls.append((name, args, kwargs))
+            return self
+        return _method
+
+
+class _RecordingSupabase:
+    def __init__(self, calls: list[tuple[str, tuple, dict]]):
+        self._calls = calls
+
+    def table(self, _name: str):
+        return _RecordingQuery(self._calls)
+
+
+def test_fetch_posts_facebook_applies_evaluation_code_and_service_area_filters(monkeypatch):
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls))
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ["fb-1", "fb-2"])
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_service_area", lambda sb, t, area: ["fb-1"])
+
+    svc._fetch_posts(
+        table="facebook_posts",
+        email="",
+        sort="latest",
+        page=1,
+        page_size=50,
+        evaluation_code="chua-danh-gia",
+        service_area="Team Dev",
+    )
+
+    in_id_calls = [args[1] for name, args, _kw in calls if name == "in_" and args and args[0] == "id"]
+    assert {"fb-1", "fb-2"} in [set(v) for v in in_id_calls]
+    assert {"fb-1"} in [set(v) for v in in_id_calls]
+
+
+def test_fetch_keyword_posts_threads_applies_evaluation_code_and_service_area_filters(monkeypatch):
+    calls: list[tuple[str, tuple, dict]] = []
+    monkeypatch.setattr(svc, "get_supabase_client", lambda: _RecordingSupabase(calls))
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_evaluation_status", lambda sb, t, code: ["th-1"])
+    monkeypatch.setattr(svc, "_resolve_post_ids_by_service_area", lambda sb, t, area: ["th-1"])
+
+    svc._fetch_keyword_posts(
+        table="threads_posts",
+        email="",
+        date_from=None,
+        date_to=None,
+        has_taxonomy_filter=False,
+        id_member=None,
+        search=None,
+        sort="latest",
+        page=1,
+        page_size=50,
+        evaluation_code="can-lien-he",
+        service_area="Team Dev",
+    )
+
+    in_id_calls = [args[1] for name, args, _kw in calls if name == "in_" and args and args[0] == "id"]
+    assert {"th-1"} in [set(v) for v in in_id_calls]

@@ -14,6 +14,7 @@ from app.core.supabase_client import (
 )
 from app.modules.all_platform.schemas import BaseResponse
 from app.modules.all_platform.schemas.posts import (
+    EvaluationStatusCountsRequest,
     UnifiedPostsRequest,
     UnifiedFilterRequest,
     PostSeedingRosterRequest,
@@ -22,6 +23,7 @@ from app.modules.all_platform.schemas.posts import (
     RecordCrawlRoundRequest,
 )
 from app.modules.all_platform.services.unified_posts_service import (
+    get_evaluation_status_counts,
     get_unified_posts,
     filter_unified_posts,
     get_unified_stats,
@@ -93,6 +95,22 @@ def unified_get_posts(payload: UnifiedPostsRequest) -> BaseResponse:
         return _fail(e)
 
 
+@router.post("/posts/evaluation-counts")
+def unified_get_evaluation_status_counts(payload: EvaluationStatusCountsRequest) -> BaseResponse:
+    """COUNT thật từ DB cho dropdown "Trạng thái liên hệ" (Post Feed) — thay cho cách đếm tay
+    cũ ở client vốn bị giới hạn cứng page_size=50 (xem get_evaluation_status_counts)."""
+    try:
+        data = get_evaluation_status_counts(
+            platform=payload.platform,
+            service_area=payload.service_area,
+            date_from=payload.date_from,
+            date_to=payload.date_to,
+        )
+        return BaseResponse(success=True, data=data)
+    except Exception as e:
+        return _fail(e)
+
+
 @router.post("/posts/filter")
 def unified_filter_posts(payload: UnifiedFilterRequest) -> BaseResponse:
     """Filter posts from all platforms with full criteria — server-side."""
@@ -114,6 +132,8 @@ def unified_filter_posts(payload: UnifiedFilterRequest) -> BaseResponse:
             id_member=payload.id_member,
             call_result_code=payload.call_result_code,
             contact_member_id=payload.contact_member_id,
+            evaluation_code=payload.evaluation_code,
+            service_area=payload.service_area,
             sort=payload.sort,
             page=payload.page,
             page_size=payload.page_size,
