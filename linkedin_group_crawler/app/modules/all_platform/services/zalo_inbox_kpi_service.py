@@ -956,6 +956,7 @@ def get_post_feed_message_stats(
     date_to: Optional[str] = None,
     member_id: Optional[str] = None,
     team_id: Optional[str] = None,
+    ignore_role_scope: bool = False,
     *,
     supabase: Optional[Client] = None,
 ) -> Dict[str, Any]:
@@ -966,7 +967,9 @@ def get_post_feed_message_stats(
 
     Phân quyền giống hệt ``post_call_result_service.get_call_result_stats`` (tái dùng
     ``_resolve_scoped_member_ids``): member chỉ thấy của mình, leader thấy team mình quản lý,
-    admin thấy toàn bộ hoặc lọc theo ``member_id``.
+    admin thấy toàn bộ hoặc lọc theo ``member_id``. ``ignore_role_scope``: chỉ widget "Kết quả
+    liên hệ" trên Dashboard chính truyền ``True`` (bỏ giới hạn theo role) — xem docstring
+    ``_resolve_scoped_member_ids``.
 
     "sent" đếm theo ``first_outbound_at`` (lần đầu gửi) trong kỳ; "replied" đếm theo
     ``first_customer_msg_at`` (lần đầu khách nhắn lại) trong kỳ — 2 field độc lập nên 1 dòng có
@@ -978,7 +981,7 @@ def get_post_feed_message_stats(
     )
 
     sb = supabase or get_supabase_client()
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id, ignore_role_scope=ignore_role_scope)
     unreachable = ["00000000-0000-0000-0000-000000000000"]
 
     s_str, e_str, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)

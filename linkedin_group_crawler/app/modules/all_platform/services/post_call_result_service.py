@@ -172,7 +172,11 @@ def _team_roster(team_id: str) -> list[str]:
 
 
 def _resolve_scoped_member_ids(
-    user: dict[str, Any], member_id: Optional[str], team_id: Optional[str] = None
+    user: dict[str, Any],
+    member_id: Optional[str],
+    team_id: Optional[str] = None,
+    *,
+    ignore_role_scope: bool = False,
 ) -> Optional[list[str]]:
     """Trả list id_member được phép xem thống kê, hoặc None nếu không giới hạn (admin, không lọc).
 
@@ -192,8 +196,15 @@ def _resolve_scoped_member_ids(
       rỗng an toàn, không lỗi. `member_id` (nếu có) phải nằm trong tập cuối cùng.
     - admin: `team_id` giới hạn theo đúng roster team đó (không giới hạn role);
       không có `team_id`/`member_id` thì None (không giới hạn).
+
+    `ignore_role_scope` (2026-11-27): widget "Kết quả liên hệ" trên Dashboard chính cố ý
+    cho MỌI role thấy bản dữ liệu chung (không giới hạn member/leader theo role nữa) —
+    xử lý bằng cách coi role như "admin" ở đây (vẫn tôn trọng `team_id`/`member_id` nếu FE
+    có truyền). KHÔNG đổi behavior mặc định (`False`) để Dashboard Leader và các nơi khác
+    đang dùng chung hàm này (Member360Drawer, TabContactResults, exportCsv, overdue-callbacks,
+    zalo-followup-count, seeding-group-coverage) giữ nguyên phân quyền cũ.
     """
-    role = str(user.get("role") or "member").strip().lower()
+    role = "admin" if ignore_role_scope else str(user.get("role") or "member").strip().lower()
     user_id = user.get("id")
 
     if role == "member":
@@ -243,6 +254,7 @@ def get_call_result_stats(
     member_id: Optional[str] = None,
     result_code: Optional[str] = None,
     team_id: Optional[str] = None,
+    ignore_role_scope: bool = False,
 ) -> dict[str, Any]:
     """Thống kê "Kết quả liên hệ" theo loại / theo thành viên / theo ngày (giờ VN).
 
@@ -266,7 +278,7 @@ def get_call_result_stats(
         start_d, end_d = end_d, start_d
     start_utc, end_utc = _vn_week_range_to_utc(start_d.isoformat(), end_d.isoformat())
 
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id, ignore_role_scope=ignore_role_scope)
 
     query = (
         supabase.table("post_call_results")

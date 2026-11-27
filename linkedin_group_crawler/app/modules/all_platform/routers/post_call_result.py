@@ -44,6 +44,7 @@ def get_post_call_result_stats(
     member_id: Optional[str] = Query(None, description="Chỉ admin/leader dùng để lọc theo 1 thành viên."),
     result_code: Optional[str] = Query(None, description="Lọc by_member/by_day theo đúng loại này (khớp pill FE đang chọn)."),
     team_id: Optional[str] = Query(None, description="Lọc theo 1 Team (Dashboard Leader)."),
+    ignore_role_scope: bool = Query(False, description="True: bỏ giới hạn theo role (member/leader), ai cũng thấy bản chung — chỉ widget 'Kết quả liên hệ' trên Dashboard chính truyền cờ này."),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Thống kê Kết quả liên hệ theo loại / theo thành viên / theo ngày.
@@ -60,6 +61,7 @@ def get_post_call_result_stats(
             member_id=member_id,
             result_code=result_code,
             team_id=team_id,
+            ignore_role_scope=ignore_role_scope,
         )
         return BaseResponse(success=True, data=data, message="Thành công")
     except Exception as exc:
@@ -73,6 +75,7 @@ def get_contact_activity_who(
     date_to: Optional[str] = Query(None),
     member_id: Optional[str] = Query(None),
     team_id: Optional[str] = Query(None, description="Lọc theo 1 Team (Dashboard Leader)."),
+    ignore_role_scope: bool = Query(False, description="True: bỏ giới hạn theo role (member/leader), ai cũng thấy bản chung — chỉ widget 'Kết quả liên hệ' trên Dashboard chính truyền cờ này."),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Thanh "Ai đã làm" (who-bar): tổng seeding + gọi điện + nhắn Zalo theo từng thành viên trong kỳ."""
@@ -84,6 +87,7 @@ def get_contact_activity_who(
             date_to=date_to,
             member_id=member_id,
             team_id=team_id,
+            ignore_role_scope=ignore_role_scope,
         )
         return BaseResponse(success=True, data=data, message="Thành công")
     except Exception as exc:
@@ -104,6 +108,7 @@ def get_contact_activity_log(
     search: Optional[str] = Query(None, description="Lọc hậu kỳ theo tên thành viên hoặc bài viết (không phân biệt hoa/thường)."),
     page: int = Query(1),
     page_size: int = Query(10, le=2000, description="Tối đa 2000 (dùng khi xuất CSV lấy toàn bộ theo bộ lọc, không phân trang UI)."),
+    ignore_role_scope: bool = Query(False, description="True: bỏ giới hạn theo role (member/leader), ai cũng thấy bản chung — chỉ widget 'Kết quả liên hệ' trên Dashboard chính truyền cờ này."),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Nhật ký hoạt động: gộp seeding + gọi điện + nhắn Zalo, phân trang."""
@@ -122,6 +127,7 @@ def get_contact_activity_log(
             search=search,
             page=page,
             page_size=page_size,
+            ignore_role_scope=ignore_role_scope,
         )
         return BaseResponse(success=True, data=data, message="Thành công")
     except Exception as exc:
@@ -135,6 +141,7 @@ def get_contact_activity_by_day(
     date_to: Optional[str] = Query(None),
     member_id: Optional[str] = Query(None),
     team_id: Optional[str] = Query(None, description="Lọc theo 1 Team (Dashboard Leader)."),
+    ignore_role_scope: bool = Query(False, description="True: bỏ giới hạn theo role (member/leader), ai cũng thấy bản chung — chỉ widget 'Kết quả liên hệ' trên Dashboard chính truyền cờ này."),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Tab "Theo ngày": seeding + gọi điện (OK/BAD) + Zalo (gửi/trả lời) theo từng ngày, đủ mọi
@@ -147,6 +154,7 @@ def get_contact_activity_by_day(
             date_to=date_to,
             member_id=member_id,
             team_id=team_id,
+            ignore_role_scope=ignore_role_scope,
         )
         return BaseResponse(success=True, data=data, message="Thành công")
     except Exception as exc:
@@ -160,6 +168,7 @@ def get_zalo_message_stats(
     date_to: Optional[str] = Query(None),
     member_id: Optional[str] = Query(None),
     team_id: Optional[str] = Query(None, description="Lọc theo 1 Team (Dashboard Leader)."),
+    ignore_role_scope: bool = Query(False, description="True: bỏ giới hạn theo role (member/leader), ai cũng thấy bản chung — chỉ widget 'Kết quả liên hệ' trên Dashboard chính truyền cờ này."),
     user: dict[str, Any] = Depends(get_current_user),
 ) -> BaseResponse:
     """Thống kê 'Tin nhắn Zalo đã gửi' / 'Khách đã phản hồi' (nguồn Post Feed)."""
@@ -171,6 +180,7 @@ def get_zalo_message_stats(
             date_to=date_to,
             member_id=member_id,
             team_id=team_id,
+            ignore_role_scope=ignore_role_scope,
         )
         return BaseResponse(success=True, data=data, message="Thành công")
     except Exception as exc:

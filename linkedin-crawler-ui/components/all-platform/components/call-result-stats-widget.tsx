@@ -17,6 +17,7 @@ import {
 import { getInitials } from "@/components/all-platform/layout/AllPlatformSidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { vnTodayIso } from "@/lib/vnDate";
+import { useAppAuth } from "@/contexts/AppAuthContext";
 
 interface CallResultStatsWidgetProps {
   selectedCode: string | null;
@@ -57,6 +58,14 @@ const OVERFLOW_PRESETS: [PresetKey, string][] = [
   ["lastQuarter", "Quý trước"],
   ["thisYear", "Năm nay"],
 ];
+
+// Mỗi user tự nhớ kỳ đã chọn lần trước (riêng theo id, không dùng chung 1 key) — mặc định
+// vẫn là "today" khi chưa từng chọn gì (lần đầu dùng, hoặc localStorage bị chặn).
+const PERIOD_PREF_STORAGE_PREFIX = "mk_call_result_period:";
+
+function isPresetKey(value: string): value is PresetKey {
+  return [...PINNED_PRESETS, ...OVERFLOW_PRESETS].some(([key]) => key === value);
+}
 
 // 8 mã call_result thật (migration 215) — nhóm cố định, không lấy từ API vì đây chỉ là
 // cách TRÌNH BÀY (chia 2 cột Thành công/Thất bại), không phải dữ liệu nghiệp vụ mới.
@@ -253,16 +262,19 @@ export function CallResultStatsWidget({
 }: CallResultStatsWidgetProps) {
   // Bộ lọc thời gian "pinned + overflow": preset chỉ set giá trị khởi tạo, sau đó date_from/date_to
   // committed (dùng để fetch) và draft (gắn trực tiếp vào 2 input ngày) tách riêng — xem applyPreset/
-  // handleDraftDateChange bên dưới.
-  const initialRange = useMemo(() => presetRange("thisWeek"), []);
+  // handleDraftDateChange bên dưới. Mặc định "today"; kỳ đã chọn lần trước của user (nếu có) được
+  // khôi phục ở effect restorePeriodPref bên dưới sau khi user.id sẵn sàng.
+  const initialRange = useMemo(() => presetRange("today"), []);
   const [dateFrom, setDateFrom] = useState(initialRange.date_from);
   const [dateTo, setDateTo] = useState(initialRange.date_to);
   const [draftFrom, setDraftFrom] = useState(initialRange.date_from);
   const [draftTo, setDraftTo] = useState(initialRange.date_to);
-  const [activePreset, setActivePreset] = useState<PresetKey | null>("thisWeek");
+  const [activePreset, setActivePreset] = useState<PresetKey | null>("today");
   const [dateRangeError, setDateRangeError] = useState<string | null>(null);
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
+  const { user } = useAppAuth();
+  const didRestorePeriodPrefRef = useRef(false);
 
   const [expanded, setExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("member");
@@ -307,7 +319,31 @@ export function CallResultStatsWidget({
     setActivePreset(preset);
     setDateRangeError(null);
     setIsOverflowOpen(false);
-  }, []);
+    if (user?.id) {
+      try {
+        window.localStorage.setItem(`${PERIOD_PREF_STORAGE_PREFIX}${user.id}`, preset);
+      } catch {
+        // ignore — localStorage có thể bị chặn (private mode...)
+      }
+    }
+  }, [user?.id]);
+
+  // Khôi phục kỳ đã chọn lần trước CỦA ĐÚNG USER này (key riêng theo id, không dùng chung) —
+  // chỉ chạy đúng 1 lần khi user.id vừa sẵn sàng; nếu không có gì đã lưu thì giữ nguyên mặc
+  // định "today" đã set ở state khởi tạo.
+  useEffect(() => {
+    if (didRestorePeriodPrefRef.current) return;
+    if (!user?.id) return;
+    didRestorePeriodPrefRef.current = true;
+    try {
+      const saved = window.localStorage.getItem(`${PERIOD_PREF_STORAGE_PREFIX}${user.id}`);
+      if (saved && isPresetKey(saved) && saved !== "today") {
+        applyPreset(saved);
+      }
+    } catch {
+      // ignore — localStorage có thể bị chặn (private mode...)
+    }
+  }, [user?.id, applyPreset]);
 
   const handleDraftDateChange = useCallback((which: "from" | "to", value: string) => {
     if (which === "from") setDraftFrom(value);
@@ -351,6 +387,10 @@ export function CallResultStatsWidget({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [isOverflowOpen]);
 
+  // `ignore_role_scope: true` ở mọi lệnh gọi trong widget này (2026-11-27): cố ý cho MỌI
+  // role (member/leader/admin) thấy chung 1 bản dữ liệu toàn công ty ở widget Dashboard
+  // chính — KHÔNG đụng tới phân quyền member/leader ở Dashboard Leader (nơi khác gọi cùng
+  // API nhưng không truyền cờ này).
   const fetchOverview = useCallback(async () => {
     setIsLoading(true);
     try {
@@ -361,17 +401,20 @@ export function CallResultStatsWidget({
           platform: resolvedPlatform,
           result_code: selectedCode || undefined,
           member_id: contactMemberId || undefined,
+          ignore_role_scope: true,
         }),
         postContactActivityService.getZaloMessageStats({
           date_from,
           date_to,
           platform: resolvedPlatform,
           member_id: contactMemberId || undefined,
+          ignore_role_scope: true,
         }),
         postContactActivityService.getWhoDidWhat({
           date_from,
           date_to,
           platform: resolvedPlatform,
+          ignore_role_scope: true,
         }),
       ]);
       if (callRes.success && callRes.data) setCallStats(callRes.data);
@@ -399,6 +442,7 @@ export function CallResultStatsWidget({
         action_type: logActionFilter || undefined,
         page: logPage,
         page_size: LOG_PAGE_SIZE,
+        ignore_role_scope: true,
       });
       if (res.success && res.data) {
         setLogItems(res.data.items);
@@ -429,6 +473,7 @@ export function CallResultStatsWidget({
         date_to,
         platform: resolvedPlatform,
         member_id: contactMemberId || undefined,
+        ignore_role_scope: true,
       });
       if (res.success && res.data) setDayRows(res.data);
     } catch {

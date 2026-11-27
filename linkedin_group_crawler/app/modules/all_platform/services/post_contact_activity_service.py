@@ -54,15 +54,18 @@ def get_who_did_what(
     date_to: Optional[str] = None,
     member_id: Optional[str] = None,
     team_id: Optional[str] = None,
+    ignore_role_scope: bool = False,
 ) -> list[dict[str, Any]]:
     """Tổng số hành động (seeding + gọi điện + nhắn Zalo) theo từng thành viên trong kỳ, cho
     thanh "Ai đã làm {kỳ}" — vừa để hiển thị vừa để bấm lọc nhanh 1 thành viên.
 
     Phân quyền giống hệt ``post_call_result_service.get_call_result_stats`` (tái dùng
-    ``_resolve_scoped_member_ids``).
+    ``_resolve_scoped_member_ids``). ``ignore_role_scope``: xem docstring
+    ``_resolve_scoped_member_ids`` — chỉ widget "Kết quả liên hệ" trên Dashboard chính truyền
+    ``True``, Dashboard Leader/Member360Drawer/exportCsv không đổi hành vi.
     """
     sb = get_supabase_client()
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id, ignore_role_scope=ignore_role_scope)
     _, _, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)
 
     totals: dict[str, dict[str, Any]] = {}
@@ -168,6 +171,7 @@ def get_day_breakdown(
     date_to: Optional[str] = None,
     member_id: Optional[str] = None,
     team_id: Optional[str] = None,
+    ignore_role_scope: bool = False,
 ) -> list[dict[str, Any]]:
     """Bảng "Theo ngày": seeding + gọi điện (tách OK/BAD) + Zalo (gửi/trả lời) theo từng ngày
     (giờ VN), đầy đủ MỌI ngày trong ``[date_from, date_to]`` kể cả ngày không có hoạt động nào —
@@ -182,7 +186,7 @@ def get_day_breakdown(
     để 2 tab "Theo thành viên" và "Theo ngày" luôn ra cùng tổng với cùng bộ lọc.
     """
     sb = get_supabase_client()
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id, ignore_role_scope=ignore_role_scope)
     start_vn, end_vn, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)
 
     days: dict[str, dict[str, Any]] = {}
@@ -434,6 +438,7 @@ def get_activity_log(
     search: Optional[str] = None,
     page: int = 1,
     page_size: int = 10,
+    ignore_role_scope: bool = False,
     *,
     max_rows_per_source: int = 500,
 ) -> dict[str, Any]:
@@ -454,7 +459,7 @@ def get_activity_log(
     `member_name`/`post_label` — không có khái niệm "tên khách hàng" chung cho cả 3 nguồn.
     """
     sb = get_supabase_client()
-    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id)
+    allowed_member_ids = _resolve_scoped_member_ids(user, member_id, team_id, ignore_role_scope=ignore_role_scope)
     _, _, start_utc, end_utc = _vn_range_to_utc_bounds(date_from, date_to)
     now_utc = datetime.now(timezone.utc)
 
