@@ -107,6 +107,54 @@ def _normalize_vn_date_bounds(
     return norm_from, norm_to
 
 
+def _execute_with_id_predicates(
+    query,
+    id_predicates: list[tuple[str, set[str]]],
+    *,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict], int]:
+    """Thực thi `query` (đã có đủ order + mọi filter KHÔNG phải id) và áp `id_predicates`
+    (`[("in"|"not_in", ids), ...]` từ call_result_code/evaluation_code/service_area/
+    contact_member_id) — 2026-11-27 hotfix 414 Request-URI Too Large.
+
+    Không còn `.in_("id", ids)`/`.not_.in_("id", ids)` thẳng vào query PostgREST nữa: danh
+    sách id resolve ở Python (từ 4 resolver trên) có thể lớn tuỳ quy mô dữ liệu thực tế theo
+    cả 2 CHIỀU (vd sau đợt backfill `auto_reject_legacy_low_lead_score_posts`/
+    `auto_reject_null_lead_score_backlog` làm tập "đã đánh giá" cũng phình to không kém tập
+    "chưa đánh giá") — nhồi vào query string làm URL vượt giới hạn, openresty trả 414, sập cả
+    Post Feed. Khi có predicate, fetch TOÀN BỘ bản ghi khớp các điều kiện còn lại (không
+    `.range()` ở DB) rồi lọc + đếm + phân trang bằng Python — tốn hơn 1 round-trip full-scan
+    nhưng không bao giờ vượt giới hạn URL bất kể tập id lớn tới đâu. Không có predicate nào
+    thì giữ nguyên đường cũ (phân trang thật ở DB, nhanh, không đổi hành vi cho mọi request
+    hiện có không dùng 4 filter này).
+    """
+    if not id_predicates:
+        offset = (page - 1) * page_size
+        result = query.range(offset, offset + page_size - 1).execute()
+        posts = result.data or []
+        total = result.count or len(posts)
+        return posts, total
+
+    result = query.execute()
+    all_rows = result.data or []
+
+    def _matches(row: dict) -> bool:
+        rid = str(row.get("id"))
+        for mode, ids in id_predicates:
+            if mode == "in" and rid not in ids:
+                return False
+            if mode == "not_in" and rid in ids:
+                return False
+        return True
+
+    filtered_rows = [r for r in all_rows if _matches(r)]
+    total = len(filtered_rows)
+    offset = (page - 1) * page_size
+    posts = filtered_rows[offset : offset + page_size]
+    return posts, total
+
+
 @retry_on_winerror
 def _fetch_posts(
     *,
@@ -266,25 +314,31 @@ def _fetch_posts(
     if search:
         query = query.ilike("content", f"%{search}%")
 
+    # 2026-11-27 hotfix (2a lan, xem _apply_resolved_id_predicates): resolver tra ve id cho
+    # call_result_code/evaluation_code/service_area/contact_member_id duoc kiem tra lai bang
+    # PYTHON SAU KHI fetch, KHONG con `.in_()`/`.not_.in_()` thang vao query PostgREST nua -
+    # danh sach id resolve duoc (ca 2 chieu IN lan NOT IN) co the lon tuy quy mo du lieu thuc
+    # te (vd dot backfill auto-reject hang loat truoc do tao ra hang nghin dong
+    # post_quick_review), nhoi thang vao query string se bi openresty tra 414 Request-URI Too
+    # Large (sap production that 2026-11-27, ngay ca sau khi da doi evaluation_code sang
+    # not_in tren tap "tuong doi nho hon" - tap do van co the lon khong kem).
+    id_predicates: list[tuple[str, set[str]]] = []
+
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     if evaluation_code:
         eval_mode, matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
-        if eval_mode == "not_in":
-            if matched_ids:
-                query = query.not_.in_("id", matched_ids)
-        else:
-            query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append((eval_mode, set(matched_ids)))
 
     if service_area and service_area.lower() != "all":
         matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     if contact_member_id:
         matched_ids = _resolve_post_ids_by_contact_member(sb, table, contact_member_id)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     # Sort
     if sort == "lead_score_high":
@@ -313,13 +367,7 @@ def _fetch_posts(
     else:  # latest
         query = query.order("crawl_date", desc=True, nullsfirst=False)
 
-    # Pagination
-    offset = (page - 1) * page_size
-    query = query.range(offset, offset + page_size - 1)
-
-    result = query.execute()
-    posts = result.data or []
-    total = result.count or len(posts)
+    posts, total = _execute_with_id_predicates(query, id_predicates, page=page, page_size=page_size)
 
     if not posts:
         return posts, total
@@ -807,25 +855,25 @@ def _fetch_keyword_posts(
     if search:
         query = query.ilike("content", f"%{search}%")
 
+    # Xem _execute_with_id_predicates: id resolve o Python duoc kiem tra lai SAU KHI fetch,
+    # khong con nhoi .in_()/.not_.in_() vao query PostgREST (hotfix 414 2026-11-27).
+    id_predicates: list[tuple[str, set[str]]] = []
+
     if call_result_code:
         matched_ids = _resolve_post_ids_by_call_result(sb, table, call_result_code)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     if evaluation_code:
         eval_mode, matched_ids = _resolve_post_ids_by_evaluation_status(sb, table, evaluation_code)
-        if eval_mode == "not_in":
-            if matched_ids:
-                query = query.not_.in_("id", matched_ids)
-        else:
-            query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append((eval_mode, set(matched_ids)))
 
     if service_area and service_area.lower() != "all":
         matched_ids = _resolve_post_ids_by_service_area(sb, table, service_area)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     if contact_member_id:
         matched_ids = _resolve_post_ids_by_contact_member(sb, table, contact_member_id)
-        query = query.in_("id", matched_ids or ["00000000-0000-0000-0000-000000000000"])
+        id_predicates.append(("in", set(matched_ids)))
 
     if sort == "lead_score_high":
         # Viec B (2026-11-26): giong het nhanh facebook_posts/linkedin_posts o tren -
@@ -849,10 +897,7 @@ def _fetch_keyword_posts(
         else:
             query = query.order("crawl_date", desc=True, nullsfirst=False)
 
-    offset = (page - 1) * page_size
-    result = query.range(offset, offset + page_size - 1).execute()
-    posts = result.data or []
-    total = result.count or len(posts)
+    posts, total = _execute_with_id_predicates(query, id_predicates, page=page, page_size=page_size)
     if not posts:
         return posts, total
 
