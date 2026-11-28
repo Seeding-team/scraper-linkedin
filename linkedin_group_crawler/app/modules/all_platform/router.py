@@ -617,3 +617,8 @@ all_platform_router.include_router(
     prefix="/public-crawler",
     tags=["All-Platform Public 4G Crawler"],
 )
+
+# ── Omnichannel Inbox SLA Monitor & Zalo Group Alert Forwarding ──────────────
+from app.modules.all_platform.sla_alerts.router import router as sla_alerts_router
+
+all_platform_router.include_router(sla_alerts_router)

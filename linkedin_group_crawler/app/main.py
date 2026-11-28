@@ -58,6 +58,7 @@ async def lifespan(_: FastAPI):
     zalo_automation_task: asyncio.Task[None] | None = None
     zalo_push_task: asyncio.Task[None] | None = None
     zalo_bot_task: asyncio.Task[None] | None = None
+    sla_alert_task: asyncio.Task[None] | None = None
     public_4g_startup_task: asyncio.Task[None] | None = None
     messenger_bridge_startup_task: asyncio.Task[None] | None = None
     email_imap_scheduler = None
@@ -236,6 +237,17 @@ async def lifespan(_: FastAPI):
         from app.modules.all_platform.zalo.services.zalo_chatwoot_bridge import run_bridge_tick
         zalo_bot_task = asyncio.create_task(_tick_loop("zalo-chatwoot-bridge", run_bridge_tick, "ZALO_BOT_POLL_INTERVAL_MS", 3000))
 
+    if _os.getenv("DISABLE_SLA_ALERT_WORKER", "0").strip().lower() in {"1", "true", "yes"}:
+        logger.warning("DISABLE_SLA_ALERT_WORKER enabled -> not starting SLA alert watchdog worker.")
+    else:
+        try:
+            from app.modules.all_platform.sla_alerts.sla_alert_worker import run_sla_alert_tick
+            sla_alert_task = asyncio.create_task(
+                _tick_loop("sla-alert-worker", run_sla_alert_tick, "SLA_ALERT_POLL_INTERVAL_MS", 15000)
+            )
+        except Exception:
+            logger.exception("Failed to start SLA alert watchdog worker")
+
     async def _reconnect_messenger_bridge_accounts_background() -> None:
         try:
             from app.modules.facebook.src.modules.messenger.services import bridge_client
@@ -297,6 +309,7 @@ async def lifespan(_: FastAPI):
             zalo_automation_task,
             zalo_push_task,
             zalo_bot_task,
+            sla_alert_task,
             public_4g_startup_task,
             messenger_bridge_startup_task,
         ):
@@ -306,6 +319,11 @@ async def lifespan(_: FastAPI):
                     await task
                 except asyncio.CancelledError:
                     pass
+        try:
+            from app.modules.all_platform.sla_alerts.sla_alert_worker import shutdown_sla_alert_worker
+            await asyncio.wait_for(shutdown_sla_alert_worker(), timeout=8.0)
+        except Exception:
+            logger.exception("SLA alert worker shutdown failed")
         try:
             from app.modules.all_platform.zalo.services.forward_engine import flush_all_pending_image_batches
             await asyncio.wait_for(flush_all_pending_image_batches(), timeout=8.0)

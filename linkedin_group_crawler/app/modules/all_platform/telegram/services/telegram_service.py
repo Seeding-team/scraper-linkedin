@@ -273,6 +273,21 @@ async def send_text(user: Dict[str, Any], account_id: str, dialog_id: int, text:
         raise HTTPException(400, "Nội dung tin nhắn trống.")
     entity = await client.get_input_entity(dialog_id)
     msg = await client.send_message(entity, text, reply_to=reply_to or None)
+    try:
+        from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+            on_staff_reply as sla_on_staff_reply,
+        )
+
+        await asyncio.to_thread(
+            sla_on_staff_reply,
+            "telegram",
+            str(account_id),
+            str(dialog_id),
+            caller_email=user.get("email"),
+            caller_name=user.get("name") or user.get("full_name"),
+        )
+    except Exception:
+        pass
     return await client_manager.record_sent_message(account_id, client, msg)
 
 
@@ -292,6 +307,21 @@ async def send_media(
     buf = BytesIO(data)
     buf.name = filename or "file"
     msg = await client.send_file(entity, file=buf, caption=caption or None, reply_to=reply_to or None)
+    try:
+        from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+            on_staff_reply as sla_on_staff_reply,
+        )
+
+        await asyncio.to_thread(
+            sla_on_staff_reply,
+            "telegram",
+            str(account_id),
+            str(dialog_id),
+            caller_email=user.get("email"),
+            caller_name=user.get("name") or user.get("full_name"),
+        )
+    except Exception:
+        pass
     return await client_manager.record_sent_message(account_id, client, msg)
 
 

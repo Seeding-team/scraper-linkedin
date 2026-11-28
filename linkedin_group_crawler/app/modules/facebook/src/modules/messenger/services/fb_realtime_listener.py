@@ -118,6 +118,52 @@ class FbRealtimeListener:
             f"Broadcasted fb_message_new for thread {thread_id} (is_self={is_self}, is_echo={is_echo})"
         )
 
+        # ── Omnichannel SLA & Zalo Group Alert Forward (additive, fail-soft) ──
+        try:
+            from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                on_inbound_message as sla_on_inbound,
+                on_staff_reply as sla_on_staff_reply,
+            )
+            from app.modules.all_platform.sla_alerts.zalo_group_alert_service import (
+                dispatch_inbound_alert,
+            )
+
+            if not is_self:
+                _sla_res = await asyncio.to_thread(
+                    sla_on_inbound,
+                    "messenger",
+                    str(account_id),
+                    thread_id,
+                    customer_name=sender_name or recipient_name,
+                    thread_type="direct",
+                    content=content or "",
+                    msg_kind="text" if (content or "").strip() else ("image" if attachments else "text"),
+                    received_at=msg_created_at,
+                )
+                await dispatch_inbound_alert(
+                    "messenger",
+                    str(account_id),
+                    thread_id,
+                    customer_name=sender_name or recipient_name,
+                    thread_type="direct",
+                    content=content or "",
+                    msg_kind="text" if (content or "").strip() else ("image" if attachments else "text"),
+                    received_at=msg_created_at,
+                    turn=(_sla_res or {}).get("turn") if isinstance(_sla_res, dict) else None,
+                    opened_new_turn=bool((_sla_res or {}).get("opened_new_turn")) if isinstance(_sla_res, dict) else False,
+                )
+            else:
+                await asyncio.to_thread(
+                    sla_on_staff_reply,
+                    "messenger",
+                    str(account_id),
+                    thread_id,
+                    caller_name=sender_name,
+                    replied_at=msg_created_at,
+                )
+        except Exception as sla_exc:
+            logger.debug(f"Messenger SLA/Alert hook failed account={account_id} thread={thread_id}: {sla_exc}")
+
         return saved_msg
 
     @classmethod

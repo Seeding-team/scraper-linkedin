@@ -5,6 +5,8 @@ import { ConversationItem } from "../types";
 import { Search, SlidersHorizontal, UserCheck, RotateCw, PenSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ChannelAccount, ChannelType } from "../types";
+import { SlaBadgePill } from "@/components/all-platform/sla-alerts/SlaBadgePill";
+import type { LiveSlaBadge } from "@/types/sla-alerts";
 
 interface ConversationListProps {
   conversations: ConversationItem[];
@@ -19,6 +21,7 @@ interface ConversationListProps {
   isSyncing?: boolean;
   onManualSync?: () => void;
   onComposeNewEmail?: () => void;
+  getSlaBadgeFor?: (channel: string, conversationId: string, accountId?: string | null) => LiveSlaBadge | null;
 }
 
 export const ConversationList: React.FC<ConversationListProps> = ({
@@ -34,6 +37,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
   isSyncing,
   onManualSync,
   onComposeNewEmail,
+  getSlaBadgeFor,
 }) => {
   const [isFilterPopoverOpen, setIsFilterPopoverOpen] = React.useState(false);
   const [filterChannel, setFilterChannel] = React.useState<string>("all");
@@ -259,6 +263,7 @@ export const ConversationList: React.FC<ConversationListProps> = ({
         ) : (
           displayedConversations.map((conv) => {
             const isSelected = selectedConvId === conv.id;
+            const slaBadge = getSlaBadgeFor?.(conv.channel, conv.id, conv.accountId) ?? null;
             return (
               <div
                 key={conv.id}
@@ -337,9 +342,10 @@ export const ConversationList: React.FC<ConversationListProps> = ({
                     {conv.lastMessageText}
                   </p>
 
-                  {/* Tags & Unread Counter */}
-                  <div className="flex items-center justify-between pt-0.5">
-                    <div className="flex flex-wrap gap-1">
+                  {/* Tags, Live SLA Badge & Unread Counter */}
+                  <div className="flex items-center justify-between gap-1 pt-0.5">
+                    <div className="flex flex-wrap items-center gap-1 min-w-0">
+                      {slaBadge && <SlaBadgePill badge={slaBadge} compact />}
                       {conv.tags.map((tag) => (
                         <span
                           key={tag}

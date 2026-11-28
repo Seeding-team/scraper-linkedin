@@ -27,6 +27,7 @@ import {
 } from "../preview/omnichannelPreviewFixtures";
 import { QuoteWorkspaceModal } from "@/modules/crm/components/QuoteWorkspaceModal";
 import { useAppAuth } from "@/contexts/AppAuthContext";
+import { useSlaLiveBadges } from "@/hooks/useSlaLiveBadges";
 import { CHANNEL_CAPABILITIES } from "../constants/channelCapabilities";
 import { AssignUserModal } from "./AssignUserModal";
 import {
@@ -174,6 +175,11 @@ export function OmnichannelInboxView() {
   // Active data arrays depending on mode
   const currentAccounts = isPreviewMode ? previewAccounts : realAccounts;
   const currentConversations = isPreviewMode ? previewConversations : realConversations;
+
+  // Live SLA Badges across all inbox channels (auto-paused in preview mode)
+  const { getBadgeFor: getSlaBadgeFor, refresh: refreshSlaBadges } = useSlaLiveBadges("all", {
+    enabled: !isPreviewMode,
+  });
 
   // Email sync state
   const [isSyncingEmail, setIsSyncingEmail] = useState(false);
@@ -640,6 +646,7 @@ export function OmnichannelInboxView() {
 
     setMessages((prev) => [...prev, { ...optimisticMsg, status: "sent" }]);
     setComposerText("");
+    void refreshSlaBadges();
   };
 
 
@@ -936,6 +943,7 @@ export function OmnichannelInboxView() {
           isSyncing={isSyncingEmail}
           onManualSync={handleManualSyncEmail}
           onComposeNewEmail={() => setIsEmailComposeOpen(true)}
+          getSlaBadgeFor={isPreviewMode ? undefined : getSlaBadgeFor}
         />
 
         {/* Pane 3 — Chat Workspace (flex-1, main focus) */}

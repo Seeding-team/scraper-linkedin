@@ -40,11 +40,12 @@ services:
     environment:
       TZ: Asia/Ho_Chi_Minh
       CRM_INSTANCE: markee
-      CRM_PUBLIC_URL: ${CRM_PUBLIC_URL:-http://localhost:8080}
+      CRM_PUBLIC_URL: ${CRM_PUBLIC_URL:-https://seeding.markeeai.com}
       ONLYOFFICE_INTERNAL_URL: http://onlyoffice:80
       ONLYOFFICE_PUBLIC_URL: ${ONLYOFFICE_PUBLIC_URL:-http://localhost:8094}
       ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-}
       DISABLE_ZCA_LISTENERS: "0"
+      DISABLE_SLA_ALERT_WORKER: "0"
       MESSENGER_BRIDGE_URL: http://messenger-bridge:8090
       # MESSENGER_BRIDGE_KEY lấy từ linkedin_group_crawler/.env (gitignore). Không đặt ở .env gốc:
       # file đó được git theo dõi và bị `git checkout -- .env` mỗi lần deploy.

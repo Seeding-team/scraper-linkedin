@@ -1299,6 +1299,21 @@ async def _auto_track_zalo_conversation_sender(account_id: str, conversation_id:
             supabase=supabase,
         )
 
+        # ── Omnichannel SLA staff reply hook (additive, fail-soft) ───────────
+        try:
+            from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                on_staff_reply as sla_on_staff_reply,
+            )
+
+            sla_on_staff_reply(
+                "zalo",
+                account_id,
+                conversation_id,
+                caller_email=clean_email,
+            )
+        except Exception as sla_exc:
+            logger.debug(f"Zalo SLA staff reply hook failed account={account_id} conv={conversation_id}: {sla_exc}")
+
         # Cập nhật share permission cho tất cả leader của member (nếu chưa từng share, tạo is_verify=False)
         leader_ids: List[str] = []
         try:
@@ -1350,6 +1365,15 @@ async def _run_post_send_side_effects(
         logger.debug(f"note_staff_reply failed for user={user_id}: {exc}")
 
     await _auto_track_zalo_conversation_sender(user_id, conversation_id, caller_email)
+    if not caller_email:
+        try:
+            from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                on_staff_reply as sla_on_staff_reply,
+            )
+
+            await asyncio.to_thread(sla_on_staff_reply, "zalo", user_id, conversation_id)
+        except Exception as sla_exc:
+            logger.debug(f"Zalo SLA fallback staff reply hook failed user={user_id}: {sla_exc}")
 
     try:
         listener_info = get_listener_status(user_id)

@@ -428,6 +428,14 @@ export function buildEntries(isAdmin: boolean, isLeader: boolean, workspaceTab: 
     },
     {
       type: "item",
+      id: "sla-monitor",
+      href: "/all-platform/sla-monitor",
+      icon: "notifications",
+      label: "Giám sát SLA & Cảnh báo",
+      matchStartsWith: ["/all-platform/sla-monitor"],
+    },
+    {
+      type: "item",
       id: "messenger-inbox",
       href: "/all-platform/messenger-inbox",
       icon: "chat",

@@ -609,6 +609,23 @@ class FbMessengerService:
         if not is_reply:
             FbCircuitBreaker.record_send_success(sb, account_id)
 
+        # ── Omnichannel SLA staff reply hook (additive, fail-soft) ───────────
+        try:
+            from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                on_staff_reply as sla_on_staff_reply,
+            )
+
+            await asyncio.to_thread(
+                sla_on_staff_reply,
+                "messenger",
+                str(account_id),
+                thread_id,
+                caller_name=account.get("name"),
+                replied_at=now_utc,
+            )
+        except Exception as sla_exc:
+            logger.debug(f"Messenger SLA staff reply hook failed account={account_id} thread={thread_id}: {sla_exc}")
+
         return {
             "success": True,
             "message": "Gửi tin nhắn Messenger thành công!",

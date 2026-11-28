@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { useAppAuth } from "@/contexts/AppAuthContext";
 import { useZaloAdminInbox, type ZaloConv } from "@/hooks/useZaloAdminInbox";
 import { useZaloPushNotifications } from "@/hooks/useZaloPushNotifications";
+import { useSlaLiveBadges } from "@/hooks/useSlaLiveBadges";
+import { SlaBadgePill } from "@/components/all-platform/sla-alerts/SlaBadgePill";
 import { Avatar } from "../dashboard/Avatar";
 import ZaloTeamAccountTree from "./ZaloTeamAccountTree";
 import ZaloAccountAuthView from "./ZaloAccountAuthView";
@@ -669,6 +671,7 @@ export function ZaloInboxAdminShell() {
   const { user } = useAppAuth();
   const inbox = useZaloAdminInbox();
   const push = useZaloPushNotifications();
+  const { getBadgeFor: getSlaBadgeFor } = useSlaLiveBadges("zalo");
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -858,7 +861,7 @@ export function ZaloInboxAdminShell() {
   }, [urlAccount, inbox.onSelectAccount]);
 
   useEffect(() => {
-    const targetConv = searchParams.get("conv");
+    const targetConv = searchParams.get("conv") || searchParams.get("conversation");
     if (!targetConv || jumpToConvRef.current === targetConv) return;
     // SU CO THAT (2026-10-04): useRef chi chan duoc trong CUNG 1 lan mount -
     // neu trang bi reload lien tuc (vd do ket hop voi loi auth/me cham gay
@@ -2416,6 +2419,7 @@ export function ZaloInboxAdminShell() {
                   !isSystemPreview && lastSender && !isSelfPreview && lastSender !== conv.name && previewText !== "—"
                     ? `${lastSender}: ${previewText}`
                     : previewText;
+                const slaBadge = getSlaBadgeFor("zalo", conv.conv_id, inbox.selectedAccountId);
                 return (
                   <button
                     key={conv.conv_id}
@@ -2468,6 +2472,7 @@ export function ZaloInboxAdminShell() {
                         <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.2 text-[9px] font-bold text-blue-600 border border-blue-100">
                           Zalo
                         </span>
+                        {slaBadge && <SlaBadgePill badge={slaBadge} compact />}
                         {conv.zalo_kpi_source?.startsWith("post_feed") && (
                           <span className="inline-flex rounded-full bg-violet-50 px-2 py-0.2 text-[9px] font-bold text-violet-700 border border-violet-200">
                             Post Feed

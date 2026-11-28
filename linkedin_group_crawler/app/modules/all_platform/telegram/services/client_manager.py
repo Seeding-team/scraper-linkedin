@@ -83,7 +83,14 @@ def _guess_media(message) -> tuple[Optional[str], Optional[Any]]:
 
 
 async def _persist_message(
-    account_id: str, client: TelegramClient, message, *, is_edit: bool = False, publish: bool = True, touch_dialog: bool = True
+    account_id: str,
+    client: TelegramClient,
+    message,
+    *,
+    is_edit: bool = False,
+    publish: bool = True,
+    touch_dialog: bool = True,
+    trigger_sla: bool = False,
 ) -> Dict[str, Any]:
     dialog_id = utils.get_peer_id(message.peer_id)
 
@@ -160,6 +167,59 @@ async def _persist_message(
 
     if publish:
         await message_events.publish_telegram_event(account_id, {"type": "message", "message": saved})
+
+    # ── Omnichannel SLA & Zalo Group Alert Forward (additive, fail-soft) ──────
+    if trigger_sla and not is_edit:
+        try:
+            from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                on_inbound_message as sla_on_inbound,
+                on_staff_reply as sla_on_staff_reply,
+            )
+            from app.modules.all_platform.sla_alerts.zalo_group_alert_service import (
+                dispatch_inbound_alert,
+            )
+
+            _tg_conv_id = str(dialog_id)
+            _tg_thread_type = "group" if (touch_dialog and dialog_type in ("group", "channel")) else "direct"
+            if not bool(message.out):
+                _tg_content = row.get("text") or (f"[{media_type}]" if media_type else "")
+                _tg_customer = sender_name or (dialog_title if touch_dialog else None) or _tg_conv_id
+                _tg_kind = media_type or "text"
+                _sla_res = await asyncio.to_thread(
+                    sla_on_inbound,
+                    "telegram",
+                    str(account_id),
+                    _tg_conv_id,
+                    customer_name=_tg_customer,
+                    thread_type=_tg_thread_type,
+                    content=_tg_content,
+                    msg_kind=_tg_kind,
+                    received_at=row.get("sent_at"),
+                )
+                await dispatch_inbound_alert(
+                    "telegram",
+                    str(account_id),
+                    _tg_conv_id,
+                    customer_name=_tg_customer,
+                    thread_type=_tg_thread_type,
+                    content=_tg_content,
+                    msg_kind=_tg_kind,
+                    received_at=row.get("sent_at"),
+                    turn=(_sla_res or {}).get("turn") if isinstance(_sla_res, dict) else None,
+                    opened_new_turn=bool((_sla_res or {}).get("opened_new_turn")) if isinstance(_sla_res, dict) else False,
+                )
+            else:
+                await asyncio.to_thread(
+                    sla_on_staff_reply,
+                    "telegram",
+                    str(account_id),
+                    _tg_conv_id,
+                    caller_name=sender_name,
+                    replied_at=row.get("sent_at"),
+                )
+        except Exception as sla_exc:
+            logger.debug(f"[Telegram {account_id}] SLA/Alert hook failed dialog={dialog_id}: {sla_exc}")
+
     return saved
 
 
@@ -180,7 +240,7 @@ def _register_handlers(account_id: str, client: TelegramClient) -> None:
     @client.on(events.NewMessage)
     async def _on_new(event):
         try:
-            await _persist_message(account_id, client, event.message)
+            await _persist_message(account_id, client, event.message, trigger_sla=True)
         except Exception:
             logger.exception(f"[Telegram {account_id}] Lỗi xử lý NewMessage")
 

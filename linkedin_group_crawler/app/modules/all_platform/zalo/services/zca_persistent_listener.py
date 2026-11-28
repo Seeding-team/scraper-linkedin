@@ -1703,6 +1703,88 @@ class ZcaPersistentListenerManager:
                             f"Zalo Inbox KPI inbound hook failed user={state.user_id} group={group_id}: {kpi_exc}"
                         )
 
+                    # ── Omnichannel SLA & Zalo Group Alert Forward (additive, fail-soft) ──
+                    try:
+                        from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                            on_inbound_message as sla_on_inbound,
+                        )
+                        from app.modules.all_platform.sla_alerts.zalo_group_alert_service import (
+                            dispatch_inbound_alert,
+                        )
+
+                        _raw_c = getattr(latest_in, "raw_content", None) or {}
+                        if isinstance(_raw_c, dict) and _raw_c.get("type") in (0, 1, "0", "1"):
+                            _zalo_thread_type = "group" if int(_raw_c["type"]) == 1 else "direct"
+                        else:
+                            from app.modules.all_platform.zalo.services.supabase_service import (
+                                resolve_thread_type as _resolve_zalo_tt,
+                            )
+                            _zalo_thread_type = (
+                                "group" if (await _resolve_zalo_tt(state.user_id, group_id)) == 1 else "direct"
+                            )
+
+                        _msg_kind = str(getattr(latest_in, "msg_kind", None) or getattr(latest_in, "type", None) or "text")
+                        _content = getattr(latest_in, "content", None)
+                        _customer_name = getattr(latest_in, "sender_name", None) or group_name
+                        _received_at = (
+                            getattr(latest_in, "ts", None)
+                            or getattr(latest_in, "timestamp", None)
+                            or getattr(latest_in, "time_text", None)
+                        )
+                        _sla_res = await asyncio.to_thread(
+                            sla_on_inbound,
+                            "zalo",
+                            state.user_id,
+                            group_id,
+                            customer_name=_customer_name,
+                            thread_type=_zalo_thread_type,
+                            content=_content,
+                            msg_kind=_msg_kind,
+                            received_at=_received_at,
+                        )
+                        await dispatch_inbound_alert(
+                            "zalo",
+                            state.user_id,
+                            group_id,
+                            customer_name=_customer_name,
+                            thread_type=_zalo_thread_type,
+                            content=_content,
+                            msg_kind=_msg_kind,
+                            received_at=_received_at,
+                            turn=(_sla_res or {}).get("turn") if isinstance(_sla_res, dict) else None,
+                            opened_new_turn=bool((_sla_res or {}).get("opened_new_turn")) if isinstance(_sla_res, dict) else False,
+                            image_urls=list(getattr(latest_in, "image_urls", None) or []),
+                        )
+                    except Exception as sla_exc:
+                        logger.debug(
+                            f"Zalo SLA/Alert inbound hook failed user={state.user_id} group={group_id}: {sla_exc}"
+                        )
+
+                outbound_msgs = [m for m in messages if getattr(m, "is_sent", False)]
+                if outbound_msgs:
+                    latest_out = outbound_msgs[-1]
+                    try:
+                        from app.modules.all_platform.sla_alerts.sla_tracker_service import (
+                            on_staff_reply as sla_on_staff_reply,
+                        )
+
+                        _replied_at = (
+                            getattr(latest_out, "ts", None)
+                            or getattr(latest_out, "timestamp", None)
+                            or getattr(latest_out, "time_text", None)
+                        )
+                        await asyncio.to_thread(
+                            sla_on_staff_reply,
+                            "zalo",
+                            state.user_id,
+                            group_id,
+                            replied_at=_replied_at,
+                        )
+                    except Exception as sla_echo_exc:
+                        logger.debug(
+                            f"Zalo SLA echo staff reply hook failed user={state.user_id} group={group_id}: {sla_echo_exc}"
+                        )
+
 
 _MANAGER = ZcaPersistentListenerManager()
 
